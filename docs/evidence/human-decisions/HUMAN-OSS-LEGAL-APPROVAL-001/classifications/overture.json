@@ -1,0 +1,220 @@
+{
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'overture', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "ce5386973ac7a35e2275155b9e5055b751673588be131b6612db329bf281feaa",
+  "contract_id": "emgi.source.overture-places.v1",
+  "fields": {
+    "available_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "blob_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "confidence": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；GERS ID 與信心值",
+      "classification": "PUBLIC"
+    },
+    "dataset_version_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "fetched_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "first_seen_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "ingested_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "last_seen_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "observation_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "observed_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "payload_excerpt": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；excerpt 只含 name/category/confidence/coordinates/brand/addresses/upstream_sources，不含 phones/emails/socials",
+      "classification": "PUBLIC"
+    },
+    "scope_principal_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "source_entity_id": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；GERS ID 與信心值",
+      "classification": "PUBLIC"
+    },
+    "status": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    }
+  },
+  "provider_id": "provider.overture",
+  "raw_source_fields": {
+    "address": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；POI 營業地址（商家地點，非個人住址）",
+      "classification": "PUBLIC"
+    },
+    "addresses": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；POI 營業地址（商家地點，非個人住址）",
+      "classification": "PUBLIC"
+    },
+    "bbox": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；record_reader._normalise 讀取的頂層欄（POI 名稱/類別/幾何/來源）",
+      "classification": "PUBLIC"
+    },
+    "brand": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；record_reader._normalise 讀取的頂層欄（POI 名稱/類別/幾何/來源）",
+      "classification": "PUBLIC"
+    },
+    "categories": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；record_reader._normalise 讀取的頂層欄（POI 名稱/類別/幾何/來源）",
+      "classification": "PUBLIC"
+    },
+    "category": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（record_reader）；POI 名稱/類別/座標",
+      "classification": "PUBLIC"
+    },
+    "confidence": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；record_reader._normalise 讀取的頂層欄（POI 名稱/類別/幾何/來源）",
+      "classification": "PUBLIC"
+    },
+    "data": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵（JSON 輸入時）",
+      "classification": "INTERNAL"
+    },
+    "emails": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；電子郵件，可能是個人信箱，保守判 RESTRICTED",
+      "classification": "RESTRICTED"
+    },
+    "features": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵（JSON 輸入時）",
+      "classification": "INTERNAL"
+    },
+    "freeform": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；POI 營業地址（商家地點，非個人住址）",
+      "classification": "PUBLIC"
+    },
+    "geometry": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；record_reader._normalise 讀取的頂層欄（POI 名稱/類別/幾何/來源）",
+      "classification": "PUBLIC"
+    },
+    "id": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；record_reader._normalise 讀取的頂層欄（POI 名稱/類別/幾何/來源）",
+      "classification": "PUBLIC"
+    },
+    "items": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵（JSON 輸入時）",
+      "classification": "INTERNAL"
+    },
+    "lat": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（record_reader）；POI 名稱/類別/座標",
+      "classification": "PUBLIC"
+    },
+    "latitude": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（record_reader）；POI 名稱/類別/座標",
+      "classification": "PUBLIC"
+    },
+    "lon": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（record_reader）；POI 名稱/類別/座標",
+      "classification": "PUBLIC"
+    },
+    "longitude": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（record_reader）；POI 名稱/類別/座標",
+      "classification": "PUBLIC"
+    },
+    "main_category": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（record_reader）；POI 名稱/類別/座標",
+      "classification": "PUBLIC"
+    },
+    "name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（record_reader）；POI 名稱/類別/座標",
+      "classification": "PUBLIC"
+    },
+    "names": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；record_reader._normalise 讀取的頂層欄（POI 名稱/類別/幾何/來源）",
+      "classification": "PUBLIC"
+    },
+    "phones": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；電話，可能是個人/獨資業者手機，無法區分，保守判 RESTRICTED",
+      "classification": "RESTRICTED"
+    },
+    "places": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵（JSON 輸入時）",
+      "classification": "INTERNAL"
+    },
+    "primary_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（record_reader）；POI 名稱/類別/座標",
+      "classification": "PUBLIC"
+    },
+    "properties": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵（JSON 輸入時）",
+      "classification": "INTERNAL"
+    },
+    "records": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵（JSON 輸入時）",
+      "classification": "INTERNAL"
+    },
+    "results": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵（JSON 輸入時）",
+      "classification": "INTERNAL"
+    },
+    "socials": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；社群帳號連結，可能是個人帳號，保守判 RESTRICTED",
+      "classification": "RESTRICTED"
+    },
+    "sources": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；record_reader._normalise 讀取的頂層欄（POI 名稱/類別/幾何/來源）",
+      "classification": "PUBLIC"
+    },
+    "stores": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵（JSON 輸入時）",
+      "classification": "INTERNAL"
+    },
+    "type": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵（JSON 輸入時）",
+      "classification": "INTERNAL"
+    },
+    "version": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；record_reader._normalise 讀取的頂層欄（POI 名稱/類別/幾何/來源）",
+      "classification": "PUBLIC"
+    },
+    "websites": {
+      "basis": "Overture Maps places 欄位（CDLA-Permissive-2.0）；record_reader._normalise 讀取的頂層欄（POI 名稱/類別/幾何/來源）",
+      "classification": "PUBLIC"
+    },
+    "x": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（record_reader）；POI 名稱/類別/座標",
+      "classification": "PUBLIC"
+    },
+    "y": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（record_reader）；POI 名稱/類別/座標",
+      "classification": "PUBLIC"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "8f5bd9a6a249fa519fb2edee2ee7367888ede3ebba1849d4456d6bd6b219c21e",
+  "source": "overture",
+  "source_version_binding": {
+    "classification_policy": "AUTHORITY_ARTIFACT_REQUIRED",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": "overture",
+    "record_model": "SourceObservation"
+  }
+}

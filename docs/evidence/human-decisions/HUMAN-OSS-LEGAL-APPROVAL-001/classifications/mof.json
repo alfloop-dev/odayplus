@@ -1,0 +1,372 @@
+{
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'mof', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "ea6d4e44dd89b0aa74935011d797cecc9f94aec050ba468f9fbe848d2b6680a4",
+  "contract_id": "emgi.source.mof-business.v1",
+  "fields": {
+    "ban": {
+      "basis": "商業登記公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "business_name": {
+      "basis": "商業登記公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "capital_amount": {
+      "basis": "商業登記公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "change_date": {
+      "basis": "商業登記公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "county": {
+      "basis": "由 registered_address 推導的行政區",
+      "classification": "PUBLIC"
+    },
+    "established_date": {
+      "basis": "商業登記公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "industry_codes": {
+      "basis": "商業登記公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "industry_names": {
+      "basis": "商業登記公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "is_active": {
+      "basis": "由 status 正規化推導",
+      "classification": "PUBLIC"
+    },
+    "is_candidate_evidence": {
+      "basis": "平台固定旗標（候選證據/非實體店真值）",
+      "classification": "INTERNAL"
+    },
+    "is_physical_store_truth": {
+      "basis": "平台固定旗標（候選證據/非實體店真值）",
+      "classification": "INTERNAL"
+    },
+    "metadata": {
+      "basis": "只含 raw_source_keys（來源鍵名清單），無值",
+      "classification": "INTERNAL"
+    },
+    "organization_type": {
+      "basis": "商業登記公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "registered_address": {
+      "basis": "商業登記公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "responsible_person": {
+      "basis": "負責人自然人姓名＝個人資料（個資法）",
+      "classification": "RESTRICTED"
+    },
+    "status": {
+      "basis": "商業登記公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "status_normalized": {
+      "basis": "由 status 正規化推導",
+      "classification": "PUBLIC"
+    },
+    "township": {
+      "basis": "由 registered_address 推導的行政區",
+      "classification": "PUBLIC"
+    },
+    "use_uniform_invoice": {
+      "basis": "商業登記公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    }
+  },
+  "provider_id": "provider.mof",
+  "raw_source_fields": {
+    "Approved_Date": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Busi_Addr": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Busi_Ban": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Busi_Chi_Name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Busi_Item": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Busi_Item_Name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Busi_Status": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Business_Accounting_NO": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Capital": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Capital_Stock_Amount": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Change_Date": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Chg_Date": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "City": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Company_Location": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Company_Name": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Company_Status_Desc": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "District": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Master_Name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；負責人自然人姓名＝個人資料",
+      "classification": "RESTRICTED"
+    },
+    "Organization": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Organization_Desc": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Responsible_Name": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；負責人自然人姓名＝個人資料",
+      "classification": "RESTRICTED"
+    },
+    "Setup_Date": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "Use_Invoice": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "ban": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "businessAddress": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "businessNm": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "businessSetupDate": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "businessType": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "business_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "capitalAmount": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "capital_amount": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "change_date": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "county": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "established_date": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "headquartersBan": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "industryCd": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "industryCd1": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "industryCd2": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "industryCd3": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "industryNm": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "industryNm1": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "industryNm2": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "industryNm3": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "industry_codes": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "industry_names": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "isUseInvoice": {
+      "basis": "財政部營業（稅籍）登記公開資料欄位（eip.fia.gov.tw businessRegistration；2026-09-21 實際擷取鍵）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "organization_type": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "registered_address": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "responsible_person": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；負責人自然人姓名＝個人資料",
+      "classification": "RESTRICTED"
+    },
+    "status": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "township": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "use_uniform_invoice": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "使用統一發票": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "營利事業名稱": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "營業人名稱": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "營業地址": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "營業狀況": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "登記地址": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "組織別": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "統一編號": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "縣市": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "行業代號": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "行業名稱": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "設立日期": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "變更日期": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "負責人姓名": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；負責人自然人姓名＝個人資料",
+      "classification": "RESTRICTED"
+    },
+    "資本額": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    },
+    "鄉鎮市區": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_mof_record）；商業登記公開欄位",
+      "classification": "PUBLIC"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "03cb313fe2221ea9bd02595ed84f516eed65cf26ce75227e250a39aa449ef25c",
+  "source": "mof",
+  "source_version_binding": {
+    "classification_policy": "AUTHORITY_ARTIFACT_REQUIRED",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": "mof_business",
+    "record_model": "MOFBusinessRecord"
+  }
+}

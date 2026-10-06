@@ -1,0 +1,532 @@
+{
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'moi', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "efc544762984330938fbe92f2873acc1d1fef0944c4b7dfd5b56e3263ec1443e",
+  "contract_id": "emgi.source.moi-rental.v1",
+  "fields": {
+    "address_or_section": {
+      "basis": "門牌區段化住址；住宅位置準識別欄位，保守判 INTERNAL",
+      "classification": "INTERNAL"
+    },
+    "building_completion_date": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "building_state": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "county": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "county_code": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "district": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "has_elevator": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "has_furniture": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "has_manager": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "is_rental": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "lease_period_end": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "lease_period_start": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "metadata": {
+      "basis": "只含 raw_keys（來源鍵名清單），無值",
+      "classification": "INTERNAL"
+    },
+    "notes": {
+      "basis": "自由文字備註，保守判 INTERNAL",
+      "classification": "INTERNAL"
+    },
+    "parking_rent_twd": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "parking_space_type": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "primary_building_materials": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "primary_use": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "release_key": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "rent_total_twd": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "rent_unit_price_twd": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "rental_area_ping": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "rental_area_sqm": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "rental_type": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "target_floor": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "total_floors": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "transaction_id": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "transaction_target": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "transaction_year_month": {
+      "basis": "實價登錄租賃公開欄位正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    }
+  },
+  "provider_id": "provider.moi",
+  "raw_source_fields": {
+    "District": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "address": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）；住宅位置準識別欄位",
+      "classification": "INTERNAL"
+    },
+    "address_or_section": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）；住宅位置準識別欄位",
+      "classification": "INTERNAL"
+    },
+    "area": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "berthCategory": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "berthFloor": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "berthPrice": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "build_type": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；實價登錄租賃公開欄位",
+      "classification": "PUBLIC"
+    },
+    "buildingArea": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "building_area_sqm": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；實價登錄租賃公開欄位",
+      "classification": "PUBLIC"
+    },
+    "building_completion_date": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "building_state": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "contract_date": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；實價登錄租賃公開欄位",
+      "classification": "PUBLIC"
+    },
+    "county": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "county_code": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；實價登錄租賃公開欄位",
+      "classification": "PUBLIC"
+    },
+    "county_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "dataset_type": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "district": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "district_name": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；實價登錄租賃公開欄位",
+      "classification": "PUBLIC"
+    },
+    "floor": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；實價登錄租賃公開欄位",
+      "classification": "PUBLIC"
+    },
+    "has_elevator": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "has_furniture": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "has_manager": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "id": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "lease_period_end": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "lease_period_start": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "manage_org_included": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；實價登錄租賃公開欄位",
+      "classification": "PUBLIC"
+    },
+    "monthly_rent_twd": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；實價登錄租賃公開欄位",
+      "classification": "PUBLIC"
+    },
+    "note": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；自由文字備註",
+      "classification": "INTERNAL"
+    },
+    "notes": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）；自由文字備註",
+      "classification": "INTERNAL"
+    },
+    "parking_rent_twd": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "parking_space_type": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "primary_building_materials": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "primary_use": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "rentPrice": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "rent_total_twd": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "rent_type": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；實價登錄租賃公開欄位",
+      "classification": "PUBLIC"
+    },
+    "rent_unit_price_twd": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "rental_area_sqm": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "rental_type": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "rooms": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；實價登錄租賃公開欄位",
+      "classification": "PUBLIC"
+    },
+    "season": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；實價登錄租賃公開欄位",
+      "classification": "PUBLIC"
+    },
+    "serial_no": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "target": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "target_floor": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "totalFloor": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "total_floor": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；實價登錄租賃公開欄位",
+      "classification": "PUBLIC"
+    },
+    "total_floors": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "total_price": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "transaction_date": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "transaction_id": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "transaction_target": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "transaction_year_month": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "unitPrice": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "主要建材": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "主要用途": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "交易年月日": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "交易標的": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "備註": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；自由文字，可能夾帶特殊交易關係描述，保守判 INTERNAL",
+      "classification": "INTERNAL"
+    },
+    "出租型態": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "單價元": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "單價元平方公尺": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "土地位置建物門牌": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；官方已門牌區段化，但屬住宅位置準識別欄位，保守判 INTERNAL",
+      "classification": "INTERNAL"
+    },
+    "土地區段位置建物區段門牌": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）；住宅位置準識別欄位",
+      "classification": "INTERNAL"
+    },
+    "土地面積平方公尺": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "建物型態": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "建物現況格局-廳": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "建物現況格局-房": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "建物現況格局-衛": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "建物現況格局-隔間": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "建物總面積平方公尺": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "建築完成年月": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "有無管理員": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "有無管理組織": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "有無附傢俱": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "有無附家具": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "有無電梯": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "租賃住宅服務": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "租賃型態": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "租賃層次": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "租賃年月日": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "租賃期間": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "租賃筆棟數": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "租賃總面積平方公尺": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "租賃起日": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "租賃起訖年月日": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "租賃迄日": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（parse_moi_rental_record）",
+      "classification": "PUBLIC"
+    },
+    "編號": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "總樓層數": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "總額元": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "車位總額元": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "車位面積平方公尺": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "車位類別": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "都市土地使用分區": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "鄉鎮市區": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "附屬設備": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "非都市土地使用分區": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "非都市土地使用編定": {
+      "basis": "lvr_land_c 官方表頭（115S2 臺北市 A_lvr_land_C.csv，轉錄於 tests/sources/official_source_fixtures.py）；內政部實價登錄租賃公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "7653e9a56f073107f48374edc205dfda7bb0f0f4266eb809e07f6c4c7c09fd0d",
+  "source": "moi",
+  "source_version_binding": {
+    "classification_policy": "AUTHORITY_ARTIFACT_REQUIRED",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": "moi_rental",
+    "record_model": "MOIRentalRecord"
+  }
+}

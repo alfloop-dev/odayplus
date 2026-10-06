@@ -1,0 +1,208 @@
+{
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'nlsc_boundary', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "e05110358d69e4fee28437cc5703d03d414abc6029b459f47a00424b41742e67",
+  "contract_id": "emgi.source.nlsc.v1",
+  "fields": {
+    "admin_code": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "admin_level": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "admin_name": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "area_sqm": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "centroid": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "county_code": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "county_name": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "geometry_geojson": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "geometry_wkt": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "h3_cells": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "is_valid_geometry": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "is_within_taiwan": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "observed_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "release_key": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "srid": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "town_code": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "town_name": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "village_code": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "village_name": {
+      "basis": "行政界線幾何與代碼正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    }
+  },
+  "provider_id": "provider.moi.nlsc",
+  "raw_source_fields": {
+    "CODE": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "COUNTY": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "COUNTYCODE": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；村里/鄉鎮/縣市界圖 DBF 屬性（data.gov.tw 7439/7441/7442 fieldDesc 亦列）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "COUNTYENG": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；村里/鄉鎮/縣市界圖 DBF 屬性（data.gov.tw 7439/7441/7442 fieldDesc 亦列）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "COUNTYID": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；村里/鄉鎮/縣市界圖 DBF 屬性（data.gov.tw 7439/7441/7442 fieldDesc 亦列）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "COUNTYNAME": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；村里/鄉鎮/縣市界圖 DBF 屬性（data.gov.tw 7439/7441/7442 fieldDesc 亦列）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "NAME": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "NOTE": {
+      "basis": "data.gov.tw 7439/7440 fieldDesc 列出的村里界 DBF 欄位（DPF-NLSC-OFFICIAL-ZIP-PREPROCESSOR-001/catalog）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "TOWN": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "TOWNCODE": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；村里/鄉鎮/縣市界圖 DBF 屬性（data.gov.tw 7439/7441/7442 fieldDesc 亦列）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "TOWNENG": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；村里/鄉鎮/縣市界圖 DBF 屬性（data.gov.tw 7439/7441/7442 fieldDesc 亦列）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "TOWNID": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；村里/鄉鎮/縣市界圖 DBF 屬性（data.gov.tw 7439/7441/7442 fieldDesc 亦列）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "TOWNNAME": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；村里/鄉鎮/縣市界圖 DBF 屬性（data.gov.tw 7439/7441/7442 fieldDesc 亦列）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "VILLAGE": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "VILLCODE": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；村里/鄉鎮/縣市界圖 DBF 屬性（data.gov.tw 7439/7441/7442 fieldDesc 亦列）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "VILLENG": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；村里/鄉鎮/縣市界圖 DBF 屬性（data.gov.tw 7439/7441/7442 fieldDesc 亦列）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "VILLNAME": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；村里/鄉鎮/縣市界圖 DBF 屬性（data.gov.tw 7439/7441/7442 fieldDesc 亦列）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "admin_code": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "admin_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "city_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "county_code": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "county_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "district_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "town_code": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "town_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "village_code": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    },
+    "village_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（NLSCAdapter）；界圖屬性",
+      "classification": "PUBLIC"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "0422cba26a3065972385dae6141854953227800e7b1260900d3d7869e3f6a866",
+  "source": "nlsc_boundary",
+  "source_version_binding": {
+    "classification_policy": "AUTHORITY_ARTIFACT_REQUIRED",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": "nlsc_boundary",
+    "record_model": "NLSCBoundaryRecord"
+  }
+}
