@@ -281,7 +281,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `esquery` 1.7.0 (npm)
 - `maplibre-gl` 6.9.0 (npm)
 - `pbf` 5.1.2 (npm)
-- `source-map-js` 1.2.1 (npm)
+- `source-map-js` 1.2.2 (npm)
 - `Flask` 3.1.3 (pypi)
 - `GitPython` 3.1.61 (pypi)
 - `Jinja2` 3.1.6 (pypi)
