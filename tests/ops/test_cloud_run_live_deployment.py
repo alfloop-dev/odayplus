@@ -439,7 +439,10 @@ def test_live_e2e_origins_come_from_the_production_variables_with_no_dev_fallbac
         '  LIVE_E2E_WEB_URL="${ODP_PROD_DEPLOY_URL}"\n'
         "else\n"
         '  LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"\n'
-        '  LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"\n'
+        "  # The Web CSRF boundary trusts ODP_WEB_BASE_URL (and the container's own\n"
+        "  # origin), not every alias Cloud Run serves the same service under, so the\n"
+        "  # password journey must run against the canonical origin users sign in at.\n"
+        '  LIVE_E2E_WEB_URL="${ODP_WEB_BASE_URL:-$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")}"\n'
         "fi\n"
     )
     empty_guard = text.index('if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then')

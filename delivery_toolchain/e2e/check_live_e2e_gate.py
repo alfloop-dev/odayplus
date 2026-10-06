@@ -1581,7 +1581,10 @@ def _check_model_lineage(
 
 
 def _check_model_registry_refused(
-    response: HttpResponse, *, checks: list[CheckResult]
+    response: HttpResponse,
+    *,
+    checks: list[CheckResult],
+    registry_bound: bool = False,
 ) -> None:
     """With production bindings unverified, the model registry must refuse.
 
@@ -1590,14 +1593,30 @@ def _check_model_registry_refused(
     composition error; a 200 here would mean model versions (and possibly
     aliases or lineage) were served from somewhere other than the approved
     registry, which is exactly the manufactured state this scope forbids.
+
+    When the runtime reports the remote registry as bound
+    (``learninghubRegistryBound``) the reads do come from the approved
+    registry, so an empty listing is the honest answer for "no verified
+    versions yet". Only an empty listing is accepted there: any served version
+    still blocks, because nothing has been verified for production.
     """
 
     refused = (not response.failed) and response.status == 503
+    expected = "503 while production bindings are unverified"
+    if registry_bound and not refused:
+        payload = _as_dict(response.payload)
+        refused = (
+            (not response.failed)
+            and response.status == 200
+            and payload.get("items") == []
+            and payload.get("count") == 0
+        )
+        expected = "503, or 200 with no model versions from the bound registry"
     _check(
         checks,
         refused,
         "models:registry_refused",
-        _failure_detail(response, expected="503 while production bindings are unverified"),
+        _failure_detail(response, expected=expected),
         _dependency_for(response, "mlflow"),
     )
     markers = find_surrogate_values(response.payload)
@@ -2772,7 +2791,11 @@ def evaluate_gate(
         models_response = http.request("GET", "/api/v1/learninghub/models")
         runtime_models = _as_dict(runtime_details.get("models"))
         if _models_refused_in_scope(config, runtime_models):
-            _check_model_registry_refused(models_response, checks=checks)
+            _check_model_registry_refused(
+                models_response,
+                checks=checks,
+                registry_bound=runtime_models.get("learninghubRegistryBound") is True,
+            )
         else:
             _check_model_lineage(models_response, checks=checks)
         # Worker first, then source data: the worker probe is what drives real
