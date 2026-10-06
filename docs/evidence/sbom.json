@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-4c2b3996bc592265964862bfbef08922",
+  "serialNumber": "urn:uuid:sha256-78b0bbbeed126f1de3600c9950a9462c",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-30T23:42:11.535819+00:00",
+    "timestamp": "2026-10-06T00:48:38.594720+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@b175b231cea7e063286670405650ae987230d7d7",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@b175b231cea7e063286670405650ae987230d7d7"
+      "purl": "pkg:generic/alfloop-dev/odayplus@296232b1294f08bb815d1f902155af0bce6aee0e",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@296232b1294f08bb815d1f902155af0bce6aee0e"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "b175b231cea7e063286670405650ae987230d7d7"
+        "value": "296232b1294f08bb815d1f902155af0bce6aee0e"
       },
       {
         "name": "sbom-hash",
-        "value": "4c2b3996bc592265964862bfbef089226561157f564d1c0f411a47913dc31cee"
+        "value": "78b0bbbeed126f1de3600c9950a9462c198a0ff21461d36663aa295970573f80"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:d301876b7cee768aee5b5e7a7ee3a18f96c411a1f2aa1cfffa19065e9ed7f91c"
+        "value": "sha256:a51e372045a0c75b64fcbaaf943807e79732bc0771ec45626fa602d1a394b9e9"
       },
       {
         "name": "container-base-images",
@@ -12189,10 +12189,10 @@
     },
     {
       "name": "multidict",
-      "version": "6.7.1",
+      "version": "6.9.1",
       "type": "library",
-      "purl": "pkg:pypi/multidict@6.7.1",
-      "bom-ref": "pkg:pypi/multidict@6.7.1",
+      "purl": "pkg:pypi/multidict@6.9.1",
+      "bom-ref": "pkg:pypi/multidict@6.9.1",
       "scope": "required",
       "licenses": [
         {
@@ -12204,11 +12204,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "ec6652a1bee61c53a3e5776b6049172c53b6aaba34f18c9ad04f82712bac623d"
+          "content": "0f06e60fa190aa7abd0914c2a766736fdc8e9f34878c4346338534b73d1b20e2"
         },
         {
           "alg": "SHA256",
-          "content": "a90f75c956e32891a4eda3639ce6dd86e87105271f43d43442a3aedf3cddf172"
+          "content": "29138fef49828542e859828107e42e50d0e587c513b7eb4b2d92bade2b0860fe"
         }
       ],
       "supplier": {
@@ -18133,10 +18133,10 @@
     },
     {
       "name": "werkzeug",
-      "version": "3.1.8",
+      "version": "3.1.9",
       "type": "library",
-      "purl": "pkg:pypi/werkzeug@3.1.8",
-      "bom-ref": "pkg:pypi/werkzeug@3.1.8",
+      "purl": "pkg:pypi/werkzeug@3.1.9",
+      "bom-ref": "pkg:pypi/werkzeug@3.1.9",
       "scope": "required",
       "licenses": [
         {
@@ -18148,11 +18148,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "9bad61a4268dac112f1c5cd4630a56ede601b6ed420300677a869083d70a4c44"
+          "content": "55ca7c70a75689be937aa27f8ff4b018f06ff4838fc73045560bf0f5a1291060"
         },
         {
           "alg": "SHA256",
-          "content": "63a77fb8892bf28ebc3178683445222aa500e48ebad5ec77b0ad80f8726b1f50"
+          "content": "6392e50c78460ba618e5b21f08a71f59c99ce99cdc6cf6e3dd7e6ccca8754fab"
         }
       ]
     },
@@ -18556,7 +18556,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@b175b231cea7e063286670405650ae987230d7d7",
+      "ref": "pkg:generic/alfloop-dev/odayplus@296232b1294f08bb815d1f902155af0bce6aee0e",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -20880,7 +20880,7 @@
         "pkg:pypi/aiosignal@1.4.0",
         "pkg:pypi/attrs@26.1.0",
         "pkg:pypi/frozenlist@1.8.0",
-        "pkg:pypi/multidict@6.7.1",
+        "pkg:pypi/multidict@6.9.1",
         "pkg:pypi/propcache@0.5.2",
         "pkg:pypi/typing-extensions@4.15.0",
         "pkg:pypi/yarl@1.24.5"
@@ -21147,14 +21147,14 @@
         "pkg:pypi/itsdangerous@2.2.0",
         "pkg:pypi/jinja2@3.1.6",
         "pkg:pypi/markupsafe@3.0.3",
-        "pkg:pypi/werkzeug@3.1.8"
+        "pkg:pypi/werkzeug@3.1.9"
       ]
     },
     {
       "ref": "pkg:pypi/flask-cors@6.0.5",
       "dependsOn": [
         "pkg:pypi/flask@3.1.3",
-        "pkg:pypi/werkzeug@3.1.8"
+        "pkg:pypi/werkzeug@3.1.9"
       ]
     },
     {
@@ -21925,7 +21925,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/werkzeug@3.1.8",
+      "ref": "pkg:pypi/werkzeug@3.1.9",
       "dependsOn": [
         "pkg:pypi/markupsafe@3.0.3"
       ]
@@ -21934,7 +21934,7 @@
       "ref": "pkg:pypi/yarl@1.24.5",
       "dependsOn": [
         "pkg:pypi/idna@3.18",
-        "pkg:pypi/multidict@6.7.1",
+        "pkg:pypi/multidict@6.9.1",
         "pkg:pypi/propcache@0.5.2"
       ]
     }
