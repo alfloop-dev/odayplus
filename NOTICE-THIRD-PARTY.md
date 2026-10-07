@@ -14,8 +14,8 @@ Retain NOTICE; state significant changes if modified.
 
 - `@humanwhocodes/config-array` 0.13.0 (npm)
 - `@humanwhocodes/module-importer` 1.0.1 (npm)
-- `@img/sharp-linux-x64` 0.35.4 (npm)
-- `@img/sharp-linuxmusl-x64` 0.35.4 (npm)
+- `@img/sharp-linux-x64` 0.35.5 (npm)
+- `@img/sharp-linuxmusl-x64` 0.35.5 (npm)
 - `@playwright/test` 1.61.1 (npm)
 - `@swc/helpers` 0.5.15 (npm)
 - `apache-arrow` 21.2.0 (npm)
@@ -32,7 +32,7 @@ Retain NOTICE; state significant changes if modified.
 - `h3-js` 4.5.0 (npm)
 - `playwright` 1.61.1 (npm)
 - `playwright-core` 1.61.1 (npm)
-- `sharp` 0.35.4 (npm)
+- `sharp` 0.35.5 (npm)
 - `typescript` 5.6.3 (npm)
 - `absl-py` 2.5.0 (pypi)
 - `adagio` 0.2.6 (pypi)
@@ -125,8 +125,8 @@ Weak copyleft. Same handling as LGPL-3.0-or-later.
 
 Weak copyleft. Used unmodified as a dynamically loaded library; recipients may obtain the library source from its upstream project.
 
-- `@img/sharp-libvips-linux-x64` 1.3.3 (npm)
-- `@img/sharp-libvips-linuxmusl-x64` 1.3.3 (npm)
+- `@img/sharp-libvips-linux-x64` 1.3.4 (npm)
+- `@img/sharp-libvips-linuxmusl-x64` 1.3.4 (npm)
 
 ### MPL-2.0
 
@@ -157,8 +157,8 @@ File-level copyleft: source of any modified MPL file must be offered.
 
 - `@humanwhocodes/config-array` 0.13.0 (npm)
 - `@humanwhocodes/module-importer` 1.0.1 (npm)
-- `@img/sharp-linux-x64` 0.35.4 (npm)
-- `@img/sharp-linuxmusl-x64` 0.35.4 (npm)
+- `@img/sharp-linux-x64` 0.35.5 (npm)
+- `@img/sharp-linuxmusl-x64` 0.35.5 (npm)
 - `@playwright/test` 1.61.1 (npm)
 - `@swc/helpers` 0.5.15 (npm)
 - `apache-arrow` 21.2.0 (npm)
@@ -175,7 +175,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `h3-js` 4.5.0 (npm)
 - `playwright` 1.61.1 (npm)
 - `playwright-core` 1.61.1 (npm)
-- `sharp` 0.35.4 (npm)
+- `sharp` 0.35.5 (npm)
 - `typescript` 5.6.3 (npm)
 - `absl-py` 2.5.0 (pypi)
 - `adagio` 0.2.6 (pypi)
@@ -240,7 +240,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 
 ### Apache-2.0 AND LGPL-3.0-or-later AND MIT (1)
 
-- `@img/sharp-wasm32` 0.35.4 (npm)
+- `@img/sharp-wasm32` 0.35.5 (npm)
 
 ### Apache-2.0 AND MIT (1)
 
@@ -389,8 +389,8 @@ File-level copyleft: source of any modified MPL file must be offered.
 
 ### LGPL-3.0-or-later (2)
 
-- `@img/sharp-libvips-linux-x64` 1.3.3 (npm)
-- `@img/sharp-libvips-linuxmusl-x64` 1.3.3 (npm)
+- `@img/sharp-libvips-linux-x64` 1.3.4 (npm)
+- `@img/sharp-libvips-linuxmusl-x64` 1.3.4 (npm)
 
 ### MIT (474)
 
