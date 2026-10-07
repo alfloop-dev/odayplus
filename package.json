@@ -28,7 +28,7 @@
       "postcss": "8.5.28"
     },
     "postcss": "8.5.28",
-    "sharp": "0.35.4"
+    "sharp": "0.35.5"
   },
   "engines": {
     "node": ">=20"
