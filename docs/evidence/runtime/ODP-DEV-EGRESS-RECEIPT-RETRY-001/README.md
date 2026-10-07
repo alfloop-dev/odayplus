@@ -32,7 +32,9 @@ uv run --python 3.12 ruff check tests/ops/test_egress_receipt_visibility.py
 git diff --check
 ```
 
-All commands completed with exit 0. The shell integration tests execute the actual capture function with simulated reads: missing/missing/valid accepts only the valid receipt; permanent absence performs exactly six reads/five sleeps then refuses; duplicate/wrong-candidate/wrong-job/non-list/read-error inputs refuse on their first read. Existing manifest/egress/recovery/workflow contract tests remain green.
+All commands completed with exit 0. Initial hosted CI `37600821089` also passed the product lanes but rejected the stale code-boundary inventory after adding the regression test file. The follow-up runs `check_code_boundaries.py --write-inventory` and its check successfully (1203 files), adding only the new verification file's inventory row. This is a generated inventory synchronization, not a classification-policy change.
+
+The shell integration tests execute the actual capture function with simulated reads: missing/missing/valid accepts only the valid receipt; permanent absence performs exactly six reads/five sleeps then refuses; duplicate/wrong-candidate/wrong-job/non-list/read-error inputs refuse on their first read. Existing manifest/egress/recovery/workflow contract tests remain green.
 
 ## Delivery boundary
 
