@@ -36,6 +36,14 @@ All commands completed with exit 0. Initial hosted CI `37600821089` also passed 
 
 The shell integration tests execute the actual capture function with simulated reads: missing/missing/valid accepts only the valid receipt; permanent absence performs exactly six reads/five sleeps then refuses; duplicate/wrong-candidate/wrong-job/non-list/read-error inputs refuse on their first read. Existing manifest/egress/recovery/workflow contract tests remain green.
 
+## Independent review repair (2026-10-07)
+
+Codex2 reopened PR #1428 at `5489619616026add6997f91e284fec5b722d5440`: malformed probe JSON in `textPayload` was silently discarded as absent, allowing retries and eventual acceptance alongside a valid receipt. Repair anchor `6d952273a734aa4ba256c0f3af2ae2a17ca2bd4e` rejects malformed text containing the explicit `"receipt_kind": "public_egress_probe"` field (including spacing variations). Extraction must finish before absence classification, validation or report writing, so malformed receipts also refuse when a valid receipt appears first in the same read. Ordinary unrelated text remains ignorable; valid JSON text receipts remain supported. The semantic validator, exact execution filter and default-deny are unchanged.
+
+New shell regressions cover malformed-only, malformed-then-valid, malformed alongside valid in either order, and malformed spacing variants: all return nonzero after **one read, zero sleeps, no accepted report**. Unrelated text followed by a valid receipt retries once and succeeds; valid text JSON succeeds immediately. The existing six-read/five-sleep permanent-absence regression still passes.
+
+The worker initially could not start `uv` because its PATH omitted `/home/lupin/.local/bin` (exit 127; not a test result). After adding that existing tool directory to PATH, the same evidence-declared verification commands above completed with terminal exit **0**, including the three focused pytest suites, shell syntax, ruff and diff checks. Original pytest output is retained as [`review-repair-pytest.log`](review-repair-pytest.log); no tests were rerun for counting. Verification used the repair anchor above; the subsequent evidence commit changes documentation only. No cloud mutation or live deployment was performed. Prior-head green CI is not proof for the repaired head: fresh protected CI and independent Codex2 approval are still required.
+
 ## Delivery boundary
 
 Independent review, protected merge and merged-head CI remain mandatory. The same standing auto-dev workflow builds a fresh candidate and obtains real cloud receipts; old successful build artifacts are not silently rebound to changed source. Actual deployment is incomplete until its egress proof, jobs, tagged smoke, password/first-rotation/admin E2E and exact release readback pass. User's request to complete actual deployment does not waive those gates or authorize staging/production.
