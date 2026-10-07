@@ -4,7 +4,7 @@
 
 Latest protected-dev Deploy Dev run [37499848122](https://github.com/alfloop-dev/odayplus/actions/runs/37499848122) at `ada72a9ebe8d311253ef6e22eb50d0905b98755d` failed **Run production npm audit gate** before building images or deploying. The downloaded hosted receipt reports one high finding. Local audit of the same lock identifies `sharp <0.35.5`, [GHSA-wq5f-xc86-pv6w / CVE-2026-96889](https://github.com/advisories/GHSA-wq5f-xc86-pv6w): librsvg use-after-free.
 
-This patch changes only the root sharp override and its locked native dependency closure: sharp/native bindings `0.35.4 -> 0.35.5`, libvips packages `1.3.3 -> 1.3.4`, and the nested WASM runtime `1.11.1 -> 1.11.3` required by the new binding. No framework upgrades, advisory suppression, threshold change, authorization change, cloud operation or deployment rerun.
+This patch changes only the root sharp override and its locked native dependency closure: sharp/native bindings `0.35.4 -> 0.35.5`, libvips packages `1.3.3 -> 1.3.4`, and the nested WASM runtime `1.11.1 -> 1.11.3` required by the new binding. The derived SBOM and third-party NOTICE are regenerated to match these versions. No framework upgrades, advisory suppression, threshold change, authorization change, cloud operation or deployment rerun.
 
 ## Exact tested source
 
@@ -29,6 +29,22 @@ Environment: Node `v22.23.2`, npm `10.9.8`, Linux x64.
 - `NODE_ENV=production npm run build --workspace=@oday-plus/web`: PASS, including type validation/static generation/standalone tracing.
 - `npm run bundle:budget --workspace=@oday-plus/web`: PASS, Operator 291.7/300 kB, Intake 289.0/300 kB, Franchisee 116.6/130 kB.
 - `git diff --check`: PASS.
+
+## Hosted CI follow-up
+
+Initial PR head `9eb49b74` in CI run `37571588644` passed Node/build, E2E, DB, API contract, performance and orchestrator checks. Its security job `112631262007` passed the Python vulnerability audit, then correctly failed four tests because the committed SBOM/NOTICE still described old dependency versions (463 other security tests passed). This follow-up regenerates `docs/evidence/sbom.json` and `NOTICE-THIRD-PARTY.md` using the project generators and the full locked Python 3.12/npm trees; no licence exemptions or approval records are modified.
+
+Local follow-up: both generator `--check` commands PASS; all four originally failing tests PASS with `NODE_ENV=test`:
+
+```sh
+NODE_ENV=test uv run --python 3.12 pytest \
+  tests/security/test_oss_license_gate.py::test_sbom_check_cli_passes \
+  tests/security/test_oss_license_gate.py::test_notice_check_cli_passes \
+  tests/security/test_oss_notice.py::test_notice_matches_the_installed_trees \
+  tests/security/test_supply_chain_security_gate.py::test_sbom_and_provenance_present_and_valid -q
+```
+
+A full local security-suite attempt inherited the host's `NODE_ENV=production` and failed synthetic API fixtures with 503 responses. A second full-suite attempt with `NODE_ENV=test` exceeded the 240-second local limit; it is not claimed as a completed pass. The fresh hosted full security job remains the authoritative CI acceptance.
 
 ## Release boundary
 
