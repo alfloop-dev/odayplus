@@ -593,7 +593,7 @@ capture_public_egress_probe_receipt() {
   local expected_egress="$1"
   local execution_file="${PUBLIC_EGRESS_PROBE_REPORT%.json}-execution.json"
   local logs_file="${PUBLIC_EGRESS_PROBE_REPORT%.json}-logs.json"
-  local execution_name
+  local execution_name attempt receipt_status
   if ! capture_latest_execution "${WORKER_CANDIDATE_JOB}" "${execution_file}"; then
     echo "Error: unable to read back the public egress probe execution." >&2
     return 1
@@ -612,6 +612,10 @@ PY
     echo "Error: public egress probe execution readback has no name." >&2
     return 1
   fi
+  # Execution completion does not guarantee Cloud Logging ingestion is visible.
+  # Re-read only missing receipts for this exact execution, at most six times;
+  # invalid/duplicate receipts and read errors still fail immediately.
+  for attempt in 1 2 3 4 5 6; do
   if ! gcloud logging read \
     "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${WORKER_CANDIDATE_JOB}\" AND labels.\"run.googleapis.com/execution_name\"=\"${execution_name##*/}\"" \
     --project="${GCP_PROJECT}" \
@@ -621,7 +625,7 @@ PY
     echo "Error: unable to read the public egress probe runtime receipt from Cloud Logging." >&2
     return 1
   fi
-  if ! run_locked_python - "${logs_file}" "${PUBLIC_EGRESS_PROBE_REPORT}" \
+  if run_locked_python - "${logs_file}" "${PUBLIC_EGRESS_PROBE_REPORT}" \
     "${ODAY_RELEASE_SHA}" "${MANIFEST_DIGEST}" "${WORKER_CANDIDATE_JOB}" \
     "${expected_egress}" <<'PY'
 import json
@@ -650,7 +654,12 @@ def receipts(value):
 
 
 logs = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(logs, list):
+    raise SystemExit("Cloud Logging readback must be a JSON list")
 observed = list(receipts(logs))
+if not observed:
+    print("public egress probe receipt not yet visible for the exact execution", file=sys.stderr)
+    raise SystemExit(3)
 if len(observed) != 1:
     raise SystemExit(
         f"expected exactly one public egress probe receipt for the execution; found {len(observed)}"
@@ -674,9 +683,21 @@ Path(sys.argv[2]).write_text(
 )
 PY
   then
+    return 0
+  else
+    receipt_status=$?
+  fi
+  if [ "${receipt_status}" -ne 3 ]; then
     echo "Error: public egress probe runtime receipt failed validation." >&2
     return 1
   fi
+  if [ "${attempt}" -lt 6 ]; then
+    echo "Waiting for the exact public egress probe receipt (attempt ${attempt}/6)..." >&2
+    sleep 10
+  fi
+  done
+  echo "Error: public egress probe receipt still absent after six reads; refusing deployment." >&2
+  return 1
 }
 
 run_public_egress_probe() {
