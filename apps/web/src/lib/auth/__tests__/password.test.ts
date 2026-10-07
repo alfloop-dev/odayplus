@@ -316,6 +316,7 @@ describe("password policy & change route", () => {
     async (variant) => {
       vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
       vi.stubEnv("ODP_IDENTITY_TOKEN_SIGNING_KEY", SECRET);
+      vi.stubEnv("ODP_AUTH_LOCAL_AUDIENCES", "urn:odp:api:local");
       vi.stubEnv("ODP_PRODUCT_MODE", "production");
       vi.stubEnv("ODP_WEB_BASE_URL", "https://ops.oday.plus");
       const initial = "Review-Initial-Secret-5521";
