@@ -629,6 +629,7 @@ PY
     "${ODAY_RELEASE_SHA}" "${MANIFEST_DIGEST}" "${WORKER_CANDIDATE_JOB}" \
     "${expected_egress}" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -649,6 +650,10 @@ def receipts(value):
             try:
                 child = json.loads(line)
             except json.JSONDecodeError:
+                # Ordinary job output is not a receipt. An identifiable probe
+                # receipt with broken JSON is evidence of corruption, not lag.
+                if re.search(r'"receipt_kind"\s*:\s*"public_egress_probe"', line):
+                    raise SystemExit("malformed public egress probe receipt JSON")
                 continue
             yield from receipts(child)
 

@@ -110,6 +110,57 @@ def test_invalid_or_duplicate_receipt_is_not_retried(tmp_path: Path, bad: object
     assert not report.exists()
 
 
+MALFORMED_RECEIPT = {"textPayload": '{"receipt_kind":"public_egress_probe","result":'}
+VALID_RECEIPT = {"jsonPayload": runtime_receipt()}
+
+
+@pytest.mark.parametrize("responses", [
+    pytest.param([[MALFORMED_RECEIPT]], id="malformed-only"),
+    pytest.param(
+        [[MALFORMED_RECEIPT], [MALFORMED_RECEIPT, VALID_RECEIPT]],
+        id="malformed-then-valid",
+    ),
+    pytest.param([[MALFORMED_RECEIPT, VALID_RECEIPT]], id="malformed-alongside-valid"),
+    pytest.param([[VALID_RECEIPT, MALFORMED_RECEIPT]], id="valid-before-malformed"),
+    pytest.param(
+        [[{"textPayload": '{ "receipt_kind" : "public_egress_probe", "result":'}]],
+        id="malformed-whitespace",
+    ),
+])
+def test_identifiable_malformed_receipt_fails_on_first_read(
+    tmp_path: Path, responses: list[object],
+):
+    result, report, calls, delays = run_gate(tmp_path, responses)
+    assert result.returncode != 0
+    assert len(calls) == 1
+    assert delays == []
+    assert "malformed public egress probe receipt JSON" in result.stderr
+    assert not report.exists()
+
+
+def test_unrelated_text_logs_are_not_malformed_probe_receipts(tmp_path: Path):
+    unrelated = [
+        {"textPayload": "Starting public_egress_probe job"},
+        {"textPayload": '{"receipt_kind":"another_probe","result":'},
+    ]
+    result, report, calls, delays = run_gate(
+        tmp_path, [unrelated, [*unrelated, VALID_RECEIPT]],
+    )
+    assert result.returncode == 0, result.stderr
+    assert len(calls) == 2
+    assert delays == ["10"]
+    assert json.loads(report.read_text()) == runtime_receipt()
+
+
+def test_valid_text_receipt_is_still_accepted(tmp_path: Path):
+    receipt = runtime_receipt()
+    result, report, calls, delays = run_gate(tmp_path, [[{"textPayload": json.dumps(receipt)}]])
+    assert result.returncode == 0, result.stderr
+    assert len(calls) == 1
+    assert delays == []
+    assert json.loads(report.read_text()) == receipt
+
+
 def test_logging_read_failure_is_not_retried_or_treated_as_missing(tmp_path: Path):
     result, report, calls, delays = run_gate(tmp_path, [[]], read_failure=True)
     assert result.returncode != 0
