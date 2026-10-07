@@ -156,6 +156,7 @@ def _render_web_env(env: dict[str, str], tmp_path: Path) -> dict[str, str]:
         "ODP_DATA_BINDING_MODE": "live",
         "ODP_PRODUCT_MODE": "poc",
         "ODP_WEB_BASE_URL": "https://web.example.com",
+        "ODP_AUTH_AUDIENCES": "https://api.example.com",
     }
     subprocess.run(
         [sys.executable, "-c", serializer, str(out), "https://api.example.com", "https://api.example.com"],
@@ -364,6 +365,37 @@ def test_local_mode_web_env_carries_no_oidc_configuration(tmp_path: Path) -> Non
     assert payload["ODP_AUTH_LOCAL_AUDIENCES"] == "https://api.example.com"
     assert payload["ODP_AUTH_AUDIENCES"] == "https://api.example.com"
     assert not [name for name in payload if name.startswith("ODP_WEB_OIDC_")]
+
+
+@pytest.mark.parametrize("local_audience", [None, "urn:odp:api:local"])
+def test_web_and_api_local_audiences_match_not_cloud_run_transport(
+    tmp_path: Path, local_audience: str | None
+) -> None:
+    env = {
+        "ODP_AUTH_MODE": "local",
+        "ODP_AUTH_OIDC_ENABLED": "false",
+        "ODP_AUTH_AUDIENCES": "https://oday-api-767864276141.asia-east1.run.app",
+        "ODP_DEPLOY_ENV": "dev",
+        "ODP_TENANT_ID": "test-tenant",
+    }
+    if local_audience is not None:
+        env["ODP_AUTH_LOCAL_AUDIENCES"] = local_audience
+    web = _render_web_env(env, tmp_path)
+    serializer = _extract_heredoc(
+        DEPLOY_SCRIPT.read_text(encoding="utf-8"),
+        'python3 - "${API_ENV_FILE}" <<\'PY\'',
+    )
+    out = tmp_path / "api-env.json"
+    subprocess.run(
+        [sys.executable, "-c", serializer, str(out)],
+        env={"PATH": "/usr/bin:/bin", **env},
+        check=True, capture_output=True, text=True, cwd=ROOT,
+    )
+    api = json.loads(out.read_text(encoding="utf-8"))
+    assert web["ODP_AUTH_LOCAL_AUDIENCES"] == api["ODP_AUTH_LOCAL_AUDIENCES"]
+    assert web["ODP_AUTH_AUDIENCES"] == api["ODP_AUTH_AUDIENCES"]
+    assert web["ODP_API_SERVICE_AUDIENCE"] == "https://api.example.com"
+    assert web["ODP_API_SERVICE_AUDIENCE"] != web["ODP_AUTH_LOCAL_AUDIENCES"]
 
 
 def test_oidc_mode_web_env_carries_the_full_client_configuration(tmp_path: Path) -> None:

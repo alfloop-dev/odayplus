@@ -96,8 +96,67 @@ describe("local identity authentication", () => {
     expect(claims.roles).toBeUndefined();
   });
 
+  it.each([
+    {
+      local: "urn:odp:api:local",
+      legacy: "https://transport.example.run.app",
+      explicit: undefined,
+      expected: "urn:odp:api:local",
+    },
+    {
+      local: " https://api.example.run.app , urn:odp:api:alternate ",
+      legacy: "https://transport.example.run.app",
+      explicit: undefined,
+      expected: "https://api.example.run.app",
+    },
+    {
+      local: undefined,
+      legacy: " https://api.example.run.app , urn:odp:api:alternate ",
+      explicit: undefined,
+      expected: "https://api.example.run.app",
+    },
+    {
+      local: "urn:odp:api:local",
+      legacy: "https://transport.example.run.app",
+      explicit: "urn:odp:api:explicit",
+      expected: "urn:odp:api:explicit",
+    },
+  ])("separates local JWT audience from transport: $expected", async ({ local, legacy, explicit, expected }) => {
+    const token = await mintLocalJwt({
+      subject: "account-1",
+      sid: "session-1",
+      audience: explicit,
+      signingSecret: "test-signing-secret-with-at-least-32-bytes",
+      environment: {
+        NODE_ENV: "production",
+        ODP_AUTH_LOCAL_AUDIENCES: local,
+        ODP_AUTH_AUDIENCES: legacy,
+        ODP_API_SERVICE_AUDIENCE: "https://transport.example.run.app",
+      },
+    });
+    const claims = JSON.parse(new TextDecoder().decode(base64UrlDecode(token.split(".")[1]!)));
+    expect(claims.aud).toBe(expected);
+  });
+
+  it.each([undefined, "", " , urn:odp:api:alternate"])(
+    "fails closed for a missing or empty local production audience (%s)",
+    async (local) => {
+      await expect(mintLocalJwt({
+        subject: "account-1",
+        sid: "session-1",
+        signingSecret: "test-signing-secret-with-at-least-32-bytes",
+        environment: {
+          NODE_ENV: "production",
+          ODP_AUTH_LOCAL_AUDIENCES: local,
+          ODP_AUTH_AUDIENCES: local === undefined ? undefined : "urn:legacy",
+        },
+      })).rejects.toThrow("A local JWT audience is required in production");
+    },
+  );
+
   it("fails closed in production when the local signing key is absent", async () => {
     vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ODP_AUTH_AUDIENCES", "urn:odp:api:local");
     vi.stubEnv("ODP_IDENTITY_TOKEN_SIGNING_KEY", "");
 
     await expect(

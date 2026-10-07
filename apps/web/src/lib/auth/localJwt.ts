@@ -49,6 +49,12 @@ export async function mintLocalJwt(options: {
   const now = options.nowSeconds ?? Math.floor(Date.now() / 1000);
   const requestedTtl = options.expiresInSeconds ?? 120;
   const ttl = Math.min(Math.max(requestedTtl, 1), 300);
+  const configuredAudiences =
+    environment.ODP_AUTH_LOCAL_AUDIENCES ?? environment.ODP_AUTH_AUDIENCES;
+  const audience = options.audience || configuredAudiences?.split(",")[0]?.trim();
+  if (isProductionWebRuntime(environment) && !audience) {
+    throw new Error("A local JWT audience is required in production");
+  }
   const header = {
     alg: "HS256",
     typ: "JWT",
@@ -59,7 +65,7 @@ export async function mintLocalJwt(options: {
       options.issuer ||
       environment.ODP_AUTH_LOCAL_ISSUER ||
       LOCAL_IDENTITY_ISSUER,
-    aud: options.audience || environment.ODP_AUTH_AUDIENCES || "oday-plus",
+    aud: audience || "oday-plus",
     sub: options.subject,
     sid: options.sid,
     tenant_id: options.tenantId || "default",

@@ -944,8 +944,13 @@ payload = {
     "ODP_AUTH_LOCAL_ISSUER": os.environ.get(
         "ODP_AUTH_LOCAL_ISSUER", "urn:odp:identity:local"
     ),
-    "ODP_AUTH_LOCAL_AUDIENCES": sys.argv[3],
-    "ODP_AUTH_AUDIENCES": sys.argv[3],
+    # Application JWT audiences must match the API manifest above, not the
+    # Cloud Run invoker audience. status.url can use a different hostname from
+    # the configured JWT audience even when both URLs address the same service.
+    "ODP_AUTH_LOCAL_AUDIENCES": os.environ.get(
+        "ODP_AUTH_LOCAL_AUDIENCES", os.environ.get("ODP_AUTH_AUDIENCES", "")
+    ),
+    "ODP_AUTH_AUDIENCES": os.environ.get("ODP_AUTH_AUDIENCES", ""),
 }
 # resolve_auth_mode owns the decision; this stage only follows it, so the Web
 # runtime can never disagree with the secrets bound to the same revision.
