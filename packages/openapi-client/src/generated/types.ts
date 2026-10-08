@@ -2055,6 +2055,7 @@ export const API_PATHS = {
   "/api/v1/audit/evidence/exports/{export_id}/legal-hold": ["POST"],
   "/api/v1/audit/evidence/retention/expired": ["GET"],
   "/api/v1/audit/evidence/retention/purge": ["POST"],
+  "/api/v1/auth/principal": ["GET"],
   "/api/v1/avm/calibration": ["POST"],
   "/api/v1/avm/cases": ["GET", "POST"],
   "/api/v1/avm/cases/{case_id}": ["GET"],
