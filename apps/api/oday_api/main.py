@@ -879,7 +879,9 @@ else:
         def platform_version(request: Request) -> dict[str, str]:
             return release_version_payload(correlation_id=request.state.correlation_id)
 
-        @api.get("/api/v1/platform/release-identity", tags=["platform"])
+        platform_observability_router = APIRouter()
+
+        @platform_observability_router.get("/platform/release-identity", tags=["platform"])
         def platform_release_identity(request: Request) -> dict[str, Any]:
             # Local, server-owned deployment metadata only. Never call
             # readiness/provider/model probes at this admission boundary.
@@ -889,8 +891,6 @@ else:
                 "release_profile_valid": active_release_profile["valid"],
                 "manifest_digest": active_release_manifest_digest,
             }
-
-        platform_observability_router = APIRouter()
 
         @platform_observability_router.get("/platform/observability", tags=["platform"])
         @platform_observability_router.get("/platform/metrics/export", tags=["platform"])

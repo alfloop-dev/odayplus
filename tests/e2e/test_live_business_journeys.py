@@ -1692,6 +1692,45 @@ def test_every_journey_path_is_routed_by_the_deployed_api(monkeypatch: pytest.Mo
 
 
 # Review R9-R14: offline contract/dependency proofs, never live acceptance.
+def test_release_identity_has_real_versioned_alias_without_provider_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.api.versioning import alias_paths, versioned_paths
+    from shared.infrastructure.persistence.factory import _memory_bundle
+
+    monkeypatch.setenv("ODAY_RELEASE_SHA", SHA)
+    monkeypatch.setenv("ODP_RELEASE_PROFILE", "full")
+    monkeypatch.setenv("ODP_RELEASE_MANIFEST_DIGEST", DIGEST)
+    probes: list[Any] = []
+
+    def offline_probe(**kwargs: Any) -> Any:
+        probes.append(kwargs)
+        raise AssertionError("release identity must not probe any provider")
+
+    app = create_app(
+        persistence=_memory_bundle(),
+        external_provider_validation=lambda: None,
+        external_provider_connectivity_probe=offline_probe,
+    )
+    assert alias_paths(app) == [path[len("/api/v1"):] for path in versioned_paths(app)]
+    client = TestClient(app)
+    headers = {"x-correlation-id": "offline-release-identity-alias"}
+    versioned = client.get(bj.RELEASE_IDENTITY_PATH, headers=headers)
+    alias = client.get("/platform/release-identity", headers=headers)
+    assert versioned.status_code == alias.status_code == 200
+    assert versioned.json() == alias.json()
+    assert versioned.json()["release_sha"] == SHA
+    assert versioned.json()["manifest_digest"] == DIGEST
+    assert "Deprecation" not in versioned.headers
+    assert alias.headers["Deprecation"] == "true"
+    assert alias.headers["Link"] == f'<{bj.RELEASE_IDENTITY_PATH}>; rel="successor-version"'
+    assert "/platform/release-identity" not in app.openapi()["paths"]
+    assert probes == []
+
+
 @pytest.mark.parametrize("missing_scope", [False, True])
 def test_actual_identity_preflight_never_dispatches_provider_on_refusal(
     monkeypatch: pytest.MonkeyPatch, missing_scope: bool,

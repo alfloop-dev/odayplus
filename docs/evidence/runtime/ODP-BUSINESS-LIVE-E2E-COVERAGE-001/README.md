@@ -32,6 +32,13 @@ IAM/egress or legal/governance holds are changed by this repair.
   needed for this tool preflight.
 - Scope documentation now specifies v2 authoritative `account_ids`; OpenAPI
   and generated path inventory include the side-effect-free identity endpoint.
+- Hosted CI run 37786698311 found one API-versioning failure (6802 other tests
+  passed): the identity route was registered inline without its compatibility
+  alias. It now uses the existing `mount_versioned` platform router, preserving
+  the same canonical URL and handler. A real-app offline regression proves
+  paired routes, identical metadata, alias deprecation headers, schema exclusion
+  of the alias, and zero provider dispatch. The existing API-versioning suite
+  is an additional focused check; no contract assertion is weakened.
 
 ## Verification and limits
 
@@ -43,6 +50,7 @@ The primary selection is:
 NODE_ENV=test uv run --frozen --python 3.12 pytest tests/e2e/test_live_e2e_gate.py tests/e2e/test_live_business_journeys.py -q
 NODE_ENV=test npm run test --workspace=@oday-plus/web -- src/app/__tests__/netplanDiagnosticsUx.test.tsx
 NODE_ENV=test npm run typecheck --workspace=@oday-plus/web
+NODE_ENV=test uv run --frozen --python 3.12 pytest tests/contract/test_api_versioning.py -q
 ```
 
 Also verify OpenAPI/client drift, boundary inventory, scoped Ruff and
