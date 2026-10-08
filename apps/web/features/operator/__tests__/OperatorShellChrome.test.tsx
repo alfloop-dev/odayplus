@@ -205,9 +205,9 @@ describe("Operator shared header chrome", () => {
   it("does not show implementation jargon in the data-mode banner", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
-    await screen.findByTestId("operator-data-unavailable");
-
-    const banner = screen.getByText("正式資料未就緒").parentElement as HTMLElement;
+    // The gate exists during loading too; wait for the final error banner,
+    // not merely the gate's first render, before checking its wording.
+    const banner = (await screen.findByText("正式資料未就緒")).parentElement as HTMLElement;
     expect(banner).not.toHaveTextContent(/fail closed|seed|API required|loading/i);
   });
 });
