@@ -2283,6 +2283,7 @@ export const API_PATHS = {
   "/api/v1/platform/dashboards/provisioned": ["GET"],
   "/api/v1/platform/metrics/export": ["GET"],
   "/api/v1/platform/observability": ["GET"],
+  "/api/v1/platform/release-identity": ["GET"],
   "/api/v1/priceops/exploration-candidates": ["POST"],
   "/api/v1/priceops/exploration-gates": ["GET", "POST"],
   "/api/v1/priceops/exploration-gates/{gate_id}/revoke": ["POST"],

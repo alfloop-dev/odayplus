@@ -11,11 +11,11 @@ owned by ODP-BUSINESS-LIVE-E2E-ACCEPTANCE-001.
 | Journey | Web selector | Actors (business roles) | Write → readback → audit |
 |---|---|---|---|
 | operations | `/operator?ws=store` | operations_manager; denied regional_supervisor | Store Ops issue transition → issue status/history → `operator.store_ops.issue_transition` |
-| growth | `/operator?ws=growth&gtab=priceops` | pricing_manager + marketing_manager; denied operations_manager | PriceOps plan action and AdLift incrementality job (polled to `succeeded`) → plan status → audit per write |
-| expansion | `/operator?ws=network` | executive planner + distinct executive approver; denied expansion_user | NetPlan solve/submit/decide with named approval → scenario status, solve result, modelled/unmodelled disclosure → `netplan.*` |
+| growth | `/operator?ws=growth&gtab=priceops` | pricing_manager + marketing_manager; denied marketing_manager/operations_manager | PriceOps action → canonical per-action audit; authorized non-empty AdLift campaign job → `succeeded` → fresh durable report with model/feature/snapshot provenance |
+| expansion | `/operator?ws=network` | executive planner + distinct executive approver; denied marketing_manager/pricing_manager | Existing operator NetPlan solve → fresh projection and canonical solve timestamp → real browser disclosure → submit/approve with named receipt → solve/decision audit |
 | governance | `/operator?ws=govern` | operations_manager/executive; denied expansion_user | business approval decision (not user administration) → approval status + decision → audit |
 | franchise | `/franchisee` | franchisee; denied operations_manager | own-store field report → own-store reports → audit |
-| intake | `/operator?ws=network&tab=intake` | expansion_user; denied pricing_manager | assisted intake decision → stage/version → audit, plus a blocked-source submission that must be refused (nothing persisted) or durably quarantined without retrieval |
+| intake | `/operator?ws=network&tab=intake` | expansion_user; denied pricing_manager | assisted intake decision → fresh decision/audit and durable target listing (create/revise/duplicate), or quarantine/reject outcome; blocked-source probe must be refused or durably quarantined without retrieval |
 
 Every journey signs in through the Web password form (`POST /login`, session
 cookie, BFF proxy). No bearer, role or tenant header is injected. Each account
@@ -31,20 +31,36 @@ against the live system:
 | Input | Purpose |
 |---|---|
 | `ODP_RELEASE_MANIFEST_PATH`, `ODP_RELEASE_MANIFEST_DIGEST`, `ODAY_RELEASE_SHA` | The immutable admitted manifest. Its sealed `release_profile` decides admission. |
-| `ODP_LIVE_JOURNEY_SCOPE_PATH` | Scope authorization (`kind: odp.live-business-journey-scope`, `schema_version: 1`), bound to the release SHA and manifest digest. It names `authorized_by` and `authorization_ref`, and per journey: `tenant_id`, `foreign_tenant_id`, `actors`, `records`, `foreign_records`, `writes.<key>.{action, body}`, and `approval_ref` where a named approval is required. The intake journey also needs `writes.policy_probe.{source_ref, body}`. |
+| `ODP_LIVE_JOURNEY_SCOPE_PATH` | Scope authorization (`kind: odp.live-business-journey-scope`, `schema_version: 2`), bound to the release SHA and manifest digest. It names `authorized_by` and `authorization_ref`, and per journey: `tenant_id`, `foreign_tenant_id`, `actors` (usernames), `account_ids` (authoritative account UUIDs per slot), `records`, `foreign_records`, `writes.<key>.{action, body}`, and `approval_ref` where a named approval is required. The intake journey also needs `writes.policy_probe.{source_ref, body}`. |
 | `ODP_LIVE_JOURNEY_<ID>[_<SLOT>]_USERNAME/_PASSWORD` | Business accounts per slot (`primary`, `approver`, `marketer`, `denied`). Each must be exactly the account the scope authorizes. |
-| `ODP_LIVE_E2E_WEB_URL`, `ODP_LIVE_E2E_API_URL`, `ODP_API_INVOKER_TOKEN` | Deployed Web origin, plus anonymous API reads of `/platform/version` and `/readiness`. |
+| `ODP_LIVE_E2E_WEB_URL`, `ODP_LIVE_E2E_API_URL`, `ODP_API_INVOKER_TOKEN` | Deployed Web origin and independent API origin. Both must bind the admitted release through the side-effect-free `/api/v1/platform/release-identity`; the authenticated Web BFF additionally reports its own SHA/profile/manifest digest using the same upstream resolver as business writes. No `/readiness` provider probes are performed. |
 
 ## Fail-closed semantics
 
 - A **dev-admin** manifest makes every journey `NOT_ADMITTED`. A caller setting
   `ODP_RELEASE_PROFILE=full` is recorded as a refused override and changes
   nothing.
-- Before any mutation the runner checks the profile, the exact served SHA and
-  runtime profile, the scope, credentials, sign-in, the business role, and a
-  live record with provenance. Until all of these pass, `LedgerHttp` refuses
-  every mutation. A refused preflight leaves `business_writes=0` and
-  `worker_or_provider_triggers=0` in the receipt.
+- Before any mutation the runner checks the profile, exact served SHA and
+  server-owned manifest digest for both API and actual Web/BFF destination,
+  scope, credentials, authoritative account UUID/tenant/roles, served grants,
+  and authorized live record with provenance. Until all pass, `LedgerHttp`
+  refuses every mutation. A refused preflight leaves `business_writes=0` and
+  `worker_or_provider_triggers=0`; identity reads never invoke provider probes.
+- Expansion additionally requires an authorized draft scenario uniquely mapped
+  to the authorized `rebalance_store_id`, actual model provenance, and scoped
+  modelled/unmodelled classes. The local Chromium launch/close check runs before
+  writes are armed. After operator solve, the canonical `solve.solved_at`,
+  returned projection and browser `data-solve-completed-at` must match this
+  fresh solve before submit/approve. Browser assertions only open the store
+  card and read disclosure; they never choose a scenario or trigger a solve.
+- Intake permits the canonical `create/revise/duplicate/quarantine/reject`
+  decisions. READY may remain READY and version need not increment: fresh
+  decision/audit plus target-listing durable readback proves the outcome.
+  Revise/duplicate require a scoped `target_listing_id`; create preserves the
+  intake tenant in persisted listing metadata for tenant-filtered readback.
+- Missing server-owned admitted manifest-digest metadata is `BLOCKED`. Setting
+  caller variables is not a deployment binding. This engineering task does not
+  change deployment workflows or authorize any actual live execution.
 - A missing admission is `BLOCKED` with the named dependency: `release`,
   `release-profile`, `scope-authorization`, `business-credential`,
   `business-role`, `business-data`, `model`, `source`, `named-approval` or

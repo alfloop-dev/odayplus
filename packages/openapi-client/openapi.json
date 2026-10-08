@@ -43109,6 +43109,29 @@
         ]
       }
     },
+    "/api/v1/platform/release-identity": {
+      "get": {
+        "operationId": "platform_release_identity_api_v1_platform_release_identity_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Platform Release Identity Api V1 Platform Release Identity Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Platform Release Identity",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
     "/api/v1/priceops/exploration-candidates": {
       "post": {
         "operationId": "generate_exploration_candidates_api_v1_priceops_exploration_candidates_post",
