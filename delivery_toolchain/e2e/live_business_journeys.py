@@ -726,7 +726,7 @@ JOURNEYS: tuple[JourneySpec, ...] = (
         actor_roles={
             "primary": frozenset({"executive"}),
             "approver": frozenset({"executive"}),
-            "denied": frozenset({"expansion_user", "site_reviewer"}),
+            "denied": frozenset({"marketing_manager", "pricing_manager"}),
         },
         operator_role="",
         required_records=(
@@ -744,13 +744,31 @@ JOURNEYS: tuple[JourneySpec, ...] = (
         action_fields={"decide": "decision"},
         requires_named_approval=True,
         read=Step("read_scenario", "GET", f"{V1}/netplan/scenarios/{{record.scenario_id}}"),
+        extra_reads=(Step(
+            "read_rebalance_projection", "GET", f"{V1}/operator/network-rebalance",
+            required=("stores[id={record.rebalance_store_id}].canonicalNetPlanScenarioIds",),
+            response_bindings={"stores[id={record.rebalance_store_id}].status": "avmready"},
+            capture={
+                "rebalance_scenario_ids": "stores[id={record.rebalance_store_id}].canonicalNetPlanScenarioIds",
+                "previous_solve_completed_at": "stores[id={record.rebalance_store_id}].netPlanJob.completedAt",
+            },
+        ),),
         writes=(
             _write(
-                "solve",
-                "POST",
-                f"{V1}/netplan/scenarios/{{record.scenario_id}}/solve",
+                "solve", "POST",
+                f"{V1}/operator/network-rebalance/stores/{{record.rebalance_store_id}}/netplan/solve",
                 worker_trigger=True,
-                audit_event="netplan.solved",
+                required=("store.netPlanJob.completedAt", "store.netPlanScenarios[id={record.scenario_id}].id"),
+                response_bindings={
+                    "store.id": "{record.rebalance_store_id}",
+                    "store.netPlanJob.id": "{record.scenario_id}",
+                    "store.netPlanScenarios[id={record.scenario_id}].modelledConstraintClasses": "{record.modelled_class}",
+                    "store.netPlanScenarios[id={record.scenario_id}].unmodelledConstraintClasses": "{record.unmodelled_class}",
+                },
+                capture={"solve_completed_at": "store.netPlanJob.completedAt"},
+                audit_event="rebalance.netplan.solved",
+                audit_response_id="auditEvent.id",
+                audit_response_correlation="correlationId",
             ),
             _write(
                 "submit",
@@ -783,6 +801,7 @@ JOURNEYS: tuple[JourneySpec, ...] = (
                 steps=(
                     UiStep("click", "rebalance-card-{record.rebalance_store_id}"),
                     UiStep("visible", "rebalance-netplan-{record.rebalance_store_id}"),
+                    UiStep("attribute", "rebalance-netplan-{record.rebalance_store_id}", "{captured.solve_completed_at}"),
                     UiStep("visible", "rebalance-scenario-{record.scenario_id}"),
                     UiStep("visible", "scenario-disclosure-{record.scenario_id}"),
                     UiStep(
@@ -969,7 +988,7 @@ JOURNEYS: tuple[JourneySpec, ...] = (
         record_id_path="id",
         record_key="intake_id",
         tenant_paths=("tenantId",),
-        state_paths=("stage", "version"),
+        state_paths=("stage", "matchResult.targetListingId", "auditEvents"),
         provenance_paths=("id", "tenantId", "sourceId", "policy", "intakeMethod", "stage"),
         allowed_values={
             "policy": (frozenset({"APPROVED_RETRIEVAL", "ASSISTED_ENTRY_ONLY"}), "source"),
@@ -1471,6 +1490,7 @@ class JourneyResult:
     #: actor slot -> the served authorization decision proving its grant.
     grants: dict[str, dict[str, Any]] = field(default_factory=dict)
     ui_checks: list[dict[str, Any]] = field(default_factory=list)
+    captured: dict[str, Any] = field(default_factory=dict)
     ledger: RequestLedger = field(default_factory=RequestLedger)
 
     def check(self, ok: bool, name: str, detail: str, dependency: str) -> bool:
@@ -1504,6 +1524,7 @@ class JourneyResult:
             "job_refs": list(self.job_refs),
             "negative_probes": dict(self.negative_probes),
             "policy_outcome": self.policy_outcome,
+            "captured": dict(self.captured),
             "ui_checks": [
                 {**check, "detail": redact(check.get("detail", ""))} for check in self.ui_checks
             ],
@@ -1739,6 +1760,7 @@ class JourneyRunner:
         self.before_payload: dict[str, Any] = {}
         self.after_payload: dict[str, Any] = {}
         self.write_responses: dict[str, dict[str, Any]] = {}
+        self.before_listings: dict[str, dict[str, Any]] = {}
 
     # -- plumbing ---------------------------------------------------------
 
@@ -1967,6 +1989,20 @@ class JourneyRunner:
             return None
         if self.spec.journey_id == "intake" and _as_dict(self.scope.writes.get("decide")).get(
             "action"
+        ) in {"create", "revise", "duplicate"}:
+            snapshot, _ = self.send(Step("read_listing_inventory", "GET", f"{V1}/operator/network-listings"))
+            rows = snapshot.payload.get("listings")
+            if not self.result.check(
+                not snapshot.failed and snapshot.status == 200 and isinstance(rows, list),
+                "read:listing_inventory", "durable listing inventory required before decision", "business-data",
+            ):
+                return None
+            self.before_listings = {
+                str(row["id"]): copy.deepcopy(row) for row in rows
+                if isinstance(row, dict) and _present(row.get("id"))
+            }
+        if self.spec.journey_id == "intake" and _as_dict(self.scope.writes.get("decide")).get(
+            "action"
         ) in {"revise", "duplicate"}:
             target_response, _ = self.send(
                 Step("read_target_listing", "GET", f"{V1}/operator/network-listings")
@@ -2018,6 +2054,14 @@ class JourneyRunner:
             for name, dotted in extra.capture.items():
                 # Optional pre-write state (e.g. the latest report before the job).
                 self.captured[name] = dig(extra_response.payload, self.path_of(dotted))
+        if self.spec.journey_id == "expansion" and not self.result.check(
+            payload.get("status") == "draft"
+            and self.scope.records.get("rebalance_store_id") in _as_dict(payload.get("options_by_entity"))
+            and self.captured.get("rebalance_scenario_ids") == [self.scope.records.get("scenario_id")],
+            "read:operator_solve_binding", "operator solve must uniquely target the authorized draft/store",
+            "business-data",
+        ):
+            return None
         return payload
 
     def bind_record(self, payload: Mapping[str, Any]) -> bool:
@@ -2210,6 +2254,19 @@ class JourneyRunner:
                     return False
                 self.captured[name] = value
             self.write_responses[step.name] = copy.deepcopy(payload)
+            if self.spec.journey_id == "expansion" and step.name == "solve":
+                canonical, _ = self.send(self.spec.read, label="fresh-solve")
+                completed_at = self.captured.get("solve_completed_at")
+                if not self.result.check(
+                    not canonical.failed and canonical.status == 200
+                    and _present(completed_at)
+                    and completed_at != self.captured.get("previous_solve_completed_at")
+                    and dig(canonical.payload, "solve.solved_at") == completed_at,
+                    "write:solve:fresh_projection", "projection must match this fresh canonical solve",
+                    "disclosure",
+                ):
+                    return False
+                self.result.captured["solve_completed_at"] = completed_at
             for check in self.spec.ui_checks:
                 if check.after_write == step.name and not self.run_ui_check(check):
                     return False
@@ -2338,6 +2395,8 @@ class JourneyRunner:
         same = after is not None and after["record_id"] == before["record_id"]
         changed = same and after is not None and after["state"] != before["state"]
         markers = find_surrogate_values(payload)
+        if self.spec.journey_id == "intake" and not self.verify_intake_outcome(payload):
+            return False
         if not self.result.check(
             not response.failed and response.status == 200 and changed and not markers,
             "readback:durable_state_change",
@@ -2371,6 +2430,42 @@ class JourneyRunner:
                 "disclosure",
             )
         return not missing and not mismatched and not undisclosed
+
+    def verify_intake_outcome(self, payload: Mapping[str, Any]) -> bool:
+        action = str(_as_dict(self.scope.writes.get("decide")).get("action") or "")
+        audit = self.spec.domain_audit
+        row = self._domain_audit_row(audit) if audit is not None else None
+        if row is None:
+            return self.result.check(False, "audit:intake_decision", "fresh durable decision audit required", "audit")
+        metadata = _as_dict(_as_dict(row).get("metadata"))
+        target_id = dig(payload, "matchResult.targetListingId")
+        stages = {"create": "READY", "revise": "READY", "duplicate": "READY",
+                  "quarantine": "QUARANTINED", "reject": "FAILED"}
+        ok = (
+            row is not None and metadata.get("decision") == action
+            and metadata.get("stage") == stages.get(action)
+            and payload.get("stage") == stages.get(action)
+            and metadata.get("targetListingId") == target_id
+        )
+        if action in {"create", "revise", "duplicate"}:
+            snapshot, _ = self.send(Step("durable_target_listing", "GET", f"{V1}/operator/network-listings"))
+            rows = snapshot.payload.get("listings")
+            target = next((row for row in rows if isinstance(row, dict) and row.get("id") == target_id), None) if isinstance(rows, list) else None
+            ok = ok and not snapshot.failed and snapshot.status == 200 and isinstance(target, dict)
+            if isinstance(target, dict):
+                ok = ok and _canonical_uuid(target.get("tenantId")) == self.scope.tenant_id
+                if action == "create":
+                    ok = ok and str(target_id) not in self.before_listings
+                    ok = ok and target.get("sourceId") == self.before_payload.get("sourceId")
+                else:
+                    old = self.before_listings.get(str(target_id))
+                    marker = f"EV-{self.scope.records.get('intake_id')}-{action.upper() if action == 'duplicate' else 'REVISION'}"
+                    ok = ok and target_id == self.scope.records.get("target_listing_id")
+                    ok = ok and isinstance(old, dict) and target != old
+                    ok = ok and marker in (target.get("sourceEvidence") or []) and marker not in (_as_dict(old).get("sourceEvidence") or [])
+            self.result.captured["intake_target_listing_id"] = target_id
+        return self.result.check(bool(ok), "readback:intake_decision_outcome",
+                                 "fresh decision must bind the durable target/stage", "durable-readback")
 
     def _domain_audit_row(self, audit: DomainAuditSpec) -> dict[str, Any] | None:
         """The new row of the record's own durable audit trail for this write."""
@@ -2925,7 +3020,11 @@ def journey_receipt_problems(spec: JourneySpec, entry: Mapping[str, Any]) -> lis
         problems.append("durable job reference missing or not succeeded")
     ui_rows = entry.get("ui_checks") or []
     for check in spec.ui_checks:
-        variables = {"record": records}
+        captures = _as_dict(entry.get("captured"))
+        fresh_solve = spec.journey_id != "expansion" or _present(captures.get("solve_completed_at"))
+        if not fresh_solve:
+            problems.append("fresh solve timestamp missing")
+        variables = {"record": records, "captured": captures}
         expected_steps = (
             [
                 {
@@ -2935,7 +3034,7 @@ def journey_receipt_problems(spec: JourneySpec, entry: Mapping[str, Any]) -> lis
                 }
                 for step in check.steps
             ]
-            if all(key in records for key in spec.required_records)
+            if fresh_solve and all(key in records for key in spec.required_records)
             else []
         )
         if not any(

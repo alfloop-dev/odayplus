@@ -98,7 +98,7 @@ ACCOUNTS: dict[str, frozenset[str]] = {
     # expansion
     "network.planner": frozenset({"executive"}),
     "network.approver": frozenset({"executive"}),
-    "expansion.analyst": frozenset({"expansion_user"}),
+    "expansion.analyst": frozenset({"marketing_manager"}),
     # governance
     "governance.lead": frozenset({"operations_manager"}),
     "growth.marketer": frozenset({"marketing_manager"}),
@@ -189,12 +189,19 @@ class BusinessWeb:
             "tenant_id": TENANT,
             "status": "draft",
             "status_history": ["draft"],
-            "options_by_entity": {"ST-NEW-1": ["C-1", "C-2"]},
+            "options_by_entity": {"RB-801": ["C-1", "C-2"]},
             "model_version": "sitescore-2026.09",
             "feature_version": "fs-14",
             "solver_version": "cp-sat-9.10",
             "approvals": [],
         }
+        self.rebalance = {
+            "id": "RB-801", "status": "avmready",
+            "canonicalNetPlanScenarioIds": ["NP-SCN-31"],
+            "netPlanScenarios": [], "netPlanJob": None,
+        }
+        self.listings = [{"id": "L-2024", "tenantId": TENANT,
+                          "sourceId": "broker-desk", "sourceEvidence": []}]
         self.governance = {
             "approvals": [{"id": "GOV-APR-4001", "status": "pending", "kind": "price_exception"}],
             "decisions": [],
@@ -219,7 +226,7 @@ class BusinessWeb:
             "sourceId": "broker-desk",
             "policy": "ASSISTED_ENTRY_ONLY",
             "intakeMethod": "ASSISTED_MANUAL",
-            "stage": "PENDING_REVIEW",
+            "stage": "READY",
             "version": 3,
             "auditEvents": [],
             "matchResult": {"targetListingId": "L-2024"},
@@ -455,6 +462,33 @@ class BusinessWeb:
             self.event(ctx, event_type, "expansion")
             return Resp(200, self.scenario)
 
+        def operator_solve(ctx: Ctx) -> Resp:
+            refused = self.denied(ctx, "expansion", {"executive"})
+            if refused:
+                return refused
+            if ctx.match.group(1) != self.rebalance["id"]:
+                return Resp(404, {})
+            if "expansion" not in self.non_durable:
+                self.scenario.update({
+                    "status": "solved", "selected_candidate_id": "C-2",
+                    "solve": {"solved_at": NOW, "model_version": self.scenario["model_version"],
+                              "result": {"unmodelled_constraint_classes": ["LEASE"]}},
+                })
+                self.scenario["status_history"].append("solved")
+                self.rebalance.update({
+                    "status": "netplanreview", "selectedScenarioId": None,
+                    "netPlanJob": {"id": self.scenario["scenario_id"], "completedAt": NOW},
+                    "netPlanScenarios": [{"id": self.scenario["scenario_id"],
+                                          "modelledConstraintClasses": ["CAPITAL"],
+                                          "unmodelledConstraintClasses": ["LEASE"]}],
+                })
+            event_id = self.event(ctx, "rebalance.netplan.solved", "expansion")
+            return Resp(200, {"store": self.rebalance,
+                              "auditEvent": {"id": None if "expansion" in self.drop_audit else event_id},
+                              "correlationId": ctx.headers.get("x-correlation-id")})
+
+        self.route("GET", rf"{v1}/operator/network-rebalance", lambda ctx: Resp(200, {"stores": [self.rebalance]}))
+        self.route("POST", rf"{v1}/operator/network-rebalance/stores/([^/]+)/netplan/solve", operator_solve)
         self.route("GET", rf"{v1}/netplan/scenarios/([^/]+)", read_scenario)
         self.route("POST", rf"{v1}/netplan/scenarios/([^/]+)/(solve|submit|decide)", scenario_step)
 
@@ -556,9 +590,18 @@ class BusinessWeb:
             refused = self.denied(ctx, "intake", {"expansion_user"})
             if refused:
                 return refused
+            action = ctx.body["action"]
             if "intake" not in self.non_durable:
-                self.intake["stage"] = "CREATED"
-                self.intake["version"] += 1
+                self.intake["stage"] = {"quarantine": "QUARANTINED", "reject": "FAILED"}.get(action, "READY")
+                if action == "create":
+                    target_id = "L-2030"
+                    self.listings.append({"id": target_id, "tenantId": TENANT, "sourceId": self.intake["sourceId"]})
+                    self.intake["matchResult"]["targetListingId"] = target_id
+                elif action in {"revise", "duplicate"}:
+                    target = self.listings[0]
+                    marker = f"EV-{self.intake['id']}-{'DUPLICATE' if action == 'duplicate' else 'REVISION'}"
+                    target["sourceEvidence"].append(marker)
+                    target["status"] = "watching"
             if "intake" not in self.drop_audit:
                 self.intake["auditEvents"].append(
                     {
@@ -566,6 +609,8 @@ class BusinessWeb:
                         "targetId": self.intake["id"],
                         "action": f"intake.decide.{ctx.body['action']}",
                         "correlationId": ctx.headers.get("x-correlation-id"),
+                        "metadata": {"decision": action, "stage": self.intake["stage"],
+                                     "targetListingId": self.intake["matchResult"]["targetListingId"]},
                     }
                 )
             return Resp(200, self.intake)
@@ -592,7 +637,7 @@ class BusinessWeb:
         self.route(
             "GET",
             rf"{v1}/operator/network-listings",
-            lambda ctx: Resp(200, {"listings": [{"id": "L-2024", "tenantId": TENANT}]}),
+            lambda ctx: Resp(200, {"listings": self.listings}),
         )
         self.route("GET", rf"{v1}/operator/network-listings/intake", search_intake)
         self.route("POST", rf"{v1}/operator/network-listings/intake/submit", submit_intake)
@@ -861,7 +906,9 @@ def test_all_six_journeys_pass_and_seal_a_verifiable_receipt() -> None:
     # Real writes really happened, each with its own audit event.
     assert web.issue["status"] == "triaged"
     assert web.scenario["status"] == "approved"
-    assert web.intake["stage"] == "CREATED"
+    assert web.intake["stage"] == "READY"
+    assert web.intake["version"] == 3
+    assert web.intake["matchResult"]["targetListingId"] == "L-2030"
     assert len(web.store["reports"]) == 1
 
 
@@ -1204,7 +1251,10 @@ def test_write_that_does_not_survive_readback_fails(journey_id: str) -> None:
 
     receipt, _, _ = run(web, selection=[journey_id])
     assert receipt["journeys"][journey_id]["status"] == "FAILED"
-    assert "readback:durable_state_change" in blockers(receipt, journey_id)
+    expected = {"expansion": "write:solve", "intake": "readback:intake_decision_outcome"}.get(
+        journey_id, "readback:durable_state_change"
+    )
+    assert expected in blockers(receipt, journey_id)
 
 
 @pytest.mark.parametrize("journey_id", bj.JOURNEY_IDS)
@@ -1641,6 +1691,206 @@ def test_every_journey_path_is_routed_by_the_deployed_api(monkeypatch: pytest.Mo
     assert missing == []
 
 
+# Review R9-R14: offline contract/dependency proofs, never live acceptance.
+@pytest.mark.parametrize("missing_scope", [False, True])
+def test_actual_identity_preflight_never_dispatches_provider_on_refusal(
+    monkeypatch: pytest.MonkeyPatch, missing_scope: bool,
+) -> None:
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.infrastructure.persistence.factory import _memory_bundle
+
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+    monkeypatch.setenv("ODAY_RELEASE_SHA", "c" * 40)
+    monkeypatch.setenv("ODP_RELEASE_PROFILE", "full")
+    monkeypatch.setenv("ODP_RELEASE_MANIFEST_DIGEST", DIGEST)
+    probes: list[Any] = []
+
+    def offline_probe(**kwargs: Any) -> Any:
+        probes.append(kwargs)
+        raise AssertionError("offline dispatch sentinel, no provider/network")
+
+    client = TestClient(create_app(
+        persistence=_memory_bundle(),
+        external_provider_validation=SimpleNamespace(mode="live", ok=True, errors=()),
+        external_provider_connectivity_probe=offline_probe,
+    ))
+
+    class LocalApi:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            self.calls.append(path)
+            assert path == bj.RELEASE_IDENTITY_PATH
+            response = client.request(method, path)
+            return Resp(response.status_code, response.json())
+
+    api = LocalApi()
+    receipt, web, _ = run(api=api, scope=None if missing_scope else scope_document(), selection=["operations"])
+    assert receipt["journeys"]["operations"]["status"] == "BLOCKED"
+    assert api.calls == ([] if missing_scope else [bj.RELEASE_IDENTITY_PATH])
+    assert probes == []
+    _zero_writes(receipt, web, "operations")
+    # Calibration: this exact deployed handler really would dispatch a provider
+    # through the injected offline sentinel if the old readiness URL were used.
+    client.get("/readiness")
+    assert len(probes) == 1
+
+
+@pytest.mark.parametrize("field,value", [
+    ("release_sha", "c" * 40), ("release_profile", "dev-admin"),
+    ("release_profile_valid", False), ("manifest_digest", "sha256:" + "d" * 64),
+    ("web_release_sha", "c" * 40), ("web_release_profile", "dev-admin"),
+    ("web_manifest_digest", ""),
+])
+def test_actual_bff_identity_drift_blocks_before_business_effects(field: str, value: Any) -> None:
+    web = BusinessWeb()
+    web.release_identity[field] = value
+    receipt, _, _ = run(web, selection=["operations"])
+    assert receipt["journeys"]["operations"]["status"] == "BLOCKED"
+    assert any(path == bj.RELEASE_IDENTITY_PATH for _, path, _ in web.calls)
+    _zero_writes(receipt, web, "operations")
+
+
+def test_priceops_per_action_audit_matches_real_route_contract() -> None:
+    from apps.api.app.routes.priceops import create_priceops_router
+
+    router = create_priceops_router()
+    endpoints = {route.path: route.endpoint for route in router.routes}
+    assert set(bj.PRICEOPS_AUDIT_EVENTS) == set(bj.JOURNEYS_BY_ID["growth"].writes_allowed["price_action"])
+    for action, event in bj.PRICEOPS_AUDIT_EVENTS.items():
+        # Compiled, shipped endpoint contract; not strings invented by BusinessWeb.
+        assert event in endpoints[f"/priceops/plans/{{plan_id}}/{action}"].__code__.co_consts
+
+
+@pytest.mark.parametrize("mismatch", ["foreign-scenario", "multiple-scenarios", "wrong-store", "already-solved"])
+def test_operator_solve_scope_mismatch_is_refused_before_trigger(mismatch: str) -> None:
+    web = BusinessWeb()
+    if mismatch == "foreign-scenario":
+        web.rebalance["canonicalNetPlanScenarioIds"] = ["FOREIGN-SCENARIO"]
+    elif mismatch == "multiple-scenarios":
+        web.rebalance["canonicalNetPlanScenarioIds"].append("SECOND-SCENARIO")
+    elif mismatch == "wrong-store":
+        web.scenario["options_by_entity"] = {"OTHER-STORE": ["C-1"]}
+    else:
+        web.scenario["status"] = "solved"
+    receipt, _, _ = run(web, selection=["expansion"])
+    assert receipt["journeys"]["expansion"]["status"] == "BLOCKED"
+    _zero_writes(receipt, web, "expansion")
+
+
+def test_stale_operator_projection_never_proceeds_to_ui_or_approval() -> None:
+    web = BusinessWeb()
+    web.rebalance["netPlanJob"] = {"id": web.scenario["scenario_id"], "completedAt": NOW}
+    ui = OfflineUi()
+    receipt, _, _ = run(web, selection=["expansion"], ui=ui)
+    assert blockers(receipt, "expansion") == {"write:solve:fresh_projection": "disclosure"}
+    assert not ui.calls
+    assert not any(path.endswith(("/submit", "/decide")) for _, path, _ in web.business_writes)
+
+
+def test_real_operator_solve_projects_this_canonical_solve_over_http(tmp_path: Path) -> None:
+    helpers = _load("journey_projection_contract", ROOT / "tests/integration/test_netplan_disclosure_ui_e2e.py")
+    scenario, repo, _, operator, engine = helpers._canonical_surface(
+        "OFFLINE-CANONICAL-SOLVE", helpers._fully_modelled_constraints(),
+        database_path=tmp_path / "offline-netplan.sqlite3",
+    )
+    client = helpers._mount_operator_api(operator)  # Offline router/schema/CP-SAT, not authorization evidence.
+    before = client.get("/api/v1/operator/network-rebalance").json()
+    store_id = next(iter(scenario.options_by_entity))
+    response = client.post(
+        f"/api/v1/operator/network-rebalance/stores/{store_id}/netplan/solve",
+        headers={"Idempotency-Key": "offline-fresh-projection", "X-Correlation-Id": "offline-solve-corr"},
+        json={"actorRoleId": "expansionManager", "actorName": "offline-only"},
+    )
+    assert response.status_code == 200, response.text
+    store = response.json()["store"]
+    solve = repo.get_solve(scenario.scenario_id)
+    assert store["netPlanJob"]["id"] == scenario.scenario_id
+    assert store["netPlanJob"]["completedAt"] == solve.solved_at.isoformat()
+    assert store["selectedScenarioId"] is None  # Cards/disclosure render without a selection write.
+    assert any(row["id"] == scenario.scenario_id for row in store["netPlanScenarios"])
+    after = client.get("/api/v1/operator/network-rebalance").json()
+    assert bj.dig(before, f"stores[id={store_id}].netPlanJob.completedAt") is None
+    assert bj.dig(after, f"stores[id={store_id}].netPlanJob.completedAt") == store["netPlanJob"]["completedAt"]
+    engine.close()
+
+
+def test_missing_chromium_launch_is_blocked_before_solver(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    for name in ("business-ui.live.ts", "playwright.live.config.ts"):
+        path = tmp_path / "tests/e2e/live" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("// offline tooling fixture\n")
+    (tmp_path / "node_modules/@playwright/test").mkdir(parents=True)
+    children: list[Any] = []
+    monkeypatch.setenv("ODP_API_INVOKER_TOKEN", "must-not-reach-browser-probe")
+
+    def unavailable_browser(command: Any, **kwargs: Any) -> Any:
+        children.append((command, kwargs))
+        return SimpleNamespace(returncode=1, stdout="", stderr="offline missing browser")
+
+    driver = bj.PlaywrightUiDriver(root=tmp_path, runner=unavailable_browser, which=lambda name: f"/offline/{name}")
+    receipt, web, _ = run(selection=["expansion"], ui=driver)
+    assert receipt["journeys"]["expansion"]["status"] == "BLOCKED"
+    _zero_writes(receipt, web, "expansion")
+    assert len(children) == 1 and "chromium.launch" in children[0][0][-1]
+    assert "ODP_API_INVOKER_TOKEN" not in children[0][1]["env"]
+
+
+def test_ready_intake_creates_tenant_bound_listing_surviving_repository_restart(tmp_path: Path) -> None:
+    from modules.opsboard.application.network_listings import NetworkListingService
+    from shared.infrastructure.persistence.factory import _durable_bundle
+
+    path = tmp_path / "offline-intake.sqlite3"
+    bundle = _durable_bundle(path)
+    repository = bundle.operator_intake_repository
+    repository.save_intake({
+        "id": "OFFLINE-DURABLE-INTAKE", "sourceId": "OFFLINE-SOURCE", "tenantId": TENANT,
+        "heatZoneId": "HZ-01", "originalUrl": "https://example.invalid/offline",
+        "stage": "READY", "version": 3, "parsedFields": {}, "auditEvents": [],
+        "matchResult": {"targetListingId": "L-2024"},
+    })
+    service = NetworkListingService(bundle.listing_repository, repository, tenant_id=TENANT)
+    before = service.get_intake("OFFLINE-DURABLE-INTAKE")
+    prior_ids = {row["id"] for row in service.snapshot(tenant_id=TENANT)["listings"]}
+    result = service.decide_intake(
+        intake_id=before["id"], action="create", reason="Offline durable creation test",
+        risk_summary="Offline fixture, no retrieval", risk_acknowledged=True,
+        actor_role_id="expansionManager", actor_name="offline-only",
+        idempotency_key="offline-create", correlation_id="offline-create-corr",
+    )
+    assert result["stage"] == before["stage"] == "READY"
+    assert result["version"] == before["version"] == 3
+    target_id = result["matchResult"]["targetListingId"]
+    assert target_id not in prior_ids
+    bundle.engine.close()
+    restarted = _durable_bundle(path)
+    rebuilt = NetworkListingService(restarted.listing_repository, restarted.operator_intake_repository,
+                                    seed_fixtures=False, tenant_id=TENANT)
+    saved = rebuilt.get_intake(before["id"])
+    row = next(row for row in rebuilt.snapshot(tenant_id=TENANT)["listings"] if row["id"] == target_id)
+    assert row["tenantId"] == TENANT and row["sourceId"] == before["sourceId"]
+    assert saved["matchResult"]["targetListingId"] == target_id
+    assert saved["auditEvents"][-1]["metadata"]["decision"] == "create"
+    assert saved["auditEvents"][-1]["correlationId"] == "offline-create-corr"
+    assert rebuilt.snapshot(tenant_id="22222222-2222-4222-8222-222222222222")["listings"] == []
+    restarted.engine.close()
+
+
+def test_receipt_without_fresh_solve_capture_is_refused_without_exception() -> None:
+    receipt, _, _ = run()
+    receipt["journeys"]["expansion"].pop("captured")
+    assert "business_journey:expansion" in failing_checks(reseal(receipt))
+
+
 # Review R1-R8: offline regressions, never live acceptance.
 @pytest.mark.parametrize("journey_id", bj.JOURNEY_IDS)
 def test_misbound_tenant_is_refused_before_any_business_write(journey_id: str) -> None:
@@ -1822,13 +2072,13 @@ def test_intake_actual_action_vocabulary_accepts_authorized_scope(action: str) -
             "tenantId": TENANT,
             "heatZoneId": "HZ-01",
             "originalUrl": "https://example.invalid/offline",
-            "stage": "PENDING_REVIEW",
+            "stage": "READY",
             "parsedFields": {},
             "auditEvents": [],
             "matchResult": {"targetListingId": "L-2024"},
         }
     )
-    service = NetworkListingService(intake_repository=repository)
+    service = NetworkListingService(intake_repository=repository, tenant_id=TENANT)
     result = service.decide_intake(
         intake_id="OFFLINE-INTAKE",
         action=action,

@@ -180,6 +180,7 @@ else:
         # It only selects what the live gate holds this release to; it never
         # relaxes a persistence, provider, model, or auth guard below.
         active_release_profile = release_profile()
+        active_release_manifest_digest = os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", "")
         require_live_data = live_data_required()
         domain_runtime_mode = "production" if require_live_data else "local"
         persistence_mode = str(getattr(bundle, "mode", "unknown")).strip().lower()
@@ -882,14 +883,11 @@ else:
         def platform_release_identity(request: Request) -> dict[str, Any]:
             # Local, server-owned deployment metadata only. Never call
             # readiness/provider/model probes at this admission boundary.
-            from apps.api.oday_api.runtime_mode import release_profile
-
-            profile = release_profile()
             return {
                 **release_version_payload(correlation_id=request.state.correlation_id),
-                "release_profile": profile["name"],
-                "release_profile_valid": profile["valid"],
-                "manifest_digest": os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""),
+                "release_profile": active_release_profile["name"],
+                "release_profile_valid": active_release_profile["valid"],
+                "manifest_digest": active_release_manifest_digest,
             }
 
         platform_observability_router = APIRouter()

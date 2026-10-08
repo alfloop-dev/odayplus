@@ -19,12 +19,16 @@ async function handler(
     // Use the SAME authenticated upstream resolver as business writes. Report
     // the Web revision separately; never trust the CLI's independent API URL.
     const payload = await response.json();
+    const headers = new Headers(response.headers);
+    headers.set("cache-control", "no-store");
+    headers.delete("content-length");
+    headers.delete("content-encoding");
     return Response.json({
       ...payload,
       web_release_sha: process.env.ODAY_RELEASE_SHA ?? process.env.ODP_RELEASE_COMMIT_SHA ?? "",
       web_release_profile: process.env.ODP_RELEASE_PROFILE?.trim() || "full",
       web_manifest_digest: process.env.ODP_RELEASE_MANIFEST_DIGEST ?? "",
-    }, { status: response.status, headers: { "cache-control": "no-store" } });
+    }, { status: response.status, headers });
   }
   return response;
 }

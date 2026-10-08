@@ -1819,6 +1819,7 @@ class NetworkListingService:
             new_id = f"L-{2031 + len(self._state['listings'])}"
             new_listing = {
                 "id": new_id,
+                "tenantId": intake["tenantId"],
                 "sourceId": intake["sourceId"],
                 "sourceListingId": effective_vals.get("providerListingId", ""),
                 "heatZoneId": intake["heatZoneId"] or "HZ-01",

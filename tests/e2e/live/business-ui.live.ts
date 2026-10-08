@@ -28,6 +28,10 @@ test("authorized live workspace disclosure before approval", async ({ page }) =>
     const element = page.getByTestId(assertion.selector);
     if (assertion.action === "click") await element.click();
     else if (assertion.action === "visible") await expect(element).toBeVisible();
+    else if (assertion.action === "attribute" && assertion.text) {
+      await expect(element).toBeVisible();
+      await expect(element).toHaveAttribute("data-solve-completed-at", assertion.text);
+    }
     else if (assertion.action === "text" && assertion.text) {
       await expect(element).toBeVisible();
       await expect(element).toContainText(assertion.text);
