@@ -2495,7 +2495,7 @@ def test_changed_disclosure_after_solve_never_submits_or_decides() -> None:
             return response
     receipt, web, _ = run(web=ChangedDisclosure(), selection=["expansion"])
     assert receipt["journeys"]["expansion"]["status"] == "BLOCKED"
-    assert not any(call["path"].endswith(("/submit", "/decide")) for call in web.business_calls)
+    assert not any(method == "POST" and path.endswith(("/submit", "/decide")) for method, path, _ in web.calls)
 
 
 def test_expansion_approval_without_approved_scenario_cannot_pass() -> None:
