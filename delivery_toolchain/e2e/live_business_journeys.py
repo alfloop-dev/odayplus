@@ -1966,12 +1966,18 @@ class JourneyRunner:
         record_id = dig(payload, self.path_of(self.spec.record_id_path))
         if not _present(record_id):
             return None
-        return copy.deepcopy(
-            {
-                "record_id": record_id,
-                "state": {path: dig(payload, self.path_of(path)) for path in self.spec.state_paths},
-            }
-        )
+        identity = copy.deepcopy({
+            "record_id": record_id,
+            "state": {path: dig(payload, self.path_of(path)) for path in self.spec.state_paths},
+        })
+        if self.spec.journey_id == "expansion":
+            proof = identity["state"].get("approval_disclosure_readiness")
+            if isinstance(proof, dict):
+                # GET observation time is not mutable business/disclosure state.
+                # Retain all policy/solve/action/ack fields in identity; record
+                # the observed times separately in the receipt's captures.
+                proof.pop("checked_at", None)
+        return identity
 
     def _mismatches(self, payload: Any, bindings: Mapping[str, str]) -> list[str]:
         """``path=served (expected wanted)`` for every binding that does not hold."""
@@ -2222,6 +2228,8 @@ class JourneyRunner:
             "named-approval",
         ):
             return None
+        if self.spec.journey_id == "expansion":
+            self.result.captured["disclosure_checked_at_before"] = dig(payload, "approval_disclosure_readiness.checked_at")
         if self.spec.journey_id == "expansion" and not self.result.check(
             payload.get("status") == "draft"
             and self.scope.records.get("rebalance_store_id") in _as_dict(payload.get("options_by_entity"))
@@ -2633,6 +2641,8 @@ class JourneyRunner:
         response, _ = self.send(self.spec.readback)
         payload = response.payload if not response.failed else {}
         self.after_payload = copy.deepcopy(payload)
+        if self.spec.journey_id == "expansion":
+            self.result.captured["disclosure_checked_at_after"] = dig(payload, "approval_disclosure_readiness.checked_at")
         after = self.identity(payload)
         self.result.after = after
         same = after is not None and after["record_id"] == before["record_id"]
@@ -3294,8 +3304,8 @@ def journey_receipt_problems(spec: JourneySpec, entry: Mapping[str, Any]) -> lis
         accounts = _as_dict(scope.get("account_ids"))
         if approval:
             pre_state, post_state = _as_dict(before.get("state")), _as_dict(after.get("state"))
-            pre_proof = _as_dict(pre_state.get("approval_disclosure_readiness"))
-            post_proof = _as_dict(post_state.get("approval_disclosure_readiness"))
+            pre_proof = {**_as_dict(pre_state.get("approval_disclosure_readiness")), "checked_at": captures.get("disclosure_checked_at_before")}
+            post_proof = {**_as_dict(post_state.get("approval_disclosure_readiness")), "checked_at": captures.get("disclosure_checked_at_after")}
             prerequisite_bound = (
                 netplan_disclosure_ready({"approval_disclosure_readiness": pre_proof, "solve": {"problem_hash": pre_state.get("solve.problem_hash")}}, records, scope.get("tenant_id"))
                 and netplan_disclosure_ready({"approval_disclosure_readiness": post_proof, "solve": {"problem_hash": post_state.get("solve.problem_hash")}}, records, scope.get("tenant_id"))

@@ -108,6 +108,21 @@ IAM/egress or legal/governance holds are changed by this repair.
 - R18/R19 are independently confirmed at 5f2736c4 (full CI37803702716 passed),
   not evidence that this new head or actual live acceptance has passed review.
 
+## Sixth-review repair (R22)
+
+- Separate volatile GET observation time from stable business/disclosure identity.
+  Exclude only checked_at from the identity's prerequisite object; retain every
+  policy/problem/primary-action/ack/readiness field. Capture the actual observed
+  before/after timestamps separately and require them in receipt verification.
+- The real NetPlan positive regression now invokes the actual consecutive GET
+  producer on every scoped read: checked_at genuinely changes, the correctly
+  denied role leaves stable business state unchanged, and the positive root
+  approval/durable readback/independent receipt still succeeds. The regression's
+  BFF/auth/solve shell remains explicitly offline. A policy change during denial
+  still fails; missing observation metadata in resealed receipts also fails.
+- R20/R21 and full CI37811102073 were independently examined at 00742c9f;
+  that previous head was rejected for R22, not approved for merge.
+
 ## Verification and limits
 
 Final checks must run on the committed exact head and emit canonical

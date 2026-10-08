@@ -76,6 +76,9 @@ against the live system:
   Re-solve must preserve this problem/action/policy/ack binding; invalidation
   stops before submit/decide. The final same new approval and sealed receipt
   must bind this prerequisite and a durable `status=approved` scenario.
+  GET `checked_at` is observation metadata, not business state: before/after
+  timestamps are captured separately, while all stable readiness/policy/problem/
+  primary-action/ack fields remain in the identity used by denied-role probes.
   The runner does not change the canonical API's authorization policy.
 - Franchise captures this POST's report ID and requires that exact new report
   in durable GET, bound to store, actor, content, status and request correlation;

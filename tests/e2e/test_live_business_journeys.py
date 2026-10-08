@@ -2510,7 +2510,7 @@ def test_expansion_approval_without_approved_scenario_cannot_pass() -> None:
     assert receipt["journeys"]["expansion"]["status"] == "FAILED"
 
 
-@pytest.mark.parametrize("fault", ["status", "before_proof", "after_proof", "ack", "hash", "policy"])
+@pytest.mark.parametrize("fault", ["status", "before_proof", "after_proof", "before_observation", "after_observation", "ack", "hash", "policy"])
 def test_resealed_expansion_needs_existing_prerequisite_and_terminal_status(fault: str) -> None:
     receipt, _, _ = run()
     entry = receipt["journeys"]["expansion"]
@@ -2518,19 +2518,35 @@ def test_resealed_expansion_needs_existing_prerequisite_and_terminal_status(faul
         entry["after"]["state"].update(status="pending_approval", status_history=["draft", "pending_approval"])
     elif fault in {"before_proof", "after_proof"}:
         entry["before" if fault == "before_proof" else "after"]["state"].pop("approval_disclosure_readiness")
+    elif fault in {"before_observation", "after_observation"}:
+        entry["captured"].pop("disclosure_checked_at_before" if fault == "before_observation" else "disclosure_checked_at_after")
     else:
         key = {"ack": "disclosure_acknowledgement_id", "hash": "solver_problem_hash", "policy": "disclosure_policy_version_id"}[fault]
         entry["after"]["state"]["approvals"][0][key] = "Unrelated value"
     assert "business_journey:expansion" in failing_checks(reseal(receipt))
 
 
-# R18-R19: real producer shapes and exact governance terminal outcomes.
+def test_denied_role_probe_still_refuses_changed_disclosure_business_binding() -> None:
+    class ChangedPolicyDuringDenial(BusinessWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            response = super().request(method, path, **kwargs)
+            if method == "POST" and path.endswith("/netplan/solve") and response.status == 403:
+                self.scenario["approval_disclosure_readiness"]["policy_version_id"] = "different-policy"
+            return response
+    receipt, web, _ = run(web=ChangedPolicyDuringDenial(), selection=["expansion"])
+    result = receipt["journeys"]["expansion"]
+    assert result["status"] == "FAILED"
+    assert result["negative_probes"]["wrong_role_denied"] is False
+    assert not any(method == "POST" and actor != ACTORS["expansion"]["denied"] and path.endswith(("/solve", "/submit", "/decide")) for method, path, actor in web.calls)
+
+
+# R18-R19/R22: actual producers including successive GET observation times.
 def test_real_netplan_decide_producer_is_root_approval_and_reads_same_record(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from starlette.requests import Request
 
-    from apps.api.app.routes.netplan import NetPlanDecisionPayload, _run
+    from apps.api.app.routes.netplan import NetPlanDecisionPayload, _run, _scenario_detail
     from shared.audit import InMemoryAuditLog
 
     helpers = _load("offline_netplan_root_contract", ROOT / "tests/integration/test_netplan_disclosure_ui_e2e.py")
@@ -2552,9 +2568,18 @@ def test_real_netplan_decide_producer_is_root_approval_and_reads_same_record(
             self.scenario["solve"]["problem_hash"] = repo.get_solve(scenario.scenario_id).problem_hash
             self.scenario["approval_disclosure_readiness"] = service.inspect_approval_disclosure(scenario.scenario_id)
             assert self.scenario["approval_disclosure_readiness"]["ready"] is True
+            self.observed_times: list[str] = []
 
         def request(self, method: str, path: str, **kwargs: Any) -> Resp:
             response = super().request(method, path, **kwargs)
+            if method == "GET" and path == f"/api/v1/netplan/scenarios/{scenario.scenario_id}" and response.status == 200:
+                # Consecutive actual GET producer calls must change checked_at,
+                # not business identity. BFF/auth/solve shell is still OFFLINE.
+                detail = _scenario_detail(service, scenario.scenario_id, repo.get_scenario(scenario.scenario_id).to_dict())
+                proof = detail["approval_disclosure_readiness"]
+                self.observed_times.append(proof["checked_at"])
+                self.scenario["approval_disclosure_readiness"] = proof
+                response.payload["approval_disclosure_readiness"] = proof
             if method == "POST" and path.endswith("/decide") and response.status == 200:
                 body = NetPlanDecisionPayload.model_validate(kwargs["body"])
                 request = Request({"type": "http", "method": "POST", "path": path, "headers": []})
@@ -2576,7 +2601,7 @@ def test_real_netplan_decide_producer_is_root_approval_and_reads_same_record(
 
     scope = scope_document()
     scope["journeys"]["expansion"]["approval_ref"] = helpers.RECEIPT_ID
-    receipt, _, _ = run(web=RealApprovalProducerWeb(), scope=scope, selection=["expansion"])
+    receipt, web, _ = run(web=RealApprovalProducerWeb(), scope=scope, selection=["expansion"])
     result = receipt["journeys"]["expansion"]
     assert result["status"] == "PASSED"
     actual = repo.list_approvals(scenario.scenario_id)
@@ -2584,6 +2609,11 @@ def test_real_netplan_decide_producer_is_root_approval_and_reads_same_record(
     assert result["captured"]["approval_id"] == actual[0].approval_id
     assert result["after"]["state"]["approvals"][0] == actual[0].to_dict()
     assert bj.journey_receipt_problems(bj.JOURNEYS_BY_ID["expansion"], result) == []
+    assert len(web.observed_times) >= 3 and len(set(web.observed_times)) == len(web.observed_times)
+    assert result["negative_probes"]["wrong_role_denied"] is True
+    for stage in ("before", "after"):
+        assert "checked_at" not in result[stage]["state"]["approval_disclosure_readiness"]
+        assert result["captured"][f"disclosure_checked_at_{stage}"] in web.observed_times
 
 
 @pytest.mark.parametrize("action,reason", [("approve", "Offline scoped approval"), ("return", "Offline scoped return justification"), ("reject", "Offline scoped reject justification"), ("approve", "")])
