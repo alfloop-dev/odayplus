@@ -2436,6 +2436,7 @@ def test_real_netplan_decide_producer_is_root_approval_and_reads_same_record(
     assert len(actual) == 1
     assert result["captured"]["approval_id"] == actual[0].approval_id
     assert result["after"]["state"]["approvals"][0] == actual[0].to_dict()
+    assert bj.journey_receipt_problems(bj.JOURNEYS_BY_ID["expansion"], result) == []
 
 
 @pytest.mark.parametrize("action,reason", [("approve", "Offline scoped approval"), ("return", "Offline scoped return justification"), ("reject", "Offline scoped reject justification"), ("approve", "")])
@@ -2489,6 +2490,7 @@ def test_runner_matches_actual_governance_http_decision_audit(action: str, reaso
     assert row["finalDecision"] == {"approve": "Approved", "return": "Returned", "reject": "Rejected"}[action]
     assert row["reason"] == (reason or "符合風險與預算規範")
     assert any(item["id"] == result["captured"]["governance_audit_id"] for item in actual["auditRows"])
+    assert bj.journey_receipt_problems(bj.JOURNEYS_BY_ID["governance"], result) == []
 
 
 @pytest.mark.parametrize("fault", ["status", "replacement", "finalDecision", "reason", "actor", "approvalId", "auditActor", "auditAction", "auditReason", "auditTarget"])
@@ -2520,7 +2522,7 @@ def test_resealed_governance_receipt_needs_current_decision_and_audit(fault: str
     if fault in {"decision_id", "governance_audit_id"}:
         result["captured"].pop(fault)
     elif fault == "status":
-        result["after"]["state"]["approvals[id=GOV-APR-4001].status"] = "rejected"
+        result["after"]["state"]["approvals[id={record.approval_id}].status"] = "rejected"
     elif fault == "audit_action":
         result["after"]["state"]["auditRows"][0]["action"] = "決策駁回"
     elif fault == "audit_ref":

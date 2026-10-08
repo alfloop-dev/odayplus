@@ -3216,7 +3216,7 @@ def journey_receipt_problems(spec: JourneySpec, entry: Mapping[str, Any]) -> lis
             and _canonical_uuid(account) is not None and row.get("actor") == account
             and row.get("approvalId") == records.get("approval_id")
             and row.get("finalDecision") == expected["final_decision"]
-            and after_state.get(f"approvals[id={records.get('approval_id')}].status") == expected["status"]
+            and after_state.get(spec.state_paths[0]) == expected["status"]
             and _present(row.get("reason")) and row.get("reason") == authorized.get("reason")
             and _present(row.get("decidedAt"))
         )
