@@ -6,7 +6,10 @@ body {
 /*
  * Intake detail is the sole content layer below the Package 10 top navigation.
  * Neutralize legacy console minimum widths only while that durable detail
- * context is open; the top navigation remains horizontally usable.
+ * context is open. The header reflows on its own (wrapping rows, scrollable
+ * workspace nav), so it must not become a scroll container: that would clip
+ * its popovers, including the user menu that holds 管理後台 / 登出.
+ * `overflow-x: clip` trims horizontally without creating a scroll container.
  */
 html:has(.operatorIntakeDetailOpen),
 body:has(.operatorIntakeDetailOpen) {
@@ -21,7 +24,7 @@ body:has(.operatorIntakeDetailOpen) {
   width: 100%;
   min-width: 0 !important;
   max-width: 100vw !important;
-  overflow-x: hidden !important;
+  overflow-x: clip !important;
 }
 
 .operatorIntakeDetailOpen > header {
@@ -29,8 +32,6 @@ body:has(.operatorIntakeDetailOpen) {
   width: 100%;
   min-width: 0 !important;
   max-width: 100vw !important;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
 }
 
 @media (max-width: 768px) {

@@ -61,6 +61,9 @@ async function openWorkspace(page: Page, workspace: string) {
   await expect(page.locator('[data-testid="operator-console"] > main')).not.toBeEmpty();
 }
 
+// Each width loads five workspaces; a cold dev-server compile needs headroom.
+test.describe.configure({ timeout: 120_000 });
+
 test.describe("Operator shared header layout", () => {
   for (const width of WIDTHS) {
     test(`header geometry is identical across workspaces at ${width}px`, async ({ page }) => {
@@ -128,6 +131,39 @@ test.describe("Operator shared header layout", () => {
     await logout.scrollIntoViewIfNeeded();
     await expect(logout).toBeInViewport();
     await expect(logout).toBeEnabled();
+  });
+
+  test("account menu is not clipped in the desktop intake-detail context", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/operator?ws=network&tab=radar&selected=layout-probe&dialog=detail");
+    await expect(page.getByTestId("operator-console")).toHaveAttribute("data-intake-detail-open", "true");
+
+    await page.getByRole("button", { name: /營運主管/, expanded: false }).click();
+    const adminLink = page.getByTestId("operator-admin-link");
+    const logout = page.getByRole("button", { name: "登出" });
+    await expect(adminLink).toBeInViewport();
+    await expect(logout).toBeInViewport();
+
+    const hitTest = await page.evaluate(() => {
+      const header = document.querySelector<HTMLElement>('[data-screen-label="Top Navigation"]');
+      const hits = (element: Element | null) => {
+        if (!element) return false;
+        const rect = element.getBoundingClientRect();
+        const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return top === element || element.contains(top);
+      };
+      const logoutButton = Array.from(document.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "登出",
+      );
+      return {
+        admin: hits(document.querySelector('[data-testid="operator-admin-link"]')),
+        logout: hits(logoutButton ?? null),
+        headerOverflowY: header ? getComputedStyle(header).overflowY : "missing",
+      };
+    });
+    // Each account action is the topmost element at its own centre, and the
+    // header did not turn into a scroll container that clips its popovers.
+    expect(hitTest).toEqual({ admin: true, logout: true, headerOverflowY: "visible" });
   });
 
   test("header does not change when workspace content is replaced by a data gate", async ({ page }) => {

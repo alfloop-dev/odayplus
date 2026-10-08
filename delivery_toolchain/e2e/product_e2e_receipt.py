@@ -18,7 +18,7 @@ from _support import load_json_object as read_json
 
 SCHEMA_VERSION = "2.0.0"
 EXPECTED_CANONICAL_SPEC_COUNT = 18
-EXPECTED_PLAYWRIGHT_TEST_COUNT = 118
+EXPECTED_PLAYWRIGHT_TEST_COUNT = 119
 RAW_PLAYWRIGHT_PATH = "docs/evidence/e2e/raw_playwright_results.json"
 RAW_PYTEST_PATH = "docs/evidence/e2e/raw_pytest_results.json"
 RECEIPT_PATH = "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json"
