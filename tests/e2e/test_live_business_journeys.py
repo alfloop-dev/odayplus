@@ -1269,9 +1269,10 @@ def test_write_that_does_not_survive_readback_fails(journey_id: str) -> None:
 
     receipt, _, _ = run(web, selection=[journey_id])
     assert receipt["journeys"][journey_id]["status"] == "FAILED"
-    expected = {"expansion": "write:solve", "intake": "readback:intake_decision_outcome"}.get(
-        journey_id, "readback:durable_state_change"
-    )
+    expected = {
+        "expansion": "write:solve", "intake": "readback:intake_decision_outcome",
+        "operations": "readback:transition_outcome", "franchise": "readback:written_record_identity",
+    }.get(journey_id, "readback:durable_state_change")
     assert expected in blockers(receipt, journey_id)
 
 
@@ -1313,7 +1314,9 @@ def test_missing_disclosure_fails_expansion() -> None:
     ]
     receipt, _, _ = run(web, selection=["expansion"])
     assert receipt["journeys"]["expansion"]["status"] == "FAILED"
-    assert blockers(receipt, "expansion") == {"disclosure:workspace_payload": "disclosure"}
+    assert blockers(receipt, "expansion") == {
+        "disclosure:workspace_payload": "disclosure", "readback:outcome_receipt": "durable-readback",
+    }
 
 
 def test_policy_blocked_source_accepted_with_retrieval_fails_intake() -> None:
