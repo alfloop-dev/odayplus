@@ -62,6 +62,27 @@ IAM/egress or legal/governance holds are changed by this repair.
   and scoped durable fields even after a receipt is resealed. Authorized report
   content/approval reason are digest-bound without adding credential material.
 
+## Fourth-review repairs (R18–R19)
+
+- R18: the canonical NetPlan decide producer returns a root ApprovalRecord,
+  not a scenario envelope. Capture root approval_id and compare that single POST
+  record with the same newly durable GET approval. Positive regression executes
+  the actual route `_run` producer, actual offline NetPlanService/solver/authority
+  receipt and ApprovalRecord.to_dict; no hand-authored response shape stands in
+  for that producer. The authorization/BFF shell of this regression is still
+  explicitly offline, not evidence of live authorization or business acceptance.
+- R19: capture this governance decision ID; bind its new durable identity,
+  approve/return/reject terminal status, canonical finalDecision, reason and
+  scoped authenticated actor UUID, plus the corresponding fresh audit's
+  actor/action/entity/reason/correlation. Wrong status/decision replacement and
+  mismatched audits fail; the sealed receipt verifier checks the same fields.
+  Actual offline GovernanceService through its real local HTTP router verifies
+  approve/return/reject and the canonical empty-approve-reason fallback. Foreign
+  actorName overrides block preflight. No governance access policy is changed.
+- Independent review confirmed R16 franchise and R17 transfer contracts; they
+  are retained unchanged in this repair. Required CI and a new independent
+  review must still approve the exact new head before merging or closing.
+
 ## Verification and limits
 
 Final checks must run on the committed exact head and emit canonical

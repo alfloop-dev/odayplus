@@ -13,7 +13,7 @@ owned by ODP-BUSINESS-LIVE-E2E-ACCEPTANCE-001.
 | operations | `/operator?ws=store` | operations_manager; denied regional_supervisor | Store Ops transition → action-specific status/owner/SLA outcome (transfer changes owner, not status/history) → `operator.store_ops.issue_transition` |
 | growth | `/operator?ws=growth&gtab=priceops` | pricing_manager + marketing_manager; denied marketing_manager/operations_manager | PriceOps action → canonical per-action audit; authorized non-empty AdLift campaign job → `succeeded` → fresh durable report with model/feature/snapshot provenance |
 | expansion | `/operator?ws=network` | executive planner + distinct executive approver; denied marketing_manager/pricing_manager | Existing operator NetPlan solve → fresh projection and canonical solve timestamp → real browser disclosure → submit/approve with named receipt → solve/decision audit |
-| governance | `/operator?ws=govern` | operations_manager/executive; denied expansion_user | business approval decision (not user administration) → approval status + decision → audit |
+| governance | `/operator?ws=govern` | operations_manager/executive; denied expansion_user | capture this business decision ID → same new durable decision/authorized terminal status/reason/account → matching new actor/action/target/reason audit |
 | franchise | `/franchisee` | franchisee; denied operations_manager | own-store field report → own-store reports → audit |
 | intake | `/operator?ws=network&tab=intake` | expansion_user; denied pricing_manager | assisted intake decision → fresh decision/audit and durable target listing (create/revise/duplicate), or quarantine/reject outcome; blocked-source probe must be refused or durably quarantined without retrieval |
 
@@ -63,11 +63,19 @@ against the live system:
   `actor_id` must equal the distinct authoritative approver UUID in scope.
   Durable approval must be newly created, match this write's captured approval
   ID, actor/principal/receipt/reason and current disclosure, and be authentic.
+  POST returns a root `ApprovalRecord`; only GET scenario contains `approvals`.
   The runner does not change the canonical API's authorization policy.
 - Franchise captures this POST's report ID and requires that exact new report
   in durable GET, bound to store, actor, content, status and request correlation;
   unrelated concurrent reports cannot substitute for a lost write. Receipts
   bind authorized report content and approval reason with content digests.
+- Governance bodies bind `actorName` to the authenticated account UUID (a
+  different caller actor blocks before writes). Capture the POST decision ID,
+  require that same newly durable decision, the authorized approve/return/reject
+  terminal status, canonical final-decision label and reason, and matching new
+  audit actor/action/entity/reason. The service's record correlation convention
+  `corr-<approvalId>` is distinct from this HTTP write's authorization correlation;
+  both are checked. Empty approve reasons use the canonical decision-log default.
 - Store Ops verifies the expected outcome of the authorized action, including
   the precise transfer owner. Noop or inadmissible transitions block before
   writes; timestamps, unrelated history or concurrent state changes do not

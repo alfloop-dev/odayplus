@@ -472,7 +472,13 @@ class BusinessWeb:
             event_type = {"solve": "netplan.solved", "submit": "netplan.submitted"}.get(
                 step, f"netplan.{ctx.body.get('decision')}"
             )
-            self.event(ctx, event_type, "expansion")
+            event_id = self.event(ctx, event_type, "expansion")
+            # Canonical decide returns ApprovalRecord.to_dict at the root;
+            # only GET scenario includes the approvals array.
+            if step == "decide":
+                return Resp(200, {**self.scenario["approvals"][-1],
+                                  "audit_event_id": event_id,
+                                  "correlation_id": ctx.headers.get("x-correlation-id")})
             return Resp(200, self.scenario)
 
         def operator_solve(ctx: Ctx) -> Resp:
@@ -527,15 +533,22 @@ class BusinessWeb:
                     "return": "returned",
                     "reject": "rejected",
                 }[ctx.body["action"]]
-                self.governance["decisions"].append(
-                    {"id": "DEC-1", "approvalId": approval["id"], "action": ctx.body.get("action")}
-                )
+                self.governance["decisions"].append({
+                    "id": "DEC-1", "approvalId": approval["id"],
+                    "finalDecision": {"approve": "Approved", "return": "Returned", "reject": "Rejected"}[ctx.body["action"]],
+                    "reason": ctx.body.get("reason") or "符合風險與預算規範",
+                    "actor": ctx.body.get("actorName"), "decidedAt": NOW,
+                })
             if "governance" not in self.drop_audit:
                 self.governance["auditRows"].append(
                     {
                         "id": "AUD-GOV-1",
                         "category": "approval",
                         "correlationId": f"corr-{ctx.body.get('approvalId')}",
+                        "actor": ctx.body.get("actorName"),
+                        "action": {"approve": "決策核准", "return": "決策退回", "reject": "決策駁回"}[ctx.body["action"]],
+                        "entityRef": (approval or {}).get("entityRef") or ctx.body.get("approvalId"),
+                        "reason": ctx.body.get("reason") or "",
                     }
                 )
             return Resp(
@@ -543,7 +556,12 @@ class BusinessWeb:
                 {
                     "approvalId": ctx.body.get("approvalId"),
                     "action": ctx.body["action"],
-                    "decision": {"id": "DEC-1"},
+                    "status": {"approve": "approved", "return": "returned", "reject": "rejected"}[ctx.body["action"]],
+                    "finalDecision": {"approve": "Approved", "return": "Returned", "reject": "Rejected"}[ctx.body["action"]],
+                    "decision": {"id": "DEC-1", "approvalId": ctx.body.get("approvalId"),
+                                 "finalDecision": {"approve": "Approved", "return": "Returned", "reject": "Rejected"}[ctx.body["action"]],
+                                 "reason": ctx.body.get("reason") or "符合風險與預算規範",
+                                 "actor": ctx.body.get("actorName"), "decidedAt": NOW},
                     "correlation_id": ctx.headers.get("x-correlation-id"),
                 },
             )
@@ -1272,6 +1290,7 @@ def test_write_that_does_not_survive_readback_fails(journey_id: str) -> None:
     expected = {
         "expansion": "write:solve", "intake": "readback:intake_decision_outcome",
         "operations": "readback:transition_outcome", "franchise": "readback:written_record_identity",
+        "governance": "readback:governance_written_decision",
     }.get(journey_id, "readback:durable_state_change")
     assert expected in blockers(receipt, journey_id)
 
@@ -2363,6 +2382,160 @@ def test_self_principal_uses_identity_store_roles_not_token_or_browser_claims(
     assert client.get(bj.PRINCIPAL_PATH, headers=headers).json()["roles"] == ["data_owner"]
     bundle.session_service.revoke_session(session.session_id, RevocationReason.ADMIN_REVOKE)
     assert client.get(bj.PRINCIPAL_PATH, headers=headers).status_code == 401
+
+
+# R18-R19: real producer shapes and exact governance terminal outcomes.
+def test_real_netplan_decide_producer_is_root_approval_and_reads_same_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from starlette.requests import Request
+
+    from apps.api.app.routes.netplan import NetPlanDecisionPayload, _run
+    from shared.audit import InMemoryAuditLog
+
+    helpers = _load("offline_netplan_root_contract", ROOT / "tests/integration/test_netplan_disclosure_ui_e2e.py")
+    approver = account_id(ACTORS["expansion"]["approver"])
+    monkeypatch.setattr(helpers, "APPROVAL_PRINCIPAL", approver)
+    scenario, repo, service, rebalance = helpers._submitted_canonical_surface("NP-SCN-31")
+    rebalance.submit_review(
+        store_id="STORE-101", reason="Offline producer-shape preparation",
+        actor_role_id="expansionManager", actor_name="Offline planner",
+        idempotency_key="offline-root-submit", correlation_id="offline-root-submit",
+        **{**helpers._ACK_SUBMISSION, "acknowledgement_actor_id": approver},
+    )
+    audit = InMemoryAuditLog()
+
+    class RealApprovalProducerWeb(BusinessWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            response = super().request(method, path, **kwargs)
+            if method == "POST" and path.endswith("/decide") and response.status == 200:
+                body = NetPlanDecisionPayload.model_validate(kwargs["body"])
+                request = Request({"type": "http", "method": "POST", "path": path, "headers": []})
+                request.state.correlation_id = kwargs["headers"]["x-correlation-id"]
+                # Execute the actual route's producer, actual NetPlanService and
+                # ApprovalRecord.to_dict, never a fabricated scenario response.
+                payload = _run(
+                    lambda: service.decide(scenario.scenario_id, actor_id=body.actor_id,
+                                           reason=body.reason, decision=body.decision,
+                                           approval_receipt_id=body.approval_receipt_id,
+                                           decided_at=helpers.MOMENT),
+                    audit, request, "netplan.approved.v1", body.actor_id, body.decision,
+                    f"netplan/scenarios/{scenario.scenario_id}/decide", scenario.scenario_id,
+                )
+                assert "approval_id" in payload and "approvals" not in payload
+                self.scenario["approvals"] = [item.to_dict() for item in repo.list_approvals(scenario.scenario_id)]
+                return Resp(200, payload)
+            return response
+
+    scope = scope_document()
+    scope["journeys"]["expansion"]["approval_ref"] = helpers.RECEIPT_ID
+    receipt, _, _ = run(web=RealApprovalProducerWeb(), scope=scope, selection=["expansion"])
+    result = receipt["journeys"]["expansion"]
+    assert result["status"] == "PASSED"
+    actual = repo.list_approvals(scenario.scenario_id)
+    assert len(actual) == 1
+    assert result["captured"]["approval_id"] == actual[0].approval_id
+    assert result["after"]["state"]["approvals"][0] == actual[0].to_dict()
+
+
+@pytest.mark.parametrize("action,reason", [("approve", "Offline scoped approval"), ("return", "Offline scoped return justification"), ("reject", "Offline scoped reject justification"), ("approve", "")])
+def test_runner_matches_actual_governance_http_decision_audit(action: str, reason: str) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from apps.api.app.routes.operator_modules.governance import create_governance_sub_router
+    from modules.opsboard.application.governance import GovernanceService
+
+    service = GovernanceService()  # OFFLINE in-memory producer and durable read
+    original = service.snapshot()["approvals"][0]
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def offline_correlation(request: Any, call_next: Any) -> Any:
+        request.state.correlation_id = request.headers.get("x-correlation-id", "offline")
+        return await call_next(request)
+
+    app.include_router(create_governance_sub_router(service), prefix="/api/v1/operator")
+    client = TestClient(app)
+
+    class RealGovernanceWeb(BusinessWeb):
+        def __init__(self) -> None:
+            super().__init__()
+            self.governance = service.snapshot()
+
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            response = super().request(method, path, **kwargs)
+            if method == "POST" and path.endswith("/governance/decisions") and response.status == 200:
+                written = client.post(path, json=kwargs["body"], headers={
+                    "x-correlation-id": kwargs["headers"]["x-correlation-id"],
+                    "idempotency-key": kwargs["headers"]["idempotency-key"],
+                })
+                assert written.status_code == 200, written.text
+                self.governance = client.get("/api/v1/operator/governance/snapshot").json()
+                return Resp(written.status_code, written.json())
+            return response
+
+    scope = scope_document()
+    entry = scope["journeys"]["governance"]
+    entry["records"]["approval_id"] = original["id"]
+    entry["writes"]["decision"] = {"action": action, "body": {"action": action, "reason": reason}}
+    receipt, _, _ = run(web=RealGovernanceWeb(), scope=scope, selection=["governance"])
+    result = receipt["journeys"]["governance"]
+    assert result["status"] == "PASSED"
+    actual = service.snapshot()
+    row = next(item for item in actual["decisions"] if item["id"] == result["captured"]["decision_id"])
+    assert row["actor"] == entry["account_ids"]["primary"]
+    assert row["approvalId"] == original["id"]
+    assert row["finalDecision"] == {"approve": "Approved", "return": "Returned", "reject": "Rejected"}[action]
+    assert row["reason"] == (reason or "符合風險與預算規範")
+    assert any(item["id"] == result["captured"]["governance_audit_id"] for item in actual["auditRows"])
+
+
+@pytest.mark.parametrize("fault", ["status", "replacement", "finalDecision", "reason", "actor", "approvalId", "auditActor", "auditAction", "auditReason", "auditTarget"])
+def test_governance_wrong_or_replaced_decision_and_audit_cannot_pass(fault: str) -> None:
+    class WrongDecision(BusinessWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            response = super().request(method, path, **kwargs)
+            if method == "POST" and path.endswith("/governance/decisions") and response.status == 200:
+                decision = self.governance["decisions"][-1]
+                if fault == "status":
+                    self.governance["approvals"][0]["status"] = "rejected"
+                elif fault == "replacement":
+                    decision.update(id="UNRELATED-DECISION", finalDecision="Rejected")
+                elif fault.startswith("audit"):
+                    key = {"auditActor": "actor", "auditAction": "action", "auditReason": "reason", "auditTarget": "entityRef"}[fault]
+                    self.governance["auditRows"][-1][key] = "Unrelated value"
+                else:
+                    decision[fault] = "Unrelated value"
+            return response
+
+    receipt, _, _ = run(web=WrongDecision(), selection=["governance"])
+    assert receipt["journeys"]["governance"]["status"] == "FAILED"
+
+
+@pytest.mark.parametrize("fault", ["decision_id", "governance_audit_id", "status", "reason", "actor", "audit_action", "audit_ref"])
+def test_resealed_governance_receipt_needs_current_decision_and_audit(fault: str) -> None:
+    receipt, _, _ = run()
+    result = receipt["journeys"]["governance"]
+    if fault in {"decision_id", "governance_audit_id"}:
+        result["captured"].pop(fault)
+    elif fault == "status":
+        result["after"]["state"]["approvals[id=GOV-APR-4001].status"] = "rejected"
+    elif fault == "audit_action":
+        result["after"]["state"]["auditRows"][0]["action"] = "決策駁回"
+    elif fault == "audit_ref":
+        result["audit_refs"][0]["event_id"] = "unrelated"
+    else:
+        result["after"]["state"]["decisions"][0][fault] = "Unrelated value"
+    assert "business_journey:governance" in failing_checks(reseal(receipt))
+
+
+def test_governance_caller_actor_override_blocks_before_any_write() -> None:
+    scope = scope_document()
+    scope["journeys"]["governance"]["writes"]["decision"]["body"]["actorName"] = "Someone else"
+    receipt, web, _ = run(scope=scope, selection=["governance"])
+    assert receipt["journeys"]["governance"]["status"] == "BLOCKED"
+    _zero_writes(receipt, web, "governance")
 
 
 # R15-R17: bound actor/write outcomes, with explicit offline real-service proofs.
