@@ -455,7 +455,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // HTML Form Submission: Redirect back to /login with error query
-    const loginRedirectUrl = new URL("/login", request.nextUrl.origin);
+    const loginRedirectUrl = new URL(
+      "/login",
+      resolveWebBaseUrl(request.nextUrl.origin),
+    );
     loginRedirectUrl.searchParams.set("error", code);
     loginRedirectUrl.searchParams.set("returnTo", targetReturnTo);
 

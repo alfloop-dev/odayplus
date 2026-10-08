@@ -532,8 +532,11 @@ class UrllibHttpClient:
 
         data: bytes | None = None
         if body is not None:
-            data = json.dumps(body).encode("utf-8")
-            request_headers["content-type"] = "application/json"
+            if request_headers.get("content-type", "").split(";", 1)[0] == "application/x-www-form-urlencoded":
+                data = urllib.parse.urlencode(body).encode("utf-8")
+            else:
+                data = json.dumps(body).encode("utf-8")
+                request_headers["content-type"] = "application/json"
 
         request = urllib.request.Request(  # noqa: S310 - validated deployed origin
             f"{self._base_url}{safe_path}",
@@ -2228,6 +2231,97 @@ def _check_dev_admin_session(
         "session",
     )
     operations.append("logout_and_revocation")
+
+    # The JSON contract above does not prove browser form redirects. Exercise
+    # URL-encoded submissions separately, without following any redirect or
+    # retaining a second live session after this journey.
+    form_headers = {
+        "accept": "text/html",
+        "content-type": "application/x-www-form-urlencoded",
+        "origin": origin,
+        "x-correlation-id": correlation_id,
+    }
+    return_to = "/operator?view=admin"
+    form_invalid = web.request(
+        "POST", "/login", authenticated=False,
+        body={"username": f"live-gate-form-{correlation_id}",
+              "password": "invalid-form-diagnostic", "returnTo": return_to},
+        headers=form_headers, follow_redirects=False,
+    )
+    failure_location = urllib.parse.urlsplit(form_invalid.location)
+    failure_query = urllib.parse.parse_qs(failure_location.query)
+    _check(
+        checks,
+        (not form_invalid.failed) and form_invalid.status == 303
+        and _origin(form_invalid.location) == _origin(origin)
+        and failure_location.path == "/login"
+        and failure_query == {"error": ["AUTH_INVALID_CREDENTIALS"], "returnTo": [return_to]}
+        and not any(form_invalid.cookies.values()),
+        "session:html_form_invalid_redirect",
+        f"status={form_invalid.status} sameOrigin={_origin(form_invalid.location) == _origin(origin)}",
+        "session",
+    )
+    form_login = web.request(
+        "POST", "/login", authenticated=False,
+        body={"username": username, "password": password, "returnTo": return_to},
+        headers=form_headers, follow_redirects=False,
+    )
+    form_cookies = {name: value for name, value in form_login.cookies.items() if value}
+    destination = urllib.parse.urlsplit(form_login.location)
+    form_signed_in = (
+        (not form_login.failed) and form_login.status == 303 and bool(form_cookies)
+        and _origin(form_login.location) == _origin(origin)
+        and destination.path == "/operator" and destination.query == "view=admin"
+        and not destination.fragment
+    )
+    _check(
+        checks, form_signed_in, "session:html_form_password_login",
+        f"status={form_login.status} sameOrigin={_origin(form_login.location) == _origin(origin)} sessionCookie={'issued' if form_cookies else 'missing'}",
+        "session",
+    )
+    if not form_cookies:
+        return
+    try:
+        form_session = web.request(
+            "GET", "/auth/session", authenticated=False, headers=session_headers(form_cookies)
+        )
+        _check(
+            checks, (not form_session.failed) and form_session.status == 200
+            and form_session.payload.get("subject") == username,
+            "session:html_form_session_resolves_account",
+            f"status={form_session.status} subjectMatches={form_session.payload.get('subject') == username}",
+            "session",
+        )
+        form_page = web.request(
+            "GET", return_to, authenticated=False,
+            headers={**session_headers(form_cookies), "accept": "text/html"},
+            follow_redirects=False,
+        )
+        _check(
+            checks, (not form_page.failed) and form_page.status == 200,
+            "admin:html_form_admin_page_served",
+            _failure_detail(form_page, expected="200 (not a /login redirect)"), "session",
+        )
+    finally:
+        form_logout = web.request(
+            "POST", "/auth/logout", authenticated=False,
+            headers=session_headers(form_cookies, origin=origin), follow_redirects=False,
+        )
+        _check(
+            checks, (not form_logout.failed) and form_logout.status == 200
+            and form_logout.payload.get("ok") is True
+            and all(not form_logout.cookies.get(name, "x") for name in form_cookies),
+            "session:html_form_logout", _failure_detail(form_logout, expected="200 ok"), "session",
+        )
+    form_replay = web.request(
+        "GET", "/auth/session", authenticated=False, headers=session_headers(form_cookies)
+    )
+    _check(
+        checks, (not form_replay.failed) and form_replay.status == 401,
+        "session:html_form_revoked_session_refused",
+        _failure_detail(form_replay, expected="401 after logout"), "session",
+    )
+    operations.append("html_form_login_and_revocation")
 
 
 def _latest_run_by_provider(items: Sequence[Any]) -> dict[str, dict[str, Any]]:
