@@ -52,6 +52,12 @@ from uuid import UUID
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT / ".odp_data" / "live-e2e-gate" / "live-e2e-gate-report.json"
 LIVE_DATA_GATE = ROOT / "delivery_toolchain" / "e2e" / "check_live_production_data.py"
+# ODP-BUSINESS-LIVE-E2E-COVERAGE-001: the six real business journeys whose
+# sealed receipt is the only thing that may turn a passing ``full`` runtime
+# gate into *full product acceptance*.
+BUSINESS_JOURNEYS = ROOT / "delivery_toolchain" / "e2e" / "live_business_journeys.py"
+BUSINESS_JOURNEY_RECEIPT_ENV = "ODP_LIVE_BUSINESS_JOURNEY_RECEIPT"
+MANIFEST_DIGEST_ENV = "ODP_RELEASE_MANIFEST_DIGEST"
 
 API_URL_ENV = "ODP_LIVE_E2E_API_URL"
 WEB_URL_ENV = "ODP_LIVE_E2E_WEB_URL"
@@ -281,6 +287,11 @@ DEPENDENCY_ACTIONS: Mapping[str, str] = {
         "the release profile sealed into the manifest digest, and a narrowed "
         "profile may only serve the deployment it was admitted for."
     ),
+    "business-journey": (
+        "Full product acceptance needs the sealed six-journey business receipt "
+        "(delivery_toolchain/e2e/live_business_journeys.py) for this exact release "
+        "and manifest digest, with every journey PASSED."
+    ),
 }
 
 
@@ -302,6 +313,22 @@ def _load_surrogate_scanner() -> Callable[[Any], list[str]]:
 
 
 find_surrogate_values = _load_surrogate_scanner()
+
+
+def _load_business_journeys() -> Any:
+    """Load the six-journey receipt verifier (offline code, no runtime import)."""
+    spec = importlib.util.spec_from_file_location(
+        "odp_live_business_journeys", BUSINESS_JOURNEYS
+    )
+    if spec is None or spec.loader is None:  # pragma: no cover - packaging error
+        raise RuntimeError(f"cannot load business journeys from {BUSINESS_JOURNEYS}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+business_journeys = _load_business_journeys()
 
 
 @dataclass(frozen=True)
@@ -347,6 +374,10 @@ class GateConfig:
     dev_admin_denied_role: str = ""
     bootstrap_admin_username: str = ""
     bootstrap_admin_password: str = ""
+    # ODP-BUSINESS-LIVE-E2E-COVERAGE-001: the admitted manifest digest the
+    # deployment exported (ODP_RELEASE_MANIFEST_DIGEST). Full product
+    # acceptance requires the six-journey receipt to be bound to it.
+    expected_manifest_digest: str = ""
 
     @property
     def dev_admin(self) -> bool:
