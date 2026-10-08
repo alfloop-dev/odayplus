@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DesignStoreOpsWorkspace,
@@ -66,7 +66,7 @@ describe("production workspace data contracts", () => {
     );
 
     const gate = await screen.findByTestId("operator-data-unavailable");
-    expect(gate).toHaveAttribute("data-status", "empty");
+    await waitFor(() => expect(gate).toHaveAttribute("data-status", "empty"));
     expect(screen.queryByText("付款機前卡住＋付款失敗＋Google 負評")).not.toBeInTheDocument();
   });
 

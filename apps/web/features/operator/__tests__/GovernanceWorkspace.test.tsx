@@ -111,7 +111,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
     render(<GovernanceWorkspace roleId="ops-lead" />);
 
     const gate = await screen.findByTestId("operator-data-unavailable");
-    expect(gate).toHaveAttribute("data-status", "seed");
+    await waitFor(() => expect(gate).toHaveAttribute("data-status", "seed"));
     expect(screen.queryByTestId("governance-workspace")).not.toBeInTheDocument();
     expect(screen.queryByText("Close escalated service issue")).not.toBeInTheDocument();
   });
