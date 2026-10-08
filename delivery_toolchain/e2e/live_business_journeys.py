@@ -74,6 +74,7 @@ password, bearer token, cookie or session value appears in the receipt.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import importlib.util
 import json
@@ -651,6 +652,7 @@ JOURNEYS: tuple[JourneySpec, ...] = (
             body_from="decision",
             body_overrides={"approvalId": "{foreign.approval_id}"},
             expect=CROSS_TENANT_REFUSALS,
+            idempotent=True,
         ),
         record_id_path="approvals[id={record.approval_id}].id",
         state_paths=("approvals[id={record.approval_id}].status",),
@@ -1308,10 +1310,12 @@ class JourneyRunner:
         record_id = dig(payload, self.path_of(self.spec.record_id_path))
         if not _present(record_id):
             return None
-        return {
-            "record_id": record_id,
-            "state": {path: dig(payload, self.path_of(path)) for path in self.spec.state_paths},
-        }
+        return copy.deepcopy(
+            {
+                "record_id": record_id,
+                "state": {path: dig(payload, self.path_of(path)) for path in self.spec.state_paths},
+            }
+        )
 
     # -- preflight --------------------------------------------------------
 
@@ -2063,6 +2067,18 @@ def verify_receipt(
         "business_journeys:command_exit",
         f"argv0={argv[0] if isinstance(argv, list) and argv else '<missing>'} "
         f"exit_code={command.get('exit_code')}",
+    )
+    summary = _as_dict(receipt.get("summary"))
+    add(
+        receipt.get("selection") == list(JOURNEY_IDS)
+        and receipt.get("complete_selection") is True
+        and summary.get("status") == STATUS_PASSED
+        and summary.get("full_acceptance_eligible") is True,
+        "business_journeys:complete_selection",
+        (
+            f"selection={receipt.get('selection')} status={summary.get('status')} "
+            f"eligible={summary.get('full_acceptance_eligible')}"
+        ),
     )
     forbidden = _forbidden_keys(receipt)
     add(
