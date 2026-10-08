@@ -1721,7 +1721,11 @@ def test_release_identity_has_real_versioned_alias_without_provider_effects(
     versioned = client.get(bj.RELEASE_IDENTITY_PATH, headers=headers)
     alias = client.get("/platform/release-identity", headers=headers)
     assert versioned.status_code == alias.status_code == 200
-    assert versioned.json() == alias.json()
+    # The release payload includes a per-request clock, not deployment identity.
+    versioned_body, alias_body = versioned.json(), alias.json()
+    assert isinstance(versioned_body.pop("time"), str)
+    assert isinstance(alias_body.pop("time"), str)
+    assert versioned_body == alias_body
     assert versioned.json()["release_sha"] == SHA
     assert versioned.json()["manifest_digest"] == DIGEST
     assert "Deprecation" not in versioned.headers
