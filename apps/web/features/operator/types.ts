@@ -444,6 +444,7 @@ export type RebalanceStore = {
     source: string;
   }>;
   netPlanScenarios?: NetPlanScenarioDetail[];
+  netPlanJob?: { id: string; completedAt: string } | null;
 };
 
 export type Approval = {

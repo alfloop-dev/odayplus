@@ -52,6 +52,12 @@ from uuid import UUID
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT / ".odp_data" / "live-e2e-gate" / "live-e2e-gate-report.json"
 LIVE_DATA_GATE = ROOT / "delivery_toolchain" / "e2e" / "check_live_production_data.py"
+# ODP-BUSINESS-LIVE-E2E-COVERAGE-001: the six real business journeys whose
+# sealed receipt is the only thing that may turn a passing ``full`` runtime
+# gate into *full product acceptance*.
+BUSINESS_JOURNEYS = ROOT / "delivery_toolchain" / "e2e" / "live_business_journeys.py"
+BUSINESS_JOURNEY_RECEIPT_ENV = "ODP_LIVE_BUSINESS_JOURNEY_RECEIPT"
+MANIFEST_DIGEST_ENV = "ODP_RELEASE_MANIFEST_DIGEST"
 
 API_URL_ENV = "ODP_LIVE_E2E_API_URL"
 WEB_URL_ENV = "ODP_LIVE_E2E_WEB_URL"
@@ -281,6 +287,11 @@ DEPENDENCY_ACTIONS: Mapping[str, str] = {
         "the release profile sealed into the manifest digest, and a narrowed "
         "profile may only serve the deployment it was admitted for."
     ),
+    "business-journey": (
+        "Full product acceptance needs the sealed six-journey business receipt "
+        "(delivery_toolchain/e2e/live_business_journeys.py) for this exact release "
+        "and manifest digest, with every journey PASSED."
+    ),
 }
 
 
@@ -302,6 +313,22 @@ def _load_surrogate_scanner() -> Callable[[Any], list[str]]:
 
 
 find_surrogate_values = _load_surrogate_scanner()
+
+
+def _load_business_journeys() -> Any:
+    """Load the six-journey receipt verifier (offline code, no runtime import)."""
+    spec = importlib.util.spec_from_file_location(
+        "odp_live_business_journeys", BUSINESS_JOURNEYS
+    )
+    if spec is None or spec.loader is None:  # pragma: no cover - packaging error
+        raise RuntimeError(f"cannot load business journeys from {BUSINESS_JOURNEYS}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+business_journeys = _load_business_journeys()
 
 
 @dataclass(frozen=True)
@@ -347,6 +374,10 @@ class GateConfig:
     dev_admin_denied_role: str = ""
     bootstrap_admin_username: str = ""
     bootstrap_admin_password: str = ""
+    # ODP-BUSINESS-LIVE-E2E-COVERAGE-001: the admitted manifest digest the
+    # deployment exported (ODP_RELEASE_MANIFEST_DIGEST). Full product
+    # acceptance requires the six-journey receipt to be bound to it.
+    expected_manifest_digest: str = ""
 
     @property
     def dev_admin(self) -> bool:
@@ -2816,6 +2847,8 @@ def evaluate_gate(
     web_http: HttpClient | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    business_journey_receipt: Mapping[str, Any] | None = None,
+    business_journey_receipt_note: str = "",
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     redact = _redactor(
         config.bearer_token,
@@ -2939,14 +2972,112 @@ def evaluate_gate(
     ]
     report["blockers"] = blockers
     report["blocking_dependencies"] = sorted({blocker["dependency"] for blocker in blockers})
+    full_acceptance = evaluate_full_acceptance(
+        config,
+        runtime_ok=report["ok"],
+        receipt=business_journey_receipt,
+        receipt_note=business_journey_receipt_note,
+        redact=redact,
+    )
+    report["full_acceptance"] = full_acceptance
     # A narrowed scope never stands as model or full-product evidence, even
     # when it passes. Say so in the receipt itself, not only in the docs.
+    # Full product acceptance additionally needs the sealed six-journey
+    # business receipt (ODP-BUSINESS-LIVE-E2E-COVERAGE-001); a passing
+    # runtime gate alone only proves the platform, not the business journeys.
     report["release_profile"] = {
         "name": config.release_profile,
         "model_readiness_claimed": config.release_profile == RELEASE_PROFILE_FULL,
-        "full_product_acceptance_claimed": config.release_profile == RELEASE_PROFILE_FULL,
+        "full_product_acceptance_claimed": full_acceptance["status"] == "PASSED",
     }
     return checks, report
+
+
+def evaluate_full_acceptance(
+    config: GateConfig,
+    *,
+    runtime_ok: bool,
+    receipt: Mapping[str, Any] | None,
+    receipt_note: str = "",
+    redact: Callable[[Any], str] = str,
+) -> dict[str, Any]:
+    """Bind the six-journey business receipt to this exact runtime gate run.
+
+    PASSED only when the sealed profile is full, the runtime gate passed, and
+    every receipt requirement (release SHA, manifest digest, sealed profile,
+    six PASSED journeys, no secrets) holds. A narrowed profile is
+    NOT_ADMITTED; anything else is BLOCKED with the named dependency.
+    """
+
+    receipt_checks = business_journeys.verify_receipt(
+        receipt,
+        expected_sha=config.expected_sha,
+        expected_digest=config.expected_manifest_digest,
+        release_profile=config.release_profile,
+    )
+    journey_entries = _as_dict(receipt.get("journeys")) if isinstance(receipt, Mapping) else {}
+    journeys = {
+        journey_id: str(_as_dict(journey_entries.get(journey_id)).get("status") or "BLOCKED")
+        for journey_id in business_journeys.JOURNEY_IDS
+    }
+    blockers = [
+        {
+            "check": check.name,
+            "dependency": check.dependency,
+            "detail": redact(check.detail),
+            "next_action": DEPENDENCY_ACTIONS.get(check.dependency, "Investigate the runtime."),
+        }
+        for check in receipt_checks
+        if not check.ok
+    ]
+    if not runtime_ok:
+        blockers.insert(
+            0,
+            {
+                "check": "business_journeys:runtime_gate",
+                "dependency": "business-journey",
+                "detail": "the runtime gate did not pass; business journeys cannot stand alone",
+                "next_action": "Clear the runtime gate blockers first.",
+            },
+        )
+    if config.release_profile != RELEASE_PROFILE_FULL:
+        status = "NOT_ADMITTED"
+        journeys = {journey_id: "NOT_ADMITTED" for journey_id in journeys}
+    elif blockers:
+        status = "BLOCKED"
+    else:
+        status = "PASSED"
+    return {
+        "status": status,
+        "release_profile": config.release_profile,
+        "runtime_gate_ok": bool(runtime_ok),
+        "receipt_provided": isinstance(receipt, Mapping),
+        "receipt_note": redact(receipt_note),
+        "receipt_digest": (
+            str(receipt.get("receipt_digest") or "") if isinstance(receipt, Mapping) else ""
+        ),
+        "expected_manifest_digest": config.expected_manifest_digest,
+        "journeys": journeys,
+        "checks": [
+            {**asdict(check), "detail": redact(check.detail)} for check in receipt_checks
+        ],
+        "blockers": blockers,
+        "blocking_dependencies": sorted({blocker["dependency"] for blocker in blockers}),
+    }
+
+
+def load_business_journey_receipt(path: Path | None) -> tuple[dict[str, Any] | None, str]:
+    """Read the receipt; an absent or unreadable file is no receipt (fail closed)."""
+
+    if path is None or not str(path).strip():
+        return None, "no business journey receipt configured"
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return None, f"business journey receipt unreadable: {type(exc).__name__}"
+    if not isinstance(payload, dict):
+        return None, "business journey receipt is not a JSON object"
+    return payload, ""
 
 
 def _web_client(config: GateConfig, correlation_id: str) -> HttpClient | None:
@@ -3024,6 +3155,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Permit HTTP only for an explicitly controlled non-production target.",
     )
+    parser.add_argument(
+        "--business-journey-receipt",
+        type=Path,
+        default=(
+            Path(os.environ[BUSINESS_JOURNEY_RECEIPT_ENV])
+            if os.environ.get(BUSINESS_JOURNEY_RECEIPT_ENV, "").strip()
+            else None
+        ),
+        help=(
+            "Sealed six-journey receipt from delivery_toolchain/e2e/"
+            "live_business_journeys.py; required for full product acceptance."
+        ),
+    )
+    parser.add_argument(
+        "--expected-manifest-digest",
+        default=os.environ.get(MANIFEST_DIGEST_ENV, ""),
+        help="Admitted manifest digest the business journey receipt must be bound to.",
+    )
+    parser.add_argument(
+        "--require-full-acceptance",
+        action="store_true",
+        help=(
+            "Exit non-zero unless full product acceptance is claimed (runtime "
+            "gate passed and the six-journey receipt verified)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -3059,6 +3216,9 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
         allow_http=args.allow_http,
         release_profile=str(args.release_profile or "").strip().lower(),
+        # The six-journey receipt is bound to this admitted manifest digest;
+        # without it full acceptance can never be claimed (fail closed).
+        expected_manifest_digest=str(args.expected_manifest_digest or "").strip().lower(),
         dev_admin_username=os.environ.get(DEV_ADMIN_USERNAME_ENV, "").strip() or os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
         # Not stripped: a password is exactly what the operator set.
         dev_admin_password=os.environ.get(DEV_ADMIN_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
@@ -3098,6 +3258,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         worker_driver = ScheduledWorkerDriver()
 
+    receipt, receipt_note = load_business_journey_receipt(args.business_journey_receipt)
     _, report = evaluate_gate(
         config,
         http=http,
@@ -3105,6 +3266,8 @@ def main(argv: list[str] | None = None) -> int:
         correlation_id=correlation_id,
         now=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         web_http=_web_client(config, correlation_id),
+        business_journey_receipt=receipt,
+        business_journey_receipt_note=receipt_note,
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -3114,7 +3277,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if report["ok"]:
         print(f"Live E2E gate passed. report={args.output}")
-        return 0
+        return _report_full_acceptance(report, require=args.require_full_acceptance)
 
     print("Live E2E gate failed. Blocking runtime dependencies:")
     for dependency in report["blocking_dependencies"]:
@@ -3123,7 +3286,23 @@ def main(argv: list[str] | None = None) -> int:
             if blocker["dependency"] == dependency:
                 print(f"  - {blocker['check']}: {blocker['detail']}")
     print(f"report={args.output}")
+    _report_full_acceptance(report, require=args.require_full_acceptance)
     return 1
+
+
+def _report_full_acceptance(report: Mapping[str, Any], *, require: bool) -> int:
+    """Print the full-acceptance verdict; non-zero only when it is required."""
+
+    full = _as_dict(report.get("full_acceptance"))
+    status = full.get("status") or "BLOCKED"
+    print(f"Full product acceptance: {status} journeys={full.get('journeys')}")
+    for blocker in full.get("blockers") or []:
+        print(f"  - {blocker['check']} [{blocker['dependency']}]: {blocker['detail']}")
+    claimed = _as_dict(report.get("release_profile")).get("full_product_acceptance_claimed") is True
+    if require and not claimed:
+        print("Full product acceptance was required and is not claimed.")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

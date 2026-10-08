@@ -342,7 +342,7 @@ export function RebalancePanel({
           ) : null}
 
           {selected.netPlanScenarios && selected.netPlanScenarios.length > 0 ? (
-            <section className={styles.rebalanceNetPlanBlock} data-testid={`rebalance-netplan-${selected.id}`}>
+            <section className={styles.rebalanceNetPlanBlock} data-testid={`rebalance-netplan-${selected.id}`} data-solve-completed-at={selected.netPlanJob?.completedAt}>
               <div className={styles.rebalanceNetPlanHeader}>NETPLAN 三案 · 點擊選擇</div>
               <div className={styles.netPlanScenarioList}>
                 {selected.netPlanScenarios.map((scenario) => {

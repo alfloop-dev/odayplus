@@ -208,6 +208,7 @@ export type RebalanceQueueRow = {
   runtimeState?: RebalanceStore["runtimeState"];
   evidence?: RebalanceStore["evidence"];
   netPlanScenarios?: RebalanceStore["netPlanScenarios"];
+  netPlanJob?: RebalanceStore["netPlanJob"];
 };
 
 export type NetworkFindAreasViewModel = {
@@ -671,6 +672,7 @@ function buildRebalanceQueue(rebalanceStores: RebalanceStore[]): RebalanceQueueR
     avmQualityDisposition: store.avmQualityDisposition,
     avmReserve: store.avmReserve,
     netPlanScenarios: store.netPlanScenarios,
+    netPlanJob: store.netPlanJob,
   }));
 }
 

@@ -180,6 +180,7 @@ else:
         # It only selects what the live gate holds this release to; it never
         # relaxes a persistence, provider, model, or auth guard below.
         active_release_profile = release_profile()
+        active_release_manifest_digest = os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", "")
         require_live_data = live_data_required()
         domain_runtime_mode = "production" if require_live_data else "local"
         persistence_mode = str(getattr(bundle, "mode", "unknown")).strip().lower()
@@ -879,6 +880,17 @@ else:
             return release_version_payload(correlation_id=request.state.correlation_id)
 
         platform_observability_router = APIRouter()
+
+        @platform_observability_router.get("/platform/release-identity", tags=["platform"])
+        def platform_release_identity(request: Request) -> dict[str, Any]:
+            # Local, server-owned deployment metadata only. Never call
+            # readiness/provider/model probes at this admission boundary.
+            return {
+                **release_version_payload(correlation_id=request.state.correlation_id),
+                "release_profile": active_release_profile["name"],
+                "release_profile_valid": active_release_profile["valid"],
+                "manifest_digest": active_release_manifest_digest,
+            }
 
         @platform_observability_router.get("/platform/observability", tags=["platform"])
         @platform_observability_router.get("/platform/metrics/export", tags=["platform"])
@@ -1600,6 +1612,28 @@ else:
             body: JobRetryPayload | None = None,
         ) -> dict[str, Any]:
             return _retry_job_response(job_id, body, request)
+
+        @platform_router.get("/auth/principal", tags=["auth"])
+        def authenticated_principal(request: Request) -> dict[str, Any]:
+            """Read only the caller's verified, authoritative business grants.
+
+            No role switching, account lookup by caller-supplied id, or token /
+            session attributes are exposed. The configured boundary resolves
+            roles from the durable identity store, never browser role headers.
+            """
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required",
+                )
+            return {
+                "account_id": principal.subject_id,
+                "tenant_id": principal.tenant_id,
+                "roles": sorted(role.value for role in principal.roles),
+            }
 
         @platform_router.get("/audit/events", tags=["audit"])
         def list_audit_events(
