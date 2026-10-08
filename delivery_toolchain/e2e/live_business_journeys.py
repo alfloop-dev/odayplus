@@ -43,7 +43,8 @@ Every journey shares one fail-closed skeleton:
    name the tenant, actors, records, allowed actions, the bodies of every write
    (authored by the named authorizer, never generated here) and, where
    required, the named approval. Each actor signs in through the Web password
-   form and must be refused the platform user-administration surface, so a
+   form, reads its actual account/tenant/roles from the authenticated self
+   principal surface, and must be refused platform user administration, so a
    ``platform_admin`` account can never stand in for a business role. The
    authorized record is read and must be live (no fixture/seed/mock marker)
    with its provenance. Until all of that holds the HTTP wrapper refuses every
@@ -96,9 +97,9 @@ DEFAULT_OUTPUT = ROOT / ".odp_data" / "live-e2e-gate" / "business-journeys-recei
 RUNNER_PATH = "delivery_toolchain/e2e/live_business_journeys.py"
 
 RECEIPT_KIND = "odp.live-business-journeys"
-RECEIPT_SCHEMA_VERSION = 1
+RECEIPT_SCHEMA_VERSION = 2
 SCOPE_KIND = "odp.live-business-journey-scope"
-SCOPE_SCHEMA_VERSION = 1
+SCOPE_SCHEMA_VERSION = 2
 
 API_URL_ENV = "ODP_LIVE_E2E_API_URL"
 WEB_URL_ENV = "ODP_LIVE_E2E_WEB_URL"
@@ -132,7 +133,10 @@ AUTH_PATHS = frozenset({"/login", "/auth/logout", "/auth/session"})
 #: here; an account served it holds platform administration grants and may
 #: not stand in for a business role.
 USER_ADMIN_PROBE_PATH = "/api/v1/operator/users"
+PRINCIPAL_PATH = "/api/v1/auth/principal"
 AUDIT_EVENTS_PATH = "/api/v1/audit/events"
+#: ``event_type`` of the API's RBAC allow/deny decisions (shared/audit/policy.py).
+SECURITY_EVENT_TYPE = "security.authorization"
 #: Actor slots a journey may use. ``denied`` is always required.
 ACTOR_SLOTS = ("primary", "approver", "marketer", "denied")
 
@@ -185,16 +189,14 @@ DEPENDENCY_ACTIONS: Mapping[str, str] = {
         "assisted entry, and a blocked-source probe, in scope."
     ),
     "named-approval": (
-        "The journey requires a named business approval reference and a distinct "
-        "approver account."
+        "The journey requires a named business approval reference and a distinct approver account."
     ),
     "tenant-isolation": (
         "A foreign-tenant or foreign-store record was served; restore tenant/ABAC "
         "binding before any release."
     ),
     "authorization": (
-        "An account without the permission was allowed to write; restore RBAC before "
-        "any release."
+        "An account without the permission was allowed to write; restore RBAC before any release."
     ),
     "business-write": "The business write was refused or failed; inspect the API response.",
     "durable-readback": (
@@ -365,19 +367,55 @@ class Step:
     capture: Mapping[str, str] = field(default_factory=dict)
     #: dotted paths that must be present and non-empty in the response.
     required: tuple[str, ...] = ()
-    #: Expected audit event type prefix for this write ("" = any event that
-    #: carries this write's unique correlation id).
+    #: Expected platform audit event type prefix for this write. Matched only
+    #: against business events in ``/api/v1/audit/events`` carrying this
+    #: write's unique correlation id; ``security.authorization`` decisions never
+    #: count as the business audit.
     audit_event: str = ""
+    #: Where the real API records the business audit outside the platform log
+    #: (the operator shell's own audit feed), the write response returns the
+    #: event: ``audit_response_id`` is its id and ``audit_response_correlation``
+    #: the correlation id it must carry (this write's).
+    audit_response_id: str = ""
+    audit_response_correlation: str = ""
+    #: response path -> template the write response must echo, binding the
+    #: write to the authorized record and action (e.g. ``approvalId``).
+    response_bindings: Mapping[str, str] = field(default_factory=dict)
+    #: response paths that must be non-empty lists (a real business payload,
+    #: not an empty job).
+    nonempty_lists: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class JobSpec:
-    """Durable async work started by a write and polled to a terminal status."""
+    """Durable async work started by a write and polled to a terminal status.
+
+    ``succeeded`` alone is not the business outcome: a worker that had nothing
+    to do also succeeds. The terminal job payload must carry the business
+    result (``result_required`` / ``result_nonempty`` / ``result_bindings``)
+    and, after it, the durable result read (``result_read``) must serve that
+    result for the authorized record with its provenance.
+    """
 
     id_capture: str
     path: str
     status_path: str = "status"
     actor: str = "primary"
+    #: paths on the terminal job payload that must be present and non-empty.
+    result_required: tuple[str, ...] = ()
+    #: paths on the terminal job payload that must be non-empty lists.
+    result_nonempty: tuple[str, ...] = ()
+    #: path on the terminal job payload -> template it must contain/equal.
+    result_bindings: Mapping[str, str] = field(default_factory=dict)
+    #: durable read of the produced result, after the job is terminal.
+    result_read: Step | None = None
+    result_read_required: tuple[str, ...] = ()
+    result_read_bindings: Mapping[str, str] = field(default_factory=dict)
+    #: path on the durable result whose value identifies the result record.
+    result_id_path: str = ""
+    #: ``captured`` name of the result id read before the write; the durable
+    #: result must be a new one.
+    previous_result_capture: str = ""
 
 
 @dataclass(frozen=True)
@@ -396,6 +434,60 @@ class PolicySpec:
     #: Paths that must be empty on a quarantined record (no retrieval).
     not_retrieved_paths: tuple[str, ...]
     readback_path: str
+
+
+@dataclass(frozen=True)
+class UiStep:
+    """One browser step of the live program: ``click``, ``visible`` or ``text``.
+
+    ``selector`` is a ``data-testid`` (template); ``text`` (template) must be
+    contained in the element for ``text`` steps.
+    """
+
+    action: str
+    selector: str
+    text: str = ""
+
+
+UI_STEP_ACTIONS = frozenset({"click", "visible", "text"})
+
+
+@dataclass(frozen=True)
+class UiCheckSpec:
+    """A real browser assertion against the deployed Web workspace.
+
+    It runs between two writes (``after_write``), so the journey proves the
+    user actually *sees* the outcome (e.g. the NetPlan disclosure after the
+    solve) before the next decision is taken. The live Playwright program
+    signs in through the password form and asserts the steps against the
+    deployed data; it never intercepts a request (no ``page.route``).
+    """
+
+    name: str
+    after_write: str
+    actor: str
+    #: Workspace URL (template) the browser opens.
+    url: str
+    steps: tuple[UiStep, ...]
+
+
+@dataclass(frozen=True)
+class DomainAuditSpec:
+    """A durable business audit trail served by the record's own read model.
+
+    The governance service records its decisions in its own durable audit
+    trail (``auditRows``), not in the platform audit log. The row must be new
+    (absent before the write) and must name the authorized record.
+    """
+
+    write: str
+    #: Path of the audit row list on the read/readback payload.
+    list_path: str
+    #: row field -> template the new row must carry.
+    match: Mapping[str, str]
+    id_field: str = "id"
+    #: Label of the trail in the receipt (``event_type`` of the audit ref).
+    event_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -419,8 +511,20 @@ class JourneySpec:
     record_id_path: str
     state_paths: tuple[str, ...]
     provenance_paths: tuple[str, ...]
+    #: ``scope.records`` key the served record id must equal.
+    record_key: str = ""
+    #: Paths where the served record carries its own tenant; each must equal
+    #: the authorized tenant before any write is armed.
+    tenant_paths: tuple[str, ...] = ()
+    #: read path -> template the served record must equal (record binding).
+    record_bindings: Mapping[str, str] = field(default_factory=dict)
     #: write key -> body field that must equal the authorized action.
     action_fields: Mapping[str, str] = field(default_factory=dict)
+    #: write key -> (actions, body field, minimum length): a reason the real
+    #: service requires for those actions (refused as 422 otherwise).
+    reason_rules: Mapping[str, tuple[frozenset[str], str, int]] = field(default_factory=dict)
+    #: write key -> body fields that must be non-empty lists.
+    body_nonempty: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     #: path -> (allowed values, dependency) the read record must satisfy.
     allowed_values: Mapping[str, tuple[frozenset[str], str]] = field(default_factory=dict)
     model_provenance_paths: tuple[str, ...] = ()
@@ -430,17 +534,28 @@ class JourneySpec:
     disclosure_keys: tuple[str, ...] = ()
     #: paths that must be present and non-empty on the readback.
     readback_required: tuple[str, ...] = ()
+    #: readback path -> template the readback must equal.
+    readback_bindings: Mapping[str, str] = field(default_factory=dict)
+    domain_audit: DomainAuditSpec | None = None
     policy: PolicySpec | None = None
     extra_reads: tuple[Step, ...] = ()
+    ui_checks: tuple[UiCheckSpec, ...] = ()
 
     @property
     def actors(self) -> tuple[str, ...]:
         used = {"primary", "denied"}
         used.update(step.actor for step in self.writes)
         used.update(step.actor for step in self.extra_reads)
+        used.update(check.actor for check in self.ui_checks)
         if self.job is not None:
             used.add(self.job.actor)
         return tuple(slot for slot in ACTOR_SLOTS if slot in used)
+
+    @property
+    def granted_actors(self) -> tuple[str, ...]:
+        """Actors whose business grant must be proven before writes are armed."""
+
+        return tuple(slot for slot in self.actors if slot != "denied")
 
     def env_prefix(self, actor: str = "primary") -> str:
         base = f"ODP_LIVE_JOURNEY_{self.journey_id.upper()}"
@@ -453,6 +568,8 @@ class JourneySpec:
         paths = [step.path for step in steps]
         if self.job is not None:
             paths.append(self.job.path)
+            if self.job.result_read is not None:
+                paths.append(self.job.result_read.path)
         if self.policy is not None:
             paths.append(self.policy.readback_path)
         return paths
@@ -499,6 +616,8 @@ JOURNEYS: tuple[JourneySpec, ...] = (
             "foreign_issue", "GET", f"{V1}/operator/store-ops/issues/{{foreign.issue_id}}"
         ),
         record_id_path="issue.id",
+        record_key="issue_id",
+        tenant_paths=("issue.tenantId",),
         state_paths=("issue.status", "issue.history"),
         provenance_paths=("issue.id", "issue.storeId", "issue.status"),
     ),
@@ -525,13 +644,24 @@ JOURNEYS: tuple[JourneySpec, ...] = (
                 "GET",
                 f"{V1}/adlift/reports/{{record.campaign_id}}",
                 actor="marketer",
+                required=(
+                    "report_id",
+                    "campaign_id",
+                    "model_version",
+                    "feature_version",
+                    "source_snapshot_ids",
+                ),
+                response_bindings={"campaign_id": "{record.campaign_id}"},
+                capture={"previous_report_id": "report_id"},
             ),
         ),
+        body_nonempty={"adlift_job": ("campaigns",)},
         writes=(
             _write(
                 "price_action",
                 "POST",
                 f"{V1}/priceops/plans/{{record.plan_id}}/{{write.price_action.action}}",
+                audit_event="priceops.plan_",
             ),
             _write(
                 "adlift_job",
@@ -548,12 +678,37 @@ JOURNEYS: tuple[JourneySpec, ...] = (
         readback=Step("readback_plan", "GET", f"{V1}/priceops/plans/{{record.plan_id}}"),
         cross_tenant=Step("foreign_plan", "GET", f"{V1}/priceops/plans/{{foreign.plan_id}}"),
         record_id_path="plan_id",
+        record_key="plan_id",
+        tenant_paths=("tenant_id",),
         state_paths=("status", "status_history"),
         provenance_paths=("plan_id", "tenant_id", "status", "items"),
         job=JobSpec(
             id_capture="adlift_job_id",
             path=f"{V1}/adlift/incrementality-jobs/{{captured.adlift_job_id}}",
             actor="marketer",
+            result_required=("reports[campaign_id={record.campaign_id}].report_id",),
+            result_nonempty=("reports",),
+            result_bindings={"job_id": "{captured.adlift_job_id}"},
+            result_read=Step(
+                "durable_adlift_report",
+                "GET",
+                f"{V1}/adlift/reports/{{record.campaign_id}}",
+                actor="marketer",
+            ),
+            result_read_required=(
+                "report_id",
+                "campaign_id",
+                "model_version",
+                "feature_version",
+                "source_snapshot_ids",
+                "generated_at",
+            ),
+            result_read_bindings={
+                "campaign_id": "{record.campaign_id}",
+                "report_id": "{captured.adlift_report_id}",
+            },
+            result_id_path="report_id",
+            previous_result_capture="previous_report_id",
         ),
     ),
     JourneySpec(
@@ -566,7 +721,12 @@ JOURNEYS: tuple[JourneySpec, ...] = (
             "denied": frozenset({"expansion_user", "site_reviewer"}),
         },
         operator_role="",
-        required_records=("scenario_id",),
+        required_records=(
+            "scenario_id",
+            "rebalance_store_id",
+            "modelled_class",
+            "unmodelled_class",
+        ),
         required_foreign=("scenario_id",),
         writes_allowed={
             "solve": frozenset({"solve"}),
@@ -599,13 +759,37 @@ JOURNEYS: tuple[JourneySpec, ...] = (
                 audit_event="netplan.approved",
             ),
         ),
-        readback=Step(
-            "readback_scenario", "GET", f"{V1}/netplan/scenarios/{{record.scenario_id}}"
-        ),
+        readback=Step("readback_scenario", "GET", f"{V1}/netplan/scenarios/{{record.scenario_id}}"),
         cross_tenant=Step(
             "foreign_scenario", "GET", f"{V1}/netplan/scenarios/{{foreign.scenario_id}}"
         ),
         record_id_path="scenario_id",
+        record_key="scenario_id",
+        tenant_paths=("tenant_id",),
+        ui_checks=(
+            UiCheckSpec(
+                name="netplan_disclosure",
+                after_write="solve",
+                actor="primary",
+                url="/operator?ws=network&tab=rebalance",
+                steps=(
+                    UiStep("click", "rebalance-card-{record.rebalance_store_id}"),
+                    UiStep("visible", "rebalance-netplan-{record.rebalance_store_id}"),
+                    UiStep("visible", "rebalance-scenario-{record.scenario_id}"),
+                    UiStep("visible", "scenario-disclosure-{record.scenario_id}"),
+                    UiStep(
+                        "text",
+                        "scenario-modelled-classes-{record.scenario_id}",
+                        "{record.modelled_class}",
+                    ),
+                    UiStep(
+                        "text",
+                        "scenario-unmodelled-classes-{record.scenario_id}",
+                        "{record.unmodelled_class}",
+                    ),
+                ),
+            ),
+        ),
         state_paths=("status", "status_history"),
         provenance_paths=("scenario_id", "tenant_id", "status", "options_by_entity"),
         model_provenance_paths=("model_version", "feature_version", "solver_version"),
@@ -632,7 +816,14 @@ JOURNEYS: tuple[JourneySpec, ...] = (
         operator_role="ops-lead",
         required_records=("approval_id",),
         required_foreign=("approval_id",),
-        writes_allowed={"decision": frozenset({"approved", "returned", "rejected"})},
+        writes_allowed={"decision": frozenset({"approve", "return", "reject"})},
+        reason_rules={"decision": (frozenset({"return", "reject"}), "reason", 10)},
+        domain_audit=DomainAuditSpec(
+            write="decision",
+            list_path="auditRows",
+            match={"category": "approval", "correlationId": "corr-{record.approval_id}"},
+            event_type="operator.governance.decision",
+        ),
         action_fields={"decision": "action"},
         requires_named_approval=True,
         read=Step("read_governance", "GET", f"{V1}/operator/governance/snapshot"),
@@ -642,6 +833,11 @@ JOURNEYS: tuple[JourneySpec, ...] = (
                 "POST",
                 f"{V1}/operator/governance/decisions",
                 body_overrides={"approvalId": "{record.approval_id}"},
+                required=("approvalId", "decision.id", "correlation_id"),
+                response_bindings={
+                    "approvalId": "{record.approval_id}",
+                    "action": "{write.decision.action}",
+                },
             ),
         ),
         readback=Step("readback_governance", "GET", f"{V1}/operator/governance/snapshot"),
@@ -655,6 +851,7 @@ JOURNEYS: tuple[JourneySpec, ...] = (
             idempotent=True,
         ),
         record_id_path="approvals[id={record.approval_id}].id",
+        record_key="approval_id",
         state_paths=("approvals[id={record.approval_id}].status",),
         provenance_paths=(
             "approvals[id={record.approval_id}].id",
@@ -663,7 +860,7 @@ JOURNEYS: tuple[JourneySpec, ...] = (
         allowed_values={
             "approvals[id={record.approval_id}].status": (frozenset({"pending"}), "business-data"),
         },
-        readback_required=("decisions[approvalId={record.approval_id}]",),
+        readback_required=("decisions[approvalId={record.approval_id}].id",),
     ),
     JourneySpec(
         journey_id="franchise",
@@ -687,6 +884,10 @@ JOURNEYS: tuple[JourneySpec, ...] = (
                 f"{V1}/operator/shell/franchisee/reports",
                 body_overrides={"storeId": "{record.store_id}"},
                 expect=frozenset({200, 201}),
+                required=("report.reportId",),
+                audit_response_id="auditEvent.id",
+                audit_response_correlation="auditEvent.metadata.correlationId",
+                response_bindings={"report.storeId": "{record.store_id}"},
             ),
         ),
         readback=Step(
@@ -699,9 +900,11 @@ JOURNEYS: tuple[JourneySpec, ...] = (
             "GET",
             f"{V1}/operator/shell/franchisee?storeId={{foreign.store_id}}",
         ),
-        record_id_path="storeId",
+        record_id_path="store.id",
+        record_key="store_id",
+        record_bindings={"meta.scope.storeId": "{record.store_id}"},
         state_paths=("reports",),
-        provenance_paths=("storeId",),
+        provenance_paths=("store.id", "meta.scope.storeId"),
     ),
     JourneySpec(
         journey_id="intake",
@@ -714,7 +917,26 @@ JOURNEYS: tuple[JourneySpec, ...] = (
         operator_role="expansion-staff",
         required_records=("intake_id",),
         required_foreign=("intake_id",),
-        writes_allowed={"decide": frozenset({"approve", "reject", "hold", "promote"})},
+        writes_allowed={
+            "decide": frozenset({"create", "revise", "duplicate", "quarantine", "reject"})
+        },
+        reason_rules={
+            "decide": (
+                frozenset({"create", "revise", "duplicate", "quarantine", "reject"}),
+                "reason",
+                1,
+            )
+        },
+        domain_audit=DomainAuditSpec(
+            write="decide",
+            list_path="auditEvents",
+            match={
+                "targetId": "{record.intake_id}",
+                "action": "intake.decide.{write.decide.action}",
+                "correlationId": "{correlation.decide}",
+            },
+            event_type="network_listings.intake.decided",
+        ),
         action_fields={"decide": "action"},
         read=Step(
             "read_intake", "GET", f"{V1}/operator/network-listings/intake/{{record.intake_id}}"
@@ -737,6 +959,8 @@ JOURNEYS: tuple[JourneySpec, ...] = (
             f"{V1}/operator/network-listings/intake/{{foreign.intake_id}}",
         ),
         record_id_path="id",
+        record_key="intake_id",
+        tenant_paths=("tenantId",),
         state_paths=("stage", "version"),
         provenance_paths=("id", "tenantId", "sourceId", "policy", "intakeMethod", "stage"),
         allowed_values={
@@ -996,6 +1220,7 @@ class JourneyScope:
     journey_id: str
     tenant_id: str
     actors: Mapping[str, str]
+    account_ids: Mapping[str, str]
     records: Mapping[str, str]
     foreign_tenant_id: str
     foreign: Mapping[str, str]
@@ -1006,6 +1231,7 @@ class JourneyScope:
         return {
             "tenant_id": self.tenant_id,
             "actors": dict(self.actors),
+            "account_ids": dict(self.account_ids),
             "records": dict(self.records),
             "foreign_tenant_id": self.foreign_tenant_id,
             "foreign_records": dict(self.foreign),
@@ -1059,13 +1285,25 @@ def journey_scope(
     if tenant is None:
         blockers.append(("scope-authorization", "tenant_id must be a tenant UUID"))
     if foreign_tenant is None or foreign_tenant == tenant:
-        blockers.append(("scope-authorization", "foreign_tenant_id must be a different tenant UUID"))
+        blockers.append(
+            ("scope-authorization", "foreign_tenant_id must be a different tenant UUID")
+        )
     actors = {
         str(k): str(v).strip()
         for k, v in _as_dict(entry.get("actors")).items()
         if isinstance(v, str) and v.strip()
     }
+    account_ids = {
+        str(k): _canonical_uuid(v) for k, v in _as_dict(entry.get("account_ids")).items()
+    }
     for slot in spec.actors:
+        if not account_ids.get(slot):
+            blockers.append(
+                (
+                    "scope-authorization",
+                    f"account_ids.{slot} must bind the authoritative account UUID",
+                )
+            )
         if slot not in actors:
             dependency = "named-approval" if slot == "approver" else "scope-authorization"
             blockers.append((dependency, f"actors.{slot} (the authorized account) is required"))
@@ -1086,9 +1324,7 @@ def journey_scope(
             blockers.append(
                 ("scope-authorization", f"foreign_records.{key} must differ from records.{key}")
             )
-    writes = {
-        str(k): v for k, v in _as_dict(entry.get("writes")).items() if isinstance(v, Mapping)
-    }
+    writes = {str(k): v for k, v in _as_dict(entry.get("writes")).items() if isinstance(v, Mapping)}
     for key, allowed in spec.writes_allowed.items():
         write = _as_dict(writes.get(key))
         action = str(write.get("action") or "")
@@ -1109,10 +1345,78 @@ def journey_scope(
                     f"writes.{key}.body.{spec.action_fields[key]} must equal the authorized action",
                 )
             )
+        if isinstance(body, Mapping):
+            for path in spec.body_nonempty.get(key, ()):
+                value = dig(body, path)
+                if not isinstance(value, list) or not value:
+                    blockers.append(
+                        (
+                            "scope-authorization",
+                            f"writes.{key}.body.{path} must be a non-empty list",
+                        )
+                    )
+            if key in spec.reason_rules:
+                actions, path, minimum = spec.reason_rules[key]
+                if action in actions and len(str(dig(body, path) or "").strip()) < minimum:
+                    blockers.append(
+                        (
+                            "scope-authorization",
+                            f"writes.{key}.body.{path} needs at least {minimum} characters",
+                        )
+                    )
+            if spec.journey_id == "intake" and key == "decide":
+                if (
+                    body.get("riskAcknowledged") is not True
+                    or not str(body.get("riskSummary") or "").strip()
+                ):
+                    blockers.append(
+                        (
+                            "scope-authorization",
+                            "intake decision requires authored riskSummary and riskAcknowledged=true",
+                        )
+                    )
+            if spec.journey_id == "growth" and key == "adlift_job":
+                campaigns = body.get("campaigns")
+                if (
+                    not isinstance(campaigns, list)
+                    or len(campaigns) != 1
+                    or not isinstance(campaigns[0], Mapping)
+                    or str(campaigns[0].get("campaign_id") or "") != records.get("campaign_id")
+                ):
+                    blockers.append(
+                        (
+                            "scope-authorization",
+                            "adlift campaigns must contain only the authorized campaign_id",
+                        )
+                    )
+                elif not _present(campaigns[0].get("source_snapshot_ids")):
+                    blockers.append(
+                        (
+                            "business-data",
+                            "authorized campaign needs source_snapshot_ids provenance",
+                        )
+                    )
     if spec.policy is not None:
         probe = _as_dict(writes.get("policy_probe"))
-        if not isinstance(probe.get("body"), Mapping) or not str(probe.get("source_ref") or ""):
-            blockers.append(("source", "writes.policy_probe needs a body and a source_ref"))
+        probe_body = _as_dict(probe.get("body"))
+        url = str(probe_body.get("url") or "")
+        if not url.startswith("https://") or not str(probe.get("source_ref") or ""):
+            blockers.append(
+                (
+                    "source",
+                    "writes.policy_probe needs an authorized HTTPS url and canonical source_ref",
+                )
+            )
+        decision = _as_dict(writes.get("decide"))
+        if decision.get("action") in {"revise", "duplicate"}:
+            target = records.get("target_listing_id")
+            if not target or _as_dict(decision.get("body")).get("targetListingId") != target:
+                blockers.append(
+                    (
+                        "scope-authorization",
+                        "revise/duplicate need a scoped target_listing_id and matching body.targetListingId",
+                    )
+                )
     approval_ref = str(entry.get("approval_ref") or "").strip()
     if spec.requires_named_approval and not approval_ref:
         blockers.append(("named-approval", "approval_ref (named business approval) is required"))
@@ -1123,6 +1427,7 @@ def journey_scope(
             journey_id=spec.journey_id,
             tenant_id=str(tenant),
             actors=actors,
+            account_ids={k: str(v) for k, v in account_ids.items()},
             records=records,
             foreign_tenant_id=str(foreign_tenant),
             foreign=foreign,
@@ -1155,10 +1460,15 @@ class JourneyResult:
     job_refs: list[dict[str, Any]] = field(default_factory=list)
     negative_probes: dict[str, bool] = field(default_factory=dict)
     policy_outcome: dict[str, Any] | None = None
+    #: actor slot -> the served authorization decision proving its grant.
+    grants: dict[str, dict[str, Any]] = field(default_factory=dict)
+    ui_checks: list[dict[str, Any]] = field(default_factory=list)
     ledger: RequestLedger = field(default_factory=RequestLedger)
 
     def check(self, ok: bool, name: str, detail: str, dependency: str) -> bool:
-        self.checks.append({"name": name, "ok": bool(ok), "detail": detail, "dependency": dependency})
+        self.checks.append(
+            {"name": name, "ok": bool(ok), "detail": detail, "dependency": dependency}
+        )
         if not ok:
             self.blockers.append({"check": name, "dependency": dependency, "detail": detail})
         return bool(ok)
@@ -1186,6 +1496,9 @@ class JourneyResult:
             "job_refs": list(self.job_refs),
             "negative_probes": dict(self.negative_probes),
             "policy_outcome": self.policy_outcome,
+            "ui_checks": [
+                {**check, "detail": redact(check.get("detail", ""))} for check in self.ui_checks
+            ],
             "requests": self.ledger.as_dict(),
             "checks": [{**check, "detail": redact(check["detail"])} for check in self.checks],
             "blockers": [
@@ -1219,6 +1532,143 @@ def credential_from_env(spec: JourneySpec, actor: str, environ: Mapping[str, str
     )
 
 
+# ---------------------------------------------------------------------------
+# Browser assertions (live Playwright program)
+# ---------------------------------------------------------------------------
+
+#: The live Playwright program and its config. The config has no webServer,
+#: no injected role/tenant headers and no retries; the program signs in
+#: through the password form and never intercepts a request.
+LIVE_UI_CONFIG = "tests/e2e/live/playwright.live.config.ts"
+LIVE_UI_PROGRAM = "tests/e2e/live/business-ui.live.ts"
+LIVE_UI_COMMAND = (
+    "npx",
+    "--no-install",
+    "playwright",
+    "test",
+    "--config",
+    LIVE_UI_CONFIG,
+    "--reporter=line",
+)
+
+
+@dataclass(frozen=True)
+class UiOutcome:
+    """What one browser assertion run proved (no secret is ever held)."""
+
+    status: str
+    command: tuple[str, ...]
+    exit_code: int | None
+    detail: str = ""
+
+
+class UiDriver(Protocol):
+    def available(self) -> tuple[bool, str]: ...
+
+    def run(
+        self,
+        *,
+        check: str,
+        web_origin: str,
+        path: str,
+        credential: Credential,
+        assertions: Sequence[Mapping[str, str]],
+    ) -> UiOutcome: ...
+
+
+class PlaywrightUiDriver:
+    """Runs ``LIVE_UI_PROGRAM`` against the deployed Web origin.
+
+    The credential reaches the child only through its environment; the
+    recorded command carries no secret. A missing toolchain is ``BLOCKED``
+    (``web``) and is detected before any write is armed.
+    """
+
+    def __init__(
+        self,
+        *,
+        root: Path = ROOT,
+        timeout_seconds: float = 300.0,
+        runner: Callable[..., Any] | None = None,
+        which: Callable[[str], str | None] | None = None,
+    ) -> None:
+        import shutil
+        import subprocess
+
+        self.root = root
+        self.timeout_seconds = timeout_seconds
+        self._run = runner or subprocess.run
+        self._which = which or shutil.which
+
+    def command(self) -> tuple[str, ...]:
+        return LIVE_UI_COMMAND
+
+    def available(self) -> tuple[bool, str]:
+        if self._which("npx") is None:
+            return False, "npx is not on PATH; the live Playwright program cannot run"
+        for relative in (LIVE_UI_CONFIG, LIVE_UI_PROGRAM):
+            if not (self.root / relative).is_file():
+                return False, f"{relative} is missing"
+        if not (self.root / "node_modules" / "@playwright" / "test").is_dir():
+            return False, "@playwright/test is not installed (npm ci)"
+        return True, "ready"
+
+    def run(
+        self,
+        *,
+        check: str,
+        web_origin: str,
+        path: str,
+        credential: Credential,
+        assertions: Sequence[Mapping[str, str]],
+    ) -> UiOutcome:
+        command = self.command()
+        # No unrelated account, cloud, API or package-registry credential may
+        # leak into the browser child. Dependencies must already be installed.
+        allowed_env = {
+            "PATH",
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "TMPDIR",
+            "TEMP",
+            "TMP",
+            "LANG",
+            "LC_ALL",
+            "CI",
+            "NODE_ENV",
+            "XDG_CACHE_HOME",
+            "PLAYWRIGHT_BROWSERS_PATH",
+        }
+        env = {key: value for key, value in os.environ.items() if key in allowed_env}
+        env.update(
+            {
+                "ODP_LIVE_UI_BASE_URL": web_origin,
+                "ODP_LIVE_UI_CHECK": check,
+                "ODP_LIVE_UI_PATH": path,
+                "ODP_LIVE_UI_USERNAME": credential.username,
+                "ODP_LIVE_UI_PASSWORD": credential.password,
+                "ODP_LIVE_UI_ASSERTIONS": json.dumps(list(assertions), sort_keys=True),
+            }
+        )
+        try:
+            completed = self._run(
+                list(command),
+                cwd=str(self.root),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+                check=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - any spawn failure is BLOCKED
+            return UiOutcome(STATUS_BLOCKED, command, None, f"{type(exc).__name__}: {exc}")
+        # Browser diagnostics can contain form values/URLs. Never copy them
+        # into the durable receipt, even if the configured password is redacted.
+        status = STATUS_PASSED if completed.returncode == 0 else STATUS_FAILED
+        return UiOutcome(status, command, int(completed.returncode), "live browser finished")
+
+
 class JourneyRunner:
     """Execute one journey against the deployed Web origin."""
 
@@ -1236,6 +1686,7 @@ class JourneyRunner:
         sleep: Callable[[float], None] = time.sleep,
         job_deadline_seconds: float = 600.0,
         poll_interval_seconds: float = 10.0,
+        ui_driver: UiDriver | None = None,
     ) -> None:
         self.spec = spec
         self.scope = scope
@@ -1250,7 +1701,13 @@ class JourneyRunner:
         self.sleep = sleep
         self.job_deadline_seconds = job_deadline_seconds
         self.poll_interval_seconds = poll_interval_seconds
+        self.ui_driver = ui_driver
         self._sequence = 0
+        #: actor slot -> correlation id of an authorized read it performed.
+        self.grant_reads: dict[str, str] = {}
+        self.before_payload: dict[str, Any] = {}
+        self.after_payload: dict[str, Any] = {}
+        self.write_responses: dict[str, dict[str, Any]] = {}
 
     # -- plumbing ---------------------------------------------------------
 
@@ -1270,6 +1727,7 @@ class JourneyRunner:
                 for key, value in self.scope.writes.items()
             },
             "captured": dict(self.captured),
+            "correlation": dict(self.result.correlation_ids),
             "approval_ref": self.scope.approval_ref,
             "tenant_id": self.scope.tenant_id,
         }
@@ -1277,7 +1735,9 @@ class JourneyRunner:
     def path_of(self, dotted: str) -> str:
         return render(dotted, self.variables(), quote=False)
 
-    def send(self, step: Step, *, actor: str | None = None, label: str = "") -> tuple[Response, str]:
+    def send(
+        self, step: Step, *, actor: str | None = None, label: str = ""
+    ) -> tuple[Response, str]:
         acting = actor or step.actor
         correlation_id = self._correlation(label or step.name)
         variables = self.variables()
@@ -1316,6 +1776,32 @@ class JourneyRunner:
                 "state": {path: dig(payload, self.path_of(path)) for path in self.spec.state_paths},
             }
         )
+
+    def _mismatches(self, payload: Any, bindings: Mapping[str, str]) -> list[str]:
+        """``path=served (expected wanted)`` for every binding that does not hold."""
+
+        mismatched: list[str] = []
+        for path, template in bindings.items():
+            served = dig(payload, self.path_of(path))
+            wanted = self.path_of(template)
+            if isinstance(served, list):
+                ok = wanted in {str(item) for item in served}
+            else:
+                ok = _present(served) and str(served) == wanted
+            if not ok:
+                mismatched.append(f"{path}={served!r} (expected {wanted!r})")
+        return mismatched
+
+    def _missing(self, payload: Any, paths: Sequence[str]) -> list[str]:
+        return [path for path in paths if not _present(dig(payload, self.path_of(path)))]
+
+    def _empty_lists(self, payload: Any, paths: Sequence[str]) -> list[str]:
+        empty: list[str] = []
+        for path in paths:
+            value = dig(payload, self.path_of(path))
+            if not isinstance(value, list) or not value:
+                empty.append(path)
+        return empty
 
     # -- preflight --------------------------------------------------------
 
@@ -1361,6 +1847,30 @@ class JourneyRunner:
             "business-credential",
         ):
             return False
+        principal = self.http.request(
+            "GET",
+            PRINCIPAL_PATH,
+            headers={"accept": "application/json", "cookie": _cookie_header(cookies)},
+        )
+        roles = principal.payload.get("roles")
+        role_values = (
+            set(roles)
+            if isinstance(roles, list) and all(isinstance(role, str) for role in roles)
+            else set()
+        )
+        if not self.result.check(
+            not principal.failed
+            and principal.status == 200
+            and principal.payload.get("account_id") == self.scope.account_ids.get(actor)
+            and _canonical_uuid(principal.payload.get("tenant_id")) == self.scope.tenant_id
+            and bool(role_values & self.spec.actor_roles.get(actor, frozenset()))
+            and "platform_admin" not in role_values,
+            f"actor:{actor}_authoritative_roles",
+            f"status={principal.status} actualRoles={sorted(role_values)} account/tenant bound to scope",
+            "business-role",
+        ):
+            return False
+        self.result.actor["verified_business_roles"][actor] = sorted(role_values)
         probe = self.http.request(
             "GET",
             USER_ADMIN_PROBE_PATH,
@@ -1377,7 +1887,7 @@ class JourneyRunner:
         )
 
     def read_record(self) -> dict[str, Any] | None:
-        response, _ = self.send(self.spec.read)
+        response, correlation_id = self.send(self.spec.read)
         if not self.result.check(
             not response.failed and response.status in self.spec.read.expect,
             f"read:{self.spec.read.name}",
@@ -1385,6 +1895,7 @@ class JourneyRunner:
             "business-data",
         ):
             return None
+        self.grant_reads.setdefault(self.spec.read.actor, correlation_id)
         payload = response.payload
         markers = find_surrogate_values(payload)
         if not self.result.check(
@@ -1394,15 +1905,15 @@ class JourneyRunner:
             "data-binding",
         ):
             return None
-        missing = [
-            path for path in self.spec.provenance_paths if not _present(dig(payload, self.path_of(path)))
-        ]
+        missing = self._missing(payload, self.spec.provenance_paths)
         if not self.result.check(
             not missing,
             f"read:{self.spec.read.name}:provenance",
             "complete" if not missing else f"missing={missing}",
             "business-data",
         ):
+            return None
+        if not self.bind_record(payload):
             return None
         for path, (allowed, dependency) in self.spec.allowed_values.items():
             value = dig(payload, self.path_of(path))
@@ -1423,22 +1934,183 @@ class JourneyRunner:
             "model",
         ):
             return None
+        if self.spec.journey_id == "intake" and _as_dict(self.scope.writes.get("decide")).get(
+            "action"
+        ) in {"revise", "duplicate"}:
+            target_response, _ = self.send(
+                Step("read_target_listing", "GET", f"{V1}/operator/network-listings")
+            )
+            target = dig(
+                target_response.payload, self.path_of("listings[id={record.target_listing_id}]")
+            )
+            if not self.result.check(
+                not target_response.failed
+                and target_response.status == 200
+                and dig(target, "id") == self.scope.records.get("target_listing_id")
+                and _canonical_uuid(dig(target, "tenantId")) == self.scope.tenant_id
+                and not find_surrogate_values(target),
+                "read:target_listing_binding",
+                "target listing must exist in the authorized tenant",
+                "business-data",
+            ):
+                return None
+        if (
+            self.spec.journey_id == "intake"
+            and _as_dict(self.scope.writes.get("decide")).get("action") == "duplicate"
+        ):
+            if not self.result.check(
+                dig(payload, "matchResult.targetListingId")
+                == self.scope.records.get("target_listing_id"),
+                "read:duplicate_target_binding",
+                "duplicate target must match the authorized existing listing",
+                "scope-authorization",
+            ):
+                return None
         for extra in self.spec.extra_reads:
-            extra_response, _ = self.send(extra)
+            extra_response, extra_correlation = self.send(extra)
             extra_markers = (
                 find_surrogate_values(extra_response.payload) if not extra_response.failed else []
             )
             if not self.result.check(
                 not extra_response.failed
                 and extra_response.status in extra.expect
-                and not extra_markers,
+                and not extra_markers
+                and not self._missing(extra_response.payload, extra.required)
+                and not self._mismatches(extra_response.payload, extra.response_bindings),
                 f"read:{extra.name}",
                 _failure_detail(extra_response, expected="200 live")
                 + (f" surrogatePaths={extra_markers[:5]}" if extra_markers else ""),
                 "data-binding" if extra_markers else "business-data",
             ):
                 return None
+            self.grant_reads.setdefault(extra.actor, extra_correlation)
+            for name, dotted in extra.capture.items():
+                # Optional pre-write state (e.g. the latest report before the job).
+                self.captured[name] = dig(extra_response.payload, self.path_of(dotted))
         return payload
+
+    def bind_record(self, payload: Mapping[str, Any]) -> bool:
+        """The served record must be the authorized record, in the authorized tenant."""
+
+        name = self.spec.read.name
+        if self.spec.record_key:
+            served = dig(payload, self.path_of(self.spec.record_id_path))
+            wanted = self.scope.records.get(self.spec.record_key, "")
+            if not self.result.check(
+                _present(served) and str(served) == wanted,
+                f"read:{name}:record_binding",
+                f"{self.spec.record_id_path}={served!r} authorized={wanted!r}",
+                "business-data",
+            ):
+                return False
+        mismatched = self._mismatches(payload, self.spec.record_bindings)
+        if not self.result.check(
+            not mismatched,
+            f"read:{name}:scope_binding",
+            "bound" if not mismatched else f"mismatched={mismatched}",
+            "business-data",
+        ):
+            return False
+        for path in self.spec.tenant_paths:
+            raw = dig(payload, self.path_of(path))
+            served_tenant = _canonical_uuid(raw)
+            if not self.result.check(
+                served_tenant is not None and served_tenant == self.scope.tenant_id,
+                f"read:{name}:tenant_binding",
+                f"{path}={raw!r} authorizedTenant={self.scope.tenant_id}",
+                "scope-authorization",
+            ):
+                return False
+        return True
+
+    def audit_events(
+        self, actor: str, correlation_id: str
+    ) -> tuple[Response, list[dict[str, Any]]]:
+        path = f"{AUDIT_EVENTS_PATH}?{urllib.parse.urlencode({'correlation_id': correlation_id})}"
+        response, _ = self.send(Step("audit_events", "GET", path, actor=actor), label="audit")
+        events = response.payload.get("events") if not response.failed else None
+        rows = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
+        return response, [row for row in rows if row.get("correlation_id") == correlation_id]
+
+    def authorization_event(self, actor: str, correlation_id: str) -> dict[str, Any] | None:
+        """The served RBAC decision (``security.authorization`` allow) for a request.
+
+        It is the API's own record of the authenticated principal's tenant and
+        of the grant that admitted the request -- not the role the scope
+        expects the account to hold.
+        """
+
+        _, events = self.audit_events(actor, correlation_id)
+        for event in events:
+            outcome = str(event.get("outcome") or event.get("result") or "").lower()
+            if (
+                event.get("event_type") == SECURITY_EVENT_TYPE
+                and outcome == "allow"
+                and _present(event.get("event_id"))
+            ):
+                metadata = _as_dict(event.get("metadata"))
+                tenant = metadata.get("tenant_id")
+                return {
+                    "correlation_id": correlation_id,
+                    "event_id": event.get("event_id"),
+                    "outcome": outcome,
+                    "action": event.get("action"),
+                    "resource": event.get("resource"),
+                    "decision_reason": metadata.get("reason"),
+                    "policy_id": metadata.get("policy_id"),
+                    "tenant_id": _canonical_uuid(tenant) or (str(tenant) if tenant else None),
+                    "account_ref": event.get("actor"),
+                }
+        return None
+
+    def prove_grants(self) -> bool:
+        """Every acting account must be *served* a grant in the authorized tenant."""
+
+        for slot in self.spec.granted_actors:
+            correlation_id = self.grant_reads.get(slot)
+            if correlation_id is None:
+                response, correlation_id = self.send(
+                    self.spec.read, actor=slot, label=f"grant-{slot}"
+                )
+                if not self.result.check(
+                    not response.failed and response.status in self.spec.read.expect,
+                    f"grant:{slot}_authorized_read",
+                    _failure_detail(response, expected="200"),
+                    "business-role",
+                ):
+                    return False
+            evidence = self.authorization_event(slot, correlation_id)
+            if not self.result.check(
+                evidence is not None,
+                f"grant:{slot}_served_decision",
+                (
+                    "allow decision served"
+                    if evidence is not None
+                    else f"no {SECURITY_EVENT_TYPE} allow event for correlation {correlation_id}"
+                ),
+                "business-role",
+            ):
+                return False
+            assert evidence is not None
+            if not self.result.check(
+                evidence["tenant_id"] == self.scope.tenant_id
+                and evidence["account_ref"] == self.scope.account_ids.get(slot),
+                f"grant:{slot}_tenant_binding",
+                f"servedTenant={evidence['tenant_id']!r} authorizedTenant={self.scope.tenant_id}",
+                "scope-authorization",
+            ):
+                return False
+            self.result.grants[slot] = evidence
+        return True
+
+    def ui_ready(self) -> bool:
+        if not self.spec.ui_checks:
+            return True
+        if self.ui_driver is None:
+            ready, detail = False, "no live browser driver configured"
+        else:
+            ready, detail = self.ui_driver.available()
+        return self.result.check(ready, "ui:live_browser", detail, "web")
 
     # -- negative probes --------------------------------------------------
 
@@ -1458,7 +2130,9 @@ class JourneyRunner:
         refused = not response.failed and response.status in DENIED_STATUSES
         readback, _ = self.send(self.spec.readback, label="denied-role-readback")
         unchanged = (
-            not readback.failed and readback.status == 200 and self.identity(readback.payload) == before
+            not readback.failed
+            and readback.status == 200
+            and self.identity(readback.payload) == before
         )
         self.result.negative_probes["wrong_role_denied"] = refused and unchanged
         return self.result.check(
@@ -1474,17 +2148,28 @@ class JourneyRunner:
         for step in self.spec.writes:
             response, correlation_id = self.send(step)
             self.result.correlation_ids[step.name] = correlation_id
-            missing = [path for path in step.required if not _present(dig(response.payload, path))]
+            payload = response.payload if not response.failed else {}
+            missing = self._missing(payload, step.required)
+            empty = self._empty_lists(payload, step.nonempty_lists)
+            mismatched = self._mismatches(payload, step.response_bindings)
+            problems = (
+                (f" missing={missing}" if missing else "")
+                + (f" emptyLists={empty}" if empty else "")
+                + (f" mismatched={mismatched}" if mismatched else "")
+            )
             if not self.result.check(
-                not response.failed and response.status in step.expect and not missing,
+                not response.failed
+                and response.status in step.expect
+                and not missing
+                and not empty
+                and not mismatched,
                 f"write:{step.name}",
-                _failure_detail(response, expected=str(sorted(step.expect)))
-                + (f" missing={missing}" if missing else ""),
+                _failure_detail(response, expected=str(sorted(step.expect))) + problems,
                 "business-write",
             ):
                 return False
             for name, dotted in step.capture.items():
-                value = dig(response.payload, dotted)
+                value = dig(payload, self.path_of(dotted))
                 if not self.result.check(
                     _present(value),
                     f"write:{step.name}:capture:{name}",
@@ -1493,7 +2178,53 @@ class JourneyRunner:
                 ):
                     return False
                 self.captured[name] = value
+            self.write_responses[step.name] = copy.deepcopy(payload)
+            for check in self.spec.ui_checks:
+                if check.after_write == step.name and not self.run_ui_check(check):
+                    return False
         return True
+
+    def run_ui_check(self, check: UiCheckSpec) -> bool:
+        variables = self.variables()
+        path = render(check.url, variables, quote=True)
+        steps = [
+            {
+                "action": step.action,
+                "selector": render(step.selector, variables, quote=False),
+                "text": render(step.text, variables, quote=False) if step.text else "",
+            }
+            for step in check.steps
+        ]
+        assert self.ui_driver is not None  # ui_ready() proved it before arming
+        outcome = self.ui_driver.run(
+            check=check.name,
+            web_origin=self.origin,
+            path=path,
+            credential=self.credentials[check.actor],
+            assertions=steps,
+        )
+        passed = outcome.status == STATUS_PASSED and outcome.exit_code == 0
+        self.result.ui_checks.append(
+            {
+                "name": check.name,
+                "after_write": check.after_write,
+                "actor": check.actor,
+                "subject": self.scope.actors.get(check.actor),
+                "url": path,
+                "steps": steps,
+                "program": LIVE_UI_PROGRAM,
+                "command": list(outcome.command),
+                "exit_code": outcome.exit_code,
+                "status": STATUS_PASSED if passed else outcome.status,
+                "detail": outcome.detail[-300:],
+            }
+        )
+        return self.result.check(
+            passed,
+            f"ui:{check.name}",
+            f"status={outcome.status} exit={outcome.exit_code} {outcome.detail[-200:]}",
+            "web" if outcome.status == STATUS_BLOCKED else "disclosure",
+        )
 
     def await_job(self) -> bool:
         job = self.spec.job
@@ -1501,22 +2232,76 @@ class JourneyRunner:
             return True
         deadline = self.monotonic() + self.job_deadline_seconds
         status = ""
+        payload: dict[str, Any] = {}
         while True:
-            response, _ = self.send(Step("job_status", "GET", job.path, actor=job.actor), label="job")
-            status = "" if response.failed else str(dig(response.payload, job.status_path) or "").lower()
+            response, _ = self.send(
+                Step("job_status", "GET", job.path, actor=job.actor), label="job"
+            )
+            payload = response.payload if not response.failed else {}
+            status = str(dig(payload, job.status_path) or "").lower()
             if status in {"succeeded", "failed", "cancelled"} or self.monotonic() >= deadline:
                 break
             self.sleep(self.poll_interval_seconds)
-        self.result.job_refs.append(
-            {"job_id": self.captured.get(job.id_capture), "status": status or None}
+        ref: dict[str, Any] = {
+            "job_id": self.captured.get(job.id_capture),
+            "status": status or None,
+        }
+        self.result.job_refs.append(ref)
+        if not self.result.check(
+            status == "succeeded",
+            "job:terminal_succeeded",
+            f"status={status or '<missing>'}",
+            "worker",
+        ):
+            return False
+        missing = self._missing(payload, job.result_required)
+        empty = self._empty_lists(payload, job.result_nonempty)
+        mismatched = self._mismatches(payload, job.result_bindings)
+        if not self.result.check(
+            not missing and not empty and not mismatched,
+            "job:business_result",
+            (
+                "result present"
+                if not (missing or empty or mismatched)
+                else f"missing={missing} emptyLists={empty} mismatched={mismatched}"
+            ),
+            "worker",
+        ):
+            return False
+        if job.result_read is None:
+            return True
+        report = dig(payload, self.path_of("reports[campaign_id={record.campaign_id}]"))
+        self.captured["adlift_report_id"] = dig(report, "report_id")
+        result, _ = self.send(job.result_read, label="job-result")
+        result_payload = result.payload if not result.failed else {}
+        markers = find_surrogate_values(result_payload)
+        missing = self._missing(result_payload, job.result_read_required)
+        mismatched = self._mismatches(result_payload, job.result_read_bindings)
+        result_id = dig(result_payload, job.result_id_path) if job.result_id_path else None
+        ref["result_id"] = result_id
+        ref["previous_result_id"] = (
+            self.captured.get(job.previous_result_capture) if job.previous_result_capture else None
         )
+        fresh = _present(result_id) and result_id != ref["previous_result_id"]
         return self.result.check(
-            status == "succeeded", "job:terminal_succeeded", f"status={status or '<missing>'}", "worker"
+            not result.failed
+            and result.status == 200
+            and not markers
+            and not missing
+            and not mismatched
+            and fresh,
+            "job:durable_result",
+            (
+                f"status={result.status} missing={missing} mismatched={mismatched} "
+                f"newResult={fresh} surrogatePaths={markers[:5] if markers else 'none'}"
+            ),
+            "data-binding" if markers else "durable-readback",
         )
 
     def readback(self, before: Mapping[str, Any]) -> bool:
         response, _ = self.send(self.spec.readback)
         payload = response.payload if not response.failed else {}
+        self.after_payload = copy.deepcopy(payload)
         after = self.identity(payload)
         self.result.after = after
         same = after is not None and after["record_id"] == before["record_id"]
@@ -1532,16 +2317,19 @@ class JourneyRunner:
             "durable-readback",
         ):
             return False
-        missing = [
-            path for path in self.spec.readback_required if not _present(dig(payload, self.path_of(path)))
-        ]
+        missing = self._missing(payload, self.spec.readback_required)
+        mismatched = self._mismatches(payload, self.spec.readback_bindings)
         undisclosed = [
             path for path in self.spec.disclosure_keys if not exists(payload, self.path_of(path))
         ]
         self.result.check(
-            not missing,
+            not missing and not mismatched,
             "readback:outcome_receipt",
-            "complete" if not missing else f"missing={missing}",
+            (
+                "complete"
+                if not (missing or mismatched)
+                else f"missing={missing} mismatched={mismatched}"
+            ),
             "durable-readback",
         )
         if self.spec.disclosure_keys:
@@ -1551,42 +2339,104 @@ class JourneyRunner:
                 "complete" if not undisclosed else f"missing={undisclosed}",
                 "disclosure",
             )
-        return not missing and not undisclosed
+        return not missing and not mismatched and not undisclosed
+
+    def _domain_audit_row(self, audit: DomainAuditSpec) -> dict[str, Any] | None:
+        """The new row of the record's own durable audit trail for this write."""
+
+        before_rows = dig(self.before_payload, self.path_of(audit.list_path))
+        after_rows = dig(self.after_payload, self.path_of(audit.list_path))
+        seen = {
+            str(row.get(audit.id_field))
+            for row in (before_rows if isinstance(before_rows, list) else [])
+            if isinstance(row, dict)
+        }
+        wanted = {key: self.path_of(template) for key, template in audit.match.items()}
+        for row in after_rows if isinstance(after_rows, list) else []:
+            if (
+                isinstance(row, dict)
+                and _present(row.get(audit.id_field))
+                and str(row.get(audit.id_field)) not in seen
+                and all(str(row.get(key)) == value for key, value in wanted.items())
+            ):
+                return row
+        return None
 
     def verify_audit(self) -> bool:
         ok = True
+        domain = {audit.write: audit for audit in self._domain_audits()}
         for step in self.spec.writes:
             correlation_id = self.result.correlation_ids.get(step.name, "")
-            path = f"{AUDIT_EVENTS_PATH}?{urllib.parse.urlencode({'correlation_id': correlation_id})}"
-            response, _ = self.send(Step("audit_events", "GET", path, actor=step.actor), label="audit")
-            events = response.payload.get("events") if not response.failed else None
-            events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
-            matching = [
-                event
-                for event in events
-                if event.get("correlation_id") == correlation_id
-                and _present(event.get("event_id"))
-                and str(event.get("event_type") or "").startswith(step.audit_event)
-            ]
-            if matching:
+            response, events = self.audit_events(step.actor, correlation_id)
+            authorization = next(
+                (
+                    event
+                    for event in events
+                    if event.get("event_type") == SECURITY_EVENT_TYPE
+                    and str(event.get("outcome") or event.get("result") or "").lower() == "allow"
+                    and _present(event.get("event_id"))
+                    and event.get("actor") == self.scope.account_ids.get(step.actor)
+                    and _canonical_uuid(_as_dict(event.get("metadata")).get("tenant_id"))
+                    == self.scope.tenant_id
+                ),
+                None,
+            )
+            event_id: Any = None
+            event_type: Any = None
+            source = ""
+            if step.audit_response_id:
+                written = self.write_responses.get(step.name, {})
+                served_id = dig(written, self.path_of(step.audit_response_id))
+                served_correlation = dig(written, self.path_of(step.audit_response_correlation))
+                if _present(served_id) and served_correlation == correlation_id:
+                    event_id, event_type = served_id, step.audit_event or "write-response"
+                source = "write-response"
+            elif step.name in domain:
+                row = self._domain_audit_row(domain[step.name])
+                if row is not None:
+                    event_id = row.get(domain[step.name].id_field)
+                    event_type = domain[step.name].event_type or str(row.get("action") or "")
+                source = "durable-readback"
+            else:
+                business = [
+                    event
+                    for event in events
+                    if event.get("event_type") != SECURITY_EVENT_TYPE
+                    and _present(event.get("event_id"))
+                    and bool(step.audit_event)
+                    and str(event.get("event_type") or "").startswith(step.audit_event)
+                ]
+                if business:
+                    event_id, event_type = business[0]["event_id"], business[0].get("event_type")
+                source = "platform"
+            if _present(event_id) and authorization is not None:
                 self.result.audit_refs.append(
                     {
                         "write": step.name,
                         "correlation_id": correlation_id,
-                        "event_id": matching[0]["event_id"],
-                        "event_type": matching[0].get("event_type"),
+                        "event_id": event_id,
+                        "event_type": event_type,
+                        "source": source,
+                        "authorization_event_id": authorization["event_id"],
                     }
                 )
             ok = (
                 self.result.check(
-                    bool(matching),
+                    _present(event_id) and authorization is not None,
                     f"audit:{step.name}",
-                    f"status={response.status} events={len(events)} matching={len(matching)}",
+                    (
+                        f"status={response.status} source={source} "
+                        f"businessEvent={'found' if _present(event_id) else 'missing'} "
+                        f"authorizationEvent={'found' if authorization else 'missing'}"
+                    ),
                     "audit",
                 )
                 and ok
             )
         return ok
+
+    def _domain_audits(self) -> tuple[DomainAuditSpec, ...]:
+        return (self.spec.domain_audit,) if self.spec.domain_audit is not None else ()
 
     def verify_policy(self) -> bool:
         policy = self.spec.policy
@@ -1598,7 +2448,14 @@ class JourneyRunner:
         if not response.failed and response.status in DENIED_STATUSES | {400, 409, 422}:
             absence, _ = self.send(policy.absence, label="policy-absence")
             items = absence.payload.get("items") if not absence.failed else None
-            proven = not absence.failed and absence.status == 200 and isinstance(items, list) and not items
+            code = dig(response.payload, "error.code") or dig(response.payload, "detail.code")
+            proven = (
+                code in policy.blocked_policies
+                and not absence.failed
+                and absence.status == 200
+                and isinstance(items, list)
+                and not items
+            )
             outcome.update({"mode": "refused", "nothing_persisted": proven})
         elif not response.failed and response.status == 200:
             record_id = dig(response.payload, policy.record_id_path)
@@ -1616,9 +2473,12 @@ class JourneyRunner:
                 durable = (
                     not readback.failed
                     and readback.status == 200
+                    and dig(readback.payload, policy.record_id_path) == record_id
                     and dig(readback.payload, policy.stage_path) == policy.quarantine_stage
                     and str(dig(readback.payload, policy.policy_path)) in policy.blocked_policies
-                    and not any(_present(dig(readback.payload, p)) for p in policy.not_retrieved_paths)
+                    and not any(
+                        _present(dig(readback.payload, p)) for p in policy.not_retrieved_paths
+                    )
                 )
             proven = quarantined and durable
             outcome.update(
@@ -1658,9 +2518,14 @@ class JourneyRunner:
         self.result.actor = {
             "tenant_id": self.scope.tenant_id,
             "subjects": dict(self.scope.actors),
+            "account_ids": dict(self.scope.account_ids),
             "expected_business_roles": {
-                slot: sorted(self.spec.actor_roles.get(slot, frozenset())) for slot in self.spec.actors
+                slot: sorted(self.spec.actor_roles.get(slot, frozenset()))
+                for slot in self.spec.actors
             },
+            # Filled only from served authorization decisions (prove_grants).
+            "verified_grants": self.result.grants,
+            "verified_business_roles": {},
             "operator_role": self.spec.operator_role or None,
             "approval_ref": self.scope.approval_ref or None,
         }
@@ -1678,7 +2543,11 @@ class JourneyRunner:
             "business-data",
         ):
             return
+        assert before is not None
         self.result.before = before
+        self.before_payload = copy.deepcopy(payload)
+        if not self.prove_grants() or not self.ui_ready():
+            return
         # Every preflight fact is proven: only now may a mutation leave.
         self.result.preflight_passed = True
         self.http.writes_armed = True
@@ -1697,7 +2566,9 @@ class JourneyRunner:
 # ---------------------------------------------------------------------------
 
 
-def runtime_preflight(api: HttpClient | None, binding: ReleaseBinding) -> list[tuple[str, str, str]]:
+def runtime_preflight(
+    api: HttpClient | None, binding: ReleaseBinding
+) -> list[tuple[str, str, str]]:
     """Return ``(check, dependency, detail)`` failures for the served runtime."""
 
     if api is None:
@@ -1769,6 +2640,7 @@ def run_journeys(
     sleep: Callable[[float], None] = time.sleep,
     job_deadline_seconds: float = 600.0,
     poll_interval_seconds: float = 10.0,
+    ui_driver: UiDriver | None = None,
 ) -> dict[str, Any]:
     """Run the selected journeys and return the sealed receipt."""
 
@@ -1861,11 +2733,14 @@ def run_journeys(
             sleep=sleep,
             job_deadline_seconds=job_deadline_seconds,
             poll_interval_seconds=poll_interval_seconds,
+            ui_driver=ui_driver,
         ).run()
 
     statuses = {result.journey_id: result.status for result in results}
     complete = [result.journey_id for result in results] == list(JOURNEY_IDS)
-    all_passed = bool(results) and not unknown and all(s == STATUS_PASSED for s in statuses.values())
+    all_passed = (
+        bool(results) and not unknown and all(s == STATUS_PASSED for s in statuses.values())
+    )
     if all_passed:
         overall = STATUS_PASSED
     elif results and all(s == STATUS_NOT_ADMITTED for s in statuses.values()):
@@ -1884,7 +2759,10 @@ def run_journeys(
         "scope_authorization": scope_header,
         "selection": [spec.journey_id for spec in specs],
         "complete_selection": complete,
-        "command": {"argv": [redact(part) for part in command], "exit_code": 0 if all_passed else 1},
+        "command": {
+            "argv": [redact(part) for part in command],
+            "exit_code": 0 if all_passed else 1,
+        },
         "journeys": {result.journey_id: result.as_dict(redact) for result in results},
         "summary": {
             "status": overall,
@@ -1942,30 +2820,106 @@ def journey_receipt_problems(spec: JourneySpec, entry: Mapping[str, Any]) -> lis
     missing_actors = [slot for slot in spec.actors if not _present(subjects.get(slot))]
     if missing_actors:
         problems.append(f"actor subjects missing for {missing_actors}")
+    verified_roles = _as_dict(actor.get("verified_business_roles"))
+    for slot in spec.actors:
+        values = verified_roles.get(slot)
+        roles = (
+            set(values)
+            if isinstance(values, list) and all(isinstance(value, str) for value in values)
+            else set()
+        )
+        if (
+            not roles.intersection(spec.actor_roles.get(slot, frozenset()))
+            or "platform_admin" in roles
+        ):
+            problems.append(f"authoritative business roles missing for {slot}")
     if spec.requires_named_approval and not _present(actor.get("approval_ref")):
         problems.append("named approval reference missing")
     before = _as_dict(entry.get("before"))
     after = _as_dict(entry.get("after"))
-    if not before or not after or before.get("record_id") != after.get("record_id"):
+    scope = _as_dict(entry.get("scope"))
+    records = _as_dict(scope.get("records"))
+    expected_record = records.get(spec.record_key)
+    if (
+        not before
+        or not after
+        or not _present(before.get("record_id"))
+        or not _present(after.get("record_id"))
+        or not _present(expected_record)
+        or str(before.get("record_id")) != str(expected_record)
+        or before.get("record_id") != after.get("record_id")
+    ):
         problems.append("before/after record identity missing or different")
     elif before.get("state") == after.get("state"):
         problems.append("record state unchanged")
     correlation_ids = _as_dict(entry.get("correlation_ids"))
+    write_correlations = [correlation_ids.get(step.name) for step in spec.writes]
+    if not all(_present(value) for value in write_correlations) or len(
+        set(str(value) for value in write_correlations)
+    ) != len(spec.writes):
+        problems.append("write correlation ids missing or reused")
     audited = {
         ref.get("write")
         for ref in entry.get("audit_refs") or []
         if isinstance(ref, dict)
         and _present(ref.get("event_id"))
+        and _present(ref.get("authorization_event_id"))
+        and _present(ref.get("correlation_id"))
+        and _present(correlation_ids.get(ref.get("write")))
         and ref.get("correlation_id") == correlation_ids.get(ref.get("write"))
     }
     missing_audit = [step.name for step in spec.writes if step.name not in audited]
     if missing_audit:
         problems.append(f"audit refs missing for {missing_audit}")
     if spec.job is not None and not any(
-        isinstance(ref, dict) and ref.get("status") == "succeeded" and _present(ref.get("job_id"))
+        isinstance(ref, dict)
+        and ref.get("status") == "succeeded"
+        and _present(ref.get("job_id"))
+        and _present(ref.get("result_id"))
+        and ref.get("result_id") != ref.get("previous_result_id")
         for ref in entry.get("job_refs") or []
     ):
         problems.append("durable job reference missing or not succeeded")
+    ui_rows = entry.get("ui_checks") or []
+    for check in spec.ui_checks:
+        variables = {"record": records}
+        expected_steps = (
+            [
+                {
+                    "action": step.action,
+                    "selector": render(step.selector, variables, quote=False),
+                    "text": render(step.text, variables, quote=False) if step.text else "",
+                }
+                for step in check.steps
+            ]
+            if all(key in records for key in spec.required_records)
+            else []
+        )
+        if not any(
+            isinstance(row, dict)
+            and row.get("name") == check.name
+            and row.get("after_write") == check.after_write
+            and row.get("program") == LIVE_UI_PROGRAM
+            and row.get("status") == STATUS_PASSED
+            and row.get("exit_code") == 0
+            and row.get("command") == list(LIVE_UI_COMMAND)
+            and bool(expected_steps)
+            and row.get("steps") == expected_steps
+            for row in ui_rows
+        ):
+            problems.append(f"live UI check missing for {check.name}")
+    grants = _as_dict(actor.get("verified_grants"))
+    for slot in spec.granted_actors:
+        grant = _as_dict(grants.get(slot))
+        if (
+            not _present(grant.get("event_id"))
+            or not _present(grant.get("correlation_id"))
+            or grant.get("outcome") != "allow"
+            or grant.get("tenant_id") != actor.get("tenant_id")
+            or not _canonical_uuid(grant.get("account_ref"))
+            or grant.get("account_ref") != _as_dict(scope.get("account_ids")).get(slot)
+        ):
+            problems.append(f"served business grant missing for {slot}")
     probes = _as_dict(entry.get("negative_probes"))
     for probe in ("cross_tenant_denied", "wrong_role_denied"):
         if probes.get(probe) is not True:
@@ -2009,7 +2963,8 @@ def verify_receipt(
         return checks
 
     add(
-        receipt.get("kind") == RECEIPT_KIND and receipt.get("schema_version") == RECEIPT_SCHEMA_VERSION,
+        receipt.get("kind") == RECEIPT_KIND
+        and receipt.get("schema_version") == RECEIPT_SCHEMA_VERSION,
         "business_journeys:schema",
         f"kind={receipt.get('kind')} schema_version={receipt.get('schema_version')}",
     )
@@ -2214,6 +3169,7 @@ def main(argv: list[str] | None = None) -> int:
         run_id=run_id,
         job_deadline_seconds=args.job_deadline_seconds,
         poll_interval_seconds=args.poll_interval_seconds,
+        ui_driver=PlaywrightUiDriver(),
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -2221,7 +3177,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Business journeys: {summary['status']} statuses={summary['statuses']}")
     for journey_id, entry in receipt["journeys"].items():
         for blocker in entry["blockers"]:
-            print(f"  - {journey_id} {blocker['check']} [{blocker['dependency']}]: {blocker['detail']}")
+            print(
+                f"  - {journey_id} {blocker['check']} [{blocker['dependency']}]: {blocker['detail']}"
+            )
     print(f"receipt={args.output}")
     return int(receipt["command"]["exit_code"])
 

@@ -1601,6 +1601,28 @@ else:
         ) -> dict[str, Any]:
             return _retry_job_response(job_id, body, request)
 
+        @platform_router.get("/auth/principal", tags=["auth"])
+        def authenticated_principal(request: Request) -> dict[str, Any]:
+            """Read only the caller's verified, authoritative business grants.
+
+            No role switching, account lookup by caller-supplied id, or token /
+            session attributes are exposed. The configured boundary resolves
+            roles from the durable identity store, never browser role headers.
+            """
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required",
+                )
+            return {
+                "account_id": principal.subject_id,
+                "tenant_id": principal.tenant_id,
+                "roles": sorted(role.value for role in principal.roles),
+            }
+
         @platform_router.get("/audit/events", tags=["audit"])
         def list_audit_events(
             correlation_id: str | None = None,

@@ -3216,6 +3216,9 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
         allow_http=args.allow_http,
         release_profile=str(args.release_profile or "").strip().lower(),
+        # The six-journey receipt is bound to this admitted manifest digest;
+        # without it full acceptance can never be claimed (fail closed).
+        expected_manifest_digest=str(args.expected_manifest_digest or "").strip().lower(),
         dev_admin_username=os.environ.get(DEV_ADMIN_USERNAME_ENV, "").strip() or os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
         # Not stripped: a password is exactly what the operator set.
         dev_admin_password=os.environ.get(DEV_ADMIN_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),

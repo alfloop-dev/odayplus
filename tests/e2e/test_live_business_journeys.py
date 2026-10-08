@@ -24,6 +24,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from uuid import NAMESPACE_DNS, UUID, uuid5
 
 import pytest
 
@@ -128,6 +129,10 @@ ACTORS: dict[str, dict[str, str]] = {
 }
 
 
+def account_id(username: str) -> str:
+    return str(uuid5(NAMESPACE_DNS, username))
+
+
 def password_for(username: str) -> str:
     return f"Pw!{username}#2026-q4"
 
@@ -148,6 +153,7 @@ class BusinessWeb:
 
     def __init__(self) -> None:
         self.admins: set[str] = set()
+        self.account_roles = dict(ACCOUNTS)
         self.calls: list[tuple[str, str, str]] = []
         self.audit: list[dict[str, Any]] = []
         self.handlers: list[tuple[str, re.Pattern[str], Callable[[Ctx], Resp]]] = []
@@ -187,8 +193,21 @@ class BusinessWeb:
         self.governance = {
             "approvals": [{"id": "GOV-APR-4001", "status": "pending", "kind": "price_exception"}],
             "decisions": [],
+            "auditRows": [],
         }
-        self.store = {"storeId": "ST-0412", "reports": []}
+        self.store = {
+            "store": {"id": "ST-0412"},
+            "meta": {"scope": {"storeId": "ST-0412"}},
+            "reports": [],
+        }
+        self.report = {
+            "report_id": "ALR-76",
+            "campaign_id": "CMP-3001",
+            "model_version": "adlift-1",
+            "feature_version": "fs-14",
+            "source_snapshot_ids": ["snap-201"],
+            "generated_at": NOW,
+        }
         self.intake = {
             "id": "LI-6001",
             "tenantId": TENANT,
@@ -197,6 +216,8 @@ class BusinessWeb:
             "intakeMethod": "ASSISTED_MANUAL",
             "stage": "PENDING_REVIEW",
             "version": 3,
+            "auditEvents": [],
+            "matchResult": {"targetListingId": "L-2024"},
         }
         self._routes()
 
@@ -269,16 +290,36 @@ class BusinessWeb:
             return Resp(401, {"error": {"code": "unauthenticated"}})
         if method in MUTATING and not headers.get("idempotency-key"):
             return Resp(400, {"error": {"code": "IDEMPOTENCY_KEY_REQUIRED"}})
+        if bare == bj.PRINCIPAL_PATH:
+            roles = self.account_roles[actor] | (
+                {"platform_admin"} if actor in self.admins else set()
+            )
+            return Resp(
+                200, {"account_id": account_id(actor), "tenant_id": TENANT, "roles": sorted(roles)}
+            )
         if bare == "/api/v1/operator/users":
             return Resp(200, {"users": []}) if actor in self.admins else Resp(403, {})
         query = dict(urllib.parse.parse_qsl(parts.query))
         for verb, pattern, handler in self.handlers:
             match = pattern.fullmatch(bare)
             if verb == method and match:
-                # A copy, as a real server's parsed JSON would be.
-                return deepcopy(
-                    handler(Ctx(actor, ACCOUNTS[actor], method, bare, query, body, headers, match))
-                )
+                ctx = Ctx(actor, ACCOUNTS[actor], method, bare, query, body, headers, match)
+                result = handler(ctx)
+                if result.status < 400 and bare != "/api/v1/audit/events":
+                    self._event += 1
+                    self.audit.append(
+                        {
+                            "event_id": f"authz-{self._event}",
+                            "event_type": "security.authorization",
+                            "outcome": "allow",
+                            "actor": account_id(actor),
+                            "action": "view" if method == "GET" else "create",
+                            "resource": bare,
+                            "correlation_id": headers.get("x-correlation-id"),
+                            "metadata": {"tenant_id": TENANT, "reason": "role permits request"},
+                        }
+                    )
+                return deepcopy(result)
         raise AssertionError(f"unrouted journey request: {method} {path}")
 
     # -- routes -------------------------------------------------------------
@@ -325,7 +366,7 @@ class BusinessWeb:
 
         def adlift_report(ctx: Ctx) -> Resp:
             refused = self.denied(ctx, "growth", {"marketing_manager"})
-            return refused or Resp(200, {"campaign_id": ctx.match.group(1), "lift": 0.07})
+            return refused or Resp(200, self.report)
 
         def price_action(ctx: Ctx) -> Resp:
             refused = self.denied(ctx, "growth", {"pricing_manager"})
@@ -344,10 +385,14 @@ class BusinessWeb:
             if refused:
                 return refused
             event_id = self.event(ctx, "adlift.incrementality_evaluated", "growth", "ALJ-77")
+            self.report = {**self.report, "report_id": "ALR-77"}
             return Resp(202, {"job_id": "ALJ-77", "status": "queued", "audit_event_id": event_id})
 
         def adlift_job_status(ctx: Ctx) -> Resp:
-            return Resp(200, {"job_id": ctx.match.group(1), "status": self.job_status})
+            return Resp(
+                200,
+                {"job_id": ctx.match.group(1), "status": self.job_status, "reports": [self.report]},
+            )
 
         self.route("GET", rf"{v1}/priceops/plans/([^/]+)", read_plan)
         self.route("GET", rf"{v1}/adlift/reports/([^/]+)", adlift_report)
@@ -411,6 +456,8 @@ class BusinessWeb:
             return Resp(200, self.governance)
 
         def decision(ctx: Ctx) -> Resp:
+            if ctx.body.get("action") not in {"approve", "return", "reject"}:
+                return Resp(422, {})
             refused = self.denied(ctx, "governance", {"operations_manager", "executive"})
             if refused:
                 return refused
@@ -421,12 +468,31 @@ class BusinessWeb:
             if approval is None and "governance" not in self.cross_tenant_leak:
                 return Resp(404, {"error": {"code": "NOT_FOUND"}})
             if approval is not None and "governance" not in self.non_durable:
-                approval["status"] = ctx.body.get("action")
+                approval["status"] = {
+                    "approve": "approved",
+                    "return": "returned",
+                    "reject": "rejected",
+                }[ctx.body["action"]]
                 self.governance["decisions"].append(
-                    {"approvalId": approval["id"], "action": ctx.body.get("action")}
+                    {"id": "DEC-1", "approvalId": approval["id"], "action": ctx.body.get("action")}
                 )
-            self.event(ctx, "operator.governance.decision", "governance")
-            return Resp(200, {"ok": True})
+            if "governance" not in self.drop_audit:
+                self.governance["auditRows"].append(
+                    {
+                        "id": "AUD-GOV-1",
+                        "category": "approval",
+                        "correlationId": f"corr-{ctx.body.get('approvalId')}",
+                    }
+                )
+            return Resp(
+                200,
+                {
+                    "approvalId": ctx.body.get("approvalId"),
+                    "action": ctx.body["action"],
+                    "decision": {"id": "DEC-1"},
+                    "correlation_id": ctx.headers.get("x-correlation-id"),
+                },
+            )
 
         self.route("GET", rf"{v1}/operator/governance/snapshot", snapshot)
         self.route("POST", rf"{v1}/operator/governance/decisions", decision)
@@ -436,7 +502,7 @@ class BusinessWeb:
             refused = self.denied(ctx, "franchise", {"franchisee"})
             if refused:
                 return refused
-            own = ctx.query.get("storeId") == self.store["storeId"]
+            own = ctx.query.get("storeId") == self.store["store"]["id"]
             if own or "franchise" in self.cross_tenant_leak:
                 return Resp(200, self.store)
             return Resp(403, {"error": {"code": "STORE_SCOPE_MISMATCH"}})
@@ -445,13 +511,20 @@ class BusinessWeb:
             refused = self.denied(ctx, "franchise", {"franchisee"})
             if refused:
                 return refused
-            if ctx.body.get("storeId") != self.store["storeId"]:
+            if ctx.body.get("storeId") != self.store["store"]["id"]:
                 return Resp(403, {})
             report = {"reportId": f"FR-{len(self.store['reports']) + 1}", **ctx.body}
             if "franchise" not in self.non_durable:
                 self.store["reports"].append(report)
-            self.event(ctx, "franchisee.report_submitted", "franchise")
-            return Resp(201, {"report": report})
+            audit = (
+                {
+                    "id": "AUD-SHELL-1",
+                    "metadata": {"correlationId": ctx.headers.get("x-correlation-id")},
+                }
+                if "franchise" not in self.drop_audit
+                else {}
+            )
+            return Resp(201, {"report": report, "auditEvent": audit})
 
         self.route("GET", rf"{v1}/operator/shell/franchisee", own_store)
         self.route("POST", rf"{v1}/operator/shell/franchisee/reports", field_report)
@@ -463,15 +536,31 @@ class BusinessWeb:
             return Resp(404, {})
 
         def decide_intake(ctx: Ctx) -> Resp:
+            if ctx.body.get("action") not in {
+                "create",
+                "revise",
+                "duplicate",
+                "quarantine",
+                "reject",
+            } or not ctx.body.get("reason"):
+                return Resp(422, {})
             if ctx.headers.get("x-operator-role") != "expansion-staff":
                 return Resp(403, {})
             refused = self.denied(ctx, "intake", {"expansion_user"})
             if refused:
                 return refused
             if "intake" not in self.non_durable:
-                self.intake["stage"] = "APPROVED"
+                self.intake["stage"] = "CREATED"
                 self.intake["version"] += 1
-            self.event(ctx, "network_listings.intake.decided", "intake")
+            if "intake" not in self.drop_audit:
+                self.intake["auditEvents"].append(
+                    {
+                        "id": "AUD-INTAKE-1",
+                        "targetId": self.intake["id"],
+                        "action": f"intake.decide.{ctx.body['action']}",
+                        "correlationId": ctx.headers.get("x-correlation-id"),
+                    }
+                )
             return Resp(200, self.intake)
 
         def submit_intake(ctx: Ctx) -> Resp:
@@ -493,12 +582,15 @@ class BusinessWeb:
         def search_intake(ctx: Ctx) -> Resp:
             return Resp(200, {"items": []})
 
+        self.route(
+            "GET",
+            rf"{v1}/operator/network-listings",
+            lambda ctx: Resp(200, {"listings": [{"id": "L-2024", "tenantId": TENANT}]}),
+        )
         self.route("GET", rf"{v1}/operator/network-listings/intake", search_intake)
         self.route("POST", rf"{v1}/operator/network-listings/intake/submit", submit_intake)
         self.route("GET", rf"{v1}/operator/network-listings/intake/([^/]+)", read_intake)
-        self.route(
-            "POST", rf"{v1}/operator/network-listings/intake/([^/]+)/decide", decide_intake
-        )
+        self.route("POST", rf"{v1}/operator/network-listings/intake/([^/]+)/decide", decide_intake)
 
 
 class RuntimeApi:
@@ -564,6 +656,9 @@ def journey_scopes() -> dict[str, dict[str, Any]]:
             "tenant_id": TENANT,
             "foreign_tenant_id": FOREIGN_TENANT,
             "actors": dict(ACTORS[journey_id]),
+            "account_ids": {
+                slot: account_id(username) for slot, username in ACTORS[journey_id].items()
+            },
             "records": records,
             "foreign_records": foreign,
             "writes": {},
@@ -576,7 +671,16 @@ def journey_scopes() -> dict[str, dict[str, Any]]:
             {"plan_id": "PLN-2001", "campaign_id": "CMP-3001"},
             {"plan_id": "PLN-9902"},
         ),
-        "expansion": base("expansion", {"scenario_id": "NP-SCN-31"}, {"scenario_id": "NP-SCN-99"}),
+        "expansion": base(
+            "expansion",
+            {
+                "scenario_id": "NP-SCN-31",
+                "rebalance_store_id": "RB-801",
+                "modelled_class": "CAPITAL",
+                "unmodelled_class": "LEASE",
+            },
+            {"scenario_id": "NP-SCN-99"},
+        ),
         "governance": base(
             "governance", {"approval_id": "GOV-APR-4001"}, {"approval_id": "GOV-APR-9904"}
         ),
@@ -590,7 +694,9 @@ def journey_scopes() -> dict[str, dict[str, Any]]:
         "price_action": {"action": "submit", "body": {"comment": "Q4 basket price move"}},
         "adlift_job": {
             "action": "incrementality",
-            "body": {"campaign_id": "CMP-3001", "window_days": 28},
+            "body": {
+                "campaigns": [{"campaign_id": "CMP-3001", "source_snapshot_ids": ["snap-201"]}]
+            },
         },
     }
     scopes["expansion"]["writes"] = {
@@ -600,20 +706,31 @@ def journey_scopes() -> dict[str, dict[str, Any]]:
     }
     scopes["expansion"]["approval_ref"] = "EXP-APPROVAL-2026-118"
     scopes["governance"]["writes"] = {
-        "decision": {"action": "approved", "body": {"action": "approved", "note": "Within band"}}
+        "decision": {
+            "action": "approve",
+            "body": {"action": "approve", "reason": "Within approved band"},
+        }
     }
     scopes["governance"]["approval_ref"] = "GOV-CAB-2026-77"
     scopes["franchise"]["writes"] = {
         "report": {
             "action": "report",
-            "body": {"category": "equipment", "summary": "Freezer temperature alarm"},
+            "body": {"category": "equipment", "message": "Freezer temperature alarm"},
         }
     }
     scopes["intake"]["writes"] = {
-        "decide": {"action": "approve", "body": {"action": "approve", "note": "Broker verified"}},
+        "decide": {
+            "action": "create",
+            "body": {
+                "action": "create",
+                "reason": "Broker verified",
+                "riskAcknowledged": True,
+                "riskSummary": "Reviewed approved manual entry",
+            },
+        },
         "policy_probe": {
-            "source_ref": "blocked-portal-listing-8812",
-            "body": {"sourceId": "blocked-portal", "sourceRef": "blocked-portal-listing-8812"},
+            "source_ref": "https://blocked-portal.example.invalid/listing-8812",
+            "body": {"url": "https://blocked-portal.example.invalid/listing-8812"},
         },
     }
     return scopes
@@ -637,6 +754,25 @@ def scope_document(**journeys: Any) -> dict[str, Any]:
     }
 
 
+class OfflineUi:
+    """OFFLINE ONLY; never a live browser receipt."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def available(self) -> tuple[bool, str]:
+        return True, "offline double"
+
+    def run(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        return bj.UiOutcome(
+            "PASSED",
+            bj.LIVE_UI_COMMAND,
+            0,
+            "offline fixture",
+        )
+
+
 _DEFAULT = object()
 
 
@@ -650,6 +786,7 @@ def run(
     environ: dict[str, str] | None = None,
     caller_profile: str = "",
     api: Any = _DEFAULT,
+    ui: Any = _DEFAULT,
 ) -> tuple[dict[str, Any], BusinessWeb, Any]:
     web = web or BusinessWeb()
     api = RuntimeApi() if api is _DEFAULT else api
@@ -675,6 +812,7 @@ def run(
         sleep=clock.sleep,
         job_deadline_seconds=60.0,
         poll_interval_seconds=5.0,
+        ui_driver=OfflineUi() if ui is _DEFAULT else ui,
     )
     return receipt, web, api
 
@@ -714,7 +852,7 @@ def test_all_six_journeys_pass_and_seal_a_verifiable_receipt() -> None:
     # Real writes really happened, each with its own audit event.
     assert web.issue["status"] == "triaged"
     assert web.scenario["status"] == "approved"
-    assert web.intake["stage"] == "APPROVED"
+    assert web.intake["stage"] == "CREATED"
     assert len(web.store["reports"]) == 1
 
 
@@ -733,7 +871,14 @@ def test_receipt_binds_release_actor_selector_and_record_identity() -> None:
     assert expansion["before"]["record_id"] == expansion["after"]["record_id"] == "NP-SCN-31"
     assert {ref["write"] for ref in expansion["audit_refs"]} == {"solve", "submit", "decide"}
     growth = receipt["journeys"]["growth"]
-    assert growth["job_refs"] == [{"job_id": "ALJ-77", "status": "succeeded"}]
+    assert growth["job_refs"] == [
+        {
+            "job_id": "ALJ-77",
+            "status": "succeeded",
+            "result_id": "ALR-77",
+            "previous_result_id": "ALR-76",
+        }
+    ]
     assert growth["requests"]["worker_or_provider_triggers"] == 1
     intake = receipt["journeys"]["intake"]
     assert intake["negative_probes"] == {
@@ -796,7 +941,9 @@ def test_dev_admin_manifest_is_not_admitted_even_when_caller_claims_full() -> No
 def test_dev_admin_release_reports_no_full_admission_in_the_verifier() -> None:
     receipt, _, _ = run()
 
-    checks = bj.verify_receipt(receipt, expected_sha=SHA, expected_digest=DIGEST, release_profile="dev-admin")
+    checks = bj.verify_receipt(
+        receipt, expected_sha=SHA, expected_digest=DIGEST, release_profile="dev-admin"
+    )
     assert [(c.name, c.ok, c.dependency) for c in checks] == [
         ("business_journeys:admission", False, "release-profile")
     ]
@@ -816,9 +963,7 @@ def test_unbound_release_blocks_before_any_request(manifest_doc: Any, expected_d
     receipt, web, api = run(manifest_doc=manifest_doc, expected_digest=expected_digest)
 
     assert set(receipt["summary"]["statuses"].values()) == {"BLOCKED"}
-    assert all(
-        "release:manifest_binding" in blockers(receipt, j) for j in bj.JOURNEY_IDS
-    )
+    assert all("release:manifest_binding" in blockers(receipt, j) for j in bj.JOURNEY_IDS)
     assert web.calls == [] and api.calls == []
 
 
@@ -903,7 +1048,9 @@ def test_missing_named_approval_reference_blocks() -> None:
     scopes = journey_scopes()
     scopes["governance"].pop("approval_ref")
 
-    receipt, web, _ = run(selection=["governance"], scope=scope_document(governance=scopes["governance"]))
+    receipt, web, _ = run(
+        selection=["governance"], scope=scope_document(governance=scopes["governance"])
+    )
     assert receipt["journeys"]["governance"]["status"] == "BLOCKED"
     assert "named-approval" in blockers(receipt, "governance").values()
     _zero_writes(receipt, web, "governance")
@@ -923,7 +1070,9 @@ def test_scope_action_outside_the_journey_vocabulary_blocks() -> None:
     scopes = journey_scopes()
     scopes["operations"]["writes"]["transition"]["action"] = "delete"
 
-    receipt, web, _ = run(selection=["operations"], scope=scope_document(operations=scopes["operations"]))
+    receipt, web, _ = run(
+        selection=["operations"], scope=scope_document(operations=scopes["operations"])
+    )
     assert receipt["journeys"]["operations"]["status"] == "BLOCKED"
     assert "scope-authorization" in blockers(receipt, "operations").values()
     _zero_writes(receipt, web, "operations")
@@ -933,7 +1082,9 @@ def test_foreign_tenant_must_differ_from_the_authorized_tenant() -> None:
     scopes = journey_scopes()
     scopes["franchise"]["foreign_tenant_id"] = TENANT
 
-    receipt, web, _ = run(selection=["franchise"], scope=scope_document(franchise=scopes["franchise"]))
+    receipt, web, _ = run(
+        selection=["franchise"], scope=scope_document(franchise=scopes["franchise"])
+    )
     assert receipt["journeys"]["franchise"]["status"] == "BLOCKED"
     _zero_writes(receipt, web, "franchise")
 
@@ -944,7 +1095,9 @@ def test_credential_for_an_unauthorized_account_blocks() -> None:
     env["ODP_LIVE_JOURNEY_OPERATIONS_PASSWORD"] = password_for("ops.analyst")
 
     receipt, web, _ = run(selection=["operations"], environ=env)
-    assert blockers(receipt, "operations") == {"preflight:primary_credential": "scope-authorization"}
+    assert blockers(receipt, "operations") == {
+        "preflight:primary_credential": "scope-authorization"
+    }
     assert web.calls == []
 
 
@@ -954,7 +1107,7 @@ def test_platform_admin_is_never_promoted_into_a_business_role() -> None:
 
     receipt, web, _ = run(web, selection=["governance"])
     assert receipt["journeys"]["governance"]["status"] == "BLOCKED"
-    assert blockers(receipt, "governance") == {"actor:primary_not_platform_admin": "business-role"}
+    assert blockers(receipt, "governance") == {"actor:primary_authoritative_roles": "business-role"}
     _zero_writes(receipt, web, "governance")
 
 
@@ -963,7 +1116,9 @@ def test_wrong_password_blocks_on_business_credential() -> None:
     env["ODP_LIVE_JOURNEY_FRANCHISE_PASSWORD"] = "wrong-password-value"
 
     receipt, web, _ = run(selection=["franchise"], environ=env)
-    assert blockers(receipt, "franchise") == {"session:primary_password_login": "business-credential"}
+    assert blockers(receipt, "franchise") == {
+        "session:primary_password_login": "business-credential"
+    }
     assert "wrong-password-value" not in json.dumps(receipt)
     _zero_writes(receipt, web, "franchise")
 
@@ -1201,7 +1356,9 @@ def test_hand_written_receipt_claims_are_cross_checked_per_journey() -> None:
 
 
 def test_no_receipt_blocks_all_six_journeys() -> None:
-    checks = bj.verify_receipt(None, expected_sha=SHA, expected_digest=DIGEST, release_profile="full")
+    checks = bj.verify_receipt(
+        None, expected_sha=SHA, expected_digest=DIGEST, release_profile="full"
+    )
 
     assert not any(check.ok for check in checks)
     assert {c.name for c in checks} >= {f"business_journey:{j}" for j in bj.JOURNEY_IDS}
@@ -1276,7 +1433,9 @@ def test_gate_runtime_failure_withholds_full_acceptance_even_with_a_receipt() ->
     assert report["release_profile"]["full_product_acceptance_claimed"] is False
 
 
-def test_gate_full_acceptance_flag_controls_the_exit_code(capsys: pytest.CaptureFixture[str]) -> None:
+def test_gate_full_acceptance_flag_controls_the_exit_code(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     receipt, _, _ = run()
     claimed = gate_report(receipt)
     unclaimed = gate_report(None)
@@ -1380,12 +1539,23 @@ def test_cli_dev_admin_manifest_with_caller_full_is_not_admitted(
 def test_manifest_mirrors_match_the_release_toolchain(profile: str) -> None:
     document = manifest(profile)
 
-    assert bj.compute_manifest_digest(document) == release_manifest.compute_manifest_digest(document)
-    assert bj.sealed_release_profile(document) == release_manifest.manifest_release_profile(document)
+    assert bj.compute_manifest_digest(document) == release_manifest.compute_manifest_digest(
+        document
+    )
+    assert bj.sealed_release_profile(document) == release_manifest.manifest_release_profile(
+        document
+    )
 
 
 def test_journey_specs_are_business_journeys() -> None:
-    assert bj.JOURNEY_IDS == ("operations", "growth", "expansion", "governance", "franchise", "intake")
+    assert bj.JOURNEY_IDS == (
+        "operations",
+        "growth",
+        "expansion",
+        "governance",
+        "franchise",
+        "intake",
+    )
     for spec in bj.JOURNEYS:
         primary = spec.actor_roles["primary"]
         assert "platform_admin" not in set().union(*spec.actor_roles.values())
@@ -1446,6 +1616,7 @@ def test_every_journey_path_is_routed_by_the_deployed_api(monkeypatch: pytest.Mo
 
     steps: list[tuple[str, str]] = [
         ("GET", bj.USER_ADMIN_PROBE_PATH),
+        ("GET", bj.PRINCIPAL_PATH),
         ("GET", bj.AUDIT_EVENTS_PATH),
     ]
     for spec in bj.JOURNEYS:
@@ -1459,3 +1630,438 @@ def test_every_journey_path_is_routed_by_the_deployed_api(monkeypatch: pytest.Mo
             steps.append(("GET", spec.policy.readback_path))
     missing = [f"{method} {path}" for method, path in steps if not routed(method, path)]
     assert missing == []
+
+
+# Review R1-R8: offline regressions, never live acceptance.
+@pytest.mark.parametrize("journey_id", bj.JOURNEY_IDS)
+def test_misbound_tenant_is_refused_before_any_business_write(journey_id: str) -> None:
+    scope = scope_document()
+    scope["journeys"][journey_id]["tenant_id"] = "22222222-2222-4222-8222-222222222222"
+    receipt, web, _ = run(scope=scope, selection=[journey_id])
+    assert receipt["journeys"][journey_id]["status"] == "BLOCKED"
+    assert not web.business_writes
+    assert receipt["journeys"][journey_id]["requests"]["worker_or_provider_triggers"] == 0
+
+
+@pytest.mark.parametrize("journey_id", bj.JOURNEY_IDS)
+def test_read_of_another_record_is_refused_before_writes(journey_id: str) -> None:
+    web = BusinessWeb()
+    spec = bj.JOURNEYS_BY_ID[journey_id]
+    scope = scope_document()
+    scope["journeys"][journey_id]["records"][spec.record_key] = "WRONG-RECORD"
+    web.cross_tenant_leak.add(journey_id)
+    receipt, _, _ = run(web, scope=scope, selection=[journey_id])
+    assert receipt["journeys"][journey_id]["status"] == "BLOCKED"
+    assert not web.business_writes
+
+
+@pytest.mark.parametrize("fault", ["missing-grant", "foreign-account"])
+def test_served_permission_proof_is_required_before_arming_writes(fault: str) -> None:
+    web = BusinessWeb()
+    original = web.request
+
+    def tamper(method: str, path: str, **kwargs: Any) -> Resp:
+        response = original(method, path, **kwargs)
+        if path.startswith(bj.AUDIT_EVENTS_PATH):
+            if fault == "missing-grant":
+                response.payload["events"] = []
+            else:
+                for event in response.payload["events"]:
+                    event["actor"] = account_id("other.account")
+        return response
+
+    web.request = tamper
+    receipt, _, _ = run(web, selection=["operations"])
+    assert receipt["journeys"]["operations"]["status"] == "BLOCKED"
+    assert not web.business_writes
+
+
+@pytest.mark.parametrize("body", [{}, {"campaigns": []}, {"campaigns": [{"campaign_id": "OTHER"}]}])
+def test_empty_or_unauthorized_adlift_campaign_never_triggers_worker(body: dict[str, Any]) -> None:
+    scope = scope_document()
+    scope["journeys"]["growth"]["writes"]["adlift_job"]["body"] = body
+    receipt, web, _ = run(scope=scope, selection=["growth"])
+    assert receipt["journeys"]["growth"]["status"] == "BLOCKED"
+    assert not web.business_writes
+
+
+def test_null_initial_adlift_report_blocks_before_writes() -> None:
+    web = BusinessWeb()
+    web.report = {}
+    receipt, _, _ = run(web, selection=["growth"])
+    assert receipt["journeys"]["growth"]["status"] == "BLOCKED"
+    assert not web.business_writes
+
+
+@pytest.mark.parametrize(
+    "fault", ["empty-result", "wrong-campaign", "empty-report", "stale-report"]
+)
+def test_succeeded_empty_adlift_job_is_not_business_acceptance(fault: str) -> None:
+    web = BusinessWeb()
+    original = web.request
+
+    def tamper(method: str, path: str, **kwargs: Any) -> Resp:
+        response = original(method, path, **kwargs)
+        if method == "GET" and "incrementality-jobs/" in path:
+            if fault == "empty-result":
+                response.payload["reports"] = []
+            elif fault == "wrong-campaign":
+                response.payload["reports"][0]["campaign_id"] = "OTHER"
+        if method == "GET" and "/adlift/reports/" in path and web.business_writes:
+            if fault == "empty-report":
+                response.payload = {}
+            elif fault == "stale-report":
+                response.payload["report_id"] = "ALR-76"
+        return response
+
+    web.request = tamper
+    receipt, _, _ = run(web, selection=["growth"])
+    assert receipt["journeys"]["growth"]["status"] == "FAILED"
+
+
+def test_expansion_ui_runs_after_solve_before_submit_and_approval() -> None:
+    web = BusinessWeb()
+
+    class OrderedUi(OfflineUi):
+        def run(self, **kwargs: Any) -> Any:
+            assert web.scenario["status"] == "solved"
+            assert not web.writes_to("/submit") and not web.writes_to("/decide")
+            assert any(
+                s["selector"] == "scenario-disclosure-NP-SCN-31" for s in kwargs["assertions"]
+            )
+            return super().run(**kwargs)
+
+    ui = OrderedUi()
+    receipt, _, _ = run(web, selection=["expansion"], ui=ui)
+    assert receipt["journeys"]["expansion"]["status"] == "PASSED"
+    assert len(ui.calls) == 1
+
+
+def test_missing_live_browser_blocks_expansion_before_any_write() -> None:
+    receipt, web, _ = run(selection=["expansion"], ui=None)
+    assert receipt["journeys"]["expansion"]["status"] == "BLOCKED"
+    assert not web.business_writes
+
+
+def test_failed_disclosure_prevents_submit_and_approval() -> None:
+    class FailedUi(OfflineUi):
+        def run(self, **kwargs: Any) -> Any:
+            return bj.UiOutcome("FAILED", ("npx", "playwright", "test"), 1)
+
+    receipt, web, _ = run(selection=["expansion"], ui=FailedUi())
+    assert receipt["journeys"]["expansion"]["status"] == "FAILED"
+    assert not web.writes_to("/submit") and not web.writes_to("/decide")
+
+
+@pytest.mark.parametrize("journey_id", bj.JOURNEY_IDS)
+@pytest.mark.parametrize("fault", ["identity", "correlation", "grant"])
+def test_resealed_incomplete_evidence_cannot_pass(journey_id: str, fault: str) -> None:
+    receipt, _, _ = run()
+    entry = receipt["journeys"][journey_id]
+    if fault == "identity":
+        entry["before"].pop("record_id")
+        entry["after"].pop("record_id")
+    elif fault == "correlation":
+        entry["correlation_ids"] = {}
+        for ref in entry["audit_refs"]:
+            ref.pop("correlation_id")
+    else:
+        entry["actor"]["verified_grants"] = {}
+    assert f"business_journey:{journey_id}" in failing_checks(reseal(receipt))
+
+
+def test_resealed_receipt_without_ui_is_rejected() -> None:
+    receipt, _, _ = run()
+    receipt["journeys"]["expansion"]["ui_checks"] = []
+    assert "business_journey:expansion" in failing_checks(reseal(receipt))
+
+
+@pytest.mark.parametrize("action", ["approve", "return", "reject"])
+def test_governance_vocabulary_matches_actual_service(action: str) -> None:
+    from apps.api.app.routes.operator_modules.governance import DecisionPayload
+    from modules.opsboard.application.governance import GovernanceService
+
+    service = GovernanceService()  # explicit OFFLINE seed; not live evidence
+    approval_id = service.snapshot()["approvals"][0]["id"]
+    body = DecisionPayload(
+        approvalId=approval_id, action=action, reason="Offline regression justification"
+    )
+    response = service.decide(
+        approval_id=body.approvalId,
+        action=body.action,
+        reason=body.reason,
+        correlation_id="offline-corr",
+    )
+    assert response["action"] == action and response["decision"]["id"]
+    assert service.snapshot()["auditRows"][0]["correlationId"] == f"corr-{approval_id}"
+    assert action in bj.JOURNEYS_BY_ID["governance"].writes_allowed["decision"]
+
+
+@pytest.mark.parametrize("action", ["create", "revise", "duplicate", "quarantine", "reject"])
+def test_intake_actual_action_vocabulary_accepts_authorized_scope(action: str) -> None:
+    from modules.opsboard.application.network_listings import (
+        InMemoryAssistedIntakeRepository,
+        NetworkListingService,
+    )
+
+    # Actual service with explicitly offline input/repository, no retrieval.
+    repository = InMemoryAssistedIntakeRepository()
+    repository.save_intake(
+        {
+            "id": "OFFLINE-INTAKE",
+            "sourceId": "OFFLINE-SOURCE",
+            "tenantId": TENANT,
+            "heatZoneId": "HZ-01",
+            "originalUrl": "https://example.invalid/offline",
+            "stage": "PENDING_REVIEW",
+            "parsedFields": {},
+            "auditEvents": [],
+            "matchResult": {"targetListingId": "L-2024"},
+        }
+    )
+    service = NetworkListingService(intake_repository=repository)
+    result = service.decide_intake(
+        intake_id="OFFLINE-INTAKE",
+        action=action,
+        reason="Offline decision test",
+        risk_summary="Offline risk disclosure",
+        risk_acknowledged=True,
+        actor_role_id="expansionManager",
+        actor_name="offline-actor",
+        idempotency_key=f"offline-{action}",
+        correlation_id="offline-intake-corr",
+    )
+    assert result["auditEvents"][-1]["action"] == f"intake.decide.{action}"
+    assert (
+        service.get_intake("OFFLINE-INTAKE")["auditEvents"][-1]["correlationId"]
+        == "offline-intake-corr"
+    )
+    scope = scope_document()
+    scope["journeys"]["intake"]["writes"]["decide"]["action"] = action
+    scope["journeys"]["intake"]["writes"]["decide"]["body"]["action"] = action
+    if action in {"revise", "duplicate"}:
+        scope["journeys"]["intake"]["records"]["target_listing_id"] = "L-2024"
+        scope["journeys"]["intake"]["writes"]["decide"]["body"]["targetListingId"] = "L-2024"
+    receipt, _, _ = run(selection=["intake"], scope=scope)
+    assert receipt["journeys"]["intake"]["status"] == "PASSED"
+
+
+def test_cli_manifest_digest_reaches_full_acceptance_verification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    receipt, _, _ = run()
+    gate = fixtures.gate
+    captured = {}
+
+    def evaluate(config: Any, **kwargs: Any) -> Any:
+        captured["digest"] = config.expected_manifest_digest
+        failed = [
+            c
+            for c in bj.verify_receipt(
+                receipt,
+                expected_sha=config.expected_sha,
+                expected_digest=config.expected_manifest_digest,
+                release_profile=config.release_profile,
+            )
+            if not c.ok
+        ]
+        return [], {
+            "ok": True,
+            "blockers": [],
+            "blocking_dependencies": [],
+            "full_acceptance": {"status": "BLOCKED" if failed else "PASSED", "blockers": []},
+            "release_profile": {"full_product_acceptance_claimed": not failed},
+        }
+
+    monkeypatch.setattr(gate, "evaluate_gate", evaluate)
+    assert (
+        gate.main(
+            [
+                "--api-url",
+                "https://api.example.invalid",
+                "--expected-sha",
+                SHA,
+                "--release-profile",
+                "full",
+                "--expected-manifest-digest",
+                DIGEST,
+                "--require-full-acceptance",
+                "--output",
+                str(tmp_path / "gate.json"),
+            ]
+        )
+        == 0
+    )
+    assert captured["digest"] == DIGEST
+
+
+@pytest.mark.parametrize("journey_id", bj.JOURNEY_IDS)
+def test_wrong_actual_business_role_is_refused_with_zero_writes(journey_id: str) -> None:
+    web = BusinessWeb()
+    web.account_roles[ACTORS[journey_id]["primary"]] = frozenset({"data_owner"})
+    receipt, _, _ = run(web, selection=[journey_id])
+    assert receipt["journeys"][journey_id]["status"] == "BLOCKED"
+    assert not web.business_writes
+
+
+def test_principal_surface_returns_only_verified_self_context_and_refuses_spoofed_production_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from apps.api.oday_api.security.dependencies import reset_default_boundary
+    from shared.infrastructure.persistence.factory import _memory_bundle
+
+    # OFFLINE auth adapter regression. Construct a local app so readiness does
+    # not mask the authentication layer being tested; no live business calls.
+    monkeypatch.setenv("NODE_ENV", "test")
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+    monkeypatch.delenv("ODP_PRODUCT_MODE", raising=False)
+    for key in ("ODP_AUTH_ISSUER", "ODP_AUTH_AUDIENCES", "ODP_AUTH_HS256_KEYS"):
+        monkeypatch.delenv(key, raising=False)
+    reset_default_boundary()
+    client = TestClient(create_app(persistence=_memory_bundle()))
+    headers = {
+        "x-subject-id": account_id("ops.manager"),
+        "x-roles": "operations_manager",
+        "x-tenant-id": TENANT,
+    }
+    response = client.get(bj.PRINCIPAL_PATH, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "account_id": account_id("ops.manager"),
+        "tenant_id": TENANT,
+        "roles": ["operations_manager"],
+    }
+    assert client.get(bj.PRINCIPAL_PATH).status_code == 401
+    monkeypatch.setenv("ODP_PRODUCT_MODE", "production")
+    assert client.get(bj.PRINCIPAL_PATH, headers=headers).status_code == 401
+    reset_default_boundary()
+
+
+def test_browser_driver_records_real_exit_without_exporting_unrelated_secrets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    calls = []
+
+    def child(command: Any, **kwargs: Any) -> Any:
+        calls.append((command, kwargs))
+        return SimpleNamespace(
+            returncode=1, stdout="sensitive browser output", stderr="sensitive diagnostics"
+        )
+
+    monkeypatch.setenv("ODP_API_INVOKER_TOKEN", "unrelated-secret")
+    monkeypatch.setenv("ODP_LIVE_JOURNEY_GROWTH_PASSWORD", "other-password")
+    driver = bj.PlaywrightUiDriver(root=tmp_path, runner=child, which=lambda name: "/usr/bin/npx")
+    assert driver.available()[0] is False
+    outcome = driver.run(
+        check="netplan_disclosure",
+        web_origin=WEB_ORIGIN,
+        path="/operator?ws=network&tab=rebalance",
+        credential=bj.Credential("ops.manager", "private-password"),
+        assertions=[{"action": "visible", "selector": "scenario-disclosure-NP-SCN-31", "text": ""}],
+    )
+    assert outcome.status == "FAILED" and outcome.exit_code == 1
+    assert outcome.command == bj.LIVE_UI_COMMAND
+    assert "sensitive" not in outcome.detail
+    assert calls[0][1]["env"]["ODP_LIVE_UI_PASSWORD"] == "private-password"
+    assert "ODP_API_INVOKER_TOKEN" not in calls[0][1]["env"]
+    assert "ODP_LIVE_JOURNEY_GROWTH_PASSWORD" not in calls[0][1]["env"]
+    assert "private-password" not in str(calls[0][0])
+
+
+def test_self_principal_uses_identity_store_roles_not_token_or_browser_claims(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from apps.api.oday_api.security import dependencies
+    from modules.opsboard.auth import AuthBoundaryConfig, AuthenticationBoundary
+    from shared.auth import Role, Scope
+    from shared.identity import Account, RevocationReason
+    from shared.infrastructure.persistence.factory import _memory_bundle
+
+    helpers = _load(
+        "journey_auth_contract_helpers", ROOT / "tests/contract/test_api_trust_contract.py"
+    )
+    bundle = _memory_bundle()
+    account = UUID(account_id("ops.manager"))
+    bundle.identity_store.save_account(
+        Account(
+            account_id=account,
+            tenant_id=UUID(TENANT),
+            username="ops.manager",
+            email="offline@example.invalid",
+            status="active",
+        )
+    )
+    bundle.identity_store.set_account_roles(account, [Role.OPERATIONS_MANAGER])
+    bundle.identity_store.set_account_scope(account, Scope(tenant_id=TENANT))
+    session = bundle.session_service.create_session(account_id=account, provider="local_password")
+    token = helpers.make_local_jwt(
+        sub=str(account),
+        sid=str(session.session_id),
+        tenant_id=TENANT,
+        extra_claims={"roles": ["platform_admin"]},
+    )
+    boundary = AuthenticationBoundary(
+        AuthBoundaryConfig(
+            audiences=frozenset({helpers.AUDIENCE}),
+            local_issuer=helpers.LOCAL_ISSUER,
+            local_signing_keys={"local-k1": helpers.LOCAL_KEY},
+            local_audiences=frozenset({helpers.AUDIENCE}),
+            identity_store=bundle.identity_store,
+            session_service=bundle.session_service,
+        )
+    )
+    monkeypatch.setenv("NODE_ENV", "test")
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+    monkeypatch.delenv("ODP_PRODUCT_MODE", raising=False)
+    client = TestClient(create_app(persistence=bundle))
+    monkeypatch.setattr(dependencies, "default_boundary", lambda: boundary)
+    monkeypatch.setenv("ODP_PRODUCT_MODE", "production")
+    headers = {
+        "authorization": f"Bearer {token}",
+        "x-roles": "platform_admin",
+        "x-tenant-id": FOREIGN_TENANT,
+    }
+    response = client.get(bj.PRINCIPAL_PATH, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "account_id": str(account),
+        "tenant_id": TENANT,
+        "roles": ["operations_manager"],
+    }
+    bundle.identity_store.set_account_roles(account, [Role.DATA_OWNER])
+    assert client.get(bj.PRINCIPAL_PATH, headers=headers).json()["roles"] == ["data_owner"]
+    bundle.session_service.revoke_session(session.session_id, RevocationReason.ADMIN_REVOKE)
+    assert client.get(bj.PRINCIPAL_PATH, headers=headers).status_code == 401
+
+
+def test_franchise_contract_matches_real_shell_service() -> None:
+    from modules.opsboard.application.shell import ShellService
+
+    service = ShellService()  # explicit OFFLINE in-memory implementation
+    response = service.get_franchisee_view(subject_id="offline-owner", store_id="ST-0412")
+    spec = bj.JOURNEYS_BY_ID["franchise"]
+    assert bj.dig(response, spec.record_id_path) == "ST-0412"
+    assert bj.dig(response, "meta.scope.storeId") == "ST-0412"
+    written = service.franchisee_report(
+        subject_id="offline-owner",
+        store_id="ST-0412",
+        category="equipment",
+        message="Offline alarm regression",
+        idempotency_key="offline-report",
+        correlation_id="offline-report-corr",
+    )
+    assert written["auditEvent"]["metadata"]["correlationId"] == "offline-report-corr"
+    assert (
+        service.get_franchisee_view(subject_id="offline-owner", store_id="ST-0412")["reports"][0][
+            "reportId"
+        ]
+        == written["report"]["reportId"]
+    )
