@@ -140,8 +140,9 @@ describe("GrowthWorkspace API loading", () => {
 
     render(<GrowthWorkspace basePath="/operator" searchParams={{}} />);
 
+    // The gate first renders in its loading state; wait for the seed verdict.
     const gate = await screen.findByTestId("operator-data-unavailable");
-    expect(gate).toHaveAttribute("data-status", "seed");
+    await waitFor(() => expect(gate).toHaveAttribute("data-status", "seed"));
     expect(screen.queryByTestId("growth-workspace")).not.toBeInTheDocument();
     expect(screen.queryByText(GROWTH_ITEMS[0].name)).not.toBeInTheDocument();
   });

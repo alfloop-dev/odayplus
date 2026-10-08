@@ -98,6 +98,7 @@ PLAYWRIGHT_COMMAND=(
   tests/e2e/operator-network-rebalance.spec.ts
   tests/e2e/operator-network-review.spec.ts
   tests/e2e/operator-network-scoring.spec.ts
+  tests/e2e/operator-shell-layout.spec.ts
   tests/e2e/operator-shell-today.spec.ts
   tests/e2e/operator-store-ops.spec.ts
   tests/e2e/product-e2e-env.spec.ts

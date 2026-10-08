@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { readOperatorReleaseStatus } from "../../lib/auth/operatorReleaseStatus";
+import { readDeploymentEnvironment } from "../../../features/operator/operatorEnvironment";
 import { webSessionCookieName } from "../../lib/auth/session";
 import {
   OperatorAdminConsole,
@@ -36,7 +37,7 @@ export default async function OperatorPage({ searchParams }: PageProps) {
 
   return (
     <>
-      <OperatorConsole searchParams={params} />
+      <OperatorConsole deploymentEnvironment={readDeploymentEnvironment()} searchParams={params} />
       {shouldShowMarketIntelligence(params) ? (
         <MarketIntelligencePanel searchParams={params} />
       ) : null}

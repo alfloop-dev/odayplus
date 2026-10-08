@@ -17,8 +17,8 @@ from typing import Any
 from _support import load_json_object as read_json
 
 SCHEMA_VERSION = "2.0.0"
-EXPECTED_CANONICAL_SPEC_COUNT = 17
-EXPECTED_PLAYWRIGHT_TEST_COUNT = 108
+EXPECTED_CANONICAL_SPEC_COUNT = 18
+EXPECTED_PLAYWRIGHT_TEST_COUNT = 119
 RAW_PLAYWRIGHT_PATH = "docs/evidence/e2e/raw_playwright_results.json"
 RAW_PYTEST_PATH = "docs/evidence/e2e/raw_pytest_results.json"
 RECEIPT_PATH = "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json"
@@ -276,6 +276,7 @@ CANONICAL_SPEC_INVENTORY = (
     "tests/e2e/operator-network-rebalance.spec.ts",
     "tests/e2e/operator-network-review.spec.ts",
     "tests/e2e/operator-network-scoring.spec.ts",
+    "tests/e2e/operator-shell-layout.spec.ts",
     "tests/e2e/operator-shell-today.spec.ts",
     "tests/e2e/operator-store-ops.spec.ts",
     "tests/e2e/product-e2e-env.spec.ts",
