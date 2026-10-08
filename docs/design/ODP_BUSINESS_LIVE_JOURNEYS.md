@@ -64,6 +64,18 @@ against the live system:
   Durable approval must be newly created, match this write's captured approval
   ID, actor/principal/receipt/reason and current disclosure, and be authentic.
   POST returns a root `ApprovalRecord`; only GET scenario contains `approvals`.
+  Before any mutation/trigger, existing GET scenario must provide a server-owned
+  `approval_disclosure_readiness` computed from its current solve, selected
+  primary action, effective tenant policy and existing acknowledgement. Missing
+  or stale solves, unresolved/blocking policy, missing/mismatched acknowledgement,
+  or an older deployment without this read-only field are `named-approval`
+  BLOCKED with zero writes/triggers. The field reuses the decision's existing
+  checks without a solver, verifier callback, save, transition or audit; it is
+  not an approval, waiver, or acknowledgement writer. Actual authorized
+  preparation of a valid acknowledged draft remains an external prerequisite.
+  Re-solve must preserve this problem/action/policy/ack binding; invalidation
+  stops before submit/decide. The final same new approval and sealed receipt
+  must bind this prerequisite and a durable `status=approved` scenario.
   The runner does not change the canonical API's authorization policy.
 - Franchise captures this POST's report ID and requires that exact new report
   in durable GET, bound to store, actor, content, status and request correlation;

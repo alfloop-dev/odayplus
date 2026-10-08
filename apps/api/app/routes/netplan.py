@@ -333,6 +333,9 @@ else:
         payload["approvals"] = [
             approval.to_dict() for approval in service.repository.list_approvals(scenario_id)
         ]
+        # Server-owned read-only disclosure prerequisite; no solve, receipt
+        # verification, acknowledgement write, transition or provider probe.
+        payload["approval_disclosure_readiness"] = service.inspect_approval_disclosure(scenario_id)
         payload["execution"] = execution.to_dict() if execution else None
         payload["outcome"] = outcome.to_dict() if outcome else None
         return payload

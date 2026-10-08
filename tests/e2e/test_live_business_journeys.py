@@ -196,6 +196,15 @@ class BusinessWeb:
             "feature_version": "fs-14",
             "solver_version": "cp-sat-9.10",
             "approvals": [],
+            # OFFLINE stand-in; the actual GET computes policy/solve/ack readiness.
+            "solve": {"problem_hash": "f" * 64},
+            "approval_disclosure_readiness": {
+                "ready": True, "scenario_id": "NP-SCN-31", "tenant_id": TENANT,
+                "solver_problem_hash": "f" * 64, "selected_candidate_id": "NP-SCN-31",
+                "policy_version_id": f"network-disclosure-2026.09:{TENANT}",
+                "requires_acknowledgement": True, "acknowledgement_id": "ACK-NP-31",
+                "checked_at": NOW,
+            },
         }
         self.rebalance = {
             "id": "RB-801", "status": "avmready",
@@ -438,13 +447,14 @@ class BusinessWeb:
                 self.scenario.update(
                     {
                         "status": "solved",
-                        "selected_candidate_id": "C-2",
+                        "selected_candidate_id": self.scenario["scenario_id"],
                         "solve": {
                             "result": {
                                 "objective": 1.25,
                                 "unmodelled_constraint_classes": ["lease_terms"],
                             },
                             "model_version": self.scenario.get("model_version"),
+                            "problem_hash": self.scenario["solve"]["problem_hash"],
                         },
                     }
                 )
@@ -462,6 +472,10 @@ class BusinessWeb:
                         "decision": ctx.body.get("decision"),
                         "reason": ctx.body.get("reason"), "decided_at": NOW,
                         "authentic_approval_verified": True,
+                        "solver_problem_hash": self.scenario["solve"]["problem_hash"],
+                        "selected_candidate_id": self.scenario["approval_disclosure_readiness"]["selected_candidate_id"],
+                        "disclosure_policy_version_id": self.scenario["approval_disclosure_readiness"]["policy_version_id"],
+                        "disclosure_acknowledgement_id": self.scenario["approval_disclosure_readiness"]["acknowledgement_id"],
                         "approved_by": ctx.actor,
                         "modelled_constraint_classes": ["CAPITAL"],
                         "unmodelled_constraint_classes": ["LEASE"],
@@ -489,8 +503,9 @@ class BusinessWeb:
                 return Resp(404, {})
             if "expansion" not in self.non_durable:
                 self.scenario.update({
-                    "status": "solved", "selected_candidate_id": "C-2",
+                    "status": "solved", "selected_candidate_id": self.scenario["scenario_id"],
                     "solve": {"solved_at": NOW, "model_version": self.scenario["model_version"],
+                              "problem_hash": self.scenario["solve"]["problem_hash"],
                               "result": {"unmodelled_constraint_classes": ["LEASE"]}},
                 })
                 self.scenario["status_history"].append("solved")
@@ -2384,6 +2399,131 @@ def test_self_principal_uses_identity_store_roles_not_token_or_browser_claims(
     assert client.get(bj.PRINCIPAL_PATH, headers=headers).status_code == 401
 
 
+# R20-R21: read the real existing prerequisite before any trigger/mutation.
+@pytest.mark.parametrize("fault", ["none", "ack_missing", "hash", "action", "no_solve", "no_policy"])
+def test_real_netplan_get_disclosure_prerequisite_is_read_only(
+    monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    import copy
+    from dataclasses import replace
+
+    from apps.api.app.routes.netplan import _scenario_detail
+
+    helpers = _load("offline_disclosure_read_only", ROOT / "tests/integration/test_netplan_disclosure_ui_e2e.py")
+    scenario, repo, service, rebalance = helpers._submitted_canonical_surface("READ-ONLY-NP")
+    rebalance.submit_review(
+        store_id="STORE-101", reason="Offline disclosure read preparation",
+        actor_role_id="expansionManager", actor_name="Offline planner",
+        idempotency_key="offline-read-submit", correlation_id="offline-read-submit",
+        **helpers._ACK_SUBMISSION,
+    )
+    if fault == "ack_missing":
+        repo._disclosure_acknowledgements.clear()
+    elif fault == "hash":
+        repo._solves[scenario.scenario_id] = replace(repo.get_solve(scenario.scenario_id), problem_hash="0" * 64)
+    elif fault == "action":
+        repo._scenarios[scenario.scenario_id] = replace(repo.get_scenario(scenario.scenario_id), selected_candidate_id=f"{scenario.scenario_id}:alternative:999")
+    elif fault == "no_solve":
+        repo._solves.clear()
+    elif fault == "no_policy":
+        service.policy_repository = None
+    before = copy.deepcopy({key: value for key, value in vars(repo).items() if key.startswith("_")})
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("read-only prerequisite invoked mutation/solver/authority callback")
+
+    for name in ("solve", "decide", "acknowledge_unmodelled_constraints", "commit_unmodelled_constraint_acknowledgement"):
+        monkeypatch.setattr(service, name, forbidden)
+    for name in ("save_scenario", "save_solve", "save_approval", "save_disclosure_acknowledgement", "save_execution", "save_outcome"):
+        monkeypatch.setattr(repo, name, forbidden)
+    monkeypatch.setattr(service, "production_executor", object())
+    monkeypatch.setattr(service, "approval_verifier", object())
+    payload = _scenario_detail(service, scenario.scenario_id, repo.get_scenario(scenario.scenario_id).to_dict())
+    proof = payload["approval_disclosure_readiness"]
+    assert proof["ready"] is (fault == "none")
+    assert proof["scenario_id"] == scenario.scenario_id
+    assert proof["tenant_id"] == helpers.TENANT_ID
+    assert {key: value for key, value in vars(repo).items() if key.startswith("_")} == before
+    if fault == "none":
+        assert proof["solver_problem_hash"] == repo.get_solve(scenario.scenario_id).problem_hash
+        assert proof["requires_acknowledgement"] is True
+        assert proof["acknowledgement_id"] in repo._disclosure_acknowledgements
+        assert proof["policy_version_id"] == helpers.default_netplan_disclosure_policy(tenant_id=helpers.TENANT_ID).policy_version_id
+
+
+def test_actual_missing_netplan_acknowledgement_blocks_preflight_zero_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apps.api.app.routes.netplan import _scenario_detail
+
+    helpers = _load("offline_missing_disclosure", ROOT / "tests/integration/test_netplan_disclosure_ui_e2e.py")
+    monkeypatch.setattr(helpers, "TENANT_ID", TENANT)
+    scenario, repo, service, _ = helpers._submitted_canonical_surface("NP-SCN-31")
+    status_before = repo.get_scenario(scenario.scenario_id).status
+    actual = _scenario_detail(service, scenario.scenario_id, repo.get_scenario(scenario.scenario_id).to_dict())
+    assert actual["approval_disclosure_readiness"]["ready"] is False
+    web = BusinessWeb()
+    web.scenario["solve"]["problem_hash"] = actual["solve"]["problem_hash"]
+    web.scenario["approval_disclosure_readiness"] = actual["approval_disclosure_readiness"]
+    receipt, web, _ = run(web=web, selection=["expansion"])
+    result = receipt["journeys"]["expansion"]
+    assert result["status"] == "BLOCKED" and not receipt["preflight_passed"]
+    assert any(check["name"] == "preflight:existing_disclosure_prerequisite" and not check["ok"] for check in result["checks"])
+    _zero_writes(receipt, web, "expansion")
+    assert repo.get_scenario(scenario.scenario_id).status == status_before
+    assert repo.list_approvals(scenario.scenario_id) == []
+
+
+@pytest.mark.parametrize("field", ["ready", "scenario_id", "tenant_id", "solver_problem_hash", "selected_candidate_id", "policy_version_id", "requires_acknowledgement", "acknowledgement_id", "checked_at", "whole-proof"])
+def test_missing_or_mismatched_server_prerequisite_blocks_zero_writes(field: str) -> None:
+    web = BusinessWeb()
+    if field == "whole-proof":
+        web.scenario.pop("approval_disclosure_readiness")
+    else:
+        web.scenario["approval_disclosure_readiness"].pop(field)
+    receipt, web, _ = run(web=web, selection=["expansion"])
+    assert receipt["journeys"]["expansion"]["status"] == "BLOCKED"
+    _zero_writes(receipt, web, "expansion")
+
+
+def test_changed_disclosure_after_solve_never_submits_or_decides() -> None:
+    class ChangedDisclosure(BusinessWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            response = super().request(method, path, **kwargs)
+            if method == "POST" and path.endswith("/netplan/solve") and response.status == 200:
+                self.scenario["approval_disclosure_readiness"]["acknowledgement_id"] = "DIFFERENT-ACK"
+            return response
+    receipt, web, _ = run(web=ChangedDisclosure(), selection=["expansion"])
+    assert receipt["journeys"]["expansion"]["status"] == "FAILED"
+    assert not any(call["path"].endswith(("/submit", "/decide")) for call in web.business_calls)
+
+
+def test_expansion_approval_without_approved_scenario_cannot_pass() -> None:
+    class PendingScenario(BusinessWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            response = super().request(method, path, **kwargs)
+            if method == "POST" and path.endswith("/decide") and response.status == 200:
+                self.scenario["status"] = "pending_approval"
+                self.scenario["status_history"][-1] = "pending_approval"
+            return response
+    receipt, _, _ = run(web=PendingScenario(), selection=["expansion"])
+    assert receipt["journeys"]["expansion"]["status"] == "FAILED"
+
+
+@pytest.mark.parametrize("fault", ["status", "before_proof", "after_proof", "ack", "hash", "policy"])
+def test_resealed_expansion_needs_existing_prerequisite_and_terminal_status(fault: str) -> None:
+    receipt, _, _ = run()
+    entry = receipt["journeys"]["expansion"]
+    if fault == "status":
+        entry["after"]["state"].update(status="pending_approval", status_history=["draft", "pending_approval"])
+    elif fault in {"before_proof", "after_proof"}:
+        entry["before" if fault == "before_proof" else "after"]["state"].pop("approval_disclosure_readiness")
+    else:
+        key = {"ack": "disclosure_acknowledgement_id", "hash": "solver_problem_hash", "policy": "disclosure_policy_version_id"}[fault]
+        entry["after"]["state"]["approvals"][0][key] = "Unrelated value"
+    assert "business_journey:expansion" in failing_checks(reseal(receipt))
+
+
 # R18-R19: real producer shapes and exact governance terminal outcomes.
 def test_real_netplan_decide_producer_is_root_approval_and_reads_same_record(
     monkeypatch: pytest.MonkeyPatch,
@@ -2396,6 +2536,7 @@ def test_real_netplan_decide_producer_is_root_approval_and_reads_same_record(
     helpers = _load("offline_netplan_root_contract", ROOT / "tests/integration/test_netplan_disclosure_ui_e2e.py")
     approver = account_id(ACTORS["expansion"]["approver"])
     monkeypatch.setattr(helpers, "APPROVAL_PRINCIPAL", approver)
+    monkeypatch.setattr(helpers, "TENANT_ID", TENANT)
     scenario, repo, service, rebalance = helpers._submitted_canonical_surface("NP-SCN-31")
     rebalance.submit_review(
         store_id="STORE-101", reason="Offline producer-shape preparation",
@@ -2406,6 +2547,12 @@ def test_real_netplan_decide_producer_is_root_approval_and_reads_same_record(
     audit = InMemoryAuditLog()
 
     class RealApprovalProducerWeb(BusinessWeb):
+        def __init__(self) -> None:
+            super().__init__()
+            self.scenario["solve"]["problem_hash"] = repo.get_solve(scenario.scenario_id).problem_hash
+            self.scenario["approval_disclosure_readiness"] = service.inspect_approval_disclosure(scenario.scenario_id)
+            assert self.scenario["approval_disclosure_readiness"]["ready"] is True
+
         def request(self, method: str, path: str, **kwargs: Any) -> Resp:
             response = super().request(method, path, **kwargs)
             if method == "POST" and path.endswith("/decide") and response.status == 200:

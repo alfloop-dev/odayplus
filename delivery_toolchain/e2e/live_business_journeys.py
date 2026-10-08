@@ -819,7 +819,7 @@ JOURNEYS: tuple[JourneySpec, ...] = (
                 ),
             ),
         ),
-        state_paths=("status", "status_history", "approvals"),
+        state_paths=("status", "status_history", "solve.problem_hash", "approval_disclosure_readiness", "approvals"),
         provenance_paths=("scenario_id", "tenant_id", "status", "options_by_entity"),
         model_provenance_paths=("model_version", "feature_version", "solver_version"),
         disclosure_keys=(
@@ -834,6 +834,7 @@ JOURNEYS: tuple[JourneySpec, ...] = (
             "approvals[approval_id={captured.approval_id}].approval_id",
         ),
         readback_bindings={
+            "status": "approved",
             "approvals[approval_id={captured.approval_id}].actor_id": "{account.approver}",
             "approvals[approval_id={captured.approval_id}].approval_principal_id": "{account.approver}",
             "approvals[approval_id={captured.approval_id}].approval_receipt_id": "{approval_ref}",
@@ -1121,6 +1122,20 @@ def outcome_content_digest(fields: Mapping[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(
         json.dumps(dict(fields), sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def netplan_disclosure_ready(payload: Mapping[str, Any], records: Mapping[str, Any], tenant_id: Any) -> bool:
+    proof = _as_dict(payload.get("approval_disclosure_readiness"))
+    return (
+        proof.get("ready") is True and proof.get("tenant_id") == tenant_id
+        and proof.get("scenario_id") == records.get("scenario_id")
+        and proof.get("selected_candidate_id") == records.get("scenario_id")
+        and _present(proof.get("solver_problem_hash"))
+        and proof.get("solver_problem_hash") == dig(payload, "solve.problem_hash")
+        and _present(proof.get("policy_version_id")) and _present(proof.get("checked_at"))
+        and type(proof.get("requires_acknowledgement")) is bool
+        and (not proof["requires_acknowledgement"] or _present(proof.get("acknowledgement_id")))
+    )
 
 
 def governance_outcome(action: str, body: Mapping[str, Any]) -> dict[str, str]:
@@ -2201,6 +2216,13 @@ class JourneyRunner:
             ):
                 return None
         if self.spec.journey_id == "expansion" and not self.result.check(
+            netplan_disclosure_ready(payload, self.scope.records, self.scope.tenant_id),
+            "preflight:existing_disclosure_prerequisite",
+            "existing server-owned policy/solve/action disclosure acknowledgement must be verifiably ready before any mutation or trigger",
+            "named-approval",
+        ):
+            return None
+        if self.spec.journey_id == "expansion" and not self.result.check(
             payload.get("status") == "draft"
             and self.scope.records.get("rebalance_store_id") in _as_dict(payload.get("options_by_entity"))
             and self.captured.get("rebalance_scenario_ids") == [self.scope.records.get("scenario_id")],
@@ -2413,6 +2435,15 @@ class JourneyRunner:
                     "disclosure",
                 ):
                     return False
+                if not self.result.check(
+                    netplan_disclosure_ready(_as_dict(canonical.payload), self.scope.records, self.scope.tenant_id)
+                    and all(dig(canonical.payload, f"approval_disclosure_readiness.{key}") == dig(self.before_payload, f"approval_disclosure_readiness.{key}")
+                            for key in ("solver_problem_hash", "selected_candidate_id", "policy_version_id", "requires_acknowledgement", "acknowledgement_id")),
+                    "write:solve:existing_disclosure_still_valid",
+                    "fresh solve must retain the exact existing disclosure prerequisite; never create an acknowledgement or continue to approval after invalidation",
+                    "named-approval",
+                ):
+                    return False
                 self.result.captured["solve_completed_at"] = completed_at
             for check in self.spec.ui_checks:
                 if check.after_write == step.name and not self.run_ui_check(check):
@@ -2572,7 +2603,7 @@ class JourneyRunner:
         response = self.write_responses.get(write_key, {})
         written_rows = [response] if is_approval else [response.get("report")]
         durable_rows, before_rows = payload.get(list_key), self.before_payload.get(list_key)
-        keys = ("approval_id", "scenario_id", "actor_id", "approval_principal_id", "approval_receipt_id", "decision", "reason", "decided_at") if is_approval else ("reportId", "storeId", "subjectId", "category", "message", "status", "createdAt", "correlationId")
+        keys = ("approval_id", "scenario_id", "actor_id", "approval_principal_id", "approval_receipt_id", "decision", "reason", "decided_at", "solver_problem_hash", "selected_candidate_id", "disclosure_policy_version_id") if is_approval else ("reportId", "storeId", "subjectId", "category", "message", "status", "createdAt", "correlationId")
         def matching(rows: Any) -> list[dict[str, Any]]:
             return [row for row in rows if isinstance(row, dict) and row.get(id_key) == identifier] if isinstance(rows, list) else []
         written, durable = matching(written_rows), matching(durable_rows)
@@ -2581,6 +2612,18 @@ class JourneyRunner:
             _present(written[0].get(key)) and written[0].get(key) == durable[0].get(key) for key in keys
         )
         authentic = not is_approval or (same and durable[0].get("authentic_approval_verified") is True)
+        if is_approval:
+            proof = _as_dict(payload.get("approval_disclosure_readiness"))
+            previous = _as_dict(self.before_payload.get("approval_disclosure_readiness"))
+            row = durable[0] if len(durable) == 1 else {}
+            authentic = authentic and payload.get("status") == "approved" and netplan_disclosure_ready(payload, self.scope.records, self.scope.tenant_id)
+            authentic = authentic and all(proof.get(key) == previous.get(key) for key in ("solver_problem_hash", "selected_candidate_id", "policy_version_id", "requires_acknowledgement", "acknowledgement_id"))
+            authentic = authentic and (
+                row.get("solver_problem_hash") == proof.get("solver_problem_hash")
+                and row.get("selected_candidate_id") == proof.get("selected_candidate_id")
+                and row.get("disclosure_policy_version_id") == proof.get("policy_version_id")
+                and (not proof.get("requires_acknowledgement") or (row.get("disclosure_acknowledgement_id") == proof.get("acknowledgement_id") == _as_dict(written[0] if written else {}).get("disclosure_acknowledgement_id")))
+            )
         return self.result.check(
             fresh and same and authentic,
             "readback:written_record_identity", "new durable approval/report must match this write's id, actor, scope, content and correlation/authority", "durable-readback",
@@ -3250,8 +3293,21 @@ def journey_receipt_problems(spec: JourneySpec, entry: Mapping[str, Any]) -> lis
         row = matched[0] if len(matched) == 1 else {}
         accounts = _as_dict(scope.get("account_ids"))
         if approval:
+            pre_state, post_state = _as_dict(before.get("state")), _as_dict(after.get("state"))
+            pre_proof = _as_dict(pre_state.get("approval_disclosure_readiness"))
+            post_proof = _as_dict(post_state.get("approval_disclosure_readiness"))
+            prerequisite_bound = (
+                netplan_disclosure_ready({"approval_disclosure_readiness": pre_proof, "solve": {"problem_hash": pre_state.get("solve.problem_hash")}}, records, scope.get("tenant_id"))
+                and netplan_disclosure_ready({"approval_disclosure_readiness": post_proof, "solve": {"problem_hash": post_state.get("solve.problem_hash")}}, records, scope.get("tenant_id"))
+                and all(pre_proof.get(key) == post_proof.get(key) for key in ("solver_problem_hash", "selected_candidate_id", "policy_version_id", "requires_acknowledgement", "acknowledgement_id"))
+                and row.get("solver_problem_hash") == post_proof.get("solver_problem_hash")
+                and row.get("selected_candidate_id") == post_proof.get("selected_candidate_id")
+                and row.get("disclosure_policy_version_id") == post_proof.get("policy_version_id")
+                and (not post_proof.get("requires_acknowledgement") or row.get("disclosure_acknowledgement_id") == post_proof.get("acknowledgement_id"))
+                and post_state.get("status") == "approved"
+            )
             bound = (
-                _canonical_uuid(accounts.get("approver")) is not None
+                prerequisite_bound and _canonical_uuid(accounts.get("approver")) is not None
                 and accounts.get("approver") != accounts.get("primary")
                 and row.get("actor_id") == row.get("approval_principal_id") == accounts.get("approver")
                 and _present(scope.get("approval_ref"))

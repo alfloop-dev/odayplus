@@ -83,6 +83,31 @@ IAM/egress or legal/governance holds are changed by this repair.
   are retained unchanged in this repair. Required CI and a new independent
   review must still approve the exact new head before merging or closing.
 
+## Fifth-review repairs (R20–R21)
+
+- R20 dependency: canonical GET scenario previously exposed no read-only way to
+  establish the existing disclosure acknowledgement prerequisite. The owned
+  repair extends that existing GET only, via NetPlanService's read-only
+  `inspect_approval_disclosure`: reuse exactly the current decision's
+  policy/solve/selected-action/acknowledgement enforcement, with no solver,
+  authority-verifier callback, save, audit, transition or new endpoint. It
+  neither creates an acknowledgement nor grants approval. Missing current solve,
+  unresolved/blocking policy or absent/mismatched acknowledgement fails closed.
+  A deployment lacking this field also blocks before any write/trigger.
+- Runner preflight requires that server-owned proof before `writes_armed`;
+  re-solve and durable approval must retain the same problem/action/policy/ack
+  binding. Missing real-service acknowledgement is covered with a zero-ledger
+  regression; local GET producer tests forbid all mutator/solver/verifier
+  callbacks and verify repository storage remains unchanged for both success
+  and missing/invalid prerequisites. Actual preparation of an acknowledged draft
+  and deployment remain external live prerequisites, never fixture waivers.
+- R21: require durable scenario `status=approved`, in addition to this new
+  authentic approval. Runtime and independently verified sealed receipts reject
+  a retained approval paired with pending_approval terminal state, or missing
+  prerequisite/incorrect problem/policy/ack binding.
+- R18/R19 are independently confirmed at 5f2736c4 (full CI37803702716 passed),
+  not evidence that this new head or actual live acceptance has passed review.
+
 ## Verification and limits
 
 Final checks must run on the committed exact head and emit canonical

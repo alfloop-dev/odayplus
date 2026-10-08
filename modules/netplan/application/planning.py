@@ -35,6 +35,7 @@ from modules.netplan.infrastructure.repositories import InMemoryNetPlanRepositor
 from shared.governance.decision_policy import (
     DecisionPolicy,
     DecisionPolicyRepository,
+    PolicyResolutionError,
     resolve_policy,
 )
 from shared.governance.netplan_disclosure import (
@@ -369,6 +370,38 @@ class NetPlanService:
             reason=reason,
             occurred_at=occurred_at,
         )
+
+    def inspect_approval_disclosure(self, scenario_id: str) -> dict[str, Any]:
+        """Read the existing disclosure prerequisite without authorising a write.
+
+        Reuse the decision's exact policy/solve/action/acknowledgement checks.
+        No solver, authority-verifier callback, save, transition or audit is
+        invoked. A successful read is not an approval or an acknowledgement;
+        decide still revalidates all its existing rules independently.
+        """
+        scenario = self._require_scenario(scenario_id)
+        now = datetime.now(UTC)
+        result: dict[str, Any] = {
+            "ready": False, "scenario_id": scenario.scenario_id,
+            "tenant_id": scenario.tenant_id, "checked_at": now.isoformat(),
+        }
+        solve = self.repository.get_solve(scenario_id)
+        if solve is None or solve.is_stale(scenario):
+            return {**result, "blocker": "missing_or_stale_solve"}
+        try:
+            subject = self._selected_approval_subject(scenario, solve)
+            policy, acknowledgement = self._enforce_constraint_disclosure(
+                scenario, solve, selected_candidate_id=subject.candidate_id, at=now,
+            )
+        except (ValueError, PolicyResolutionError):
+            return {**result, "blocker": "disclosure_policy_or_acknowledgement"}
+        return {
+            **result, "ready": True, "solver_problem_hash": solve.problem_hash,
+            "selected_candidate_id": subject.candidate_id,
+            "policy_version_id": policy.policy_version_id,
+            "requires_acknowledgement": acknowledgement is not None,
+            "acknowledgement_id": acknowledgement.acknowledgement_id if acknowledgement else "",
+        }
 
     def prepare_unmodelled_constraint_acknowledgement(
         self,
