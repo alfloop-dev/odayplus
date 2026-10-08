@@ -40,6 +40,28 @@ IAM/egress or legal/governance holds are changed by this repair.
   of the alias, and zero provider dispatch. The existing API-versioning suite
   is an additional focused check; no contract assertion is weakened.
 
+## Third-review repairs (R15–R17)
+
+- R15: preflight requires distinct authoritative account UUIDs and a canonical
+  NetPlanDecisionPayload with `actor_id=account_ids.approver` and authored reason.
+  Bind the newly captured approval ID, actor/principal/authority receipt, reason,
+  authenticity and current disclosure to POST and durable GET. Missing/spoofed
+  actor, primary-as-approver, unknown `comment` or different receipt blocks
+  before writes. The canonical NetPlan API's access policy is not modified.
+- R16: capture the actual POST report ID; require exactly one new durable report
+  with matching store, account, authored category/message, received status,
+  created time and write correlation. A concurrent unrelated report cannot make
+  a lost write pass. An offline real ShellService/repository restart checks the
+  producer/consumer contract in addition to malformed/lost-report counterexamples.
+- R17: StoreOps expected outcomes are action-specific; transfer binds actual
+  ownerRoleId/ownerName rather than nonexistent history or a status change.
+  Noop/inadmissible transitions block preflight. Real offline StoreOpsService
+  transfer regressions prove unchanged status/history but changed durable owner;
+  wrong-owner/concurrent outcomes fail. Timestamps are not business outcomes.
+- Receipt verification requires the newly captured report/approval identities
+  and scoped durable fields even after a receipt is resealed. Authorized report
+  content/approval reason are digest-bound without adding credential material.
+
 ## Verification and limits
 
 Final checks must run on the committed exact head and emit canonical

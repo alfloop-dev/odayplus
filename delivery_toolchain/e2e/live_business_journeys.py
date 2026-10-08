@@ -626,7 +626,7 @@ JOURNEYS: tuple[JourneySpec, ...] = (
         record_id_path="issue.id",
         record_key="issue_id",
         tenant_paths=("issue.tenantId",),
-        state_paths=("issue.status", "issue.history"),
+        state_paths=("issue.status", "issue.ownerRoleId", "issue.ownerName", "issue.slaDueAt", "issue.relatedGrowthId"),
         provenance_paths=("issue.id", "issue.storeId", "issue.status"),
     ),
     JourneySpec(
@@ -742,6 +742,7 @@ JOURNEYS: tuple[JourneySpec, ...] = (
             "decide": frozenset({"approved"}),
         },
         action_fields={"decide": "decision"},
+        reason_rules={"decide": (frozenset({"approved"}), "reason", 1)},
         requires_named_approval=True,
         read=Step("read_scenario", "GET", f"{V1}/netplan/scenarios/{{record.scenario_id}}"),
         extra_reads=(Step(
@@ -781,7 +782,8 @@ JOURNEYS: tuple[JourneySpec, ...] = (
                 "POST",
                 f"{V1}/netplan/scenarios/{{record.scenario_id}}/decide",
                 actor="approver",
-                body_overrides={"approval_receipt_id": "{approval_ref}"},
+                body_overrides={"approval_receipt_id": "{approval_ref}", "actor_id": "{account.approver}"},
+                capture={"approval_id": "approvals[approval_receipt_id={approval_ref}].approval_id"},
                 audit_event="netplan.approved",
             ),
         ),
@@ -817,20 +819,30 @@ JOURNEYS: tuple[JourneySpec, ...] = (
                 ),
             ),
         ),
-        state_paths=("status", "status_history"),
+        state_paths=("status", "status_history", "approvals"),
         provenance_paths=("scenario_id", "tenant_id", "status", "options_by_entity"),
         model_provenance_paths=("model_version", "feature_version", "solver_version"),
         disclosure_keys=(
             "solve.result.unmodelled_constraint_classes",
-            "approvals[decision=approved].modelled_constraint_classes",
-            "approvals[decision=approved].unmodelled_constraint_classes",
+            "approvals[approval_id={captured.approval_id}].modelled_constraint_classes",
+            "approvals[approval_id={captured.approval_id}].unmodelled_constraint_classes",
         ),
         readback_required=(
             "solve.result",
             "solve.model_version",
             "selected_candidate_id",
-            "approvals[decision=approved].approval_id",
+            "approvals[approval_id={captured.approval_id}].approval_id",
         ),
+        readback_bindings={
+            "approvals[approval_id={captured.approval_id}].actor_id": "{account.approver}",
+            "approvals[approval_id={captured.approval_id}].approval_principal_id": "{account.approver}",
+            "approvals[approval_id={captured.approval_id}].approval_receipt_id": "{approval_ref}",
+            "approvals[approval_id={captured.approval_id}].scenario_id": "{record.scenario_id}",
+            "approvals[approval_id={captured.approval_id}].decision": "approved",
+            "approvals[approval_id={captured.approval_id}].reason": "{write.decide.reason}",
+            "approvals[approval_id={captured.approval_id}].modelled_constraint_classes": "{record.modelled_class}",
+            "approvals[approval_id={captured.approval_id}].unmodelled_constraint_classes": "{record.unmodelled_class}",
+        },
     ),
     JourneySpec(
         journey_id="governance",
@@ -911,10 +923,17 @@ JOURNEYS: tuple[JourneySpec, ...] = (
                 f"{V1}/operator/shell/franchisee/reports",
                 body_overrides={"storeId": "{record.store_id}"},
                 expect=frozenset({200, 201}),
-                required=("report.reportId",),
+                required=("report.reportId", "report.createdAt"),
+                capture={"report_id": "report.reportId"},
                 audit_response_id="auditEvent.id",
                 audit_response_correlation="auditEvent.metadata.correlationId",
-                response_bindings={"report.storeId": "{record.store_id}"},
+                response_bindings={
+                    "report.storeId": "{record.store_id}",
+                    "report.subjectId": "{account.primary}",
+                    "report.category": "{write.report.category}",
+                    "report.message": "{write.report.message}",
+                    "report.status": "received",
+                },
             ),
         ),
         readback=Step(
@@ -932,6 +951,15 @@ JOURNEYS: tuple[JourneySpec, ...] = (
         record_bindings={"meta.scope.storeId": "{record.store_id}"},
         state_paths=("reports",),
         provenance_paths=("store.id", "meta.scope.storeId"),
+        readback_required=("reports[reportId={captured.report_id}].createdAt",),
+        readback_bindings={
+            "reports[reportId={captured.report_id}].storeId": "{record.store_id}",
+            "reports[reportId={captured.report_id}].subjectId": "{account.primary}",
+            "reports[reportId={captured.report_id}].category": "{write.report.category}",
+            "reports[reportId={captured.report_id}].message": "{write.report.message}",
+            "reports[reportId={captured.report_id}].status": "received",
+            "reports[reportId={captured.report_id}].correlationId": "{correlation.report}",
+        },
     ),
     JourneySpec(
         journey_id="intake",
@@ -1072,6 +1100,44 @@ def _present(value: Any) -> bool:
     if isinstance(value, (str, list, dict, tuple)):
         return bool(value)
     return True
+
+
+def outcome_content_digest(fields: Mapping[str, Any]) -> str:
+    return "sha256:" + hashlib.sha256(
+        json.dumps(dict(fields), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def operations_expected_state(
+    before: Mapping[str, Any], action: str, body: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Canonical StoreOpsService outcomes, excluding clocks and unrelated audit."""
+    expected = dict(before)
+    if action == "transfer":
+        expected["issue.ownerRoleId"] = str(body.get("targetRoleId") or before.get("issue.ownerRoleId"))
+        owner = str(body.get("targetOwnerName") or "").strip()
+        if owner:
+            expected["issue.ownerName"] = owner
+    elif action == "triage":
+        expected["issue.status"] = "waitingevidence" if body.get("needEvidence") or body.get("decision") == "needEvidence" else "triaged"
+    elif action == "assign":
+        expected["issue.status"] = "assigned"
+        for name in ("ownerRoleId", "ownerName", "slaDueAt"):
+            value = body.get(name)
+            if value:
+                expected[f"issue.{name}"] = str(value).strip() if name != "ownerRoleId" else str(value)
+    elif action == "actions":
+        expected["issue.status"] = "waitingapproval" if body.get("requiresApproval") else "inprogress"
+    elif action == "field-report":
+        expected["issue.status"] = "waitingevidence" if body.get("checklistStatus") == "blocked" else "observing"
+    elif action == "outcome":
+        outcome = body.get("outcome")
+        expected["issue.status"] = "closed" if outcome == "effective" and body.get("closeIssue") else "escalated" if outcome in {"ineffective", "inconclusive"} else "outcomeready"
+    elif action == "escalate":
+        expected["issue.status"] = "escalated"
+        if body.get("target") == "growth":
+            expected["issue.relatedGrowthId"] = "growth"
+    return expected
 
 
 def _canonical_uuid(value: Any) -> str | None:
@@ -1266,6 +1332,17 @@ class JourneyScope:
                 key: str(_as_dict(value).get("action") or "") for key, value in self.writes.items()
             },
             "approval_ref": self.approval_ref or None,
+            "authorized_outcomes": {
+                "report_content_digest": outcome_content_digest({
+                    key: _as_dict(_as_dict(self.writes.get("report")).get("body")).get(key)
+                    for key in ("category", "message")
+                }) if self.journey_id == "franchise" else None,
+                "approval_reason_digest": outcome_content_digest({
+                    "reason": _as_dict(_as_dict(self.writes.get("decide")).get("body")).get("reason")
+                }) if self.journey_id == "expansion" else None,
+                "transition_body": dict(_as_dict(_as_dict(self.writes.get("transition")).get("body")))
+                if self.journey_id == "operations" else None,
+            },
         }
 
 
@@ -1335,7 +1412,8 @@ def journey_scope(
             dependency = "named-approval" if slot == "approver" else "scope-authorization"
             blockers.append((dependency, f"actors.{slot} (the authorized account) is required"))
     subjects = [actors[slot] for slot in spec.actors if slot in actors]
-    if len(set(subjects)) != len(subjects):
+    ids = [account_ids[slot] for slot in spec.actors if account_ids.get(slot)]
+    if len(set(subjects)) != len(subjects) or len(set(ids)) != len(ids):
         blockers.append(("scope-authorization", "every journey actor must be a distinct account"))
     records = {str(k): str(v) for k, v in _as_dict(entry.get("records")).items() if _present(v)}
     for key in spec.required_records:
@@ -1373,6 +1451,18 @@ def journey_scope(
                 )
             )
         if isinstance(body, Mapping):
+            if spec.journey_id == "expansion" and key == "decide":
+                if body.get("actor_id") != account_ids.get("approver"):
+                    blockers.append(("scope-authorization", "NetPlan decision actor_id must be the scoped authenticated approver UUID"))
+                if set(body) - {"actor_id", "reason", "decision", "approval_receipt_id", "decided_at"}:
+                    blockers.append(("scope-authorization", "NetPlan decision body must follow NetPlanDecisionPayload"))
+                if _present(body.get("approval_receipt_id")) and body["approval_receipt_id"] != entry.get("approval_ref"):
+                    blockers.append(("named-approval", "decision approval_receipt_id differs from scope"))
+            if spec.journey_id == "franchise" and key == "report":
+                if not isinstance(body.get("category"), str) or not isinstance(body.get("message"), str) or not body["message"].strip():
+                    blockers.append(("scope-authorization", "report category and non-empty message are required"))
+                elif body["message"] != body["message"].strip():
+                    blockers.append(("scope-authorization", "report message must bind the canonical trimmed content"))
             for path in spec.body_nonempty.get(key, ()):
                 value = dig(body, path)
                 if not isinstance(value, list) or not value:
@@ -1771,6 +1861,7 @@ class JourneyRunner:
     def variables(self) -> dict[str, Any]:
         return {
             "record": dict(self.scope.records),
+            "account": dict(self.scope.account_ids),
             "foreign": dict(self.scope.foreign),
             "write": {
                 key: {
@@ -2054,6 +2145,20 @@ class JourneyRunner:
             for name, dotted in extra.capture.items():
                 # Optional pre-write state (e.g. the latest report before the job).
                 self.captured[name] = dig(extra_response.payload, self.path_of(dotted))
+        if self.spec.journey_id == "operations":
+            write = _as_dict(self.scope.writes.get("transition"))
+            action, body = str(write.get("action")), _as_dict(write.get("body"))
+            state = _as_dict(self.identity(payload)).get("state", {})
+            allowed = {"triage": {"new", "waitingevidence"}, "assign": {"triaged"},
+                       "actions": {"assigned"}, "field-report": {"inprogress", "executed"},
+                       "outcome": {"observing", "outcomeready"}}
+            status = state.get("issue.status")
+            if not self.result.check(
+                (status in allowed[action] if action in allowed else status != "closed")
+                and operations_expected_state(state, action, body) != state,
+                "read:transition_admission", "authorized transition needs an admissible, non-noop business outcome", "business-data",
+            ):
+                return None
         if self.spec.journey_id == "expansion" and not self.result.check(
             payload.get("status") == "draft"
             and self.scope.records.get("rebalance_store_id") in _as_dict(payload.get("options_by_entity"))
@@ -2253,6 +2358,7 @@ class JourneyRunner:
                 ):
                     return False
                 self.captured[name] = value
+                self.result.captured[name] = value
             self.write_responses[step.name] = copy.deepcopy(payload)
             if self.spec.journey_id == "expansion" and step.name == "solve":
                 canonical, _ = self.send(self.spec.read, label="fresh-solve")
@@ -2386,6 +2492,44 @@ class JourneyRunner:
             "data-binding" if markers else "durable-readback",
         )
 
+    def verify_written_outcome(self, payload: Mapping[str, Any]) -> bool:
+        """Require THIS write's new durable record, not concurrent list changes."""
+        journey = self.spec.journey_id
+        if journey == "operations":
+            write = _as_dict(self.scope.writes.get("transition"))
+            before = _as_dict(self.identity(self.before_payload)).get("state", {})
+            expected = operations_expected_state(before, str(write.get("action")), _as_dict(write.get("body")))
+            after = _as_dict(self.identity(payload)).get("state", {})
+            written = _as_dict(self.identity(self.write_responses.get("transition", {}))).get("state", {})
+            return self.result.check(
+                after == written == expected and after != before,
+                "readback:transition_outcome", "durable StoreOps outcome must match the authorized action and write response", "durable-readback",
+            )
+        if journey not in {"expansion", "franchise"}:
+            return True
+        is_approval = journey == "expansion"
+        capture = "approval_id" if is_approval else "report_id"
+        list_key = "approvals" if is_approval else "reports"
+        id_key = "approval_id" if is_approval else "reportId"
+        write_key = "decide" if is_approval else "report"
+        identifier = self.captured.get(capture)
+        response = self.write_responses.get(write_key, {})
+        written_rows = response.get("approvals") if is_approval else [response.get("report")]
+        durable_rows, before_rows = payload.get(list_key), self.before_payload.get(list_key)
+        keys = ("approval_id", "scenario_id", "actor_id", "approval_principal_id", "approval_receipt_id", "decision", "reason", "decided_at") if is_approval else ("reportId", "storeId", "subjectId", "category", "message", "status", "createdAt", "correlationId")
+        def matching(rows: Any) -> list[dict[str, Any]]:
+            return [row for row in rows if isinstance(row, dict) and row.get(id_key) == identifier] if isinstance(rows, list) else []
+        written, durable = matching(written_rows), matching(durable_rows)
+        fresh = _present(identifier) and isinstance(before_rows, list) and not matching(before_rows)
+        same = len(written) == len(durable) == 1 and all(
+            _present(written[0].get(key)) and written[0].get(key) == durable[0].get(key) for key in keys
+        )
+        authentic = not is_approval or (same and durable[0].get("authentic_approval_verified") is True)
+        return self.result.check(
+            fresh and same and authentic,
+            "readback:written_record_identity", "new durable approval/report must match this write's id, actor, scope, content and correlation/authority", "durable-readback",
+        )
+
     def readback(self, before: Mapping[str, Any]) -> bool:
         response, _ = self.send(self.spec.readback)
         payload = response.payload if not response.failed else {}
@@ -2396,6 +2540,8 @@ class JourneyRunner:
         changed = same and after is not None and after["state"] != before["state"]
         markers = find_surrogate_values(payload)
         if self.spec.journey_id == "intake" and not self.verify_intake_outcome(payload):
+            return False
+        if not self.verify_written_outcome(payload):
             return False
         if not self.result.check(
             not response.failed and response.status == 200 and changed and not markers,
@@ -2990,6 +3136,57 @@ def journey_receipt_problems(spec: JourneySpec, entry: Mapping[str, Any]) -> lis
         problems.append("before/after record identity missing or different")
     elif before.get("state") == after.get("state"):
         problems.append("record state unchanged")
+    captures = _as_dict(entry.get("captured"))
+    outcomes = _as_dict(scope.get("authorized_outcomes"))
+    if spec.journey_id == "operations":
+        before_state, after_state = _as_dict(before.get("state")), _as_dict(after.get("state"))
+        action = _as_dict(scope.get("authorized_actions")).get("transition")
+        body = outcomes.get("transition_body")
+        if not isinstance(body, dict) or after_state != operations_expected_state(before_state, str(action), body):
+            problems.append("authorized StoreOps transition outcome missing or different")
+    if spec.journey_id in {"expansion", "franchise"}:
+        approval = spec.journey_id == "expansion"
+        id_key, list_key = ("approval_id", "approvals") if approval else ("reportId", "reports")
+        identifier = captures.get("approval_id" if approval else "report_id")
+        before_rows = _as_dict(before.get("state")).get(list_key)
+        after_rows = _as_dict(after.get("state")).get(list_key)
+        matched = [row for row in after_rows if isinstance(row, dict) and row.get(id_key) == identifier] if isinstance(after_rows, list) else []
+        fresh = _present(identifier) and isinstance(before_rows, list) and all(
+            isinstance(row, dict) and row.get(id_key) != identifier for row in before_rows
+        )
+        row = matched[0] if len(matched) == 1 else {}
+        accounts = _as_dict(scope.get("account_ids"))
+        if approval:
+            bound = (
+                _canonical_uuid(accounts.get("approver")) is not None
+                and accounts.get("approver") != accounts.get("primary")
+                and row.get("actor_id") == row.get("approval_principal_id") == accounts.get("approver")
+                and _present(scope.get("approval_ref"))
+                and row.get("approval_receipt_id") == scope.get("approval_ref") == actor.get("approval_ref")
+                and row.get("scenario_id") == records.get("scenario_id")
+                and row.get("decision") == "approved"
+                and row.get("authentic_approval_verified") is True
+                and isinstance(row.get("modelled_constraint_classes"), list)
+                and records.get("modelled_class") in row["modelled_constraint_classes"]
+                and isinstance(row.get("unmodelled_constraint_classes"), list)
+                and records.get("unmodelled_class") in row["unmodelled_constraint_classes"]
+                and _present(row.get("decided_at")) and _present(row.get("reason"))
+                and outcome_content_digest({"reason": row.get("reason")}) == outcomes.get("approval_reason_digest")
+            )
+        else:
+            bound = (
+                _canonical_uuid(accounts.get("primary")) is not None
+                and row.get("subjectId") == accounts.get("primary")
+                and row.get("storeId") == records.get("store_id")
+                and row.get("status") == "received"
+                and _present(row.get("createdAt"))
+                and _present(row.get("category")) and _present(row.get("message"))
+                and _present(row.get("correlationId"))
+                and row.get("correlationId") == _as_dict(entry.get("correlation_ids")).get("report")
+                and outcome_content_digest({key: row.get(key) for key in ("category", "message")}) == outcomes.get("report_content_digest")
+            )
+        if not fresh or not bound:
+            problems.append("fresh named approval binding missing" if approval else "durable written franchise report binding missing")
     correlation_ids = _as_dict(entry.get("correlation_ids"))
     write_correlations = [correlation_ids.get(step.name) for step in spec.writes]
     if not all(_present(value) for value in write_correlations) or len(

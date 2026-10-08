@@ -174,8 +174,10 @@ class BusinessWeb:
             "id": "SO-ISS-1001",
             "storeId": "ST-0412",
             "tenantId": TENANT,
-            "status": "open",
-            "history": [{"status": "open", "at": "2026-10-07T09:00:00Z"}],
+            "status": "new",
+            "ownerRoleId": "opsLead", "ownerName": "Offline owner",
+            "slaDueAt": NOW, "relatedGrowthId": None,
+            "history": [{"status": "new", "at": "2026-10-07T09:00:00Z"}],
         }
         self.plan = {
             "plan_id": "PLN-2001",
@@ -364,8 +366,13 @@ class BusinessWeb:
                 return Resp(404, {})
             action = ctx.match.group(2)
             if "operations" not in self.non_durable:
-                self.issue["status"] = f"{action}d" if action.endswith("e") else f"{action}ed"
-                self.issue["history"].append({"status": self.issue["status"], "by": ctx.actor})
+                if action == "transfer":
+                    self.issue["ownerRoleId"] = ctx.body.get("targetRoleId") or self.issue["ownerRoleId"]
+                    if ctx.body.get("targetOwnerName"):
+                        self.issue["ownerName"] = ctx.body["targetOwnerName"].strip()
+                else:
+                    self.issue["status"] = f"{action}d" if action.endswith("e") else f"{action}ed"
+                    self.issue["history"].append({"status": self.issue["status"], "by": ctx.actor})
             event_id = self.event(ctx, "operator.store_ops.issue_transition", "operations")
             return Resp(200, {"issue": self.issue, "auditEvent": {"eventId": event_id}})
 
@@ -447,11 +454,17 @@ class BusinessWeb:
                 self.scenario["status"] = ctx.body.get("decision")
                 self.scenario["approvals"].append(
                     {
-                        "approval_id": ctx.body.get("approval_receipt_id"),
+                        "approval_id": f"NP-APP-{len(self.scenario['approvals']) + 1}",
+                        "scenario_id": self.scenario["scenario_id"],
+                        "actor_id": ctx.body.get("actor_id"),
+                        "approval_principal_id": ctx.body.get("actor_id"),
+                        "approval_receipt_id": ctx.body.get("approval_receipt_id"),
                         "decision": ctx.body.get("decision"),
+                        "reason": ctx.body.get("reason"), "decided_at": NOW,
+                        "authentic_approval_verified": True,
                         "approved_by": ctx.actor,
-                        "modelled_constraint_classes": ["catchment", "cannibalization"],
-                        "unmodelled_constraint_classes": ["lease_terms"],
+                        "modelled_constraint_classes": ["CAPITAL"],
+                        "unmodelled_constraint_classes": ["LEASE"],
                     }
                 )
             if durable:
@@ -554,7 +567,9 @@ class BusinessWeb:
                 return refused
             if ctx.body.get("storeId") != self.store["store"]["id"]:
                 return Resp(403, {})
-            report = {"reportId": f"FR-{len(self.store['reports']) + 1}", **ctx.body}
+            report = {"reportId": f"FR-{len(self.store['reports']) + 1}", **ctx.body,
+                      "subjectId": account_id(ctx.actor), "status": "received", "createdAt": NOW,
+                      "correlationId": ctx.headers.get("x-correlation-id")}
             if "franchise" not in self.non_durable:
                 self.store["reports"].append(report)
             audit = (
@@ -756,7 +771,10 @@ def journey_scopes() -> dict[str, dict[str, Any]]:
     scopes["expansion"]["writes"] = {
         "solve": {"action": "solve", "body": {}},
         "submit": {"action": "submit", "body": {}},
-        "decide": {"action": "approved", "body": {"decision": "approved", "comment": "Go"}},
+        "decide": {"action": "approved", "body": {
+            "decision": "approved", "actor_id": account_id(ACTORS["expansion"]["approver"]),
+            "reason": "Offline named approval",
+        }},
     }
     scopes["expansion"]["approval_ref"] = "EXP-APPROVAL-2026-118"
     scopes["governance"]["writes"] = {
@@ -2342,6 +2360,181 @@ def test_self_principal_uses_identity_store_roles_not_token_or_browser_claims(
     assert client.get(bj.PRINCIPAL_PATH, headers=headers).json()["roles"] == ["data_owner"]
     bundle.session_service.revoke_session(session.session_id, RevocationReason.ADMIN_REVOKE)
     assert client.get(bj.PRINCIPAL_PATH, headers=headers).status_code == 401
+
+
+# R15-R17: bound actor/write outcomes, with explicit offline real-service proofs.
+@pytest.mark.parametrize("fault", ["primary", "missing", "duplicate_account", "comment", "receipt"])
+def test_netplan_decision_actor_scope_blocks_before_any_write(fault: str) -> None:
+    scope = scope_document()
+    entry = scope["journeys"]["expansion"]
+    body = entry["writes"]["decide"]["body"]
+    if fault == "primary":
+        body["actor_id"] = entry["account_ids"]["primary"]
+    elif fault == "missing":
+        body.pop("actor_id")
+    elif fault == "duplicate_account":
+        entry["account_ids"]["approver"] = entry["account_ids"]["primary"]
+        body["actor_id"] = entry["account_ids"]["approver"]
+    elif fault == "comment":
+        body["comment"] = "Not a NetPlanDecisionPayload field"
+    else:
+        body["approval_receipt_id"] = "another-authority-receipt"
+    receipt, web, _ = run(scope=scope, selection=["expansion"])
+    assert receipt["journeys"]["expansion"]["status"] == "BLOCKED"
+    _zero_writes(receipt, web, "expansion")
+
+
+def test_netplan_positive_scope_uses_actual_decision_payload() -> None:
+    from apps.api.app.routes.netplan import NetPlanDecisionPayload
+
+    entry = journey_scopes()["expansion"]
+    body = NetPlanDecisionPayload.model_validate({
+        **entry["writes"]["decide"]["body"], "approval_receipt_id": entry["approval_ref"],
+    })
+    assert body.actor_id == entry["account_ids"]["approver"] != entry["account_ids"]["primary"]
+    assert body.reason
+    receipt, _, _ = run(selection=["expansion"])
+    result = receipt["journeys"]["expansion"]
+    assert result["status"] == "PASSED"
+    approval = result["after"]["state"]["approvals"][0]
+    assert approval["approval_id"] == result["captured"]["approval_id"]
+    assert approval["actor_id"] == approval["approval_principal_id"] == body.actor_id
+    assert approval["approval_receipt_id"] == body.approval_receipt_id
+
+
+@pytest.mark.parametrize("field", ["actor_id", "approval_principal_id", "approval_receipt_id", "approval_id", "reason", "authentic_approval_verified"])
+def test_netplan_durable_approval_must_match_this_named_write(field: str) -> None:
+    class MisboundApproval(BusinessWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            response = super().request(method, path, **kwargs)
+            if method == "POST" and path.endswith("/decide") and response.status == 200:
+                row = self.scenario["approvals"][-1]
+                row[field] = False if field == "authentic_approval_verified" else "another-value"
+            return response
+
+    receipt, _, _ = run(web=MisboundApproval(), selection=["expansion"])
+    assert receipt["journeys"]["expansion"]["status"] == "FAILED"
+
+
+@pytest.mark.parametrize("fault", ["lost_with_concurrent", "storeId", "subjectId", "category", "message", "correlationId", "reportId", "duplicate"])
+def test_franchise_requires_the_exact_new_durable_report(fault: str) -> None:
+    class MisboundReport(BusinessWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            response = super().request(method, path, **kwargs)
+            if method == "POST" and path.endswith("/franchisee/reports") and response.status < 400:
+                report = self.store["reports"][-1]
+                if fault == "lost_with_concurrent":
+                    self.store["reports"] = [{**report, "reportId": "unrelated-concurrent-report"}]
+                elif fault == "duplicate":
+                    self.store["reports"].append(deepcopy(report))
+                else:
+                    report[fault] = "unrelated-value"
+            return response
+
+    receipt, _, _ = run(web=MisboundReport(), selection=["franchise"])
+    assert receipt["journeys"]["franchise"]["status"] == "FAILED"
+
+
+@pytest.mark.parametrize("journey_id,capture", [("expansion", "approval_id"), ("franchise", "report_id")])
+def test_resealed_receipt_requires_written_record_capture(journey_id: str, capture: str) -> None:
+    receipt, _, _ = run()
+    receipt["journeys"][journey_id]["captured"].pop(capture)
+    assert f"business_journey:{journey_id}" in failing_checks(reseal(receipt))
+
+
+@pytest.mark.parametrize("journey_id,field", [("expansion", "actor_id"), ("expansion", "approval_principal_id"), ("expansion", "approval_receipt_id"), ("franchise", "subjectId"), ("franchise", "storeId"), ("franchise", "message"), ("franchise", "correlationId")])
+def test_resealed_receipt_requires_scoped_durable_outcome(journey_id: str, field: str) -> None:
+    receipt, _, _ = run()
+    key = "approvals" if journey_id == "expansion" else "reports"
+    receipt["journeys"][journey_id]["after"]["state"][key][0][field] = "misbound"
+    assert f"business_journey:{journey_id}" in failing_checks(reseal(receipt))
+
+
+@pytest.mark.parametrize("body", [{"targetOwnerName": "New offline owner"}, {"targetRoleId": "facilitiesLead"}])
+def test_real_storeops_transfer_is_the_durable_authorized_outcome(body: dict[str, str]) -> None:
+    from modules.opsboard.application.store_ops import StoreOpsService
+
+    service = StoreOpsService()  # OFFLINE real in-memory domain implementation
+    original = service.snapshot()["issues"][0]
+
+    class RealTransferWeb(BusinessWeb):
+        def __init__(self) -> None:
+            super().__init__()
+            self.issue = {**original, "tenantId": TENANT}
+
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            response = super().request(method, path, **kwargs)
+            if method == "POST" and path.endswith("/transfer") and response.status == 200:
+                written = service.transition_issue(
+                    issue_id=original["id"], action_type="transfer", payload=kwargs["body"],
+                    correlation_id=kwargs["headers"]["x-correlation-id"],
+                )
+                self.issue = {**written["issue"], "tenantId": TENANT}
+                response.payload["issue"] = deepcopy(self.issue)
+            return response
+
+    scope = scope_document()
+    entry = scope["journeys"]["operations"]
+    entry["records"]["issue_id"] = original["id"]
+    entry["writes"]["transition"] = {"action": "transfer", "body": body}
+    receipt, _, _ = run(web=RealTransferWeb(), scope=scope, selection=["operations"])
+    result = receipt["journeys"]["operations"]
+    assert result["status"] == "PASSED"
+    actual = service.get_issue(original["id"])
+    assert actual["status"] == original["status"]
+    assert actual.get("history") == original.get("history")
+    assert (actual["ownerRoleId"], actual["ownerName"]) != (original["ownerRoleId"], original["ownerName"])
+    for owner_field in ("ownerRoleId", "ownerName"):
+        assert result["after"]["state"][f"issue.{owner_field}"] == actual[owner_field]
+
+
+def test_noop_transfer_blocks_before_writes_and_wrong_owner_is_not_success() -> None:
+    scope = scope_document()
+    entry = scope["journeys"]["operations"]
+    entry["writes"]["transition"] = {"action": "transfer", "body": {"targetRoleId": "opsLead"}}
+    receipt, web, _ = run(scope=scope, selection=["operations"])
+    assert receipt["journeys"]["operations"]["status"] == "BLOCKED"
+    _zero_writes(receipt, web, "operations")
+    entry["writes"]["transition"]["body"] = {"targetOwnerName": "Authorized offline owner"}
+
+    class WrongOwner(BusinessWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            response = super().request(method, path, **kwargs)
+            if method == "POST" and path.endswith("/transfer") and response.status == 200:
+                self.issue["ownerName"] = "Unrelated concurrent owner"
+            return response
+
+    receipt, _, _ = run(web=WrongOwner(), scope=scope, selection=["operations"])
+    assert receipt["journeys"]["operations"]["status"] == "FAILED"
+
+
+def test_runner_reads_this_real_shell_report_after_repository_restart() -> None:
+    from modules.opsboard.application.shell import InMemoryShellRepository, ShellService
+
+    repo = InMemoryShellRepository()
+    service = ShellService(repository=repo)  # OFFLINE domain producer/consumer
+
+    class RealReportWeb(BusinessWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            response = super().request(method, path, **kwargs)
+            if method == "POST" and path.endswith("/franchisee/reports") and response.status < 400:
+                body = kwargs["body"]
+                response = Resp(200, service.franchisee_report(
+                    subject_id=account_id(ACTORS["franchise"]["primary"]), store_id=body["storeId"],
+                    category=body["category"], message=body["message"],
+                    correlation_id=kwargs["headers"]["x-correlation-id"],
+                    idempotency_key=kwargs["headers"]["idempotency-key"],
+                ))
+                restarted = ShellService(repository=repo)
+                self.store["reports"] = restarted.get_franchisee_view(
+                    subject_id=account_id(ACTORS["franchise"]["primary"]), store_id=body["storeId"],
+                )["reports"]
+            return response
+
+    receipt, _, _ = run(web=RealReportWeb(), selection=["franchise"])
+    result = receipt["journeys"]["franchise"]
+    assert result["status"] == "PASSED"
+    assert result["captured"]["report_id"] == result["after"]["state"]["reports"][0]["reportId"]
 
 
 def test_franchise_contract_matches_real_shell_service() -> None:

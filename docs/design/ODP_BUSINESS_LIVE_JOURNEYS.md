@@ -10,7 +10,7 @@ owned by ODP-BUSINESS-LIVE-E2E-ACCEPTANCE-001.
 
 | Journey | Web selector | Actors (business roles) | Write → readback → audit |
 |---|---|---|---|
-| operations | `/operator?ws=store` | operations_manager; denied regional_supervisor | Store Ops issue transition → issue status/history → `operator.store_ops.issue_transition` |
+| operations | `/operator?ws=store` | operations_manager; denied regional_supervisor | Store Ops transition → action-specific status/owner/SLA outcome (transfer changes owner, not status/history) → `operator.store_ops.issue_transition` |
 | growth | `/operator?ws=growth&gtab=priceops` | pricing_manager + marketing_manager; denied marketing_manager/operations_manager | PriceOps action → canonical per-action audit; authorized non-empty AdLift campaign job → `succeeded` → fresh durable report with model/feature/snapshot provenance |
 | expansion | `/operator?ws=network` | executive planner + distinct executive approver; denied marketing_manager/pricing_manager | Existing operator NetPlan solve → fresh projection and canonical solve timestamp → real browser disclosure → submit/approve with named receipt → solve/decision audit |
 | governance | `/operator?ws=govern` | operations_manager/executive; denied expansion_user | business approval decision (not user administration) → approval status + decision → audit |
@@ -58,6 +58,20 @@ against the live system:
   decision/audit plus target-listing durable readback proves the outcome.
   Revise/duplicate require a scoped `target_listing_id`; create preserves the
   intake tenant in persisted listing metadata for tenant-filtered readback.
+- NetPlan decision bodies follow `NetPlanDecisionPayload`: `actor_id`, `reason`,
+  `decision` and optional receipt/time only (not `comment`). Before any write,
+  `actor_id` must equal the distinct authoritative approver UUID in scope.
+  Durable approval must be newly created, match this write's captured approval
+  ID, actor/principal/receipt/reason and current disclosure, and be authentic.
+  The runner does not change the canonical API's authorization policy.
+- Franchise captures this POST's report ID and requires that exact new report
+  in durable GET, bound to store, actor, content, status and request correlation;
+  unrelated concurrent reports cannot substitute for a lost write. Receipts
+  bind authorized report content and approval reason with content digests.
+- Store Ops verifies the expected outcome of the authorized action, including
+  the precise transfer owner. Noop or inadmissible transitions block before
+  writes; timestamps, unrelated history or concurrent state changes do not
+  count as that action's business outcome.
 - Missing server-owned admitted manifest-digest metadata is `BLOCKED`. Setting
   caller variables is not a deployment binding. This engineering task does not
   change deployment workflows or authorize any actual live execution.
