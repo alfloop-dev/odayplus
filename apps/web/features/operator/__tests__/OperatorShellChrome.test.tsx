@@ -208,6 +208,59 @@ describe("Operator shared header chrome", () => {
     expect(Math.min(...timeoutSpy.mock.calls.map(([ms]) => ms))).toBeGreaterThan(10_000);
   });
 
+  /** A 200 whose headers arrived but whose streamed body then fails. */
+  function failingBodyResponse(error: Error) {
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "Content-Type": "application/json" }),
+      json: () => Promise.reject(error),
+    } as unknown as Response;
+  }
+
+  it("retries once when the 200 body times out mid-stream, then renders live data", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(failingBodyResponse(new DOMException("signal timed out", "TimeoutError")))
+      .mockResolvedValueOnce(jsonResponse(liveEnvelope));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const ids = fetchMock.mock.calls.map(
+      (call) => (call[1] as { headers: Record<string, string> }).headers["X-Correlation-Id"],
+    );
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it("makes exactly two attempts when the body keeps failing with a network error", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () => failingBodyResponse(new TypeError("network error")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "network"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a malformed JSON body", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(failingBodyResponse(new SyntaxError("Unexpected token < in JSON")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-status", "error"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does not retry a permission denial", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ detail: "forbidden" }, 403));
     vi.stubGlobal("fetch", fetchMock);
