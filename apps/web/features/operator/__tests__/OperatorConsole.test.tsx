@@ -138,7 +138,9 @@ describe("OperatorConsole production data gate", () => {
     await waitFor(() => {
       expect(gate).toHaveAttribute("data-status", "error");
     });
-    expect(screen.getByTestId("operator-console").className).toContain("consoleNetworkParity");
+    // The shared header is unconditional: the data gate keeps the same chrome.
+    expect(screen.getByTestId("operator-topbar-inner")).toBeInTheDocument();
+    expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "network");
     expect(screen.getByRole("button", { name: /今日工作/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /門市營運/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /營運主管/ })).toBeInTheDocument();

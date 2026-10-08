@@ -45,12 +45,15 @@ import {
 } from "./network/networkFindAreasLoader";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
+  classifyLoadFailure,
   inspectOperatorShellPayload,
   operatorFixturesAllowed,
   payloadContainsSeedData,
   toUnavailableOperatorStatus,
   type OperatorDataAvailability,
+  type OperatorLoadFailure,
 } from "./operatorDataMode";
+import { resolveOperatorEnvironment } from "./operatorEnvironment";
 import styles from "./operator.module.css";
 import type { StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
 import {
@@ -314,9 +317,43 @@ function toDomSafeId(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]+/g, "-");
 }
 
-export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<string, string | string[] | undefined> }) {
+function newCorrelationId(scope: string): string {
+  const random =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2, 14);
+  return `corr-${scope}-${random}`;
+}
+
+function dataModeBannerCopy(
+  status: OperatorDataAvailability,
+  fixturesAllowed: boolean,
+): { detail: string; label: string } {
+  if (status === "ready") {
+    return { label: "Live API", detail: "目前顯示的是經驗證的正式營運資料。" };
+  }
+  if (fixturesAllowed) {
+    return { label: "Local fixture mode", detail: "本機示範資料，僅供開發與測試使用。" };
+  }
+  if (status === "loading") {
+    return { label: "正式資料載入中", detail: "資料載入完成前不會顯示任何示範或測試資料。" };
+  }
+  return { label: "正式資料未就緒", detail: "目前無法顯示正式營運資料；系統不會以示範資料代替。" };
+}
+
+export function OperatorConsole({
+  deploymentEnvironment,
+  searchParams = {},
+}: {
+  /** Deploy target from server config (ODP_DEPLOY_ENV); independent of the data policy. */
+  deploymentEnvironment?: string | null;
+  searchParams?: Record<string, string | string[] | undefined>;
+}) {
   const intakeDetailOpen = isIntakeDetailOpen(searchParams);
   const fixturesAllowed = operatorFixturesAllowed();
+  const environment = resolveOperatorEnvironment(
+    deploymentEnvironment ?? process.env.NEXT_PUBLIC_ODP_DEPLOY_ENV,
+  );
   const [activeRoleId, setActiveRoleId] = useState<OperatorRoleId>(DEFAULT_OPERATOR_ROLE_ID);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId>(() => {
     const requested = typeof searchParams.ws === "string" ? searchParams.ws : "";
@@ -352,7 +389,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const [shellDataStatus, setShellDataStatus] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
   );
-  const [shellLoadError, setShellLoadError] = useState<string | null>(null);
+  const [shellLoadFailure, setShellLoadFailure] = useState<OperatorLoadFailure | null>(null);
   const [shellReloadToken, setShellReloadToken] = useState(0);
   const [liveNotifications, setLiveNotifications] = useState<any[]>(fixturesAllowed ? notifications : []);
   const [liveIssues, setLiveIssues] = useState<Issue[]>(fixturesAllowed ? ISSUE_FIXTURES : []);
@@ -434,6 +471,8 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   const canRenderWorkspace = fixturesAllowed || shellDataStatus === "ready";
   const canRenderDirectIntake =
     intakeDetailOpen && activeWorkspaceId === "network";
+  const isTodayContent = canRenderWorkspace && activeWorkspaceId === "today";
+  const dataModeBanner = dataModeBannerCopy(shellDataStatus, fixturesAllowed);
 
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
@@ -473,14 +512,26 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
       if (!fixturesAllowed) {
         setShellDataStatus("loading");
       }
-      setShellLoadError(null);
+      setShellLoadFailure(null);
+      const correlationId = newCorrelationId("operator-bootstrap");
+      const failWith = (error: unknown, httpStatus?: number, responseCorrelationId?: string | null) => {
+        setShellDataStatus("error");
+        setShellLoadFailure({
+          correlationId: responseCorrelationId || correlationId,
+          httpStatus,
+          kind: classifyLoadFailure(error, httpStatus),
+          occurredAt: new Date().toISOString(),
+          technicalDetail: error instanceof Error ? error.message : String(error ?? "Operator bootstrap failed"),
+        });
+      };
       try {
-        const headers = getSecurityHeaders(activeRoleId);
+        const headers = { ...getSecurityHeaders(activeRoleId), "X-Correlation-Id": correlationId };
         const bootstrapRes = await fetch("/api/v1/operator/bootstrap", {
           headers,
           signal: AbortSignal.timeout(operatorBootstrapTimeoutMs),
         });
         if (!bootstrapRes.ok) {
+          const responseCorrelationId = bootstrapRes.headers?.get?.("x-correlation-id") ?? null;
           const denial = await classifyAccessDenial(bootstrapRes);
           if (cancelled) return;
           if (denial === "password_change_required") {
@@ -489,14 +540,16 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
             window.location.assign(PASSWORD_CHANGE_PATH);
             return;
           }
-          if (denial === "forbidden" && !fixturesAllowed) {
-            setShellDataStatus("error");
-            setShellLoadError(
-              "此帳號沒有營運資料讀取權限（例如僅具平台管理員角色）。使用者與角色管理請使用「管理後台」。",
-            );
+          if (fixturesAllowed) {
+            setShellDataStatus("fixture");
             return;
           }
-          throw new Error(`Operator bootstrap returned ${bootstrapRes.status}`);
+          failWith(
+            new Error(`Operator bootstrap returned ${bootstrapRes.status}${denial ? ` (${denial})` : ""}`),
+            denial === "forbidden" ? 403 : bootstrapRes.status,
+            responseCorrelationId,
+          );
+          return;
         }
         const payload = await bootstrapRes.json();
         if (cancelled) return;
@@ -504,9 +557,14 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
 
         if (!fixturesAllowed && inspection.status !== "ready") {
           setShellDataStatus(inspection.status);
-          setShellLoadError(
+          setShellLoadFailure(
             inspection.status === "seed"
-              ? `Blocked non-production source: ${inspection.source ?? "unknown"}`
+              ? {
+                  correlationId,
+                  kind: "unknown",
+                  occurredAt: new Date().toISOString(),
+                  technicalDetail: `Blocked non-production source: ${inspection.source ?? "unknown"}`,
+                }
               : null,
           );
           return;
@@ -520,8 +578,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
         if (fixturesAllowed) {
           setShellDataStatus("fixture");
         } else {
-          setShellDataStatus("error");
-          setShellLoadError(err instanceof Error ? err.message : "Operator bootstrap failed");
+          failWith(err);
         }
       }
     }
@@ -1035,299 +1092,328 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
     <div
       className={[
         styles.console,
-        styles.consoleNetworkParity,
         intakeDetailOpen ? "operatorIntakeDetailOpen" : "",
       ].filter(Boolean).join(" ")}
       data-intake-detail-open={intakeDetailOpen ? "true" : undefined}
       data-testid="operator-console"
     >
       <header className={styles.topbar} data-screen-label="Top Navigation">
-        <div className={styles.brandCluster} aria-label="Oday Plus Operator Console">
-          <span className={styles.brandMark}>O+</span>
-          <span className={styles.brandText}>
-            <strong>Oday Plus</strong>
-            <small>Operator Console</small>
-          </span>
-          <Chip tone={fixturesAllowed ? "accent" : "neutral"}>
-            {fixturesAllowed ? "LOCAL FIXTURE" : "PRODUCTION"}
-          </Chip>
-        </div>
+        <div className={styles.topbarInner} data-testid="operator-topbar-inner">
+          <div className={styles.brandCluster} aria-label="Oday Plus Operator Console">
+            <span className={styles.brandMark}>O+</span>
+            <span className={styles.brandText}>
+              <strong>Oday Plus</strong>
+              <small>Operator Console</small>
+            </span>
+            <span
+              aria-label={`部署環境：${environment.label}`}
+              className={[styles.envBadge, styles[`envBadge_${environment.id}`]].join(" ")}
+              data-environment={environment.id}
+              data-testid="operator-environment-badge"
+            >
+              {environment.label}
+            </span>
+          </div>
 
-        <nav className={styles.workspaceNav} aria-label="Operator workspaces">
-          {workspaceNavItems.map((workspace) => {
-            const workspaceId = isWorkspaceId(workspace.id) ? workspace.id : DEFAULT_WORKSPACE_ID;
-            const isActive = activeWorkspaceId === workspaceId;
-            const isLocked = !isWorkspaceAllowed(activeRole, workspaceId);
+          <nav className={styles.workspaceNav} aria-label="Operator workspaces">
+            {workspaceNavItems.map((workspace) => {
+              const workspaceId = isWorkspaceId(workspace.id) ? workspace.id : DEFAULT_WORKSPACE_ID;
+              const isActive = activeWorkspaceId === workspaceId;
+              const isLocked = !isWorkspaceAllowed(activeRole, workspaceId);
 
-            return (
+              return (
+                <button
+                  aria-current={isActive ? "page" : undefined}
+                  aria-disabled={isLocked}
+                  className={[
+                    styles.workspaceNavItem,
+                    isActive ? styles.workspaceNavItem_active : "",
+                    isLocked ? styles.workspaceNavItem_locked : "",
+                  ].join(" ")}
+                  key={workspace.id}
+                  onClick={() => handleWorkspaceClick(workspaceId)}
+                  title={isLocked ? `${activeRole.label} locked` : workspace.description}
+                  type="button"
+                >
+                  <span>{workspace.label}</span>
+                  <small>{workspace.description}</small>
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className={styles.topActions}>
+            <div className={styles.popoverAnchor}>
+              <div className={styles.searchBox}>
+                <input
+                  aria-label="Global search"
+                  onBlur={() => window.setTimeout(() => setIsSearchOpen(false), 120)}
+                  onChange={(event) => {
+                    setSearchValue(event.target.value);
+                    setIsSearchOpen(true);
+                  }}
+                  onFocus={() => setIsSearchOpen(true)}
+                  onKeyDown={handleSearchKeyDown}
+                  placeholder="搜尋門市、案件、物件"
+                  value={searchValue}
+                />
+                <button
+                  aria-label="Open command palette"
+                  className={styles.searchShortcut}
+                  data-testid="operator-command-trigger"
+                  onClick={() => openCommandPalette(searchValue)}
+                  title="Ctrl+K / ⌘K"
+                  type="button"
+                >
+                  ⌘K
+                </button>
+              </div>
+              {isSearchOpen && !isCommandPaletteOpen && searchValue.trim() ? (
+                <div className={styles.searchPanel} data-testid="operator-search-results" role="listbox">
+                  <div className={styles.popoverTitle}>Search</div>
+                  {searchMatches.length ? (
+                    searchMatches.map((item, index) => (
+                      <button
+                        aria-selected={index === searchActiveIndex}
+                        className={styles.searchResult}
+                        data-target-entity={item.target.entityId}
+                        data-target-tab={item.target.tab}
+                        data-target-workspace={item.target.workspace}
+                        key={item.id}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          handleTargetSelect(item.target, item.entityId);
+                        }}
+                        role="option"
+                        type="button"
+                      >
+                        <span>{item.entityId}</span>
+                        <strong>{item.label}</strong>
+                        <small>{item.description}</small>
+                      </button>
+                    ))
+                  ) : (
+                    <div className={styles.searchEmpty}>No matching operator work</div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+
+            <div className={styles.popoverAnchor}>
               <button
-                aria-current={isActive ? "page" : undefined}
-                aria-disabled={isLocked}
-                className={[
-                  styles.workspaceNavItem,
-                  isActive ? styles.workspaceNavItem_active : "",
-                  isLocked ? styles.workspaceNavItem_locked : "",
-                ].join(" ")}
-                key={workspace.id}
-                onClick={() => handleWorkspaceClick(workspaceId)}
-                title={isLocked ? `${activeRole.label} locked` : workspace.description}
+                aria-expanded={isNotificationOpen}
+                className={styles.headerAction}
+                data-testid="operator-notification-button"
+                onClick={() => {
+                  setIsNotificationOpen((open) => !open);
+                  setIsTaskCenterOpen(false);
+                  setIsRoleMenuOpen(false);
+                }}
                 type="button"
               >
-                <span>{workspace.label}</span>
-                <small>{workspace.description}</small>
+                通知
+                <span
+                  className={[
+                    styles.headerCount,
+                    shellEnvelope.header.counts.notifications > 0 ? styles.headerCount_alert : "",
+                  ].join(" ")}
+                >
+                  {shellEnvelope.header.counts.notifications}
+                </span>
               </button>
-            );
-          })}
-        </nav>
+              {isNotificationOpen ? (
+                <div className={styles.notificationPanel} data-screen-label="Notifications">
+                  <div className={styles.popoverTitle}>Notifications</div>
+                  {liveNotifications.map((notification) => (
+                    <article className={styles.notificationItem} key={notification.id ?? notification.title}>
+                      <StatusBadge tone={notification.tone}>{notification.title}</StatusBadge>
+                      <p>{notification.detail}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+            </div>
 
-        <div className={styles.topActions}>
-          <div className={styles.popoverAnchor}>
-            <label className={styles.searchBox}>
-              <span aria-hidden="true">/</span>
-              <input
-                aria-label="Global search"
-                onBlur={() => window.setTimeout(() => setIsSearchOpen(false), 120)}
-                onChange={(event) => {
-                  setSearchValue(event.target.value);
-                  setIsSearchOpen(true);
-                }}
-                onFocus={() => setIsSearchOpen(true)}
-                onKeyDown={handleSearchKeyDown}
-                placeholder="搜尋門市、案件、物件..."
-                value={searchValue}
-              />
-            </label>
-            {isSearchOpen && !isCommandPaletteOpen && searchValue.trim() ? (
-              <div className={styles.searchPanel} data-testid="operator-search-results" role="listbox">
-                <div className={styles.popoverTitle}>Search</div>
-                {searchMatches.length ? (
-                  searchMatches.map((item, index) => (
-                    <button
-                      aria-selected={index === searchActiveIndex}
-                      className={styles.searchResult}
-                      data-target-entity={item.target.entityId}
-                      data-target-tab={item.target.tab}
-                      data-target-workspace={item.target.workspace}
-                      key={item.id}
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        handleTargetSelect(item.target, item.entityId);
-                      }}
-                      role="option"
-                      type="button"
-                    >
-                      <span>{item.entityId}</span>
-                      <strong>{item.label}</strong>
-                      <small>{item.description}</small>
+            <div className={styles.popoverAnchor}>
+              <button
+                aria-expanded={isTaskCenterOpen}
+                className={styles.headerAction}
+                data-testid="operator-task-center-button"
+                onClick={() => (isTaskCenterOpen ? setIsTaskCenterOpen(false) : openTaskCenter())}
+                title={taskSummary.urgent > 0 ? `${taskSummary.urgent} 項緊急` : undefined}
+                type="button"
+              >
+                <span data-testid="operator-task-center-count">
+                  任務中心
+                  <strong
+                    className={[
+                      styles.headerCount,
+                      taskSummary.urgent > 0 && shellEnvelope.header.counts.taskCenter > 0 ? styles.headerCount_alert : "",
+                    ].join(" ")}
+                  >
+                    {shellEnvelope.header.counts.taskCenter}
+                  </strong>
+                </span>
+              </button>
+              {isTaskCenterOpen ? (
+                <div className={styles.taskCenterPanel} data-testid="operator-task-center">
+                  <div className={styles.taskCenterHeader}>
+                    <div>
+                      <div className={styles.popoverTitle}>Task center</div>
+                      <strong>我的待辦與核准</strong>
+                    </div>
+                    <Chip tone={taskCenterSource === "api" ? "success" : "neutral"}>
+                      {taskCenterLoadState === "loading" ? "SYNCING" : taskCenterSource.toUpperCase()}
+                    </Chip>
+                  </div>
+                  <div className={styles.taskCenterStats} aria-label="Task center summary">
+                    <span>
+                      <strong>{shellEnvelope.header.counts.taskCenter}</strong>
+                      API
+                    </span>
+                    <span>
+                      <strong>{taskSummary.urgent}</strong>
+                      Urgent
+                    </span>
+                    <span>
+                      <strong>{liveTasks.length}</strong>
+                      Visible
+                    </span>
+                  </div>
+                  <div className={styles.taskList}>
+                    {taskCenterLoadState === "empty" || taskCenterLoadState === "error" ? (
+                      <div className={styles.commandEmpty} data-testid="operator-task-center-unavailable">
+                        {taskCenterLoadState === "empty"
+                          ? "Task API 已回應，但目前沒有可用任務。"
+                          : "Task API 暫時無法取得，未顯示 fixture 任務。"}
+                      </div>
+                    ) : liveTasks.slice(0, 8).map((task) => (
+                      <button
+                        className={styles.taskRow}
+                        key={task.id}
+                        onClick={() => handleTaskSelect(task)}
+                        type="button"
+                      >
+                        <span className={[styles.taskMarker, styles[`marker_${task.tone}`]].join(" ")} aria-hidden="true" />
+                        <span className={styles.taskMain}>
+                          <span>
+                            <strong>{task.title}</strong>
+                            <StatusBadge tone={task.tone}>{task.status}</StatusBadge>
+                          </span>
+                          <small>{task.id} · {task.summary}</small>
+                        </span>
+                        <span className={styles.taskMeta}>
+                          <b>{task.owner}</b>
+                          <em>{task.priority}</em>
+                          <time>{task.dueLabel}</time>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className={styles.taskCenterFooter}>
+                    <button type="button" onClick={() => window.location.assign("/tasks")}>
+                      Open full tasks page
                     </button>
-                  ))
-                ) : (
-                  <div className={styles.searchEmpty}>No matching operator work</div>
-                )}
-              </div>
-            ) : null}
-          </div>
+                    <span>
+                      {taskCenterLoadState === "fallback"
+                        ? "/api/v1/operator/shell/tasks local fixture active"
+                        : "/api/v1/operator/shell/tasks"}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
 
-          <Button
-            aria-label="Open command palette"
-            data-testid="operator-command-trigger"
-            onClick={() => openCommandPalette(searchValue)}
-            size="sm"
-            variant="ghost"
-          >
-            ⌘K
-          </Button>
-
-          <div className={styles.popoverAnchor}>
-            <Button
-              aria-expanded={isNotificationOpen}
-              aria-label="Open notifications"
-              onClick={() => {
-                setIsNotificationOpen((open) => !open);
-                setIsTaskCenterOpen(false);
-                setIsRoleMenuOpen(false);
-              }}
-              size="sm"
-              variant="ghost"
-            >
-              ! {shellEnvelope.header.counts.notifications}
-            </Button>
-            {isNotificationOpen ? (
-              <div className={styles.notificationPanel} data-screen-label="Notifications">
-                <div className={styles.popoverTitle}>Notifications</div>
-                {liveNotifications.map((notification) => (
-                  <article className={styles.notificationItem} key={notification.id ?? notification.title}>
-                    <StatusBadge tone={notification.tone}>{notification.title}</StatusBadge>
-                    <p>{notification.detail}</p>
-                  </article>
-                ))}
-              </div>
-            ) : null}
-          </div>
-
-          <div className={styles.popoverAnchor}>
             <button
-              aria-expanded={isTaskCenterOpen}
-              aria-label="Open task center"
-              className={styles.taskCenterButton}
-              data-testid="operator-task-center-button"
-              onClick={() => (isTaskCenterOpen ? setIsTaskCenterOpen(false) : openTaskCenter())}
+              className={styles.headerAction}
+              data-testid="operator-approval-count"
+              onClick={() => handleWorkspaceClick("govern")}
               type="button"
             >
-              <span data-testid="operator-task-center-count">
-                Task Center <strong>{shellEnvelope.header.counts.taskCenter}</strong>
-              </span>
-              {taskSummary.urgent > 0 ? <span>{taskSummary.urgent} urgent</span> : null}
+              待核准
+              <strong
+                className={[
+                  styles.headerCount,
+                  shellEnvelope.header.counts.approvals > 0 ? styles.headerCount_pending : "",
+                ].join(" ")}
+              >
+                {shellEnvelope.header.counts.approvals}
+              </strong>
             </button>
-            {isTaskCenterOpen ? (
-              <div className={styles.taskCenterPanel} data-testid="operator-task-center">
-                <div className={styles.taskCenterHeader}>
-                  <div>
-                    <div className={styles.popoverTitle}>Task center</div>
-                    <strong>我的待辦與核准</strong>
-                  </div>
-                  <Chip tone={taskCenterSource === "api" ? "success" : "neutral"}>
-                    {taskCenterLoadState === "loading" ? "SYNCING" : taskCenterSource.toUpperCase()}
-                  </Chip>
-                </div>
-                <div className={styles.taskCenterStats} aria-label="Task center summary">
-                  <span>
-                    <strong>{shellEnvelope.header.counts.taskCenter}</strong>
-                    API
-                  </span>
-                  <span>
-                    <strong>{taskSummary.urgent}</strong>
-                    Urgent
-                  </span>
-                  <span>
-                    <strong>{liveTasks.length}</strong>
-                    Visible
-                  </span>
-                </div>
-                <div className={styles.taskList}>
-                  {taskCenterLoadState === "empty" || taskCenterLoadState === "error" ? (
-                    <div className={styles.commandEmpty} data-testid="operator-task-center-unavailable">
-                      {taskCenterLoadState === "empty"
-                        ? "Task API 已回應，但目前沒有可用任務。"
-                        : "Task API 暫時無法取得，未顯示 fixture 任務。"}
-                    </div>
-                  ) : liveTasks.slice(0, 8).map((task) => (
+
+            <div className={styles.popoverAnchor}>
+              <button
+                aria-expanded={isRoleMenuOpen}
+                className={styles.roleButton}
+                onClick={() => {
+                  setIsRoleMenuOpen((open) => !open);
+                  setIsNotificationOpen(false);
+                  setIsTaskCenterOpen(false);
+                }}
+                type="button"
+              >
+                <span aria-hidden="true" className={styles.roleAvatar}>{Array.from(activeRole.label)[0]}</span>
+                {activeRole.label}
+                <span aria-hidden="true" className={styles.roleCaret}>▾</span>
+              </button>
+              {isRoleMenuOpen ? (
+                <div className={styles.roleMenu} data-screen-label="Role Switch Menu">
+                  <div className={styles.popoverTitle}>Role switcher</div>
+                  {rolesForShell.map((role) => (
                     <button
-                      className={styles.taskRow}
-                      key={task.id}
-                      onClick={() => handleTaskSelect(task)}
+                      className={role.id === activeRole.id ? styles.roleOption_active : styles.roleOption}
+                      key={role.id}
+                      onClick={() => handleRoleSelect(role.id)}
                       type="button"
                     >
-                      <span className={[styles.taskMarker, styles[`marker_${task.tone}`]].join(" ")} aria-hidden="true" />
-                      <span className={styles.taskMain}>
-                        <span>
-                          <strong>{task.title}</strong>
-                          <StatusBadge tone={task.tone}>{task.status}</StatusBadge>
-                        </span>
-                        <small>{task.id} · {task.summary}</small>
+                      <span className={styles.roleOptionText}>
+                        <strong>{role.label}</strong>
+                        <small>{role.subtitle}</small>
                       </span>
-                      <span className={styles.taskMeta}>
-                        <b>{task.owner}</b>
-                        <em>{task.priority}</em>
-                        <time>{task.dueLabel}</time>
+                      <span className={styles.roleAccessList} aria-label={`${role.label} workspace access`}>
+                        {WORKSPACES.map((workspace) => {
+                          const allowed = role.allowedWorkspaces.includes(workspace.id);
+                          return (
+                            <span
+                              className={allowed ? styles.roleAccess_allowed : styles.roleAccess_locked}
+                              key={workspace.id}
+                            >
+                              {allowed ? workspace.shortLabel : `Lock ${workspace.shortLabel}`}
+                            </span>
+                          );
+                        })}
                       </span>
                     </button>
                   ))}
                 </div>
-                <div className={styles.taskCenterFooter}>
-                  <button type="button" onClick={() => window.location.assign("/tasks")}>
-                    Open full tasks page
-                  </button>
-                  <span>
-                    {taskCenterLoadState === "fallback"
-                      ? "/api/v1/operator/shell/tasks local fixture active"
-                      : "/api/v1/operator/shell/tasks"}
-                  </span>
-                </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
+
+            <a className={styles.adminLink} data-testid="operator-admin-link" href={ADMIN_PATH}>
+              管理後台
+            </a>
+            <button className={styles.logoutButton} onClick={handleLogout} type="button">
+              登出
+            </button>
           </div>
-
-          <button
-            className={styles.approvalChip}
-            data-testid="operator-approval-count"
-            onClick={() => handleWorkspaceClick("govern")}
-            type="button"
-          >
-            待核准 <strong>{shellEnvelope.header.counts.approvals}</strong>
-          </button>
-
-          <div className={styles.popoverAnchor}>
-            <Button
-              aria-expanded={isRoleMenuOpen}
-              onClick={() => {
-                setIsRoleMenuOpen((open) => !open);
-                setIsNotificationOpen(false);
-                setIsTaskCenterOpen(false);
-              }}
-              size="sm"
-              variant="secondary"
-            >
-              {activeRole.label}
-            </Button>
-            {isRoleMenuOpen ? (
-              <div className={styles.roleMenu} data-screen-label="Role Switch Menu">
-                <div className={styles.popoverTitle}>Role switcher</div>
-                {rolesForShell.map((role) => (
-                  <button
-                    className={role.id === activeRole.id ? styles.roleOption_active : styles.roleOption}
-                    key={role.id}
-                    onClick={() => handleRoleSelect(role.id)}
-                    type="button"
-                  >
-                    <span className={styles.roleOptionText}>
-                      <strong>{role.label}</strong>
-                      <small>{role.subtitle}</small>
-                    </span>
-                    <span className={styles.roleAccessList} aria-label={`${role.label} workspace access`}>
-                      {WORKSPACES.map((workspace) => {
-                        const allowed = role.allowedWorkspaces.includes(workspace.id);
-                        return (
-                          <span
-                            className={allowed ? styles.roleAccess_allowed : styles.roleAccess_locked}
-                            key={workspace.id}
-                          >
-                            {allowed ? workspace.shortLabel : `Lock ${workspace.shortLabel}`}
-                          </span>
-                        );
-                      })}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-
-          <a className={styles.adminLink} data-testid="operator-admin-link" href={ADMIN_PATH}>
-            管理後台
-          </a>
-          <Button onClick={handleLogout} size="sm" variant="ghost">
-            Logout
-          </Button>
         </div>
       </header>
 
-      <div className={styles.pocBanner}>
+      <div className={styles.pocBanner} data-data-status={shellDataStatus}>
         <div>
-          <strong>{shellDataStatus === "ready" ? "Live API" : fixturesAllowed ? "Local fixture mode" : "API required"}</strong>
-          <span>
-            Production 只顯示可驗證的 Operator API 資料；loading、seed、empty 或 error 均會 fail closed。
-          </span>
+          <span aria-hidden="true" className={styles.pocBannerDot} />
+          <strong>{dataModeBanner.label}</strong>
+          <span>{dataModeBanner.detail}</span>
         </div>
-        <Button onClick={handleReset} size="sm" variant="secondary">
+        <button className={styles.pocBannerAction} onClick={handleReset} type="button">
           重設視角
-        </Button>
+        </button>
       </div>
 
-      <main className={styles.shell}>
+      <main className={[styles.shell, isTodayContent ? styles.shell_today : ""].filter(Boolean).join(" ")}>
         {!canRenderWorkspace && !canRenderDirectIntake ? (
           <OperatorDataUnavailableGate
-            detail={shellLoadError}
+            failure={shellLoadFailure}
             onRetry={() => setShellReloadToken((token) => token + 1)}
             status={toUnavailableOperatorStatus(shellDataStatus)}
           />

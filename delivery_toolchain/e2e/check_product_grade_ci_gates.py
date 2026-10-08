@@ -54,6 +54,42 @@ def extract_labels_from_html(html_path):
     return set(pattern.findall(content))
 
 
+RELEASE_AUTHORIZING_FINAL_DECISIONS = {"approved", "approved-with-actions"}
+RELEASE_NON_AUTHORIZING_STATUS = re.compile(
+    r"^(no[-\s]?go|blocked|rejected|pending|conditional|unknown|tbd)\b"
+)
+
+
+def evaluate_release_go_decision(text):
+    """Return (authorized, reason) from the structured fields of the GO/NO-GO record.
+
+    Only an unconditional ``Decision status: go ...`` line plus a Human/Ops
+    ``Final decision recorded`` row of approved / approved-with-actions
+    authorizes release. A bare "go" substring (which "NO-GO" and the title
+    "Go/No-Go" also contain) never does.
+    """
+    status_match = re.search(r"^Decision status:\s*(.+?)\s*$", text, re.MULTILINE)
+    if not status_match:
+        return False, "no structured 'Decision status:' line"
+    status = status_match.group(1).strip().lower()
+    if RELEASE_NON_AUTHORIZING_STATUS.match(status):
+        return False, f"decision status is '{status_match.group(1).strip()}'"
+    if not re.match(r"^(go|approved)\b", status):
+        return False, f"decision status '{status_match.group(1).strip()}' is not a GO"
+
+    final_match = re.search(
+        r"^\|\s*Final decision recorded\s*\|[^|\n]*\|\s*([^|\n]+?)\s*\|",
+        text,
+        re.MULTILINE,
+    )
+    if not final_match:
+        return False, "no 'Final decision recorded' row"
+    final = final_match.group(1).strip().lower()
+    if final not in RELEASE_AUTHORIZING_FINAL_DECISIONS:
+        return False, f"final Human/Ops decision is '{final_match.group(1).strip()}'"
+    return True, f"decision status '{status_match.group(1).strip()}', final decision '{final}'"
+
+
 def validate_remote_visual_approval(path):
     if not path.exists():
         return ["remote visual approval artifact is missing"]
@@ -167,11 +203,15 @@ def main():
     # 4. Check go/no-go authorization and authenticated remote visual evidence.
     if args.require_go:
         if RELEASE_GO_PATH.exists():
-            content = RELEASE_GO_PATH.read_text(encoding="utf-8").lower()
-            if "go" in content:
-                report_lines.append("[PASS] PRODUCT_RELEASE_GO_NO_GO.md authorizes release.")
+            authorized, reason = evaluate_release_go_decision(
+                RELEASE_GO_PATH.read_text(encoding="utf-8")
+            )
+            if authorized:
+                report_lines.append(f"[PASS] PRODUCT_RELEASE_GO_NO_GO.md authorizes release ({reason}).")
             else:
-                report_lines.append("[FAIL] PRODUCT_RELEASE_GO_NO_GO.md exists but does not authorize release.")
+                report_lines.append(
+                    f"[FAIL] PRODUCT_RELEASE_GO_NO_GO.md does not authorize release: {reason}."
+                )
                 success = False
         else:
             report_lines.append("[FAIL] --require-go specified but PRODUCT_RELEASE_GO_NO_GO.md is missing.")

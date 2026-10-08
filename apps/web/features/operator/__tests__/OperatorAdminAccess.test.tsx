@@ -85,7 +85,7 @@ describe("OperatorConsole session wiring", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
-    fireEvent.click(screen.getByRole("button", { name: "Logout" }));
+    fireEvent.click(screen.getByRole("button", { name: "登出" }));
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/login"));
     expect(fetchMock.mock.calls.some(([input]) => urlOf(input) === "/auth/logout")).toBe(true);
@@ -104,7 +104,7 @@ describe("OperatorConsole session wiring", () => {
     );
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
-    fireEvent.click(screen.getByRole("button", { name: "Logout" }));
+    fireEvent.click(screen.getByRole("button", { name: "登出" }));
 
     expect(await screen.findByText(/登出失敗/)).toBeInTheDocument();
     expect(assign).not.toHaveBeenCalled();

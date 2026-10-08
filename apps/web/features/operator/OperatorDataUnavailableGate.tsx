@@ -2,38 +2,79 @@
 
 import { Button, StatusBadge } from "./components";
 import {
+  classifyLoadFailure,
   unavailableDataMessage,
   type OperatorDataAvailability,
+  type OperatorLoadFailure,
 } from "./operatorDataMode";
 import styles from "./operator.module.css";
 
 export function OperatorDataUnavailableGate({
   detail,
+  failure,
   onRetry,
   status,
 }: {
+  /** Technical detail (exception text, blocked source); never the headline. */
   detail?: string | null;
+  failure?: OperatorLoadFailure | null;
   onRetry?: () => void;
   status: Exclude<OperatorDataAvailability, "ready" | "fixture">;
 }) {
-  const message = unavailableDataMessage(status);
+  const technicalDetail = failure?.technicalDetail ?? detail ?? null;
+  const failureKind = failure?.kind ?? (technicalDetail ? classifyLoadFailure(technicalDetail) : undefined);
+  const message = unavailableDataMessage(status, failureKind);
+  const isLoading = status === "loading";
 
   return (
     <section
-      aria-live={status === "loading" ? "polite" : "assertive"}
+      aria-live={isLoading ? "polite" : "assertive"}
       className={styles.dataUnavailableGate}
+      data-failure-kind={isLoading ? undefined : failureKind}
       data-status={status}
       data-testid="operator-data-unavailable"
-      role={status === "loading" ? "status" : "alert"}
+      role={isLoading ? "status" : "alert"}
     >
-      <div>
-        <StatusBadge tone={status === "loading" ? "info" : "warning"}>
-          {message.code}
-        </StatusBadge>
+      <div className={styles.dataUnavailableBody}>
+        <StatusBadge tone={isLoading ? "info" : "warning"}>{message.badge}</StatusBadge>
         <h1>{message.title}</h1>
-        <p>{detail || message.detail}</p>
+        <p>{message.detail}</p>
+        {isLoading ? null : <p className={styles.dataUnavailableNext}>{message.next}</p>}
+        {isLoading ? null : (
+          <details className={styles.dataUnavailableTechnical} data-testid="operator-data-unavailable-technical">
+            <summary>技術資訊</summary>
+            <dl>
+              <dt>錯誤代碼</dt>
+              <dd>{message.code}</dd>
+              {failure?.correlationId ? (
+                <>
+                  <dt>追蹤編號</dt>
+                  <dd data-testid="operator-data-unavailable-correlation">{failure.correlationId}</dd>
+                </>
+              ) : null}
+              {failure?.httpStatus ? (
+                <>
+                  <dt>HTTP 狀態</dt>
+                  <dd>{failure.httpStatus}</dd>
+                </>
+              ) : null}
+              {failure?.occurredAt ? (
+                <>
+                  <dt>發生時間</dt>
+                  <dd>{failure.occurredAt}</dd>
+                </>
+              ) : null}
+              {technicalDetail ? (
+                <>
+                  <dt>原始訊息</dt>
+                  <dd>{technicalDetail}</dd>
+                </>
+              ) : null}
+            </dl>
+          </details>
+        )}
       </div>
-      {onRetry && status !== "loading" ? (
+      {onRetry && !isLoading ? (
         <Button onClick={onRetry} size="sm" variant="secondary">
           重新載入
         </Button>
