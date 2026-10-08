@@ -8,7 +8,13 @@ import {
   type OperatorLoadFailure,
 } from "./operatorDataMode";
 import styles from "./operator.module.css";
-import { ADMIN_PATH } from "./operatorSession";
+import { ADMIN_PATH, LOGIN_PATH } from "./operatorSession";
+
+function reloginHref(): string {
+  if (typeof window === "undefined") return LOGIN_PATH;
+  const returnTo = `${window.location.pathname}${window.location.search}`;
+  return `${LOGIN_PATH}?returnTo=${encodeURIComponent(returnTo)}`;
+}
 
 export function OperatorDataUnavailableGate({
   detail,
@@ -76,6 +82,11 @@ export function OperatorDataUnavailableGate({
         )}
       </div>
       <div className={styles.dataUnavailableActions}>
+        {failureKind === "unauthenticated" && !isLoading ? (
+          <a className={styles.dataUnavailableLink} data-testid="operator-data-unavailable-login-link" href={reloginHref()}>
+            重新登入
+          </a>
+        ) : null}
         {failureKind === "forbidden" && !isLoading ? (
           <a className={styles.dataUnavailableLink} data-testid="operator-data-unavailable-admin-link" href={ADMIN_PATH}>
             前往管理後台

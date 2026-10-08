@@ -438,6 +438,7 @@
   position: absolute;
   top: calc(100% + 10px);
   right: 0;
+  max-width: calc(100vw - 24px);
   z-index: 40;
   width: 340px;
   padding: 10px;
@@ -2812,6 +2813,26 @@
 @media (max-width: 768px) {
   .topbarInner {
     padding: 8px 12px;
+  }
+
+  /*
+   * Header popovers anchor to the viewport on phones: their triggers wrap to
+   * arbitrary x positions, so a right-aligned fixed-width panel would leave
+   * the account actions (管理後台 / 登出) off-screen.
+   */
+  .notificationPanel,
+  .searchPanel,
+  .roleMenu,
+  .taskCenterPanel {
+    position: fixed;
+    top: auto;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-width: none;
+    max-height: calc(100vh - 140px);
+    margin-top: 8px;
+    overflow-y: auto;
   }
 
   .brandCluster {

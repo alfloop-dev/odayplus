@@ -180,6 +180,28 @@ describe("Operator shared header chrome", () => {
     expect(within(gate).getByTestId("operator-data-unavailable-technical")).toHaveTextContent("504");
   });
 
+  it("tells an expired session to sign in again instead of showing permission guidance", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({ error: { code: "WEB_SESSION_REQUIRED", message: "A valid web session is required." } }, 401),
+      ),
+    );
+    window.history.replaceState({}, "", "/operator?ws=store");
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "store" }} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "unauthenticated"));
+    expect(within(gate).getByRole("heading", { level: 1 })).toHaveTextContent("登入已過期");
+    expect(within(gate).getByTestId("operator-data-unavailable-login-link")).toHaveAttribute(
+      "href",
+      `/login?returnTo=${encodeURIComponent("/operator?ws=store")}`,
+    );
+    expect(within(gate).queryByTestId("operator-data-unavailable-admin-link")).not.toBeInTheDocument();
+    expect(gate).not.toHaveTextContent("沒有營運資料讀取權限");
+  });
+
   it("does not show implementation jargon in the data-mode banner", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);

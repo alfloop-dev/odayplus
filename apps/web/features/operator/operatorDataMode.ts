@@ -177,6 +177,7 @@ export type OperatorLoadFailureKind =
   | "network"
   | "server"
   | "forbidden"
+  | "unauthenticated"
   | "unknown";
 
 export type OperatorLoadFailure = {
@@ -204,7 +205,8 @@ export function classifyLoadFailure(
   error: unknown,
   httpStatus?: number,
 ): OperatorLoadFailureKind {
-  if (httpStatus === 401 || httpStatus === 403) return "forbidden";
+  if (httpStatus === 401) return "unauthenticated";
+  if (httpStatus === 403) return "forbidden";
   if (httpStatus === 408 || httpStatus === 504) return "timeout";
   if (httpStatus !== undefined && httpStatus >= 500) return "server";
 
@@ -212,7 +214,8 @@ export function classifyLoadFailure(
   const text = (error instanceof Error ? error.message : typeof error === "string" ? error : "")
     .toLowerCase();
   if (name === "TimeoutError" || /timed? ?out|timeout|\b504\b/.test(text)) return "timeout";
-  if (/\b40[13]\b|forbidden|unauthori[sz]ed|沒有.*權限/.test(text)) return "forbidden";
+  if (/\b401\b|unauthori[sz]ed|unauthenticated|session.required/.test(text)) return "unauthenticated";
+  if (/\b403\b|forbidden|沒有.*權限/.test(text)) return "forbidden";
   if (name === "TypeError" || /failed to fetch|network|offline|econn/.test(text)) return "network";
   if (/\b5\d\d\b/.test(text)) return "server";
   return "unknown";
@@ -251,6 +254,14 @@ function failureMessage(kind: OperatorLoadFailureKind): UnavailableDataMessage {
         detail: "此帳號沒有營運資料讀取權限（例如僅具平台管理員角色）。",
         next: "使用者與角色管理請使用「管理後台」；需要營運資料權限請洽系統管理員。",
         title: "此帳號沒有營運資料讀取權限",
+      };
+    case "unauthenticated":
+      return {
+        badge: "登入已過期",
+        code: "OPERATOR_SESSION_EXPIRED",
+        detail: "此頁面的登入狀態已失效（可能已逾時或在其他地方登出）。",
+        next: "請重新登入，登入後會回到目前的頁面。",
+        title: "登入已過期",
       };
     default:
       return {

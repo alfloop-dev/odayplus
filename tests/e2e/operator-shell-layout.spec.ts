@@ -100,6 +100,36 @@ test.describe("Operator shared header layout", () => {
     });
   }
 
+  test("header popovers and account actions stay inside a 390px viewport", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openWorkspace(page, "today");
+
+    const insideViewport = async (selector: string) =>
+      page.locator(selector).first().evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.left >= -0.5 && rect.right <= document.documentElement.clientWidth + 0.5;
+      });
+
+    await page.getByRole("button", { name: /通知/ }).click();
+    expect(await insideViewport('[data-screen-label="Notifications"]')).toBe(true);
+    await page.keyboard.press("Escape");
+
+    await page.getByTestId("operator-task-center-button").click();
+    expect(await insideViewport('[data-testid="operator-task-center"]')).toBe(true);
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: /營運主管/, expanded: false }).click();
+    expect(await insideViewport('[data-screen-label="Role Switch Menu"]')).toBe(true);
+    const adminLink = page.getByTestId("operator-admin-link");
+    const logout = page.getByRole("button", { name: "登出" });
+    await adminLink.scrollIntoViewIfNeeded();
+    await expect(adminLink).toBeInViewport();
+    expect(await insideViewport('[data-testid="operator-admin-link"]')).toBe(true);
+    await logout.scrollIntoViewIfNeeded();
+    await expect(logout).toBeInViewport();
+    await expect(logout).toBeEnabled();
+  });
+
   test("header does not change when workspace content is replaced by a data gate", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openWorkspace(page, "today");
