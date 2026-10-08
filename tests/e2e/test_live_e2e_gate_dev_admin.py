@@ -228,6 +228,18 @@ class AdminWeb(base.FakeHttp):
         # POST /login
         if method == "POST" and path == "/login":
             assert headers.get("origin") == base.WEB_URL, "login must carry Web origin (CSRF)"
+            if headers.get("content-type") == "application/x-www-form-urlencoded":
+                assert headers.get("accept") == "text/html"
+                assert kwargs.get("follow_redirects") is False
+                body = kwargs.get("body") or {}
+                if "form POST /login" in self.routes:
+                    route = self.routes["form POST /login"]
+                    return route(body, headers) if callable(route) else deepcopy(route)
+                if body.get("username") == USERNAME and body.get("password") == PASSWORD and self.password_rotated:
+                    self.logged_out = False
+                    return base.response(303, location=f"{base.WEB_URL}/operator?view=admin",
+                                         cookies={SESSION_COOKIE: SESSION_VALUE})
+                return base.response(303, location=f"{base.WEB_URL}/login?error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin")
             if "anon POST /login" in self.routes:
                 route = self.routes["anon POST /login"]
                 if callable(route):
@@ -407,6 +419,12 @@ def test_dev_admin_passes_with_missing_models_and_already_rotated_session() -> N
         "session:anonymous_session_denied",
         "session:anonymous_api_denied",
         "session:invalid_credentials_refused",
+        "session:html_form_invalid_redirect",
+        "session:html_form_password_login",
+        "session:html_form_session_resolves_account",
+        "admin:html_form_admin_page_served",
+        "session:html_form_logout",
+        "session:html_form_revoked_session_refused",
         "session:password_login",
         "session:session_resolves_account",
         "admin:identity_user_list",
@@ -435,6 +453,7 @@ def test_dev_admin_passes_with_missing_models_and_already_rotated_session() -> N
         "wrong_role_denied",
         "admin_page",
         "logout_and_revocation",
+        "html_form_login_and_revocation",
     ]
     assert report["release_profile"] == {
         "name": "dev-admin",
@@ -447,6 +466,66 @@ def test_dev_admin_passes_with_missing_models_and_already_rotated_session() -> N
         call == "GET /api/v1/operator/bootstrap" and h.get("x-operator-role") == DENIED_ROLE
         for call, h in web.headers_seen
     )
+
+
+@pytest.mark.parametrize("origin", ["https://0.0.0.0:3000", "https://attacker.example"])
+def test_browser_form_failure_with_wrong_origin_blocks_dev_admin(origin: str) -> None:
+    def login(body, headers):
+        if body.get("username") == USERNAME:
+            return base.response(303, location=f"{base.WEB_URL}/operator?view=admin",
+                                 cookies={SESSION_COOKIE: SESSION_VALUE})
+        return base.response(303, location=f"{origin}/login?error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin")
+
+    _, report, _ = run_dev_admin(web=AdminWeb(web_routes(**{"form POST /login": login})))
+    assert report["ok"] is False
+    assert "session:html_form_invalid_redirect" in blockers(report)
+
+
+@pytest.mark.parametrize("location,cookies", [
+    ("https://0.0.0.0:3000/operator?view=admin", {SESSION_COOKIE: SESSION_VALUE}),
+    (f"{base.WEB_URL}/operator?view=admin", {}),
+    (f"{base.WEB_URL}/operator?view=business", {SESSION_COOKIE: SESSION_VALUE}),
+])
+def test_broken_browser_form_success_blocks_dev_admin(location: str, cookies: dict) -> None:
+    def login(body, headers):
+        if body.get("username") == USERNAME:
+            return base.response(303, location=location, cookies=cookies)
+        return base.response(303, location=f"{base.WEB_URL}/login?error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin")
+
+    _, report, _ = run_dev_admin(web=AdminWeb(web_routes(**{"form POST /login": login})))
+    assert report["ok"] is False
+    assert "session:html_form_password_login" in blockers(report)
+
+
+def test_form_transport_sends_urlencoded_body_without_following_redirects(monkeypatch) -> None:
+    import io
+    from email.message import Message
+
+    captured = {}
+    class Opener:
+        def open(self, request, timeout):
+            captured["request"] = request
+            headers = Message()
+            headers["Location"] = f"{base.WEB_URL}/login?error=AUTH_INVALID_CREDENTIALS"
+            raise gate.urllib.error.HTTPError(request.full_url, 303, "See Other", headers, io.BytesIO(b""))
+
+    def opener(*handlers):
+        captured["handlers"] = handlers
+        return Opener()
+
+    monkeypatch.setattr(gate.urllib.request, "build_opener", opener)
+    client = gate.UrllibHttpClient(base.WEB_URL, timeout=5, bearer_token="", operator_role="",
+                                 operator_subject="", operator_tenant="", correlation_id=base.CORRELATION_ID)
+    response = client.request("POST", "/login", authenticated=False,
+        body={"username": "test", "password": "a+b & 測試", "returnTo": "/operator?view=admin"},
+        headers={"accept": "text/html", "content-type": "application/x-www-form-urlencoded"},
+        follow_redirects=False)
+    request = captured["request"]
+    assert request.get_header("Content-type") == "application/x-www-form-urlencoded"
+    assert gate.urllib.parse.parse_qs(request.data.decode()) == {
+        "username": ["test"], "password": ["a+b & 測試"], "returnTo": ["/operator?view=admin"]}
+    assert captured["handlers"] == (gate._NoRedirect,)
+    assert response.status == 303
 
 
 def test_dev_admin_passes_fresh_bootstrap_account_with_controlled_rotation() -> None:
@@ -471,6 +550,7 @@ def test_dev_admin_passes_fresh_bootstrap_account_with_controlled_rotation() -> 
         "wrong_role_denied",
         "admin_page",
         "logout_and_revocation",
+        "html_form_login_and_revocation",
     ]
 
 

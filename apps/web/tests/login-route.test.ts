@@ -282,6 +282,74 @@ describe("§1 Password login success & failure (Contract §2, §3)", () => {
   });
 });
 
+describe("Cloud Run HTML login redirects", () => {
+  const publicOrigin = "https://oday-web-767864276141.asia-east1.run.app";
+
+  function formRequest(username: string, password: string, returnTo = "/operator?view=admin") {
+    const request = new NextRequest("https://0.0.0.0:3000/login", {
+      method: "POST",
+      headers: {
+        accept: "text/html",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ username, password, returnTo }).toString(),
+    });
+    request.headers.set("origin", publicOrigin);
+    request.headers.set("x-forwarded-for", IP);
+    request.headers.set("x-forwarded-host", "attacker.example");
+    return request;
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("ODP_WEB_BASE_URL", publicOrigin);
+    vi.stubEnv("ODP_AUTH_MODE", "local");
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    installThrottle();
+    setIdentityStoreForTests(new MockIdentityStore(ACCOUNTS));
+  });
+
+  it.each([
+    ["admin", "wrong-password-xxx", "AUTH_INVALID_CREDENTIALS"],
+    ["missing-account", "wrong-password-xxx", "AUTH_INVALID_CREDENTIALS"],
+    ["admin", "", "AUTH_INVALID_CREDENTIALS"],
+    ["locked-user", "Locked12345678!", "AUTH_ACCOUNT_LOCKED"],
+  ])("keeps the %s failure on the configured public origin", async (username, password, code) => {
+    const response = await POST(formRequest(username, password));
+    expect(response.status).toBe(303);
+    const destination = new URL(response.headers.get("location")!);
+    expect(destination.origin).toBe(publicOrigin);
+    expect(destination.pathname).toBe("/login");
+    expect(destination.searchParams.get("error")).toBe(code);
+    expect(destination.searchParams.get("returnTo")).toBe("/operator?view=admin");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("keeps a throttled form login on the public origin", async () => {
+    for (let i = 0; i < CONFIG.accountMaxFailures; i++) {
+      await POST(loginRequest({ username: "admin", password: "wrong-password-xxx" }));
+    }
+    const response = await POST(formRequest("admin", "Admin12345678!"));
+    const destination = new URL(response.headers.get("location")!);
+    expect(destination.origin).toBe(publicOrigin);
+    expect(destination.searchParams.get("error")).toBe("AUTH_RATE_LIMITED");
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it.each(["/operator?view=admin", "//attacker.example/operator"])(
+    "keeps successful form login and safe returnTo %s on the public origin",
+    async (returnTo) => {
+      const response = await POST(formRequest("admin", "Admin12345678!", returnTo));
+      const destination = new URL(response.headers.get("location")!);
+      expect(response.status).toBe(303);
+      expect(destination.origin).toBe(publicOrigin);
+      expect(destination.pathname).toBe("/operator");
+      expect(destination.search).toBe(returnTo.startsWith("//") ? "" : "?view=admin");
+      expect(response.headers.get("set-cookie")).toContain(webSessionCookieName);
+    },
+  );
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // §2  Account Threshold — Formal TypeScript Rate Limit (§6.4)
 // ═══════════════════════════════════════════════════════════════════════════
