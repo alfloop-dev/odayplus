@@ -152,6 +152,11 @@ class BusinessWeb:
     """Stateful double of the deployed Web origin and its ``/api/v1`` BFF."""
 
     def __init__(self) -> None:
+        self.release_identity = {
+            "release_sha": SHA, "release_profile": "full", "release_profile_valid": True,
+            "manifest_digest": DIGEST, "web_release_sha": SHA,
+            "web_release_profile": "full", "web_manifest_digest": DIGEST,
+        }
         self.admins: set[str] = set()
         self.account_roles = dict(ACCOUNTS)
         self.calls: list[tuple[str, str, str]] = []
@@ -290,6 +295,8 @@ class BusinessWeb:
             return Resp(401, {"error": {"code": "unauthenticated"}})
         if method in MUTATING and not headers.get("idempotency-key"):
             return Resp(400, {"error": {"code": "IDEMPOTENCY_KEY_REQUIRED"}})
+        if bare == bj.RELEASE_IDENTITY_PATH:
+            return Resp(200, deepcopy(self.release_identity))
         if bare == bj.PRINCIPAL_PATH:
             roles = self.account_roles[actor] | (
                 {"platform_admin"} if actor in self.admins else set()
@@ -377,7 +384,7 @@ class BusinessWeb:
             if "growth" not in self.non_durable:
                 self.plan["status"] = "submitted"
                 self.plan["status_history"].append("submitted")
-            self.event(ctx, "priceops.plan_submitted", "growth")
+            self.event(ctx, bj.PRICEOPS_AUDIT_EVENTS[ctx.match.group(2)], "growth")
             return Resp(200, self.plan)
 
         def adlift_job(ctx: Ctx) -> Resp:
@@ -594,7 +601,7 @@ class BusinessWeb:
 
 
 class RuntimeApi:
-    """Anonymous ``/platform/version`` and ``/readiness`` of the deployed API."""
+    """Offline double of the side-effect-free deployed identity endpoint."""
 
     def __init__(self, *, sha: str = SHA, profile: str = "full", valid: bool = True) -> None:
         self.sha = sha
@@ -607,11 +614,13 @@ class RuntimeApi:
         self.calls.append(f"{method} {path}")
         if path == "/platform/version":
             return Resp(200, {"release_sha": self.sha})
+        if path == bj.RELEASE_IDENTITY_PATH:
+            return Resp(200, {
+                "release_sha": self.sha, "release_profile": self.profile,
+                "release_profile_valid": self.valid, "manifest_digest": DIGEST,
+            })
         if path == "/readiness":
-            return Resp(
-                200,
-                {"details": {"releaseProfile": {"name": self.profile, "valid": self.valid}}},
-            )
+            raise AssertionError("Provider-probing readiness must not be used for admission")
         raise AssertionError(f"unrouted runtime request: {method} {path}")
 
 

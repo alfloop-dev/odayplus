@@ -134,6 +134,14 @@ AUTH_PATHS = frozenset({"/login", "/auth/logout", "/auth/session"})
 #: not stand in for a business role.
 USER_ADMIN_PROBE_PATH = "/api/v1/operator/users"
 PRINCIPAL_PATH = "/api/v1/auth/principal"
+RELEASE_IDENTITY_PATH = "/api/v1/platform/release-identity"
+PRICEOPS_AUDIT_EVENTS = {
+    "submit": "priceops.submitted.v1",
+    "approve": "priceops.approved.v1",
+    "activate": "priceops.activated.v1",
+    "simulate": "priceops.simulated.v1",
+    "optimize": "priceops.optimized.v1",
+}
 AUDIT_EVENTS_PATH = "/api/v1/audit/events"
 #: ``event_type`` of the API's RBAC allow/deny decisions (shared/audit/policy.py).
 SECURITY_EVENT_TYPE = "security.authorization"
@@ -1611,7 +1619,28 @@ class PlaywrightUiDriver:
                 return False, f"{relative} is missing"
         if not (self.root / "node_modules" / "@playwright" / "test").is_dir():
             return False, "@playwright/test is not installed (npm ci)"
-        return True, "ready"
+        node = self._which("node")
+        if node is None:
+            return False, "node is not on PATH"
+        # Launch and close a local blank browser, before writes are armed.
+        # Package presence alone does not prove Chromium/binary dependencies.
+        environment = {
+            key: value for key, value in os.environ.items()
+            if key in {"PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL",
+                       "XDG_CACHE_HOME", "PLAYWRIGHT_BROWSERS_PATH"}
+        }
+        try:
+            completed = self._run(
+                [node, "-e", "require('@playwright/test').chromium.launch({headless:true})"
+                 ".then(b=>b.close()).catch(()=>process.exit(1))"],
+                cwd=str(self.root), env=environment, capture_output=True,
+                text=True, timeout=30.0, check=False,
+            )
+        except Exception:
+            return False, "local Chromium preflight could not launch"
+        if completed.returncode != 0:
+            return False, "local Chromium executable/dependencies are unavailable"
+        return True, "local Chromium launch/close verified"
 
     def run(
         self,
@@ -1679,6 +1708,7 @@ class JourneyRunner:
         web: HttpClient,
         web_origin: str,
         scope: JourneyScope,
+        binding: ReleaseBinding,
         credentials: Mapping[str, Credential],
         run_id: str,
         result: JourneyResult,
@@ -1690,6 +1720,7 @@ class JourneyRunner:
     ) -> None:
         self.spec = spec
         self.scope = scope
+        self.binding = binding
         self.credentials = credentials
         self.run_id = run_id
         self.result = result
@@ -2404,7 +2435,12 @@ class JourneyRunner:
                     if event.get("event_type") != SECURITY_EVENT_TYPE
                     and _present(event.get("event_id"))
                     and bool(step.audit_event)
-                    and str(event.get("event_type") or "").startswith(step.audit_event)
+                    and (
+                        event.get("event_type") == PRICEOPS_AUDIT_EVENTS.get(
+                            _as_dict(self.scope.writes.get("price_action")).get("action")
+                        ) if self.spec.journey_id == "growth" and step.name == "price_action"
+                        else str(event.get("event_type") or "").startswith(step.audit_event)
+                    )
                 ]
                 if business:
                     event_id, event_type = business[0]["event_id"], business[0].get("event_type")
@@ -2532,6 +2568,16 @@ class JourneyRunner:
         for actor in self.spec.actors:
             if not self.sign_in(actor):
                 return
+        # Authenticate through the real BFF, then bind BOTH its upstream and
+        # the Web revision before even reading the authorized business record.
+        response, _ = self.send(Step("bff_release_identity", "GET", RELEASE_IDENTITY_PATH))
+        errors = release_identity_failures(response.payload, self.binding, include_web=True)
+        if not self.result.check(
+            not response.failed and response.status == 200 and not errors,
+            "runtime:bff_release_binding", "; ".join(detail for _, _, detail in errors)
+            or f"status={response.status}", "release",
+        ):
+            return
         payload = self.read_record()
         if payload is None:
             return
@@ -2566,43 +2612,38 @@ class JourneyRunner:
 # ---------------------------------------------------------------------------
 
 
+def release_identity_failures(
+    payload: Mapping[str, Any], binding: ReleaseBinding, *, include_web: bool = False
+) -> list[tuple[str, str, str]]:
+    """Compare side-effect-free, server-owned identity with the admitted artifact."""
+    wanted: dict[str, Any] = {
+        "release_sha": binding.release_sha,
+        "release_profile": binding.profile,
+        "release_profile_valid": True,
+        "manifest_digest": binding.manifest_digest,
+    }
+    if include_web:
+        wanted.update({
+            "web_release_sha": binding.release_sha,
+            "web_release_profile": binding.profile,
+            "web_manifest_digest": binding.manifest_digest,
+        })
+    return [
+        (f"runtime:{key}", "release", f"{key} is missing or differs from admitted release")
+        for key, expected in wanted.items() if payload.get(key) != expected
+    ]
+
+
 def runtime_preflight(
     api: HttpClient | None, binding: ReleaseBinding
 ) -> list[tuple[str, str, str]]:
-    """Return ``(check, dependency, detail)`` failures for the served runtime."""
-
+    """No readiness calls: that endpoint may trigger real provider probes."""
     if api is None:
         return [("runtime:api_origin", "release", f"no usable deployed API origin ({API_URL_ENV})")]
-    failures: list[tuple[str, str, str]] = []
-    version = api.request("GET", "/platform/version", authenticated=False)
-    actual = "" if version.failed else str(version.payload.get("release_sha") or "").lower()
-    if actual != binding.release_sha:
-        failures.append(
-            (
-                "runtime:release_sha",
-                "release",
-                f"expected={binding.release_sha} actual={actual or '<missing>'}",
-            )
-        )
-    readiness = api.request("GET", "/readiness", authenticated=False)
-    profile = _as_dict(_as_dict(readiness.payload.get("details")).get("releaseProfile"))
-    if not (
-        not readiness.failed
-        and readiness.status == 200
-        and profile.get("name") == binding.profile
-        and profile.get("valid") is True
-    ):
-        failures.append(
-            (
-                "runtime:release_profile",
-                "release-profile",
-                (
-                    f"sealed={binding.profile or '<missing>'} "
-                    f"runtime={profile.get('name') or '<missing>'} valid={profile.get('valid')}"
-                ),
-            )
-        )
-    return failures
+    response = api.request("GET", RELEASE_IDENTITY_PATH, authenticated=False)
+    if response.failed or response.status != 200:
+        return [("runtime:release_identity", "release", "read-only runtime identity unavailable")]
+    return release_identity_failures(response.payload, binding)
 
 
 # ---------------------------------------------------------------------------
@@ -2663,9 +2704,10 @@ def run_journeys(
     scope_journeys: dict[str, Any] = {}
     scope_header: dict[str, Any] = {}
     if admitted:
-        shared.extend(runtime_preflight(api, binding))
         scope_journeys, scope_header, scope_errors = parse_scope(scope_document, binding=binding)
         shared.extend(("scope:authorization", "scope-authorization", e) for e in scope_errors)
+        if not shared:
+            shared.extend(runtime_preflight(api, binding))
         if web is None:
             shared.append(("web:origin", "web", f"no usable deployed Web origin ({WEB_URL_ENV})"))
 
@@ -2726,6 +2768,7 @@ def run_journeys(
             web=web,
             web_origin=web_origin,
             scope=scope,
+            binding=binding,
             credentials=credentials,
             run_id=run_id,
             result=result,

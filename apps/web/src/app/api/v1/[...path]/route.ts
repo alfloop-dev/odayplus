@@ -11,10 +11,22 @@ async function handler(
   context: RouteContext,
 ): Promise<Response> {
   const { path } = await context.params;
-  return proxyApiRequest(
+  const response = await proxyApiRequest(
     request,
     `/api/v1/${path.map(encodeURIComponent).join("/")}`,
   );
+  if (request.method === "GET" && path.join("/") === "platform/release-identity" && response.ok) {
+    // Use the SAME authenticated upstream resolver as business writes. Report
+    // the Web revision separately; never trust the CLI's independent API URL.
+    const payload = await response.json();
+    return Response.json({
+      ...payload,
+      web_release_sha: process.env.ODAY_RELEASE_SHA ?? process.env.ODP_RELEASE_COMMIT_SHA ?? "",
+      web_release_profile: process.env.ODP_RELEASE_PROFILE?.trim() || "full",
+      web_manifest_digest: process.env.ODP_RELEASE_MANIFEST_DIGEST ?? "",
+    }, { status: response.status, headers: { "cache-control": "no-store" } });
+  }
+  return response;
 }
 
 export const GET = handler;

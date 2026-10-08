@@ -878,6 +878,20 @@ else:
         def platform_version(request: Request) -> dict[str, str]:
             return release_version_payload(correlation_id=request.state.correlation_id)
 
+        @api.get("/api/v1/platform/release-identity", tags=["platform"])
+        def platform_release_identity(request: Request) -> dict[str, Any]:
+            # Local, server-owned deployment metadata only. Never call
+            # readiness/provider/model probes at this admission boundary.
+            from apps.api.oday_api.runtime_mode import release_profile
+
+            profile = release_profile()
+            return {
+                **release_version_payload(correlation_id=request.state.correlation_id),
+                "release_profile": profile["name"],
+                "release_profile_valid": profile["valid"],
+                "manifest_digest": os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""),
+            }
+
         platform_observability_router = APIRouter()
 
         @platform_observability_router.get("/platform/observability", tags=["platform"])
