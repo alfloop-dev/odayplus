@@ -248,6 +248,45 @@ describe("Operator shared header chrome", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  /** Attempt signals that have already timed out, as after a 20s body stall. */
+  function stubTimedOutAttemptSignals() {
+    return vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+      const controller = new AbortController();
+      controller.abort(new DOMException("signal timed out", "TimeoutError"));
+      return controller.signal;
+    });
+  }
+
+  it("retries a body read that the timeout aborts with AbortError (Chromium < 154)", async () => {
+    stubTimedOutAttemptSignals();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(failingBodyResponse(new DOMException("The operation was aborted.", "AbortError")))
+      .mockResolvedValueOnce(jsonResponse(liveEnvelope));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("makes exactly two attempts when every body read is aborted by the timeout", async () => {
+    stubTimedOutAttemptSignals();
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () =>
+        failingBodyResponse(new DOMException("The operation was aborted.", "AbortError")),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "timeout"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("does not retry a malformed JSON body", async () => {
     const fetchMock = vi
       .fn()

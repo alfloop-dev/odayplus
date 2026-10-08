@@ -554,15 +554,23 @@ export function OperatorConsole({
       // One attempt covers the request and, for a successful status, reading
       // the body, each under a fresh timeout budget.
       const attemptBootstrap = async (finalAttempt: boolean) => {
-        const response = await fetch("/api/v1/operator/bootstrap", {
-          headers,
-          signal: AbortSignal.timeout(operatorBootstrapTimeoutMs),
-        });
-        if (!finalAttempt && operatorBootstrapRetryableStatuses.has(response.status)) {
-          throw new RetryableBootstrapStatus(response.status);
+        const signal = AbortSignal.timeout(operatorBootstrapTimeoutMs);
+        try {
+          const response = await fetch("/api/v1/operator/bootstrap", { headers, signal });
+          if (!finalAttempt && operatorBootstrapRetryableStatuses.has(response.status)) {
+            throw new RetryableBootstrapStatus(response.status);
+          }
+          if (!response.ok) return { response, payload: undefined as unknown };
+          return { response, payload: (await response.json()) as unknown };
+        } catch (error) {
+          // Chromium before 154 rejects a body read cut off by this timeout
+          // with AbortError instead of TimeoutError; report the signal's own
+          // timeout reason so the failure is classified (and retried) as one.
+          if (error instanceof Error && error.name === "AbortError" && signal.aborted) {
+            throw signal.reason instanceof Error ? signal.reason : error;
+          }
+          throw error;
         }
-        if (!response.ok) return { response, payload: undefined as unknown };
-        return { response, payload: (await response.json()) as unknown };
       };
       try {
         let attempt: Awaited<ReturnType<typeof attemptBootstrap>>;
