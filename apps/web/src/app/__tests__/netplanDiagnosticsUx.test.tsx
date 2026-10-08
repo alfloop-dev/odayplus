@@ -47,7 +47,7 @@ describe("NetPlan structured diagnostic & stale state UX component rendering", (
       tone: "watch",
       selectedScenarioId: "SCENARIO-INFEASIBLE",
       netPlanScenarios: [scenario],
-      netPlanJob: { id: scenario.id, completedAt: "2026-10-08T10:00:00+00:00" },
+      netPlanJob: { id: "SCENARIO-INFEASIBLE", completedAt: "2026-10-08T10:00:00+00:00" },
     };
 
     render(
