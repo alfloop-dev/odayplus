@@ -88,8 +88,9 @@ test.describe("Operator shared header layout", () => {
         expect(measured[workspace].badgeHeight, `${workspace} badge height`).toBe(reference.badgeHeight);
       }
 
-      if (width >= 1440) {
-        // Single 52px row plus the 1px bottom border (Package 10 S02:33-34).
+      if (width > 1240) {
+        // One 52px row plus the 1px bottom border (Package 10 S02:33-34): every
+        // desktop width keeps brand, nav and actions on a single row.
         expect(reference.headerHeight).toBe(53);
       }
       if (width >= 1920) {

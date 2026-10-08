@@ -1154,7 +1154,7 @@ export function OperatorConsole({
                   }}
                   onFocus={() => setIsSearchOpen(true)}
                   onKeyDown={handleSearchKeyDown}
-                  placeholder="搜尋門市、案件、物件"
+                  placeholder="搜尋門市、案件"
                   value={searchValue}
                 />
                 <button
@@ -1345,6 +1345,7 @@ export function OperatorConsole({
               <button
                 aria-expanded={isRoleMenuOpen}
                 className={styles.roleButton}
+                title={activeRole.label}
                 onClick={() => {
                   setIsRoleMenuOpen((open) => !open);
                   setIsNotificationOpen(false);
@@ -1353,12 +1354,12 @@ export function OperatorConsole({
                 type="button"
               >
                 <span aria-hidden="true" className={styles.roleAvatar}>{Array.from(activeRole.label)[0]}</span>
-                {activeRole.label}
+                <span className={styles.roleLabel}>{activeRole.label}</span>
                 <span aria-hidden="true" className={styles.roleCaret}>▾</span>
               </button>
               {isRoleMenuOpen ? (
                 <div className={styles.roleMenu} data-screen-label="Role Switch Menu">
-                  <div className={styles.popoverTitle}>Role switcher</div>
+                  <div className={styles.popoverTitle}>使用者與角色</div>
                   {rolesForShell.map((role) => (
                     <button
                       className={role.id === activeRole.id ? styles.roleOption_active : styles.roleOption}
@@ -1385,16 +1386,17 @@ export function OperatorConsole({
                       </span>
                     </button>
                   ))}
+                  <div className={styles.userMenuFooter}>
+                    <a className={styles.userMenuItem} data-testid="operator-admin-link" href={ADMIN_PATH}>
+                      管理後台
+                    </a>
+                    <button className={styles.userMenuItem} onClick={handleLogout} type="button">
+                      登出
+                    </button>
+                  </div>
                 </div>
               ) : null}
             </div>
-
-            <a className={styles.adminLink} data-testid="operator-admin-link" href={ADMIN_PATH}>
-              管理後台
-            </a>
-            <button className={styles.logoutButton} onClick={handleLogout} type="button">
-              登出
-            </button>
           </div>
         </div>
       </header>

@@ -95,6 +95,9 @@ def test_release_go_rejects_go_substrings_and_non_final_decisions() -> None:
         _go_record("conditional go for deterministic product E2E", "pending-human"),
         _go_record("go", "pending-human"),
         _go_record("blocked pending sign-off", "approved"),
+        _go_record("go pending production authorization", "approved-with-actions"),
+        _go_record("go, subject to Human/Ops sign-off", "approved"),
+        _go_record("approved except staging", "approved"),
         "# Product Release Go/No-Go\n\nThis document mentions go many times but records nothing.\n",
     ]
     for text in rejected:

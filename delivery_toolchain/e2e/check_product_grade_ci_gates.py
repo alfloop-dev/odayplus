@@ -55,8 +55,10 @@ def extract_labels_from_html(html_path):
 
 
 RELEASE_AUTHORIZING_FINAL_DECISIONS = {"approved", "approved-with-actions"}
-RELEASE_NON_AUTHORIZING_STATUS = re.compile(
-    r"^(no[-\s]?go|blocked|rejected|pending|conditional|unknown|tbd)\b"
+# Closed vocabulary: any qualifier ("go pending ...", "go, subject to ...")
+# leaves the decision open and therefore does not authorize release.
+RELEASE_AUTHORIZING_STATUS = re.compile(
+    r"^(go|approved)(\s+for\s+(release|production))?\.?$"
 )
 
 
@@ -71,11 +73,9 @@ def evaluate_release_go_decision(text):
     status_match = re.search(r"^Decision status:\s*(.+?)\s*$", text, re.MULTILINE)
     if not status_match:
         return False, "no structured 'Decision status:' line"
-    status = status_match.group(1).strip().lower()
-    if RELEASE_NON_AUTHORIZING_STATUS.match(status):
-        return False, f"decision status is '{status_match.group(1).strip()}'"
-    if not re.match(r"^(go|approved)\b", status):
-        return False, f"decision status '{status_match.group(1).strip()}' is not a GO"
+    status = " ".join(status_match.group(1).split()).lower()
+    if not RELEASE_AUTHORIZING_STATUS.match(status):
+        return False, f"decision status is '{status_match.group(1).strip()}', not an unconditional GO"
 
     final_match = re.search(
         r"^\|\s*Final decision recorded\s*\|[^|\n]*\|\s*([^|\n]+?)\s*\|",

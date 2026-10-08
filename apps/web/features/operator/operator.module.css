@@ -280,24 +280,15 @@
   border-radius: 50%;
 }
 
+.roleLabel {
+  max-width: 5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .roleCaret {
   color: #8e97be;
   font-size: 9px;
-}
-
-.logoutButton {
-  flex: none;
-  padding: 6px 2px;
-  color: #8e97be;
-  font-size: 11.5px;
-  white-space: nowrap;
-  background: none;
-  border: none;
-  cursor: pointer;
-}
-
-.logoutButton:hover {
-  color: #f2f4fc;
 }
 
 .adminLink {
@@ -390,7 +381,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  width: 184px;
+  width: 150px;
   padding: 0 4px 0 10px;
   color: #e6e9f7;
   background: var(--operator-topbar-2);
@@ -459,6 +450,33 @@
 
 .roleMenu {
   width: 520px;
+}
+
+/* Account actions live in the user menu so the header fits one row from 1241px. */
+.userMenuFooter {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--operator-border);
+}
+
+.userMenuItem {
+  flex: 1;
+  padding: 8px 10px;
+  color: var(--operator-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  background: transparent;
+  border: 1px solid var(--operator-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.userMenuItem:hover {
+  background: var(--operator-soft);
 }
 
 .taskCenterPanel {
@@ -1932,7 +1950,7 @@
 .queueRow:focus-visible,
 .headerAction:focus-visible,
 .roleButton:focus-visible,
-.logoutButton:focus-visible,
+.userMenuItem:focus-visible,
 .searchShortcut:focus-visible,
 .adminLink:focus-visible,
 .pocBannerAction:focus-visible,
@@ -2732,6 +2750,24 @@
 .dataUnavailableGate .dataUnavailableNext {
   color: var(--operator-text);
   font-weight: 600;
+}
+
+.dataUnavailableActions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dataUnavailableLink {
+  padding: 6px 12px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  background: #2e3a97;
+  border-radius: 8px;
 }
 
 .dataUnavailableTechnical {

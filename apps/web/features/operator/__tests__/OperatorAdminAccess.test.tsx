@@ -85,6 +85,7 @@ describe("OperatorConsole session wiring", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    fireEvent.click(screen.getByRole("button", { name: /營運主管/, expanded: false }));
     fireEvent.click(screen.getByRole("button", { name: "登出" }));
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/login"));
@@ -104,6 +105,7 @@ describe("OperatorConsole session wiring", () => {
     );
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    fireEvent.click(screen.getByRole("button", { name: /營運主管/, expanded: false }));
     fireEvent.click(screen.getByRole("button", { name: "登出" }));
 
     expect(await screen.findByText(/登出失敗/)).toBeInTheDocument();
@@ -126,7 +128,13 @@ describe("OperatorConsole session wiring", () => {
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
 
     const gate = await screen.findByTestId("operator-data-unavailable");
-    await waitFor(() => expect(gate).toHaveTextContent("管理後台"));
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "forbidden"));
+    expect(screen.getByTestId("operator-data-unavailable-admin-link")).toHaveAttribute(
+      "href",
+      "/operator?view=admin",
+    );
+    // The account actions also stay reachable from the user menu.
+    fireEvent.click(screen.getByRole("button", { name: /營運主管/, expanded: false }));
     expect(screen.getByTestId("operator-admin-link")).toHaveAttribute("href", "/operator?view=admin");
   });
 });

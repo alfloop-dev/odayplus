@@ -8,6 +8,7 @@ import {
   type OperatorLoadFailure,
 } from "./operatorDataMode";
 import styles from "./operator.module.css";
+import { ADMIN_PATH } from "./operatorSession";
 
 export function OperatorDataUnavailableGate({
   detail,
@@ -74,11 +75,18 @@ export function OperatorDataUnavailableGate({
           </details>
         )}
       </div>
-      {onRetry && !isLoading ? (
-        <Button onClick={onRetry} size="sm" variant="secondary">
-          重新載入
-        </Button>
-      ) : null}
+      <div className={styles.dataUnavailableActions}>
+        {failureKind === "forbidden" && !isLoading ? (
+          <a className={styles.dataUnavailableLink} data-testid="operator-data-unavailable-admin-link" href={ADMIN_PATH}>
+            前往管理後台
+          </a>
+        ) : null}
+        {onRetry && !isLoading ? (
+          <Button onClick={onRetry} size="sm" variant="secondary">
+            重新載入
+          </Button>
+        ) : null}
+      </div>
     </section>
   );
 }
