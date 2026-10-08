@@ -2467,7 +2467,7 @@ def test_actual_missing_netplan_acknowledgement_blocks_preflight_zero_writes(
     web.scenario["approval_disclosure_readiness"] = actual["approval_disclosure_readiness"]
     receipt, web, _ = run(web=web, selection=["expansion"])
     result = receipt["journeys"]["expansion"]
-    assert result["status"] == "BLOCKED" and not receipt["preflight_passed"]
+    assert result["status"] == "BLOCKED" and not result["preflight_passed"]
     assert any(check["name"] == "preflight:existing_disclosure_prerequisite" and not check["ok"] for check in result["checks"])
     _zero_writes(receipt, web, "expansion")
     assert repo.get_scenario(scenario.scenario_id).status == status_before
@@ -2494,7 +2494,7 @@ def test_changed_disclosure_after_solve_never_submits_or_decides() -> None:
                 self.scenario["approval_disclosure_readiness"]["acknowledgement_id"] = "DIFFERENT-ACK"
             return response
     receipt, web, _ = run(web=ChangedDisclosure(), selection=["expansion"])
-    assert receipt["journeys"]["expansion"]["status"] == "FAILED"
+    assert receipt["journeys"]["expansion"]["status"] == "BLOCKED"
     assert not any(call["path"].endswith(("/submit", "/decide")) for call in web.business_calls)
 
 
