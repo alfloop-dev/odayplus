@@ -178,6 +178,45 @@ describe("Operator shared header chrome", () => {
       "corr-from-server",
     );
     expect(within(gate).getByTestId("operator-data-unavailable-technical")).toHaveTextContent("504");
+    // A persistent upstream timeout is retried exactly once before the gate shows.
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a cold-start 504 once with the same correlation id and renders live data", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: "WEB_API_UPSTREAM_TIMEOUT", retryable: true } }), {
+          status: 504,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(liveEnvelope));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [first, second] = fetchMock.mock.calls.map(
+      (call) => (call[1] as { headers: Record<string, string> }).headers["X-Correlation-Id"],
+    );
+    expect(second).toBe(first);
+    // The browser budget outlasts the Web BFF's 10s upstream timeout.
+    expect(Math.min(...timeoutSpy.mock.calls.map(([ms]) => ms))).toBeGreaterThan(10_000);
+  });
+
+  it("does not retry a permission denial", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ detail: "forbidden" }, 403));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "forbidden"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("tells an expired session to sign in again instead of showing permission guidance", async () => {

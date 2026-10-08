@@ -73,7 +73,14 @@ import {
 
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
-const operatorBootstrapTimeoutMs = 10_000;
+// The browser budget must exceed the Web BFF's own 10s upstream timeout plus
+// its session lookup and service-identity work, so a slow API surfaces as the
+// BFF's structured 504 (with correlation id) instead of a bare client abort.
+const operatorBootstrapTimeoutMs = 20_000;
+// One automatic retry absorbs a scale-to-zero cold start; the retry reuses
+// the correlation id so both attempts trace as one operator request.
+const operatorBootstrapRetryableStatuses = new Set([502, 503, 504]);
+const operatorBootstrapRetryDelayMs = 300;
 
 const notifications = [
   {
@@ -524,12 +531,26 @@ export function OperatorConsole({
           technicalDetail: error instanceof Error ? error.message : String(error ?? "Operator bootstrap failed"),
         });
       };
-      try {
-        const headers = { ...getSecurityHeaders(activeRoleId), "X-Correlation-Id": correlationId };
-        const bootstrapRes = await fetch("/api/v1/operator/bootstrap", {
+      const headers = { ...getSecurityHeaders(activeRoleId), "X-Correlation-Id": correlationId };
+      const requestBootstrap = () =>
+        fetch("/api/v1/operator/bootstrap", {
           headers,
           signal: AbortSignal.timeout(operatorBootstrapTimeoutMs),
         });
+      try {
+        let bootstrapRes: Response;
+        try {
+          bootstrapRes = await requestBootstrap();
+          if (operatorBootstrapRetryableStatuses.has(bootstrapRes.status)) {
+            throw new Error(`Operator bootstrap returned ${bootstrapRes.status}`);
+          }
+        } catch (firstError) {
+          if (cancelled) return;
+          console.warn("Retrying operator bootstrap once:", firstError);
+          await new Promise((resolve) => window.setTimeout(resolve, operatorBootstrapRetryDelayMs));
+          if (cancelled) return;
+          bootstrapRes = await requestBootstrap();
+        }
         if (!bootstrapRes.ok) {
           const responseCorrelationId = bootstrapRes.headers?.get?.("x-correlation-id") ?? null;
           const denial = await classifyAccessDenial(bootstrapRes);
