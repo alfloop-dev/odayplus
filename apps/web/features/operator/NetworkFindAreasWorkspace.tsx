@@ -370,14 +370,9 @@ const NETWORK_ACTOR = {
 // role, not hardcoded. Deciding a review requires sitescore APPROVE, which the
 // Site Reviewer backend role holds but Expansion (expansion_user) does not.
 //
-// - An authorized reviewer console role (see NETWORK_REVIEW_DECIDER_ROLE_IDS)
-//   reads and decides as the Site Reviewer backend identity (sitescore
-//   VIEW+APPROVE) and sees the GO / WAIT / 退回 / 駁回 decision bar.
-// - Expansion (and any other network-capable role) reads as expansion_user
-//   (sitescore VIEW) and can prepare/submit, but the decision bar is hidden
-//   (canDecide=false). If a decide POST is still attempted it carries the
-//   role's own non-approving identity, so the API fails closed with 403 —
-//   defense in depth behind the hidden bar.
+// UI decision visibility is only presentation: every request retains the
+// active persona and the API enforces sitescore APPROVE against durable grants.
+// Read-only administrators/auditors must never be projected as expansion users.
 // Never substitute a reviewer/expansion persona for the active console role.
 // The API resolves the durable identity and enforces its real grants.
 

@@ -455,15 +455,14 @@ export function GovernanceWorkspace({
     const apiAuditRows = normalizeGovernanceAuditRows(snapshot.auditRows);
     const apiEvidencePackages = normalizeGovernanceEvidencePackages(snapshot.evidencePackages);
     const statusBoard = normalizeGovernanceStatusBoard(snapshot.statusBoard);
-    const statusRows = statusBoard
-      ? Object.values(statusBoard).flatMap((rows) => rows ?? [])
-      : [];
+    const hasStatusRows = statusBoard !== null &&
+      Object.values(statusBoard).some((rows) => (rows?.length ?? 0) > 0);
     const hasData =
       apiApprovals.length > 0 ||
       apiDecisions.length > 0 ||
       apiAuditRows.length > 0 ||
       apiEvidencePackages.length > 0 ||
-      statusRows.length > 0;
+      hasStatusRows;
     setLocalApprovals(apiApprovals);
     setLocalDecisions(apiDecisions);
     setLocalAuditRows(apiAuditRows);

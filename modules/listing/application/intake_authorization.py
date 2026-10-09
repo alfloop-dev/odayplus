@@ -28,6 +28,7 @@ from shared.auth import (
 _SCOPE_AXIS_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("brand", ("brand_id", "brandId")),
     ("region", ("region_id", "regionId")),
+    ("store", ("store_id", "storeId")),
     ("assigned_area", ("assigned_area_id", "assignedAreaId")),
     ("heat_zone", ("heat_zone_id", "heatZoneId")),
 )
@@ -81,6 +82,7 @@ def intake_resource_in_scope(principal: Principal, resource: dict[str, Any]) -> 
     checks = {
         "brand": principal.scope.permits_brand,
         "region": principal.scope.permits_region,
+        "store": principal.scope.permits_store,
         "assigned_area": principal.scope.permits_assigned_area,
         "heat_zone": principal.scope.permits_heat_zone,
     }

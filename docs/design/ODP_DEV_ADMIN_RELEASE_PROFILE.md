@@ -229,6 +229,45 @@ reads display **unknown**, never model-ready or assumed model absence. Raw
 readiness errors, secrets and transport tokens are not sent to the browser.
 The full profile and all existing API/gate refusal policies are unchanged.
 
+### 5.5 Explicit tenant-bounded operator reads (ODP-OPERATOR-READ-AUTHORIZATION-001)
+
+`operator_viewer` is an **opt-in persisted identity role**, not a new auth path
+or a privilege implied by `platform_admin`. Its finite grants are only
+`VIEW` on `operator_console`, `listing`, `sitescore`, and `heatzone`. The console
+already aggregates StoreOps/Growth/Governance under `operator_console`; domain
+reads outside this list remain refused. No wildcard, business write, approval,
+execution, export, publication, admin grant or cross-tenant bypass is added.
+It selects the existing `pm-audit` console persona; a read-enabled administrator
+may also select their existing `platform-admin` persona. Network requests retain
+the active verified persona instead of impersonating an expansion/reviewer role.
+
+Identity role editing remains the existing tenant-scoped `/operator/users` API
+and atomic `identity.account.roles_updated` audit transaction. There is **no
+automatic grant**, bootstrap expansion, direct SQL grant, scope enlargement or
+status change. Before a coordinator grants this role to the requested existing
+account after independent review, required CI, merge and admitted deployment:
+
+1. Read the authoritative account, full scope, status and current roles through
+   the authenticated Web/BFF API. Preserve admin and every scope axis/status.
+2. Submit the bounded role change through that API with an explicit reason.
+   `operator_viewer` itself adds no export authority (unlike `auditor`); any
+   removal of a previously granted role needs its own explicit authorization.
+3. Fresh-read account/session permissions and the new audit event; prove the
+   same tenant, scope/status/admin grants, positive reads, rejected unauthorized
+   personas and business writes, and rejected foreign-tenant reads.
+4. Check Network and Governance on the deployed exact candidate. Canonical
+   Governance `statusBoard` is a list of persisted record counts; Web displays
+   those observations separately, **not** as model/connector readiness. Invalid
+   rows/boards fail closed; zero records are not manufactured approvals.
+5. Record real remote receipts without secrets. StoreOps 503 for absent
+   materialized state and actual empty data stay limitations. Do not enable
+   sources, backfill, train/promote models, bypass admission, or self-approve F11.
+
+The §5 pure-admin verifier and bootstrap role stay **unchanged**. A read-enabled
+account is not a pure-admin test subject and cannot be used to claim that
+baseline journey passed. Offline regression inputs are not live grant evidence;
+engineering review/merge does not close the post-deployment acceptance steps.
+
 ## 6. Operator / coordinator handoff
 
 **Changed release interface**

@@ -61,6 +61,34 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     vi.unstubAllEnvs();
   });
 
+  it("uses the active verified persona for every Network read without false fixture labels", async () => {
+    const view = render(
+      <NetworkFindAreasWorkspace activeRoleId="platform-admin" selectedHeatZoneId="live-zone"
+        liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />,
+    );
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+    const calls = vi.mocked(fetch).mock.calls;
+    expect(calls.map(([url]) => String(url))).toEqual(expect.arrayContaining([
+      expect.stringContaining("network-listings?"), "/api/v1/operator/network-scoring",
+      "/api/v1/operator/network-rebalance", "/api/v1/operator/network-reviews",
+    ]));
+    for (const [, init] of calls) {
+      expect(init?.headers).toMatchObject({ "X-Operator-Role": "platform-admin" });
+      expect(init?.headers).not.toHaveProperty("X-Roles");
+    }
+    expect(screen.queryByLabelText("Data source: fixtures")).toBeNull();
+    expect(screen.queryByText("fixture data")).toBeNull();
+    vi.mocked(fetch).mockClear();
+    view.rerender(
+      <NetworkFindAreasWorkspace activeRoleId="pm-audit" selectedHeatZoneId="live-zone"
+        liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />,
+    );
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+    for (const [, init] of vi.mocked(fetch).mock.calls) {
+      expect(init?.headers).toMatchObject({ "X-Operator-Role": "pm-audit" });
+    }
+  });
+
   it("cold-opens Radar even when every unrelated Network snapshot is unavailable", async () => {
     render(
       <NetworkFindAreasWorkspace

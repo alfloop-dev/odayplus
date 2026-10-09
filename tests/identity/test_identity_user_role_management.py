@@ -231,6 +231,37 @@ def test_bootstrap_admin_must_rotate_then_reaches_admin_but_not_business(stack: 
     assert stack.client.get("/api/v1/operator/bootstrap", headers=headers).status_code == 403
 
 
+def test_explicit_operator_view_grant_preserves_admin_scope_status_and_audit(stack: Any) -> None:
+    admin_id = _bootstrap_admin(stack)
+    _rotate_password(stack, admin_id)
+    admin = _sign_in(stack, admin_id)
+    before = stack.client.get(f"/api/v1/operator/users/{admin_id}", headers=admin).json()
+    assert stack.client.get("/api/v1/operator/bootstrap", headers=admin).status_code == 403
+    saved = stack.client.post(
+        "/api/v1/operator/users", headers=admin,
+        json={"subjectId": admin_id, "roles": ["platform_admin", "operator_viewer"],
+              "scope": before["scope"], "status": before["status"], "reason": "Explicit bounded read grant"},
+    )
+    assert saved.status_code == 200, saved.text
+    after = saved.json()["user"]
+    assert after["scope"] == before["scope"]
+    assert after["status"] == before["status"] == "active"
+    # Per-request durable resolution: no role/tenant claims or new auth path.
+    assert _roles_seen_by_boundary(stack, admin) == {"platform_admin", "operator_viewer"}
+    assert stack.client.get("/api/v1/operator/bootstrap", headers=admin).status_code == 200
+    assert stack.client.get("/api/v1/operator/users", headers=admin).status_code == 200
+    assert stack.client.get("/api/v1/operator/bootstrap", headers={**admin, "X-Operator-Role": "expansion-manager"}).status_code == 403
+    assert "identity.account.roles_updated" in _audit_types(stack)
+    trail = stack.client.get("/api/v1/operator/users/audit-trail", headers=admin).json()["events"]
+    event = next(e for e in trail if e["event_type"] == "identity.account.roles_updated")
+    assert event["metadata"]["roles_before"] == ["platform_admin"]
+    assert set(event["metadata"]["roles_after"]) == {"platform_admin", "operator_viewer"}
+    # Another unmodified pure administrator still cannot read business data.
+    pure_id = _invited_account(stack, "other.admin", "platform_admin")
+    pure = _sign_in(stack, pure_id)
+    assert stack.client.get("/api/v1/operator/bootstrap", headers=pure).status_code == 403
+
+
 def test_role_change_is_authoritative_tenant_scoped_and_audited(stack: Any) -> None:
     admin_id = _bootstrap_admin(stack)
     _rotate_password(stack, admin_id)
