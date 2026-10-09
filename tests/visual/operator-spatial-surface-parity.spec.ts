@@ -14,6 +14,93 @@ const proposal = {
   warnings: ["Requires independent boundary review"], created_at: "2026-09-03T12:00:00Z",
 };
 const phase = process.env.NETWORK_PARITY_CAPTURE_PHASE ?? "after";
+
+for (const width of [1440, 390]) {
+  test(`Spatial list availability and retry at ${width}`, async ({ page }, info) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript(() => {
+      sessionStorage.setItem("oday.operator.role", "expansion-manager");
+      sessionStorage.setItem("oday.operator.subject", "operator-expansion-manager");
+      sessionStorage.setItem("oday.operator.tenant", "tenant-a");
+    });
+    const directory = process.env.NETWORK_PARITY_EVIDENCE_DIR ?? info.outputDir;
+    await mkdir(directory, { recursive: true });
+    let release!: () => void;
+    let response: { status: number; json: unknown } = { status: 500, json: { detail: "controlled read failure" } };
+    let received = 0;
+    await page.route("**/api/v1/heatzones/merge-split/proposals", async (route) => {
+      received += 1;
+      await new Promise<void>((resolve) => { release = resolve; });
+      await route.fulfill(response);
+    });
+    await page.goto("/operator?ws=network&tab=composition");
+    await page.getByTestId("network-tab-7").click();
+    const panel = page.getByTestId("heatzone-merge-split-panel");
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+    await expect.poll(() => received).toBeGreaterThan(0);
+    async function capture(state: string) {
+      await page.evaluate(() => scrollTo(0, 0));
+      const boxes = await panel.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return { x: r.x, width: r.width, scrollWidth: el.scrollWidth, documentWidth: document.documentElement.scrollWidth };
+      });
+      const axe = await new AxeBuilder({ page }).include('[data-testid="heatzone-merge-split-panel"]').withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+      await writeFile(path.join(directory, `${phase}-${state}-geometry-${width}.json`), JSON.stringify(boxes, null, 2));
+      await writeFile(path.join(directory, `${phase}-${state}-axe-${width}.json`), JSON.stringify(axe, null, 2));
+      await page.screenshot({ path: path.join(directory, `${phase}-${state}-${width}.png`), fullPage: true, animations: "disabled" });
+      if (phase === "after") {
+        expect(boxes.x).toBeGreaterThanOrEqual(0);
+        expect(boxes.x + boxes.width).toBeLessThanOrEqual(width);
+        expect(boxes.scrollWidth).toBeLessThanOrEqual(Math.ceil(boxes.width));
+        expect(boxes.documentWidth).toBeLessThanOrEqual(width);
+        expect(axe.violations).toEqual([]);
+      }
+    }
+    if (phase === "after") {
+      await expect(panel.getByTestId("loading-proposals")).toBeVisible();
+      await expect(panel.getByTestId("empty-proposals")).toHaveCount(0);
+      await expect(panel.getByTestId("proposal-status-filter")).toBeDisabled();
+    }
+    await capture("list-pending");
+    const completed = page.waitForResponse("**/api/v1/heatzones/merge-split/proposals");
+    release();
+    await completed;
+    if (phase === "after") await expect(panel.getByTestId("proposal-read-error")).toBeVisible();
+    else await expect(panel.getByTestId("empty-proposals")).toBeVisible();
+    await capture("list-failed-500");
+    if (phase === "after") {
+      await expect(panel.getByTestId("empty-proposals")).toHaveCount(0);
+      await expect(panel.getByTestId("proposal-detail")).toHaveCount(0);
+      const count = received;
+      await panel.getByRole("button", { name: "重新載入提案" }).click();
+      await expect.poll(() => received).toBeGreaterThan(count);
+      await expect(panel.getByTestId("loading-proposals")).toBeVisible();
+      response = { status: 200, json: { items: [proposal] } };
+      release();
+      await expect(panel.getByTestId("proposal-detail")).toContainText(proposal.zone_id);
+      await capture("list-recovered");
+    }
+    // Controlled negative reads, not authorization grants or backend write proof.
+    for (const [state, next] of [
+      ["list-denied-403", { status: 403, json: { detail: "controlled scope denial" } }],
+      ["list-malformed", { status: 200, json: { not_items: [] } }],
+    ] as const) {
+      response = next;
+      const count = received;
+      await page.reload();
+      await page.getByTestId("network-tab-7").click();
+      await expect.poll(() => received).toBeGreaterThan(count);
+      const done = page.waitForResponse("**/api/v1/heatzones/merge-split/proposals");
+      release();
+      await done;
+      if (phase === "after") await expect(panel.getByTestId("proposal-read-error")).toBeVisible();
+      else await expect(panel.getByTestId("empty-proposals")).toBeVisible();
+      await capture(state);
+    }
+  });
+}
+
 for (const width of [1440, 1024, 390]) {
   test(`Spatial later-spec integration and empty state at ${width}`, async ({ page }, info) => {
     test.setTimeout(120_000);
