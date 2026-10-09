@@ -1,0 +1,30 @@
+{
+  "task_id": "ODP-UI-STORE-OPS-PARITY-001",
+  "mode": "local_fixture_ci_repair_not_release_approval",
+  "failed_pr_head": "9ea09a8cc5e6231bad68272576ff315e126095a0",
+  "failed_ci_run": "https://github.com/alfloop-dev/odayplus/actions/runs/37926859706",
+  "repair_anchor": "0425e7c5a463fbf5ec0e22c6f737bc0b436d3488",
+  "verification_binding": "Anchor tree plus added workflow regression test; tested source bytes bound below. Evidence-only additions do not alter these files.",
+  "tested_files_sha256": {
+    "tests/visual/operator-store-ops-parity.spec.ts": "6132325dab6ce9989fa27af31334912c3c2eab28240bee0900617f8eae69e947",
+    "tests/visual/operator-store-ops-parity.config.ts": "9be0bcd9358404f96b18fa867ddee5dd78a13f0d97014baaffca05000b41886e",
+    ".github/workflows/ci.yml": "b0bd3f495daf57b6105930693d1097afb4670cb9078175543ab244a0088aeff1",
+    "tests/tooling/test_product_e2e_bootstrap_contract.py": "f507f9283931e2dd0277147f3a4c97ed0d32672cf008a4e369e6dbe55ea3b89f"
+  },
+  "completion_basis": "Synchronous original shell child return codes captured immediately after each command; no process-name polling or summary-based waiting.",
+  "checks": [
+    { "command": "npx playwright test --list --project=chromium", "exit_code": 0, "tests": 122, "files": 18 },
+    { "command": "npx playwright test --config tests/visual/operator-store-ops-parity.config.ts --list", "exit_code": 0, "tests": 9, "files": 2 },
+    { "command": "OPSBOARD_PORT=3186 CI=1 npx playwright test --config tests/visual/operator-store-ops-parity.config.ts", "exit_code": 0, "tests_passed": 9, "log": "ci-repair-playwright.log" },
+    { "command": "uv run --frozen pytest tests/e2e/test_acceptance_coverage.py tests/e2e/test_release_gate_registry.py -q", "exit_code": 2, "status": "dependency_install_failed_before_tests", "python": "3.14.7", "log": "ci-repair-python-default-error.log" },
+    { "command": "uv run --frozen --python 3.12 pytest tests/e2e/test_acceptance_coverage.py tests/e2e/test_release_gate_registry.py -q", "exit_code": 0, "python": "3.12.14", "log": "ci-repair-pytest.log" },
+    { "command": "uv run --frozen --python 3.12 pytest tests/tooling/test_product_e2e_bootstrap_contract.py tests/tooling/test_ci_product_parallel.py -q", "exit_code": 0, "log": "ci-repair-workflow.log" },
+    { "command": "uv run --frozen --python 3.12 ruff check tests/tooling/test_product_e2e_bootstrap_contract.py", "exit_code": 0 },
+    { "command": "python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge", "exit_code": 0, "log": "ci-repair-dev-gate.log", "boundary": "static preflight only" },
+    { "command": "python3 delivery_toolchain/governance/check_code_boundaries.py", "exit_code": 0 },
+    { "command": "git diff --check", "exit_code": 0 }
+  ],
+  "full_product_e2e_rerun_locally": false,
+  "remote_required_checks": "pending resubmission; not claimed successful",
+  "release_or_remote_visual_approval": false
+}

@@ -97,6 +97,23 @@ Focused config 只啟動既有 fixture web server；兩份 spec 都攔截 Store 
 - 初期曾有測試 selector／設計 animation／CDN／prototype mobile pointer 的 harness failures；一次 300s terminal timeout 無完整 exit 收據，未視為成功。修正後以完整的原工具 exit 0 與本目錄 logs 判定，不從程序名稱或 passed grep 推斷。
 - [shots.sha256](shots.sha256) 綁定 PNG 與幾何 JSON。
 
+## 2026-10-09 CI 修復紀錄
+
+PR #1438 原 head `9ea09a8cc5e6` 的 [CI run 37926859706](https://github.com/alfloop-dev/odayplus/actions/runs/37926859706) 回報三個 Python failures，及 `product-e2e-gate` 在啟動業務 runner 前失敗：新增 supplemental spec 使正式 inventory 超出精確的 **18 specs／122 tests**；`product` 因下游 lint/unit 失敗而失敗。不是 transient infra，沒有重試原紅色 head。
+
+修復 anchor `0425e7c5a463` 將幾何／axe spec **原樣移動**到 `tests/visual/`，focused config 改由 `tests/` 搜尋兩份 Store mock suites。既有 `product-e2e-gate` job 在統一 bootstrap 之後、完整 business runner 之前顯式執行 focused config；失敗會阻擋此 required lane。新 regression test 保護此順序、指令與 fail-closed 行為。沒有放寬 registry/count、修改 business runner、生成正式 release receipts、取消測試或更動 UI。
+
+[ci-repair-verification.json](ci-repair-verification.json) 綁定修正檔案 SHA-256 與原工具 exit codes：
+
+- 根 config `--list`：**exit 0、122 tests／18 files**；focused config `--list`：**exit 0、9 tests／2 files**。
+- `OPSBOARD_PORT=3186 CI=1 npx playwright test --config tests/visual/operator-store-ops-parity.config.ts`：**9 passed／exit 0**，重驗幾何、axe、keyboard return 與三個既有 Store business tests，見 [log](ci-repair-playwright.log)。
+- `uv run --frozen --python 3.12 pytest tests/e2e/test_acceptance_coverage.py tests/e2e/test_release_gate_registry.py -q`：**exit 0**，包含原三個失敗測試，見 [log](ci-repair-pytest.log)。
+- `uv run --frozen --python 3.12 pytest tests/tooling/test_product_e2e_bootstrap_contract.py tests/tooling/test_ci_product_parallel.py -q`：**exit 0**，見 [log](ci-repair-workflow.log)；修改的 Python test `ruff check`：**exit 0**。
+- `python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge`：**exit 0**，見 [log](ci-repair-dev-gate.log)。這是 static preflight，不是完整 Docker product E2E 或 production GO。
+- 首次本機 `uv run --frozen pytest ...` 使用預設 Python 3.14，因 `pgserver` 只提供 cp312 wheel 而 **exit 2**，未開始測試、未視為成功；[error log](ci-repair-python-default-error.log)。改用既有 CI 指定的 Python 3.12 後原測試命令完成 exit 0。
+
+原截圖與 verification.json 留存原時間／指令（當時 spec 位於 `tests/e2e/`），不改寫歷史收據。新 CI 修復沒有更動渲染，因此不以新截圖偽裝 UI 增量。完整 product E2E、全產品 Python suite 與遠端 required checks 由重新提交後的 CI 執行；此本機紀錄不宣稱遠端全綠，不先 done。
+
 ## VDC 邊界與審查
 
 | 條件 | 本任務結果／邊界 |
