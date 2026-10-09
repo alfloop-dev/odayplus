@@ -1197,7 +1197,7 @@ def read_admin_routes(roles: list[str]) -> dict[str, Any]:
             "account_id": ADMIN_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID, "roles": sorted(roles),
         }),
         "GET /api/v1/operator/users/audit-trail [session]": base.response(200, audit),
-        f"GET /api/v1/operator/users/{ADMIN_ACCOUNT_ID} [session]": base.response(200, {"user": record}),
+        f"GET /api/v1/operator/users/{ADMIN_ACCOUNT_ID} [session]": base.response(200, record),
         "GET /api/v1/operator/bootstrap [session]": base.response(200, {
             "data_mode": "live", "data_source": "postgresql://operator-live",
         }),
@@ -1272,7 +1272,7 @@ def test_read_admin_each_required_read_and_denial_blocks(path: str, check: str) 
 
 def test_read_admin_canonical_permission_expansion_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     from shared.auth import Action, Role
-    from shared.auth.rbac import Permission, ROLE_PERMISSIONS
+    from shared.auth.rbac import ROLE_PERMISSIONS, Permission
 
     monkeypatch.setitem(ROLE_PERMISSIONS, Role.AUDITOR,
                         ROLE_PERMISSIONS[Role.AUDITOR] | {Permission("listing", Action.UPDATE)})

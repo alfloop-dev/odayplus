@@ -2104,12 +2104,19 @@ def _check_dev_admin_session(
             and principal.payload.get("tenant_id") == snapshot["scope"]["tenant_id"]
             and _read_admin_roles(principal.payload.get("roles"))
             and sorted(principal.payload["roles"]) == snapshot["roles"]
-            and current.status == 200 and current.payload.get("subject") == snapshot["username"]
+            and not current.failed and current.status == 200
+            and current.payload.get("subject") == snapshot["username"]
         )
         _check(checks, bound, "admin:read_principal_bound",
                f"status={principal.status} accountTenantRolesBound={bound}", "auth")
         if not bound:
             return
+        report["dev_admin"]["read_account_binding"] = {
+            "account_id": snapshot["subject_id"],
+            "tenant_id": snapshot["scope"]["tenant_id"],
+            "roles": snapshot["roles"],
+            "canonical_finite_grants_verified": True,
+        }
 
     # 6. User audit trail carries identity.account.bootstrap event.
     trail = web.request(
@@ -2265,7 +2272,7 @@ def _check_dev_admin_session(
             authenticated=False, headers=session_headers(cookies),
         )
         _check(checks, not detail.failed and detail.status == 200
-               and _identity_snapshot(_as_dict(detail.payload.get("user"))) == own_snapshot,
+               and _identity_snapshot(detail.payload) == own_snapshot,
                "admin:scoped_account_read", f"status={detail.status}", "tenant-isolation")
         # Invalid bodies and a non-existent id cannot create business state even
         # if a broken guard reaches validation. Only an authorization 403 passes.
