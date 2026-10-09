@@ -96,19 +96,106 @@ def scoped_audit_events(events: list[dict[str, Any]], targets: dict[str, set[str
     ]
 
 
+# Listing field contract for the scoped reader, inventoried from every
+# NetworkListingService producer (seed, repository reload, convert, merge,
+# archive, intake create/revise/duplicate). A field is either the listing's
+# own state or a reference that is re-derived from the visible id set.
+# Unclassified fields are withheld: a new producer field is not scoped read
+# evidence until someone decides what it references.
+LISTING_OWN_FIELDS = frozenset({
+    "id", "tenantId", "tenant_id", "scope", "brandId", "brand_id", "regionId",
+    "region_id", "storeId", "store_id", "assignedAreaId", "assigned_area_id",
+    "heatZoneId", "heat_zone_id", "sourceId", "sourceListingId", "sourceUrl",
+    "canonicalUrl", "contentFingerprint", "address", "coordinates", "latitude",
+    "longitude", "h3Index", "status", "rentPerMonth", "areaPing", "floor",
+    "frontageMeters", "listingType", "geocodeConfidence", "listingConfidence",
+    "listingConfidenceProvenance", "hardRuleFailures", "hardRuleSummary",
+    "fitScore", "firstSeenAt", "convertedAt", "archivedReason", "archivedAt",
+    "prior90dCellNetRevenue", "prior90dCellTransactionCount",
+    "prior90dCellStoreCount", "featureSnapshotTime", "hasLegalHold",
+    "legalHold", "proposer", "submitter", "owner", "brokerCompany",
+    "contactEmail", "rawSnapshot",
+})
+# merge_listing writes both directions: the source names its target, the
+# target accumulates its sources. mergeReason/mergedAt describe the merge as a
+# whole (the target keeps only the latest reason), so they are shown only when
+# every counterpart is visible.
+LISTING_MERGE_REFERENCES = ("duplicateOfId", "mergedIntoId")
+LISTING_MERGE_CONTEXT = ("mergeReason", "mergedAt")
+
+
+def _merge_counterparts(row: dict[str, Any]) -> list[Any]:
+    sources = row.get("mergedSourceListingIds") or []
+    refs = [row.get(key) for key in LISTING_MERGE_REFERENCES]
+    # A malformed source list cannot be checked, so it counts as unseen.
+    refs.extend(sources if isinstance(sources, list) else [object()])
+    return [ref for ref in refs if ref is not None]
+
+
+def _is_visible(ref: Any, ids: set[str]) -> bool:
+    return isinstance(ref, str) and ref in ids
+
+
+def evidence_owner(ref: Any, known_ids: set[str]) -> str | None:
+    # Every producer writes "EV-<listing or intake id>-<kind>"; merge and the
+    # intake decisions append other objects' refs onto the target listing.
+    # Longest match so an excluded "L-1-X" never passes as visible "L-1".
+    if not isinstance(ref, str):
+        return None
+    owners = [oid for oid in known_ids if ref.startswith(f"EV-{oid}-")]
+    return max(owners, key=len, default=None)
+
+
+def project_listing_record(
+    row: dict[str, Any], *, listing_ids: set[str], evidence_ids: set[str],
+    known_ids: set[str], candidate_ids: set[str],
+) -> dict[str, Any]:
+    result = {key: deepcopy(value) for key, value in row.items() if key in LISTING_OWN_FIELDS}
+    for key in LISTING_MERGE_REFERENCES:
+        if key in row:
+            result[key] = row[key] if _is_visible(row[key], listing_ids) else None
+    if "mergedSourceListingIds" in row:
+        sources = row["mergedSourceListingIds"]
+        result["mergedSourceListingIds"] = (
+            [ref for ref in sources if _is_visible(ref, listing_ids)] if isinstance(sources, list) else []
+        )
+    whole_merge_visible = all(_is_visible(ref, listing_ids) for ref in _merge_counterparts(row))
+    for key in LISTING_MERGE_CONTEXT:
+        if key in row:
+            result[key] = row[key] if whole_merge_visible else None
+    if "candidateId" in row:
+        result["candidateId"] = (
+            row["candidateId"] if _is_visible(row["candidateId"], candidate_ids) else None
+        )
+    if "sourceEvidence" in row:
+        refs = row["sourceEvidence"]
+        result["sourceEvidence"] = [
+            ref for ref in refs if evidence_owner(ref, known_ids) in evidence_ids
+        ] if isinstance(refs, list) else []
+    return result
+
+
 def project_listing_snapshot(principal: Principal, snapshot: dict[str, Any]) -> dict[str, Any]:
     result = deepcopy(snapshot)
-    listings = {row["id"]: row for row in result.get("listings", []) if record_in_scope(principal, row)}
+    all_listings = result.get("listings", [])
+    all_intakes = result.get("assistedIntakes", [])
+    listings = {row["id"]: row for row in all_listings if record_in_scope(principal, row)}
     result["listings"] = list(listings.values())
-    for row in result["listings"]:
-        if row.get("mergedIntoId") not in listings:
-            row["mergedIntoId"] = None
     result["assistedIntakes"] = [
         project_intake_record(row, set(listings))
-        for row in result.get("assistedIntakes", []) if record_in_scope(principal, row)
+        for row in all_intakes if record_in_scope(principal, row)
     ]
     evidence = candidate_scope_evidence(principal, result)
     ids = set(evidence)
+    known_ids = {row.get("id") for row in all_listings + all_intakes} | {
+        ref for row in all_listings for ref in _merge_counterparts(row) if isinstance(ref, str)
+    }
+    evidence_ids = set(listings) | {row["id"] for row in result["assistedIntakes"]}
+    result["listings"] = [
+        project_listing_record(row, listing_ids=set(listings), evidence_ids=evidence_ids,
+                               known_ids=known_ids - {None}, candidate_ids=ids)
+        for row in result["listings"]
+    ]
     result["candidates"] = [row for row in result.get("candidates", []) if row["id"] in ids]
     result["siteReviews"] = [
         row for row in result.get("siteReviews", [])

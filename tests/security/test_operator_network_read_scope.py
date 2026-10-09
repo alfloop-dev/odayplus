@@ -174,3 +174,127 @@ def test_child_tenant_scope_conflicts_and_related_intake_data_are_not_disclosed(
         result = client.get(path, headers=headers)
         assert result.status_code == 200, result.text
         assert "L-2025" not in result.text and "Excluded address" not in result.text
+
+
+MERGE_REASON = "Same storefront re-posted by broker at L-2024"
+
+
+def merged_listing_client(tmp_path):
+    """Real merge producer, durable write, then a fresh service reload."""
+    from shared.infrastructure.persistence import DurableListingRepository
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
+
+    store = SqliteDocumentStore(SqliteEngine(tmp_path / "merge-scope.sqlite3"))
+
+    def mount():
+        service = NetworkListingService(
+            listing_repository=DurableListingRepository(store),
+            intake_repository=DurableAssistedIntakeRepository(store),
+        )
+        app = FastAPI()
+        app.include_router(create_network_listings_sub_router(
+            service,
+            require_view_permission_fn=require_operator_permission(
+                "listing", Action.VIEW, scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE),
+            require_write_permission_fn=require_operator_permission("listing", Action.UPDATE),
+        ))
+        return service, TestClient(app)
+
+    _, writer = mount()
+    merged = writer.post("/network-listings/listings/L-2029/merge", headers={
+        "X-Subject-Id": "merger", "X-Roles": "expansion_user,site_reviewer",
+        "X-Tenant-Id": "tenant-a", "X-Operator-Role": "expansion-manager",
+        "Idempotency-Key": "merge-cross-zone", "X-Correlation-Id": "merge-cross-zone",
+    }, json={
+        "targetListingId": "L-2024", "reason": MERGE_REASON, "actorRoleId": "expansionManager",
+        "riskSummary": "Source evidence moves onto the target listing", "riskAcknowledged": True,
+    })
+    assert merged.status_code == 200, merged.text
+    service, reader = mount()
+    persisted = {row["id"]: row for row in service.export_state()["listings"]}
+    # The relationship survived reload; only the scoped projection may hide it.
+    assert persisted["L-2029"]["duplicateOfId"] == persisted["L-2029"]["mergedIntoId"] == "L-2024"
+    assert persisted["L-2024"]["mergedSourceListingIds"] == ["L-2029"]
+    assert persisted["L-2024"]["mergeReason"] == MERGE_REASON
+    assert "EV-L-2029-RAW-591" in persisted["L-2024"]["sourceEvidence"]
+    return reader
+
+
+def test_cross_zone_merge_hides_excluded_target_from_source_visible_scope(tmp_path):
+    reader = merged_listing_client(tmp_path)
+    response = reader.get("/network-listings?selectedHeatZoneId=HZ-02",
+                          headers={**HEADERS, "X-Heat-Zone-Ids": "HZ-02"})
+    assert response.status_code == 200, response.text
+    rows = {row["id"]: row for row in response.json()["listings"]}
+    assert set(rows) == {"L-2025", "L-2029"}
+    source = rows["L-2029"]
+    assert source["status"] == "duplicate"
+    assert source["duplicateOfId"] is None and source["mergedIntoId"] is None
+    assert source["mergeReason"] is None and source["mergedAt"] is None
+    assert "L-2024" not in response.text and MERGE_REASON not in response.text
+
+
+def test_cross_zone_merge_hides_excluded_source_from_target_visible_scope(tmp_path):
+    reader = merged_listing_client(tmp_path)
+    response = reader.get("/network-listings?selectedHeatZoneId=HZ-01",
+                          headers={**HEADERS, "X-Heat-Zone-Ids": "HZ-01"})
+    assert response.status_code == 200, response.text
+    rows = {row["id"]: row for row in response.json()["listings"]}
+    assert set(rows) == {"L-2024", "L-2030"}
+    target = rows["L-2024"]
+    assert target["mergedSourceListingIds"] == []
+    assert target["mergeReason"] is None and target["mergedAt"] is None
+    assert target["sourceEvidence"] == ["EV-L-2024-RAW-591", "EV-L-2024-GEOCODE", "EV-L-2024-BROKER-CALL"]
+    assert "L-2029" not in response.text and MERGE_REASON not in response.text
+
+
+def test_cross_zone_merge_is_intact_for_unrestricted_viewer(tmp_path):
+    reader = merged_listing_client(tmp_path)
+    response = reader.get("/network-listings", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    rows = {row["id"]: row for row in response.json()["listings"]}
+    assert rows["L-2029"]["duplicateOfId"] == rows["L-2029"]["mergedIntoId"] == "L-2024"
+    assert rows["L-2029"]["mergeReason"] == rows["L-2024"]["mergeReason"] == MERGE_REASON
+    assert rows["L-2024"]["mergedSourceListingIds"] == ["L-2029"]
+    assert rows["L-2024"]["mergedAt"] is not None
+    assert "EV-L-2029-RAW-591" in rows["L-2024"]["sourceEvidence"]
+
+
+def test_listing_fields_outside_the_contract_and_foreign_evidence_are_withheld():
+    seed = NetworkListingService().export_state()
+    rows = {row["id"]: row for row in seed["listings"]}
+    lookalike = {**deepcopy(rows["L-2025"]), "id": "L-2024-X", "sourceEvidence": ["EV-L-2024-X-RAW"]}
+    seed["listings"].append(lookalike)
+    rows["L-2024"].update({
+        # Intake decisions and merges append other objects' refs to the target.
+        "sourceEvidence": ["EV-L-2024-RAW-591", "EV-IN-9-DUPLICATE", "EV-IN-8-REVISION",
+                           "EV-L-2024-X-RAW", "broker note on L-2025", {"ref": "L-2025"}],
+        "brokerNote": "Also see L-2025",
+        "mergedSourceListingIds": "L-2025",
+        "mergeReason": "Combined with L-2025",
+        "duplicateOfId": ["L-2025"],
+        "candidateId": "CS-9-L-2025",
+    })
+    service = NetworkListingService(initial_state=seed, seed_fixtures=False)
+    for intake_id, zone in (("IN-8", "HZ-01"), ("IN-9", "HZ-02")):
+        service._save_intake({"id": intake_id, "tenantId": "tenant-a", "heatZoneId": zone,
+                              "stage": "READY", "auditEvents": []})
+    app = FastAPI()
+    app.include_router(create_network_listings_sub_router(
+        service,
+        require_view_permission_fn=require_operator_permission(
+            "listing", Action.VIEW, scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE),
+        require_write_permission_fn=require_operator_permission("listing", Action.UPDATE),
+    ))
+    response = TestClient(app).get("/network-listings", headers={**HEADERS, "X-Heat-Zone-Ids": "HZ-01"})
+    assert response.status_code == 200, response.text
+    target = next(row for row in response.json()["listings"] if row["id"] == "L-2024")
+    assert target["sourceEvidence"] == ["EV-L-2024-RAW-591", "EV-IN-8-REVISION"]
+    assert "brokerNote" not in target
+    assert target["mergedSourceListingIds"] == [] and target["mergeReason"] is None
+    assert target["duplicateOfId"] is None and target["candidateId"] is None
+    assert "L-2025" not in response.text and "IN-9" not in response.text and "L-2024-X" not in response.text
