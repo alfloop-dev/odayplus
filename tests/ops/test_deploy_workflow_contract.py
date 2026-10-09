@@ -1606,8 +1606,11 @@ def test_the_build_phase_signs_and_attests_every_published_image() -> None:
         jobs["build"], "Build, publish, sign, and attest immutable container images"
     )["run"]
 
-    assert "cosign sign --yes" in run
-    assert "cosign attest --yes --type cyclonedx" in run
+    assert 'sign_images.sh sign "${tagged}"' in run
+    assert 'sign_images.sh attest "${digest_ref}" "${SBOM_PATH}"' in run
+    helper = (ROOT / "delivery_toolchain/security/sign_images.sh").read_text(encoding="utf-8")
+    assert 'cosign_with_oidc_retry sign --yes "${IMAGE}"' in helper
+    assert 'cosign_with_oidc_retry attest --yes --type cyclonedx --predicate "$3" "$2"' in helper
     assert "resolve_supply_chain_ref" in run
     assert 'resolve_supply_chain_ref "${digest_ref}" sig' in run
     assert 'resolve_supply_chain_ref "${digest_ref}" att' in run

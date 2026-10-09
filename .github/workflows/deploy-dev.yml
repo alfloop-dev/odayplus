@@ -572,11 +572,12 @@ jobs:
                 -f "${dockerfile}" \
                 .
               docker push "${tagged}"
-              cosign sign --yes "${tagged}"
+              # Only pre-publication transient ambient OIDC failures are retried.
+              CI=true ./delivery_toolchain/security/sign_images.sh sign "${tagged}"
               CI=true ./delivery_toolchain/security/sign_images.sh verify "${tagged}"
               local digest_ref
               digest_ref="$(resolve_image_digest "${tagged}")"
-              cosign attest --yes --type cyclonedx --predicate "${SBOM_PATH}" "${digest_ref}"
+              CI=true ./delivery_toolchain/security/sign_images.sh attest "${digest_ref}" "${SBOM_PATH}"
               resolved["${name}"]="${digest_ref}"
             }
 
