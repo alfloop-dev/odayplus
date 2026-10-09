@@ -5,7 +5,7 @@ import base from "../../playwright.config";
 export default defineConfig({
   ...base,
   testDir: ".",
-  testMatch: /operator-(network-tabs|intake-dialogs|intake-detail|review-decision|review-surface|promotion|sitescore-states)-parity\.spec\.ts/,
+  testMatch: /operator-(network-tabs|intake-dialogs|intake-detail|review-decision|review-surface|radar-surface|promotion|sitescore-states)-parity\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
   retries: 0,
