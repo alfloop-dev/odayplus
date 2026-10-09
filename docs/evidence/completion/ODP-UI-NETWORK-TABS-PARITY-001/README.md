@@ -329,6 +329,20 @@ early focused failures are retained. Genuine provisioning/read-model/target-scop
 integration must precede modal acceptance; no ID/version/production evidence was
 invented. **Not ready for full-scope resubmission.**
 
+## Assignment / SLA contract read-token increment
+
+[`resource-projection/README.md`](resource-projection/README.md) records anchor
+`02a44df9c0fc`: UUID Intake detail now exposes tenant-bound, resource-specific
+Assignment/SLA versions; normative/generated schema and explicit Operator DTO
+fields agree. Actual HTTP Assignment creation/claim/409/transfer/reread tests,
+fixture-resource SLA pause/resume/read tests, unavailable-token cases, full API
+operations suite, runtime schema drift, focused web34, typecheck/lint/ruff and
+boundaries have original exit0 receipts. The initial API timeout lacks a child
+exit receipt and is preserved as UNKNOWN, not success. **This does not connect
+the separate Operator Intake read model or provision its resources/targets.**
+No browser/durability/visual acceptance is inferred; those remain next work.
+Still not ready for full-scope review resubmission.
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
