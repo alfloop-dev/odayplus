@@ -14,6 +14,7 @@ import importlib.util
 import json
 import sys
 from copy import deepcopy
+from functools import wraps
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
@@ -1289,8 +1290,12 @@ def test_read_admin_gate_mutation_probes_never_reach_real_handlers(
     from fastapi.testclient import TestClient
 
     from apps.api.app.routes.operator_modules.governance import create_governance_sub_router
-    from apps.api.app.routes.operator_modules.network_listings import create_network_listings_sub_router
-    from apps.api.app.routes.operator_modules.network_reviews import create_network_review_sub_router
+    from apps.api.app.routes.operator_modules.network_listings import (
+        create_network_listings_sub_router,
+    )
+    from apps.api.app.routes.operator_modules.network_reviews import (
+        create_network_review_sub_router,
+    )
     from apps.api.app.routes.operator_modules.network_scoring import (
         NetworkScoringBatchPayload,
         create_network_scoring_sub_router,
@@ -1332,17 +1337,6 @@ def test_read_admin_gate_mutation_probes_never_reach_real_handlers(
         (create_network_scoring_sub_router, "require_write_permission_fn", "sitescore", Action.EXECUTE),
         (create_governance_sub_router, "require_decision_permission_fn", "intervention", Action.APPROVE),
     ]
-    for (factory, permission_arg, resource, action), service, resolver in zip(
-        factories, services, resolvers, strict=True,
-    ):
-        app.include_router(factory(
-            service, require_view_permission_fn=lambda: None,
-            service_resolver=resolver, **{permission_arg: guard(resource, action)},
-        ), prefix="/api/v1/operator")
-    if bypass_guard:
-        for dependency in guards:
-            app.dependency_overrides[dependency] = lambda: None
-
     paths = {
         "/api/v1/operator/network-listings/intake/submit": "write",
         "/api/v1/operator/network-reviews/live-gate-no-such-review/decide": "approve",
@@ -1350,11 +1344,35 @@ def test_read_admin_gate_mutation_probes_never_reach_real_handlers(
         "/api/v1/operator/governance/decisions": "publish",
     }
     handlers = []
-    for route in app.routes:
-        if isinstance(route, APIRoute) and route.path in paths:
-            handler = Mock(wraps=route.dependant.call)
-            route.dependant.call = handler
-            handlers.append(handler)
+
+    def observe(endpoint: Any) -> Any:
+        spy = Mock(wraps=endpoint)
+        handlers.append(spy)
+
+        @wraps(endpoint)
+        def observed(*args: Any, **kwargs: Any) -> Any:
+            return spy(*args, **kwargs)
+
+        return observed
+
+    for (factory, permission_arg, resource, action), service, resolver in zip(
+        factories, services, resolvers, strict=True,
+    ):
+        router = factory(
+            service, require_view_permission_fn=lambda: None,
+            service_resolver=resolver, **{permission_arg: guard(resource, action)},
+        )
+        # Instrument before inclusion; FastAPI may compose included routers lazily.
+        for route in router.routes:
+            if isinstance(route, APIRoute) and (
+                "/api/v1/operator" + route.path.replace("{review_id}", "live-gate-no-such-review")
+            ) in paths:
+                route.endpoint = observe(route.endpoint)
+                route.dependant.call = route.endpoint
+        app.include_router(router, prefix="/api/v1/operator")
+    if bypass_guard:
+        for dependency in guards:
+            app.dependency_overrides[dependency] = lambda: None
     assert len(handlers) == 4
     client = TestClient(app)
     routes = read_admin_routes(roles)
@@ -1385,6 +1403,21 @@ def test_read_admin_gate_mutation_probes_never_reach_real_handlers(
     for spy in [*handlers, *resolvers, *services, listing_repository, score_repository, model_runtime]:
         assert spy.mock_calls == [], "probe must never invoke handlers, scoring, providers or persistence"
     assert report["release_profile"]["full_product_acceptance_claimed"] is False
+
+    # Offline sensitivity control: the original {} probe WOULD reach batch
+    # scoring with candidate_ids=None if authorization broke. Stub the method
+    # for this control only, so no real scoring/provider/persistence executes.
+    for dependency in guards:
+        app.dependency_overrides[dependency] = lambda: None
+    scoring.score_batch.return_value = {"offline_handler_control": True}
+    control = client.post("/api/v1/operator/network-scoring/score", json={})
+    assert control.status_code == 200, control.text
+    assert sum(spy.call_count for spy in handlers) == 1
+    resolvers[2].assert_called_once()
+    scoring.score_batch.assert_called_once()
+    assert scoring.score_batch.call_args.kwargs["candidate_ids"] is None
+    for spy in (listing_repository, score_repository, model_runtime):
+        assert spy.mock_calls == []
 
 
 def test_read_admin_canonical_permission_expansion_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
