@@ -252,6 +252,21 @@ collapsed/expanded-search scoped AA is zero at all widths. Full web 735, focused
 an uncertified reload-before-back ordering timeout requiring follow-up. This is
 still a bounded checkpoint, **not ready for full-scope resubmission**.
 
+## Rebalance hierarchy / AVM / blocked NetPlan increment
+
+[`rebalance-surface/README.md`](rebalance-surface/README.md) records baseline
+`5b74726103da`, layout `5683d6a6a2d2`, summary/assertions `d1ef18fb41f3` and
+cold-load proof `dac44607e34f`. Initial/AVM/selected-NetPlan 1440/390
+reference-before-after pairs, supplemental 1024 and expanded-chart captures restore
+left signals/right valuation hierarchy and compact row light history. Authoritative
+zeros/missing data are preserved. Only the detailed execution chart is collapsed;
+constraint badges, blocking alerts, applicable acknowledgements and relocation
+boundary remain visible. Twelve final scoped AA receipts are clear; keyboard real
+AVM request/selection, durable GET/reload and direct-submit422/no-approval proof pass.
+Full web742/focused26/visual3/business1/typecheck/lint/boundaries and unchanged125/18
+inventory pass with original exits; failed test-reader/typed-fixture/cold-load
+receipts retained. This is a bounded checkpoint, **not full-scope resubmission**.
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
@@ -264,8 +279,10 @@ still a bounded checkpoint, **not ready for full-scope resubmission**.
    are in `review-decision/`; complete further applicable permission/conflict visual
    states and full-scope detail density review.
    Preserve VDC-001 conditional controls, conflict input preservation and receipts.
-2. Capture/inspect Rebalance and Spatial, plus remaining
-   batch write/error/empty states. Find Areas baseline hierarchy, actual scoped
+2. Capture/inspect Spatial, plus remaining
+   batch write/error/empty states. Rebalance initial/AVM/selected-blocked baseline,
+   expanded-plan geometry/scoped AA and durable/gate/reload proof are now in
+   `rebalance-surface/`; further applicable negative/permission/conflict pairs remain. Find Areas baseline hierarchy, actual scoped
    data, keyboard and back/forward-before-reload proof are in `findareas-surface/`;
    follow up reload-before-back stability and full-scope detail density. Radar full-tab/source-empty pairs, tablet/mobile
    geometry, keyboard/scoped AA and real source/write gates are in `radar-surface/`;

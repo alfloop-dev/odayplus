@@ -1,0 +1,39 @@
+
+> @oday-plus/web@0.1.0 test
+> vitest run features/operator/network/__tests__/RebalanceSurface.test.tsx features/operator/network/__tests__/RebalanceDisclosurePartition.test.tsx features/operator/network/__tests__/RebalanceAvmQualityDisposition.test.tsx
+
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+
+ ❯ features/operator/network/__tests__/RebalanceSurface.test.tsx (7 tests | 1 failed) 593ms
+     × defines every referenced CSS-module key 14ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  features/operator/network/__tests__/RebalanceSurface.test.tsx > Package 10 Rebalance source semantics > defines every referenced CSS-module key
+TypeError: The URL must be of scheme file
+ ❯ features/operator/network/__tests__/RebalanceSurface.test.tsx:68:20
+     66|   });
+     67|   it("defines every referenced CSS-module key", () => {
+     68|     const source = readFileSync(new URL("../RebalancePanel.tsx", impor…
+       |                    ^
+     69|     const css = readFileSync(new URL("../../networkFindAreas.module.cs…
+     70|     for (const match of source.matchAll(/styles\.([A-Za-z0-9_]+)/g)) e…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 25 passed (26)
+   Start at  20:05:00
+   Duration  3.54s (transform 1.39s, setup 0ms, import 3.23s, tests 1.53s, environment 4.12s)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+npm error workspace @oday-plus/web@0.1.0
+npm error location /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+npm error command failed
+npm error command sh -c vitest run features/operator/network/__tests__/RebalanceSurface.test.tsx features/operator/network/__tests__/RebalanceDisclosurePartition.test.tsx features/operator/network/__tests__/RebalanceAvmQualityDisposition.test.tsx
+
+EXIT_CODE=1

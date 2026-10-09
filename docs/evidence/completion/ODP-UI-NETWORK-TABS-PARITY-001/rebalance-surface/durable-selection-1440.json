@@ -1,0 +1,447 @@
+{
+  "source": "api",
+  "stores": [
+    {
+      "id": "RB-801",
+      "storeId": "ST-021",
+      "storeName": "新北板橋文化",
+      "status": "netplanreview",
+      "statusLabel": "NetPlan 三案",
+      "ownerRoleId": "expansionManager",
+      "ownerName": "王若寧",
+      "summary": "連續 90 天紅燈，低利用率與租金壓力觸發 AVM／NetPlan 重配評估。",
+      "healthNote": "連續 90 天紅燈 · 重配候選",
+      "monthlyRevenueLabel": "NT$292K／月",
+      "monthlyRevenueTwd": 292000,
+      "utilizationLabel": "31%",
+      "utilizationPct": 31,
+      "sourceIssueId": "ISS-0992",
+      "lightHistory": [
+        "R",
+        "R",
+        "R",
+        "R",
+        "R",
+        "R",
+        "R",
+        "R"
+      ],
+      "trend": [
+        58,
+        54,
+        50,
+        48,
+        45,
+        43,
+        40,
+        38,
+        36,
+        34,
+        32,
+        31
+      ],
+      "evidence": [
+        {
+          "id": "EV-RB-801-90D",
+          "kind": "forecastops",
+          "label": "90 天紅燈與營收趨勢",
+          "source": "ForecastOps snapshot FS-20260714-0600"
+        },
+        {
+          "id": "EV-RB-801-UTIL",
+          "kind": "operations",
+          "label": "設備利用率 31%",
+          "source": "OpsBoard store-machine snapshot"
+        },
+        {
+          "id": "EV-AVM-AFB1833E",
+          "kind": "avm",
+          "label": "AVM service valuation P10/P50/P90",
+          "source": "avm-rebalance-income-market-v1.0.0 · AVM-SNAP-20260714-0600"
+        },
+        {
+          "id": "EV-NP-A29FF583",
+          "kind": "netplan",
+          "label": "NetPlan three-case solver output",
+          "source": "netplan-rebalance-three-case-v1.0.0 · NP-SNAP-20260714-0615"
+        },
+        {
+          "id": "EV-SEL-60AA52AB",
+          "kind": "netplan-selection",
+          "label": "Selected scenario: Move (移轉新址)",
+          "source": "expansionManager · NP-SNAP-20260714-0615"
+        }
+      ],
+      "relocationExecuted": false,
+      "executionBoundary": "Relocation cannot execute until Govern approval is approved and an execution plan is created.",
+      "runtimeState": null,
+      "avmRequestId": "AVM-611",
+      "avmJob": {
+        "id": "AVM-611",
+        "status": "completed",
+        "requestedAt": "2026-10-09T20:11:31Z",
+        "modelVersion": "avm-rebalance-income-market-v1.0.0",
+        "snapshotId": "AVM-SNAP-20260714-0600",
+        "retryable": true,
+        "completedAt": "2026-10-09T20:11:32Z"
+      },
+      "avm": {
+        "requestId": "AVM-611",
+        "p10": 2340000,
+        "p50": 2860000,
+        "p90": 3420000,
+        "confidence": "中高（收益法＋市場比較）",
+        "reserve": "保留價：待房東議價（服務估值）",
+        "evidenceId": "EV-AVM-AFB1833E",
+        "modelVersion": "avm-rebalance-income-market-v1.0.0",
+        "snapshotId": "AVM-SNAP-20260714-0600",
+        "featureSnapshotTime": "2026-07-14T06:00:00Z"
+      },
+      "avmP10": 2340000,
+      "avmP50": 2860000,
+      "avmP90": 3420000,
+      "avmConf": "中高（收益法＋市場比較）",
+      "avmQualityScoreStatus": null,
+      "avmQualityDisposition": null,
+      "avmReserve": "保留價：待房東議價（服務估值）",
+      "avmModelVersion": "avm-rebalance-income-market-v1.0.0",
+      "avmSnapshotId": "AVM-SNAP-20260714-0600",
+      "avmEvidenceId": "EV-AVM-AFB1833E",
+      "netPlanJob": {
+        "id": "NP-801",
+        "status": "solved",
+        "completedAt": "2026-10-09T20:11:33Z",
+        "modelVersion": "netplan-rebalance-three-case-v1.0.0",
+        "snapshotId": "NP-SNAP-20260714-0615",
+        "solverVersion": "netplan-exhaustive-cpsat-compatible-v1",
+        "featureSnapshotTime": "2026-07-14T06:15:00Z"
+      },
+      "netPlanScenarios": [
+        {
+          "id": "keep",
+          "name": "Keep / Improve",
+          "score": 42,
+          "expectedGrossMargin": null,
+          "investmentTwd": 450000,
+          "risk": "中",
+          "capacityDelta": null,
+          "actions": null,
+          "bindingConstraints": [
+            "max_budget"
+          ],
+          "modelledConstraintClasses": [
+            "CAPITAL"
+          ],
+          "unmodelledConstraintClasses": [
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING"
+          ],
+          "modelled_constraint_classes": [
+            "CAPITAL"
+          ],
+          "unmodelled_constraint_classes": [
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING"
+          ],
+          "blockedConstraintClasses": [
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING"
+          ],
+          "acknowledgeableConstraintClasses": [],
+          "disclosurePolicyVersionId": null,
+          "disclosureUndeclared": false,
+          "isSystemRecommendation": false,
+          "selected": false,
+          "solverStatus": null,
+          "solverVersion": "netplan-exhaustive-cpsat-compatible-v1",
+          "evidenceIds": [
+            "EV-NP-A29FF583"
+          ],
+          "isStale": false,
+          "isInfeasible": false,
+          "diagnostics": [],
+          "roi": "ROI 8%（改善後）",
+          "roiPct": 0.08,
+          "inv": "NT$450K（設備更新＋在地行銷）",
+          "payback": "18 個月（增量）",
+          "time": "即刻起 90 天",
+          "rationale": "保留原址但需重新配置設備、在地行銷與 90 天營運觀察。",
+          "modelVersion": "netplan-rebalance-three-case-v1.0.0",
+          "snapshotId": "NP-SNAP-20260714-0615"
+        },
+        {
+          "id": "move",
+          "name": "Move (移轉新址)",
+          "score": 71,
+          "expectedGrossMargin": null,
+          "investmentTwd": 1900000,
+          "risk": "中高",
+          "capacityDelta": null,
+          "actions": null,
+          "bindingConstraints": [
+            "max_budget"
+          ],
+          "modelledConstraintClasses": [
+            "CAPITAL"
+          ],
+          "unmodelledConstraintClasses": [
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING"
+          ],
+          "modelled_constraint_classes": [
+            "CAPITAL"
+          ],
+          "unmodelled_constraint_classes": [
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING"
+          ],
+          "blockedConstraintClasses": [
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING"
+          ],
+          "acknowledgeableConstraintClasses": [],
+          "disclosurePolicyVersionId": null,
+          "disclosureUndeclared": false,
+          "isSystemRecommendation": true,
+          "selected": true,
+          "solverStatus": null,
+          "solverVersion": "netplan-exhaustive-cpsat-compatible-v1",
+          "evidenceIds": [
+            "EV-NP-A29FF583"
+          ],
+          "isStale": false,
+          "isInfeasible": false,
+          "diagnostics": [],
+          "roi": "ROI 18%（新址預估）",
+          "roiPct": 0.18,
+          "inv": "NT$1.9M（移轉＋裝修）",
+          "payback": "26 個月",
+          "time": "Q3–Q4 執行",
+          "rationale": "Move 方案在需求缺口與租金帶權衡下最高分，但仍需 Govern 雙簽核。",
+          "modelVersion": "netplan-rebalance-three-case-v1.0.0",
+          "snapshotId": "NP-SNAP-20260714-0615"
+        },
+        {
+          "id": "exit",
+          "name": "Exit (關店止損)",
+          "score": 55,
+          "expectedGrossMargin": null,
+          "investmentTwd": 180000,
+          "risk": "低",
+          "capacityDelta": null,
+          "actions": null,
+          "bindingConstraints": [],
+          "modelledConstraintClasses": [
+            "CAPITAL"
+          ],
+          "unmodelledConstraintClasses": [
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING"
+          ],
+          "modelled_constraint_classes": [
+            "CAPITAL"
+          ],
+          "unmodelled_constraint_classes": [
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING"
+          ],
+          "blockedConstraintClasses": [
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING"
+          ],
+          "acknowledgeableConstraintClasses": [],
+          "disclosurePolicyVersionId": null,
+          "disclosureUndeclared": false,
+          "isSystemRecommendation": false,
+          "selected": false,
+          "solverStatus": null,
+          "solverVersion": "netplan-exhaustive-cpsat-compatible-v1",
+          "evidenceIds": [
+            "EV-NP-A29FF583"
+          ],
+          "isStale": false,
+          "isInfeasible": false,
+          "diagnostics": [],
+          "roi": "年省 NT$1.1M",
+          "roiPct": 0,
+          "inv": "解約金 NT$180K＋設備移撥",
+          "payback": "—",
+          "time": "60 天內",
+          "rationale": "止損風險最低，但會留下商圈需求缺口與設備調度成本。",
+          "modelVersion": "netplan-rebalance-three-case-v1.0.0",
+          "snapshotId": "NP-SNAP-20260714-0615"
+        }
+      ],
+      "netPlanModelVersion": "netplan-rebalance-three-case-v1.0.0",
+      "netPlanSnapshotId": "NP-SNAP-20260714-0615",
+      "selectedScenarioId": "move",
+      "netPlanOptionId": "NPO-MOVE",
+      "selectedScenarioOwner": {
+        "actorRoleId": "expansionManager",
+        "actorName": "Expansion Manager",
+        "selectedAt": "2026-10-09T20:11:33Z"
+      },
+      "selectedScenarioEvidenceId": "EV-SEL-60AA52AB",
+      "relatedApprovalId": null,
+      "approvalStatus": null,
+      "canonicalAvmCaseId": null,
+      "canonicalNetPlanScenarioIds": null
+    }
+  ],
+  "selectedStoreId": "RB-801",
+  "selectedStore": null,
+  "selectedScenario": null,
+  "metadata": {
+    "serviceVersion": "operator-network-rebalance-r4",
+    "canonicalPackage": "r4-20260707-package-6",
+    "canonicalZipSha256": "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76",
+    "screenLabels": [
+      "Network 展店與店網",
+      "Network 低效重配",
+      "Govern 治理稽核"
+    ],
+    "avm": {
+      "modelVersion": "avm-rebalance-income-market-v1.0.0",
+      "snapshotId": "AVM-SNAP-20260714-0600",
+      "featureSnapshotTime": "2026-07-14T06:00:00Z"
+    },
+    "netPlan": {
+      "modelVersion": "netplan-rebalance-three-case-v1.0.0",
+      "snapshotId": "NP-SNAP-20260714-0615",
+      "solverVersion": "netplan-exhaustive-cpsat-compatible-v1",
+      "featureSnapshotTime": "2026-07-14T06:15:00Z"
+    }
+  },
+  "models": null,
+  "governApprovals": [],
+  "auditEvents": [
+    {
+      "id": "AUD-REB-04BD3B9A90",
+      "occurredAt": "2026-10-09T20:11:33Z",
+      "actorRoleId": "expansionManager",
+      "actorName": "Expansion Manager",
+      "category": "workflow",
+      "action": "rebalance.scenario.selected",
+      "targetType": "rebalanceStore",
+      "targetId": "RB-801",
+      "message": "rebalance.scenario.selected recorded for RB-801",
+      "correlationId": "corr-r4-008-select-RB-801-move",
+      "metadata": {
+        "scenarioId": "move",
+        "scenarioName": "Move (移轉新址)",
+        "evidenceId": "EV-SEL-60AA52AB",
+        "modelVersion": "netplan-rebalance-three-case-v1.0.0",
+        "snapshotId": "NP-SNAP-20260714-0615",
+        "solverVersion": "netplan-exhaustive-cpsat-compatible-v1",
+        "featureSnapshotTime": "2026-07-14T06:15:00Z"
+      }
+    },
+    {
+      "id": "AUD-REB-A193912BD3",
+      "occurredAt": "2026-10-09T20:11:33Z",
+      "actorRoleId": "expansionManager",
+      "actorName": "Expansion Manager",
+      "category": "workflow",
+      "action": "rebalance.netplan.solved",
+      "targetType": "rebalanceStore",
+      "targetId": "RB-801",
+      "message": "rebalance.netplan.solved recorded for RB-801",
+      "correlationId": "corr-r4-008-solve-netplan-RB-801",
+      "metadata": {
+        "evidenceId": "EV-NP-A29FF583",
+        "scenarioCount": 3,
+        "modelVersion": "netplan-rebalance-three-case-v1.0.0",
+        "snapshotId": "NP-SNAP-20260714-0615",
+        "solverVersion": "netplan-exhaustive-cpsat-compatible-v1",
+        "featureSnapshotTime": "2026-07-14T06:15:00Z"
+      }
+    },
+    {
+      "id": "AUD-REB-7E002FA547",
+      "occurredAt": "2026-10-09T20:11:32Z",
+      "actorRoleId": "expansionManager",
+      "actorName": "Expansion Manager",
+      "category": "workflow",
+      "action": "rebalance.avm.completed",
+      "targetType": "rebalanceStore",
+      "targetId": "RB-801",
+      "message": "rebalance.avm.completed recorded for RB-801",
+      "correlationId": "corr-r4-008-complete-avm-RB-801",
+      "metadata": {
+        "evidenceId": "EV-AVM-AFB1833E",
+        "p50": 2860000,
+        "modelVersion": "avm-rebalance-income-market-v1.0.0",
+        "snapshotId": "AVM-SNAP-20260714-0600",
+        "featureSnapshotTime": "2026-07-14T06:00:00Z"
+      }
+    },
+    {
+      "id": "AUD-REB-B6C560F7E8",
+      "occurredAt": "2026-10-09T20:11:31Z",
+      "actorRoleId": "expansionManager",
+      "actorName": "Expansion Manager",
+      "category": "workflow",
+      "action": "rebalance.avm.requested",
+      "targetType": "rebalanceStore",
+      "targetId": "RB-801",
+      "message": "rebalance.avm.requested recorded for RB-801",
+      "correlationId": "corr-r4-008-request-avm-RB-801",
+      "metadata": {
+        "avmRequestId": "AVM-611",
+        "modelVersion": "avm-rebalance-income-market-v1.0.0",
+        "snapshotId": "AVM-SNAP-20260714-0600",
+        "featureSnapshotTime": "2026-07-14T06:00:00Z"
+      }
+    }
+  ],
+  "counts": {
+    "stores": 1,
+    "pendingApprovals": 0
+  },
+  "correlationId": null
+}

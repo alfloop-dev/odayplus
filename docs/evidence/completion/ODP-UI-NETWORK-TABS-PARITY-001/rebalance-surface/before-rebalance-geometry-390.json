@@ -1,0 +1,82 @@
+{
+  "boxes": {
+    "panel": {
+      "x": 12,
+      "y": 805.890625,
+      "width": 366,
+      "height": 737.984375,
+      "scrollWidth": 366,
+      "columns": "366px",
+      "overflowX": "visible"
+    },
+    "layout": {
+      "x": 12,
+      "y": 805.890625,
+      "width": 366,
+      "height": 737.984375,
+      "scrollWidth": 366,
+      "columns": "366px",
+      "overflowX": "visible"
+    },
+    "list": {
+      "x": 12,
+      "y": 805.890625,
+      "width": 366,
+      "height": 123,
+      "scrollWidth": 366,
+      "columns": "none",
+      "overflowX": "visible"
+    },
+    "card": {
+      "x": 12,
+      "y": 805.890625,
+      "width": 366,
+      "height": 98.21875,
+      "scrollWidth": 364,
+      "columns": "336px",
+      "overflowX": "visible"
+    },
+    "detail": {
+      "x": 12,
+      "y": 942.890625,
+      "width": 366,
+      "height": 600.984375,
+      "scrollWidth": 364,
+      "columns": "338px",
+      "overflowX": "visible"
+    },
+    "stepper": {
+      "x": 26,
+      "y": 1092.09375,
+      "width": 338,
+      "height": 54,
+      "scrollWidth": 338,
+      "columns": "62.7969px 62.7969px 62.7969px 62.7969px 62.7969px",
+      "overflowX": "visible"
+    },
+    "primary": {
+      "x": 26,
+      "y": 1460.09375,
+      "width": 338,
+      "height": 39,
+      "scrollWidth": 338,
+      "columns": "none",
+      "overflowX": "visible"
+    }
+  },
+  "document": {
+    "width": 390,
+    "scrollWidth": 390
+  },
+  "design": {
+    "initial": {
+      "x": 20,
+      "y": 715.921875,
+      "width": 350,
+      "height": 993.171875,
+      "scrollWidth": 564,
+      "columns": "330px 6px",
+      "overflowX": "visible"
+    }
+  }
+}
