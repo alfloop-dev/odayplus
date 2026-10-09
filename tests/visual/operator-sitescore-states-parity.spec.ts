@@ -29,10 +29,19 @@ async function shot(page: Page, info: TestInfo, name: string) {
 for (const width of [1440, 390]) {
   test(`SiteScore risk / batch / scoped flow at ${width}`, async ({ page, request }, info) => {
     await page.setViewportSize({ width, height: 900 });
-    await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-manager"));
+    page.setDefaultTimeout(15_000);
+    await page.addInitScript(() => {
+      sessionStorage.setItem("oday.operator.role", "expansion-manager");
+      sessionStorage.setItem("oday.operator.subject", "operator-expansion-manager");
+      sessionStorage.setItem("oday.operator.tenant", "tenant-a");
+    });
     const api = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
     const headers = { "x-subject-id": "operator-expansion-manager", "x-roles": "expansion_user", "x-operator-role": "expansion-staff", "x-tenant-id": "tenant-a" };
     expect((await request.post(`${api}/api/v1/operator/network-scoring/reset`, { headers })).status()).toBe(200);
+    expect((await request.post(`${api}/api/v1/operator/network-listings/reset`, { headers })).status()).toBe(200);
+    // Warm the actual BFF/persona scoped reads; do not override the listings journey.
+    expect((await request.get("/api/v1/operator/network-scoring", { headers })).status()).toBe(200);
+    expect((await request.get("/api/v1/operator/network-listings", { headers })).status()).toBe(200);
     const response = await request.get(`${api}/api/v1/operator/network-scoring`, { headers });
     expect(response.status()).toBe(200);
     const payload = await response.json();
@@ -40,9 +49,11 @@ for (const width of [1440, 390]) {
     await page.route("**/api/v1/operator/network-scoring", (route) => route.fulfill({ json: payload }));
     await page.goto("/operator?ws=network");
     await expect(page.getByLabel("Network Find Areas state")).toContainText("4 進行中候選", { timeout: 30_000 });
+    await expect(page.getByRole("button", { name: "展店經理", exact: true })).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("network-tab-3").click();
     const panel = page.getByTestId("network-panel-sitescore");
     await expect(panel).toBeVisible();
+    await expect(panel.getByTestId("sitescore-card-CS-1001")).toContainText("2026-07-04 06:10", { timeout: 30_000 });
     await panel.getByTestId("sitescore-pick-CS-1002").click();
     const report = panel.getByTestId("sitescore-card-CS-1002");
     await expect(report).toBeVisible();
@@ -75,8 +86,12 @@ for (const width of [1440, 390]) {
     measures.table = await box(table);
     measures.tableScroll = await box(table.locator(".."));
     await shot(page, info, `${phase}-batch-${width}`);
+    await save(info, `${phase}-geometry-${width}.json`, measures);
     if (!before) {
       const scroll = table.locator("..");
+      const scrollBox = await box(scroll);
+      expect(scrollBox.x + scrollBox.width).toBeLessThanOrEqual(width);
+      if (width === 390) expect(scrollBox.width).toBeGreaterThanOrEqual(300);
       await expect(scroll).toHaveAttribute("tabindex", "0");
       await scroll.focus();
       await expect(scroll).toBeFocused();

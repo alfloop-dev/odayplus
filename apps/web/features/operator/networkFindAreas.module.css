@@ -4987,7 +4987,7 @@
 .batchRent {
   margin-left: auto;
   font-size: 10px;
-  color: #6e7891;
+  color: #5a6478;
   font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
 }
 
@@ -5015,6 +5015,11 @@
   border-radius: 12px;
   overflow: hidden;
   padding: 14px 16px;
+}
+
+.scoreLabToolbar .muted,
+.scoreLabBatchWorkspace .dataTable small {
+  color: #5a6478;
 }
 
 .scoreLabBatchWorkspace .tableWrap:focus-visible,
@@ -5233,7 +5238,7 @@
 
 .riskCardKey {
   font-size: 9px;
-  color: #6b7590;
+  color: #5a6478;
   font-weight: 700;
 }
 
@@ -5253,7 +5258,7 @@
 
 .riskCardVal[data-tone="good"] {
   background: #e5f3ea;
-  color: #1e7f4f;
+  color: #18663f;
 }
 
 .riskCardVal[data-tone="watch"] {
