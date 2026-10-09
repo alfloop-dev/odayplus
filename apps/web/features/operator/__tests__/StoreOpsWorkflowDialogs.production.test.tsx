@@ -23,6 +23,30 @@ const liveIssue: StoreOpsWorkflowIssue = {
 
 describe("StoreOpsWorkflowDialogs production guards", () => {
   beforeEach(() => { vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })); });
+  it("keeps escalation metadata and target enums behind the compact choice cards", () => {
+    const onEscalate = vi.fn();
+    render(<StoreOpsWorkflowDialogs activeDialog="escalate" issue={liveIssue} callbacks={{ onEscalate }} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("radio", { name: /^展店與店網/ }));
+    fireEvent.click(screen.getByText("緊急程度與通知設定"));
+    fireEvent.change(screen.getByLabelText("緊急程度"), { target: { value: "critical" } });
+    fireEvent.change(screen.getByLabelText("升級理由"), { target: { value: "需結構性方案" } });
+    fireEvent.submit(screen.getByLabelText("升級理由").closest("form")!);
+    expect(onEscalate).toHaveBeenCalledWith(expect.objectContaining({ target: "network", urgency: "critical", notifyOwner: true, reason: "需結構性方案" }));
+  });
+
+  it("preserves the reply rejection reason guard and publish flag in advanced settings", () => {
+    const onReplyReview = vi.fn();
+    render(<StoreOpsWorkflowDialogs activeDialog="replyReview" issue={liveIssue} callbacks={{ onReplyReview }} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByText("回覆管道與審查設定"));
+    fireEvent.change(screen.getByLabelText("審查決策"), { target: { value: "reject" } });
+    fireEvent.submit(screen.getByLabelText(/回覆內容/).closest("form")!);
+    expect(onReplyReview).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("退回或拒絕必須填寫審查備註");
+    fireEvent.change(screen.getByLabelText(/審查備註/), { target: { value: "需核對現場證據" } });
+    fireEvent.submit(screen.getByLabelText(/回覆內容/).closest("form")!);
+    expect(onReplyReview).toHaveBeenCalledWith(expect.objectContaining({ decision: "reject", channel: "google", publishAfterApproval: false, reviewerNote: "需核對現場證據" }));
+  });
+
   it("keeps triage payload enums and advanced inputs editable", () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     const onTriage = vi.fn();

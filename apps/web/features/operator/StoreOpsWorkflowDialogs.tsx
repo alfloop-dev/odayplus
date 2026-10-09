@@ -742,6 +742,11 @@ function EscalateForm({ callbacks, issue, onClose }: WorkflowFormProps) {
             { label: "治理稽核", description: "跨部門核准與稽核檢討", value: "govern" },
           ]}
         />
+        <TextAreaField className={styles.fullWidth} label="Escalation reason" onChange={setReason} required value={reason} />
+      </div>
+      <details className={styles.advanced}>
+        <summary>緊急程度與通知設定</summary>
+        <div className={styles.grid}>
         <SelectField<StoreOpsUrgency>
           label="Urgency"
           onChange={setUrgency}
@@ -752,7 +757,6 @@ function EscalateForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           ]}
           value={urgency}
         />
-        <TextAreaField className={styles.fullWidth} label="Escalation reason" onChange={setReason} required value={reason} />
         <TextAreaField
           className={styles.fullWidth}
           label="Requested outcome"
@@ -767,6 +771,7 @@ function EscalateForm({ callbacks, issue, onClose }: WorkflowFormProps) {
         label="Notify current owner"
         onChange={setNotifyOwner}
       />
+      </details>
       <DialogActions onCancel={onClose} primaryLabel="Escalate" />
     </form>
   );
@@ -883,7 +888,11 @@ function ReplyReviewForm({ callbacks, issue, onClose }: WorkflowFormProps) {
 
   return (
     <form className={styles.form} onSubmit={submit}>
-      <div className={styles.grid}>
+      <div className={styles.notice}><strong>事件摘要</strong><br />{issue.summary}</div>
+      <TextAreaField label="Draft reply" onChange={setDraftReply} required value={draftReply} />
+      <details className={styles.advanced} open={needsReason || undefined}>
+        <summary>回覆管道與審查設定</summary>
+        <div className={styles.grid}>
         <SelectField<StoreOpsReplyChannel>
           label="Reply channel"
           onChange={setChannel}
@@ -906,7 +915,6 @@ function ReplyReviewForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           ]}
           value={decision}
         />
-        <TextAreaField className={styles.fullWidth} label="Draft reply" onChange={setDraftReply} required value={draftReply} />
         <TextAreaField
           className={styles.fullWidth}
           hint="Required for return or reject."
@@ -924,7 +932,8 @@ function ReplyReviewForm({ callbacks, issue, onClose }: WorkflowFormProps) {
         label="Publish after approval"
         onChange={setPublishAfterApproval}
       />
-      {error ? <div className={styles.error}>{error}</div> : null}
+      </details>
+      {error ? <div role="alert" className={styles.error}>{error}</div> : null}
       <DialogActions onCancel={onClose} primaryLabel="Submit Review" />
     </form>
   );
