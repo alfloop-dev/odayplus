@@ -1,7 +1,10 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { OperatorConsole } from "../OperatorConsole";
+import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
+import { DEFAULT_OPERATOR_ROLE_ID, OPERATOR_ROLES, getOperatorRole } from "../navigation";
+
+const productionRetryDelays = [...operatorBootstrapRetryPolicy.delaysMs];
 
 const liveEnvelope = {
   meta: {
@@ -83,9 +86,11 @@ describe("Operator shared header chrome", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    operatorBootstrapRetryPolicy.delaysMs = productionRetryDelays.map(() => 0);
   });
 
   afterEach(() => {
+    operatorBootstrapRetryPolicy.delaysMs = [...productionRetryDelays];
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -178,8 +183,8 @@ describe("Operator shared header chrome", () => {
       "corr-from-server",
     );
     expect(within(gate).getByTestId("operator-data-unavailable-technical")).toHaveTextContent("504");
-    // A persistent upstream timeout is retried exactly once before the gate shows.
-    expect(fetch).toHaveBeenCalledTimes(2);
+    // A persistent upstream timeout uses the whole cold-start budget, then gates.
+    expect(fetch).toHaveBeenCalledTimes(4);
   });
 
   it("retries a cold-start 504 once with the same correlation id and renders live data", async () => {
@@ -235,7 +240,7 @@ describe("Operator shared header chrome", () => {
     expect(ids[1]).toBe(ids[0]);
   });
 
-  it("makes exactly two attempts when the body keeps failing with a network error", async () => {
+  it("makes exactly four attempts when the body keeps failing with a network error", async () => {
     const fetchMock = vi
       .fn()
       .mockImplementation(async () => failingBodyResponse(new TypeError("network error")));
@@ -245,7 +250,7 @@ describe("Operator shared header chrome", () => {
 
     const gate = await screen.findByTestId("operator-data-unavailable");
     await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "network"));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   /** Attempt signals that have already timed out, as after a 20s body stall. */
@@ -271,7 +276,7 @@ describe("Operator shared header chrome", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("makes exactly two attempts when every body read is aborted by the timeout", async () => {
+  it("makes exactly four attempts when every body read is aborted by the timeout", async () => {
     stubTimedOutAttemptSignals();
     const fetchMock = vi
       .fn()
@@ -284,7 +289,86 @@ describe("Operator shared header chrome", () => {
 
     const gate = await screen.findByTestId("operator-data-unavailable");
     await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "timeout"));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("rides out a cold start longer than three BFF timeouts and says the service is starting", async () => {
+    const coldStart = () =>
+      new Response(JSON.stringify({ error: { code: "WEB_API_UPSTREAM_TIMEOUT", retryable: true } }), {
+        status: 504,
+        headers: { "Content-Type": "application/json" },
+      });
+    let releaseFourth: (value: Response) => void = () => undefined;
+    const fourth = new Promise<Response>((resolve) => {
+      releaseFourth = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(coldStart())
+      .mockResolvedValueOnce(coldStart())
+      .mockResolvedValueOnce(coldStart())
+      .mockReturnValueOnce(fourth);
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    // While retrying, the gate stays in loading and explains the cold start.
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    const gate = screen.getByTestId("operator-data-unavailable");
+    expect(gate).toHaveAttribute("data-status", "loading");
+    expect(within(gate).getByTestId("operator-data-unavailable-detail")).toHaveTextContent("正在啟動");
+
+    releaseFourth(jsonResponse(liveEnvelope));
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+    const ids = new Set(
+      fetchMock.mock.calls.map((call) => (call[1] as { headers: Record<string, string> }).headers["X-Correlation-Id"]),
+    );
+    expect(ids.size).toBe(1);
+  });
+
+  it("keeps the starting message when a superseded bootstrap resolves during the next one's retries", async () => {
+    const deferred = () => {
+      let resolve: (value: Response) => void = () => undefined;
+      const promise = new Promise<Response>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    };
+    const superseded = deferred();
+    const retry = deferred();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(superseded.promise)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: "WEB_API_UPSTREAM_TIMEOUT", retryable: true } }), {
+          status: 504,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockReturnValueOnce(retry.promise);
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // Switching role cancels the pending load and starts another, which hits
+    // a cold start and begins retrying.
+    const currentRole = getOperatorRole(DEFAULT_OPERATOR_ROLE_ID);
+    const otherRole = OPERATOR_ROLES.find((role) => role.id !== currentRole.id)!;
+    fireEvent.click(screen.getByTitle(currentRole.label));
+    const menu = document.querySelector<HTMLElement>('[data-screen-label="Role Switch Menu"]')!;
+    fireEvent.click(within(menu).getByText(otherRole.label));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    const detail = () => screen.getByTestId("operator-data-unavailable-detail");
+    await waitFor(() => expect(detail()).toHaveTextContent("正在啟動"));
+
+    // The superseded load finishing must not erase the notice.
+    superseded.resolve(jsonResponse(liveEnvelope));
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(detail()).toHaveTextContent("正在啟動");
+
+    retry.resolve(jsonResponse(liveEnvelope));
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
   });
 
   it("does not retry a malformed JSON body", async () => {
