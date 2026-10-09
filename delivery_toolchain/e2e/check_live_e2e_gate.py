@@ -1719,6 +1719,37 @@ def _identity_snapshot(record: Mapping[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _read_admin_roles(roles: Any) -> bool:
+    """Accept only explicit finite read grants, pinned against canonical RBAC.
+
+    Auditor's existing audit export is retained; no new export or mutating
+    business privilege is admitted. Future RBAC expansion fails closed here.
+    """
+    if not isinstance(roles, list) or not all(isinstance(r, str) for r in roles):
+        return False
+    if len(set(roles)) != len(roles) or "platform_admin" not in roles:
+        return False
+    expected = {
+        "platform_admin": {(r, a) for r in ("user", "role", "feature_flag")
+                           for a in ("view", "create", "update", "delete")},
+        "auditor": {(r, "view") for r in ("operator_console", "avm", "listing", "audit",
+                                          "model", "decision", "data_quality")} | {("audit", "export")},
+        "operator_viewer": {(r, "view") for r in ("operator_console", "listing", "sitescore", "heatzone")},
+    }
+    if not set(roles) <= expected.keys() or not set(roles) & {"auditor", "operator_viewer"}:
+        return False
+    # The gate also runs as a standalone script, outside a package invocation.
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from shared.auth.identity import Role
+    from shared.auth.rbac import ROLE_PERMISSIONS
+
+    return all(
+        {(p.resource, p.action.value) for p in ROLE_PERMISSIONS.get(Role(role), ())} == expected[role]
+        for role in roles
+    )
+
+
 def _payload_mentions(response: HttpResponse, code: str) -> bool:
     return code in json.dumps(response.payload, sort_keys=True)
 
@@ -1748,12 +1779,14 @@ def _check_dev_admin_session(
     3. password sign-in (or initial secret sign-in + first-password rotation if fresh);
     4. the session resolves to that account;
     5. GET /api/v1/operator/users is served from the identity schema, lists the
-       account itself with exactly platform_admin, active;
+       active pure admin or explicitly read-enabled admin; the latter must bind
+       to /auth/principal and an audited finite canonical read-role grant;
     6. the user audit trail carries the identity.account.bootstrap event;
     7. moving the account itself to a valid foreign tenant UUID is refused by the
        identity tenant policy (422) and the readback account, tenant, full scope,
        roles and status are unchanged;
-    8. the business operator shell is refused (platform_admin holds no business read);
+    8. pure-admin business reads are refused; explicit read-enabled admins must
+       successfully read scoped live data and be refused business mutations;
     9. an Operator Console role outside grants is refused (wrong-role probe);
     10. GET /operator?view=admin is served as an authenticated Web page;
     11. sign-out succeeds and the revoked cookie is refused by Web and API.
@@ -2022,7 +2055,12 @@ def _check_dev_admin_session(
         if u.get("username") == username
         or _as_dict(u.get("attributes")).get("username") == username
     ]
-    own_record = own[0] if own else {}
+    own_record = own[0] if len(own) == 1 else {}
+    read_admin = (
+        _read_admin_roles(own_record.get("roles"))
+        and own_record.get("status") == "active"
+        and _as_dict(own_record.get("attributes")).get("identity_source") == "identity.accounts"
+    )
     pure_admin = (
         sorted(str(r) for r in own_record.get("roles") or []) == ["platform_admin"]
         and own_record.get("status") == "active"
@@ -2030,7 +2068,7 @@ def _check_dev_admin_session(
     )
     _check(
         checks,
-        (not users.failed) and users.status == 200 and pure_admin,
+        (not users.failed) and users.status == 200 and (pure_admin or read_admin),
         "admin:identity_user_list",
         (
             (
@@ -2051,6 +2089,27 @@ def _check_dev_admin_session(
         _dependency_for(users, "auth"),
     )
     operations.append("identity_user_list")
+    report["dev_admin"]["account_mode"] = "read-enabled-admin" if read_admin else "pure-admin"
+    if users.failed or users.status != 200 or not (pure_admin or read_admin):
+        return
+    if read_admin:
+        principal = web.request(
+            "GET", "/api/v1/auth/principal", authenticated=False, headers=session_headers(cookies)
+        )
+        snapshot = _identity_snapshot(own_record)
+        bound = (
+            not principal.failed and principal.status == 200 and snapshot is not None
+            and _canonical_uuid(snapshot["subject_id"]) is not None
+            and principal.payload.get("account_id") == snapshot["subject_id"]
+            and principal.payload.get("tenant_id") == snapshot["scope"]["tenant_id"]
+            and _read_admin_roles(principal.payload.get("roles"))
+            and sorted(principal.payload["roles"]) == snapshot["roles"]
+            and current.status == 200 and current.payload.get("subject") == snapshot["username"]
+        )
+        _check(checks, bound, "admin:read_principal_bound",
+               f"status={principal.status} accountTenantRolesBound={bound}", "auth")
+        if not bound:
+            return
 
     # 6. User audit trail carries identity.account.bootstrap event.
     trail = web.request(
@@ -2080,6 +2139,21 @@ def _check_dev_admin_session(
         "audit",
     )
     operations.append("bootstrap_audit_readback")
+    if read_admin:
+        grant_events = [
+            e for e in events
+            if e.get("event_type") == "identity.account.roles_updated"
+            and _as_dict(e.get("metadata")).get("account_id") == own_record["subject_id"]
+            and _as_dict(e.get("metadata")).get("roles_after") == sorted(own_record["roles"])
+            and _as_dict(e.get("metadata")).get("scope_after") == own_record["scope"]
+            and _as_dict(e.get("metadata")).get("tenant_id") == own_record["scope"]["tenant_id"]
+            and _as_dict(e.get("metadata")).get("status") == "active"
+        ]
+        audited = not trail.failed and trail.status == 200 and bool(grant_events)
+        _check(checks, audited, "admin:read_grant_audited",
+               f"status={trail.status} matchingExplicitGrants={len(grant_events)}", "audit")
+        if not audited:
+            return
 
     # 7. Tenant isolation: moving the admin's own account to a valid foreign
     #    tenant is refused by the identity tenant policy, and the account reads
@@ -2179,14 +2253,44 @@ def _check_dev_admin_session(
     business = web.request(
         "GET", "/api/v1/operator/bootstrap", authenticated=False, headers=session_headers(cookies)
     )
-    _check(
-        checks,
-        (not business.failed) and business.status == 403,
-        "admin:business_shell_denied",
-        _failure_detail(business, expected="403 (platform_admin holds no business read)"),
-        "auth",
-    )
-    operations.append("business_shell_denied")
+    if read_admin:
+        markers = find_surrogate_values(business.payload)
+        served = (not business.failed and business.status == 200
+                  and _declared_data_mode(business.payload) == "live"
+                  and bool(_operator_source(business.payload)) and not markers)
+        _check(checks, served, "admin:scoped_business_read",
+               f"status={business.status} liveOriginVerified={served}", "data-binding")
+        detail = web.request(
+            "GET", f"/api/v1/operator/users/{own_snapshot['subject_id']}",
+            authenticated=False, headers=session_headers(cookies),
+        )
+        _check(checks, not detail.failed and detail.status == 200
+               and _identity_snapshot(_as_dict(detail.payload.get("user"))) == own_snapshot,
+               "admin:scoped_account_read", f"status={detail.status}", "tenant-isolation")
+        # Invalid bodies and a non-existent id cannot create business state even
+        # if a broken guard reaches validation. Only an authorization 403 passes.
+        for label, path in (
+            ("write", "network-listings/intake/submit"),
+            ("approve", "network-reviews/live-gate-no-such-review/decide"),
+            ("execute", "network-scoring/score"),
+            ("publish", "governance/decisions"),
+        ):
+            refused = web.request(
+                "POST", f"/api/v1/operator/{path}", body={}, authenticated=False,
+                headers=session_headers(cookies, origin=origin), follow_redirects=False,
+            )
+            _check(checks, not refused.failed and refused.status == 403,
+                   f"admin:business_{label}_denied", _failure_detail(refused, expected="403"), "auth")
+        operations.append("scoped_read_and_business_mutations_denied")
+    else:
+        _check(
+            checks,
+            (not business.failed) and business.status == 403,
+            "admin:business_shell_denied",
+            _failure_detail(business, expected="403 (platform_admin holds no business read)"),
+            "auth",
+        )
+        operations.append("business_shell_denied")
 
     # 9. RBAC wrong-role probe:
     denied_role = config.dev_admin_denied_role or "cs-lead"

@@ -112,9 +112,10 @@ dev-admin gate cannot close them, and its receipt says so:
 
 The gate signs in through the deployed Web origin the way a browser does. It
 uses the password form endpoint, the sealed session cookie, the BFF proxy that
-swaps the cookie for the server-side session bearer, and exercises the single
-pure `platform_admin` account created by the identity bootstrap (§5.1). It
-never injects a bearer, role or tenant header.
+swaps the cookie for the server-side session bearer, and exercises the configured
+existing administrator created by the identity bootstrap (§5.1). Pure admin
+retains the baseline below; explicitly read-enabled admin must satisfy §5.6.
+It never injects a bearer or tenant header.
 
 The supported operations exercised, in order:
 
@@ -267,10 +268,48 @@ account after independent review, required CI, merge and admitted deployment:
    materialized state and actual empty data stay limitations. Do not enable
    sources, backfill, train/promote models, bypass admission, or self-approve F11.
 
-The §5 pure-admin verifier and bootstrap role stay **unchanged**. A read-enabled
-account is not a pure-admin test subject and cannot be used to claim that
-baseline journey passed. Offline regression inputs are not live grant evidence;
-engineering review/merge does not close the post-deployment acceptance steps.
+The bootstrap role and §5 pure-admin verifier branch stay **unchanged**. A
+read-enabled account cannot claim that baseline journey passed; it must satisfy
+the additional §5.6 contract. Offline regression inputs are not live grant
+evidence; engineering review/merge does not close post-deployment acceptance.
+
+### 5.6 Existing explicitly read-enabled release administrator
+
+Actual deployed dev-admin verifier subject is `ajoe734` (account
+`17e9cb99-db46-4a07-8e61-6bf9b22cf5d2`, tenant
+`e34f2117-de4b-478c-82fd-13c4ef428d42`). The user-authorized, audited addition of
+`auditor` on 2026-10-09 must be preserved; there is no separately bound pure-admin
+account. The verifier uses the **same existing username/password binding**, not a
+second account, new credential, role header, configuration switch or gate waiver.
+
+It selects the stricter read-enabled branch only from authoritative active
+`identity.accounts` data: exactly `platform_admin` plus `auditor` and/or
+`operator_viewer`, no duplicate/unknown/additional roles. Each role's effective
+permissions must equal the finite canonical RBAC set pinned by the gate; future
+expansion, wildcard or business-mutating grants fail closed. Existing auditor
+`audit:export` is explicitly retained, not newly granted; all other non-admin
+verbs remain VIEW-only. User/role/feature-flag administration remains supported.
+
+Required additional proof, not replacements for existing checks:
+
+- Web session username, unique identity account UUID, tenant UUID and exact role
+  set bind to server-verified `/api/v1/auth/principal`. Caller headers cannot
+  manufacture these facts.
+- Bootstrap audit plus explicit `identity.account.roles_updated` audit must bind
+  the current account, tenant, complete scope, active status and current roles.
+- Existing foreign-tenant policy probe and full unchanged readback remain required.
+- Successful scoped self-account detail and business bootstrap reads are required;
+  business bootstrap must carry truthful live provenance and no surrogate markers.
+  Missing data/binding 503 is a blocker, not converted to a successful empty read.
+- Invalid-body, non-existent-object business write/approval/execution/publication
+  probes must return authorization 403 (not 404/422/503); wrong persona, admin
+  page, durable logout/revocation and both password journeys remain required.
+
+The receipt labels `account_mode=read-enabled-admin`, never `pure-admin` proof.
+Pure-admin baseline still requires business403 and rejects business200. Full
+profile/model/registry/source/admission boundaries remain unchanged. This permits
+verification of the actual current audited subject, not permission promotion or
+full-product/F11 acceptance.
 
 ## 6. Operator / coordinator handoff
 
@@ -308,8 +347,9 @@ engineering review/merge does not close the post-deployment acceptance steps.
 
 **Prerequisites in the `dev` GitHub environment** (vars are environment-scoped)
 
-- `ODP_DEV_ADMIN_USERNAME`: the username of the single pure `platform_admin`
-  account created by the bootstrap.
+- `ODP_DEV_ADMIN_USERNAME`: the username of the existing bootstrap administrator,
+  pure-admin or explicitly audited read-enabled administrator (§5.6). The current
+  binding is `ajoe734`; this task changes neither binding nor credentials.
 - `ODP_DEV_ADMIN_PASSWORD` (environment **secret**): the permanent rotated
   password of that account.
 - `ODP_DEV_ADMIN_INITIAL_PASSWORD` (environment **secret**): the one-time initial

@@ -1179,6 +1179,108 @@ def test_missing_web_client_blocks_the_session_journey() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Explicit read-enabled administration (same configured account/credentials)
+# ---------------------------------------------------------------------------
+
+
+def read_admin_routes(roles: list[str]) -> dict[str, Any]:
+    record = admin_users(roles)["users"][0]
+    audit = admin_audit_trail()
+    audit["events"].append({
+        "event_type": "identity.account.roles_updated",
+        "metadata": {"account_id": ADMIN_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID,
+                     "roles_after": sorted(roles), "scope_after": admin_scope(), "status": "active"},
+    })
+    routes = web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, admin_users(roles)),
+        "GET /api/v1/auth/principal [session]": base.response(200, {
+            "account_id": ADMIN_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID, "roles": sorted(roles),
+        }),
+        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, audit),
+        f"GET /api/v1/operator/users/{ADMIN_ACCOUNT_ID} [session]": base.response(200, {"user": record}),
+        "GET /api/v1/operator/bootstrap [session]": base.response(200, {
+            "data_mode": "live", "data_source": "postgresql://operator-live",
+        }),
+    })
+    for path in ("network-listings/intake/submit", "network-reviews/live-gate-no-such-review/decide",
+                 "network-scoring/score", "governance/decisions"):
+        routes[f"POST /api/v1/operator/{path} [session]"] = base.response(403, {"detail": "role denied"})
+    return routes
+
+
+@pytest.mark.parametrize("roles", [
+    ["platform_admin", "auditor"], ["platform_admin", "operator_viewer"],
+    ["platform_admin", "auditor", "operator_viewer"],
+])
+def test_explicit_read_admin_requires_positive_reads_and_negative_mutations(roles: list[str]) -> None:
+    checks, report, _ = run_dev_admin(web=AdminWeb(read_admin_routes(roles)))
+    assert report["ok"], report["blockers"]
+    assert report["dev_admin"]["account_mode"] == "read-enabled-admin"
+    names = {c.name for c in checks}
+    assert "admin:business_shell_denied" not in names
+    assert {"admin:read_principal_bound", "admin:read_grant_audited", "admin:scoped_business_read",
+            "admin:scoped_account_read", "admin:business_write_denied", "admin:business_approve_denied",
+            "admin:business_execute_denied", "admin:business_publish_denied"} <= names
+    assert report["release_profile"]["full_product_acceptance_claimed"] is False
+
+
+@pytest.mark.parametrize("extra", ["unknown", "architecture_owner", "expansion_user", "site_reviewer",
+                                   "operations_manager", "executive", "model_owner", "platform_admin"])
+def test_read_admin_additional_or_duplicate_roles_fail_closed(extra: str) -> None:
+    _, report, _ = run_dev_admin(web=AdminWeb(read_admin_routes(["platform_admin", "auditor", extra])))
+    assert "admin:identity_user_list" in blockers(report)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("account_id", "another-account"), ("tenant_id", gate.FOREIGN_TENANT_PROBE_ID),
+    ("tenant_id", None), ("roles", ["platform_admin"]),
+    ("roles", ["platform_admin", "auditor", "executive"]),
+])
+def test_read_admin_principal_must_bind_account_tenant_and_exact_roles(field: str, value: Any) -> None:
+    routes = read_admin_routes(["platform_admin", "auditor"])
+    routes["GET /api/v1/auth/principal [session]"].payload[field] = value
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    assert "admin:read_principal_bound" in blockers(report)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("account_id", "another-account"), ("tenant_id", gate.FOREIGN_TENANT_PROBE_ID),
+    ("roles_after", ["platform_admin"]), ("scope_after", {}), ("status", "disabled"),
+])
+def test_read_admin_requires_matching_explicit_audit(field: str, value: Any) -> None:
+    routes = read_admin_routes(["platform_admin", "auditor"])
+    routes["GET /api/v1/operator/users/audit-trail [session]"].payload["events"][-1]["metadata"][field] = value
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    assert "admin:read_grant_audited" in blockers(report)
+
+
+@pytest.mark.parametrize("path,check", [
+    ("operator/bootstrap", "admin:scoped_business_read"),
+    (f"operator/users/{ADMIN_ACCOUNT_ID}", "admin:scoped_account_read"),
+    ("operator/network-listings/intake/submit", "admin:business_write_denied"),
+    ("operator/network-reviews/live-gate-no-such-review/decide", "admin:business_approve_denied"),
+    ("operator/network-scoring/score", "admin:business_execute_denied"),
+    ("operator/governance/decisions", "admin:business_publish_denied"),
+])
+def test_read_admin_each_required_read_and_denial_blocks(path: str, check: str) -> None:
+    routes = read_admin_routes(["platform_admin", "auditor"])
+    method = "GET" if "read" in check else "POST"
+    routes[f"{method} /api/v1/{path} [session]"] = base.response(503 if method == "GET" else 422, {})
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    assert check in blockers(report)
+
+
+def test_read_admin_canonical_permission_expansion_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shared.auth import Action, Role
+    from shared.auth.rbac import Permission, ROLE_PERMISSIONS
+
+    monkeypatch.setitem(ROLE_PERMISSIONS, Role.AUDITOR,
+                        ROLE_PERMISSIONS[Role.AUDITOR] | {Permission("listing", Action.UPDATE)})
+    _, report, _ = run_dev_admin(web=AdminWeb(read_admin_routes(["platform_admin", "auditor"])))
+    assert "admin:identity_user_list" in blockers(report)
+
+
+# ---------------------------------------------------------------------------
 # The runtime the gate reads: real API composition, no fixture
 # ---------------------------------------------------------------------------
 
