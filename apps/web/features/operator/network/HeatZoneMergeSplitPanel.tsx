@@ -621,7 +621,7 @@ export function HeatZoneMergeSplitPanel({
                 <div style={{ marginTop: "14px", padding: "10px", backgroundColor: "#f1f5f9", borderRadius: "6px", fontSize: "12px" }}>
                   <strong>審批記錄:</strong> 由 <code>{activeProposal.approved_by}</code> 於 {activeProposal.approved_at || activeProposal.created_at} 處理。
                   {activeProposal.rejection_reason && (
-                    <div style={{ color: "#dc2626", marginTop: "4px" }}>
+                    <div style={{ color: "#b91c1c", marginTop: "4px" }}>
                       拒絕原因: {activeProposal.rejection_reason}
                     </div>
                   )}

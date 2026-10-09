@@ -1209,3 +1209,4 @@ tests/unit/test_forecast_alert_precision.py,verification,verification_only,false
 tests/unit/test_priceops_elasticity_binding.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_pricing_bandit.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_pricing_simulation.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/visual/spatial_durable_backend.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

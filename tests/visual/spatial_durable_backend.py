@@ -13,7 +13,6 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from apps.api.oday_api.main import create_app
 from modules.heatzone.application import merge_split_evidence
 from shared.infrastructure.persistence import build_persistence
 from tests.integration._heatzone_evidence import (
@@ -65,6 +64,8 @@ def seed_generated_history(bundle) -> None:
 
 
 def create_test_app():
+    from apps.api.oday_api.main import create_app
+
     root = scratch_root()
     database = root / "spatial.sqlite3"
     # Refuse stale data instead of silently treating a previous run as evidence.
