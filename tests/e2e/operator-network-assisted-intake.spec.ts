@@ -102,9 +102,23 @@ async function openRadarAsExpansionManager(page: Page) {
       "operator-expansion-manager",
     );
   });
+  // Warm the real BFF route before the typed client's bounded timeout.
+  // Cold Next compilation and the role-keyed workspace remount must finish
+  // before submission; neither is a durable intake failure.
+  const inbox = await page.request.get("/api/v1/operator/network-listings/intake", {
+    headers: {
+      "x-subject-id": "operator-expansion-manager",
+      "x-roles": "expansion_user,site_reviewer",
+      "x-operator-role": "expansion-manager",
+      "x-tenant-id": "tenant-a",
+    },
+  });
+  expect(inbox.status()).toBe(200);
   await page.goto("/operator?ws=network");
+  await expect(page.getByRole("button", { name: "展店經理", exact: true })).toBeVisible({ timeout: 15_000 });
   await page.getByTestId("network-tab-1").click();
   await expect(page.getByTestId("intake-inbox-view")).toBeVisible();
+  await expect(page.getByTestId("intake-inbox-empty")).toBeVisible({ timeout: 15_000 });
 }
 
 async function submitUrl(page: Page, url: string) {
