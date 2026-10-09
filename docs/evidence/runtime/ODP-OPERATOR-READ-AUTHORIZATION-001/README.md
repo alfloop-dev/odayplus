@@ -344,6 +344,66 @@ No account role grant, credential/cloud configuration change, deployment, source
 activation, backfill, model operation or F11 approval was performed in this repair.
 All outstanding live acceptance below remains outstanding.
 
+## Today real-content readability repair — 2026-10-09
+
+Authorized scope: PR1435 comment6076021503 and the owner dispatch task brief.
+The predecessor authenticated read-only probe at explicit `/operator?ws=today`
+found seven persisted ingestion identifiers extending to643.55px and human titles
+to651.55px at390px, despite document/header width checks passing. Original
+sanitized observation remains `/tmp/odp-read-auth-integration-20261009/predecessor-today-layout.json`
+and `predecessor-today-390.png`; it is not post-fix deployment proof.
+
+Implementation/test anchor: `dbafb714ab48af43262bdd30421338a58e072528`.
+Only `operator.module.css` and the existing `operator-shell-layout.spec.ts`
+change in this repair; all R2 Network scope/privacy changes are preserved.
+Today identifier/title labels now occupy separate shrinkable grid rows and wrap
+complete text. No identifier shortening, hidden human title or new tooltip-only
+access is introduced. Existing button text, accessible name, target and handlers
+are unchanged. No live account, data, configuration or source/model mutation.
+
+The real-CSS test replays the seven sanitized predecessor IDs through offline
+bootstrap/Today response substitution using the actual React and Next CSS.
+It asserts full ID/title text, button accessible names and each painted text
+fragment's bounds inside its label, row and viewport at390/1024/1440px; document
+width alone cannot conceal clipping. This is fixture-mode engineering evidence,
+not authenticated production or F11 acceptance. Existing header geometry across
+five workspaces/eight widths, popover hit-testing, six-role Today envelopes,
+search, navigation and local fixture approval refresh were checked as well.
+The approval test mutates only the disposable local fixture API, not live state.
+
+Commands on the clean implementation anchor (original terminal exit receipts):
+
+```sh
+timeout 300 env NODE_PATH="$PWD/node_modules" \
+  ODP_API_BASE_URL=http://127.0.0.1:8217 npx playwright test \
+  --config "$ORCH_SCRATCH_DIR/today-playwright.config.ts" \
+  tests/e2e/operator-shell-layout.spec.ts tests/e2e/operator-shell-today.spec.ts
+npm run typecheck --workspace=@oday-plus/web
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check
+```
+
+All four exits **0**; original browser receipt: **18 passed**, no retries,
+1.9 minutes. Logs are `today-final.log` and `today-typecheck.log` alongside this
+README; `today-playwright-config.txt` preserves the temporary config, which
+imports the existing repository config and relocates only worker ports/cwd,
+interpreter and output directory. No new authentication harness was added.
+
+Pre-fix negative: same new test at390px with unchanged old CSS exited **1**,
+rejecting all14 identifier/title text fragments (`today-before-final.log`).
+The first attempt exited1 before geometry due to the cold bootstrap exceeding
+the default5-second row wait; the test wait was bounded at45 seconds before the
+successful reproduction. Neither failed invocation is reported as a pass.
+The final test run followed the CSS repair; no test was rerun just for counts.
+
+Prior CI [37896858030](https://github.com/alfloop-dev/odayplus/actions/runs/37896858030)
+binds only old head `02a1625a7f78722f16136c230b8d580bf570522e` (still in progress
+when read at07:20 UTC). It is retained and is **not** new-head CI success.
+Required CI and independent exact-new-head review must pass after resubmission.
+Admitted deployment, bounded audited grant, real remote readback and independent
+F11/live acceptance remain outstanding. StoreOps/source/model/admission holds
+are unchanged.
+
 ## Outstanding live acceptance (not completed here)
 
 After required CI, independent exact-head review, merge and admitted deployment,
