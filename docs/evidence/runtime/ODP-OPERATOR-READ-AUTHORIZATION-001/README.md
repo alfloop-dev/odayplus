@@ -1,6 +1,6 @@
 # ODP-OPERATOR-READ-AUTHORIZATION-001 — engineering evidence
 
-Owner: Pi · Reviewer: Codex2 · 2026-10-09
+Owner: Pi · Current reviewer: Codex · 2026-10-09
 
 ## Scope and limits
 
@@ -262,6 +262,87 @@ because the verifier expected a `user` wrapper rather than the actual flat GET
 DTO. Correcting the verifier and fixture to that real DTO preceded the final
 334-test pass. Initial ruff import-order failure was repaired. No failed run was
 misreported or rerun merely to collect test counts.
+
+## P1 complete Network scope repair — 2026-10-09
+
+Codex reopened exact head `04e7b311b977c2c0c44ec19787067ecf9e287fae`:
+only listings/intakes were filtered, leaving excluded HeatZones, candidates,
+reviews, audit events and pre-filter counts visible within the caller's tenant.
+The old exact-head CI success is not approval of this repair.
+
+Anchors: `8df0f1f6698f` and final implementation `13a9cfa20ab5`. The tested
+working code/test tree was committed at the latter without further runtime/test
+changes. Only this evidence/receipt commit follows it.
+
+- Project the complete listing envelope using verified tenant and every
+  restricted brand/region/store/assigned-area/heat-zone axis. Child candidates
+  must join visible authoritative listings; duplicate tenant fields or child
+  scope cannot override an excluded parent. Missing restricted metadata denies.
+- Require HeatZone-owned scope evidence for whole-zone summaries (the existing
+  durable tenant resolver supplies the zone's tenant partition). A visible
+  listing alone does not grant its entire zone's brand/store aggregate. This
+  intentionally leaves zones unavailable where their scope evidence is absent.
+- Recompute counts and zone ranks/selection, restrict source relationships,
+  clear excluded merge/review links and intake match results. Withhold unscoped
+  pipeline steps, review cross-queue comparison prose and opaque cross-object
+  audit messages/metadata, rather than mislabel them as scoped observations.
+- Actual live scoring/review route composition reuses the existing tenant-bound
+  listing resolver as its authoritative scope index. Scorecards, batch ranks,
+  compare columns/metrics/recommendation and counts are built from visible
+  candidates only; reviews/approvals/decisions/audit follow the same allowed
+  candidate relationship. No model fallback or second authorization path.
+- Non-viewer flows and write guards remain unchanged. The test inputs are
+  offline fixtures and durable SQLite-backed integration inputs, not live data
+  or PostgreSQL/live-grant evidence. The existing session boundary still owns
+  production principal verification; header fixtures are test-only.
+
+Original terminal status and exit code determined completion. Final checks:
+
+```sh
+timeout 240 "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q \
+  tests/security/test_operator_network_read_scope.py \
+  tests/security/test_operator_read_authorization.py \
+  tests/contract/test_operator_network_listings_api.py \
+  tests/contract/test_operator_network_scoring_api.py \
+  tests/contract/test_operator_network_review_api.py \
+  tests/integration/test_operator_live_domain_modules.py \
+  tests/security/test_assisted_listing_intake_authorization_matrix.py \
+  tests/security/test_assisted_listing_intake_privacy.py \
+  --junitxml="$ORCH_SCRATCH_DIR/scope-final.xml"
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check \
+  apps/api/app/routes/operator.py \
+  apps/api/app/routes/operator_modules/network_listings.py \
+  apps/api/app/routes/operator_modules/network_scoring.py \
+  apps/api/app/routes/operator_modules/network_reviews.py \
+  modules/opsboard/application/network_read_scope.py \
+  modules/opsboard/application/network_scoring.py \
+  tests/security/test_operator_network_read_scope.py \
+  tests/integration/test_operator_live_domain_modules.py
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check
+```
+
+All final exits **0**. Existing `scope-final.xml` records **85 tests**, zero
+failures/errors/skips (209.201 seconds); `scope-final.log` preserves the original
+pytest output. No rerun solely to count tests. New full-envelope regressions
+cover heat-zone/brand/region/store/assigned-area restrictions, missing metadata,
+foreign/conflicting child scope, related records/aggregates, real review decision
+records, cross-object audit/match data, unchanged stored state/non-viewer flows,
+and actual durable tenant service resolution. Inventory adds only the new helper
+and focused test module.
+
+Earlier diagnostics are not passing final receipts: first 18-test subset exit0;
+expanded 67-test run exit1 because the new fixture used unsupported APPROVE
+instead of producer GO and cleanup used SQLAlchemy dispose instead of the actual
+SqliteEngine close. Both test-only mistakes were fixed before final85. Initial
+ruff import-order/test lambda findings and stale inventory were repaired. A
+cross-directory anchor attempt was refused before commit until its required
+Cross-Dir trailer was added. No failed run is claimed as successful.
+
+Required remote CI and independent review must bind the new submitted head.
+No account role grant, credential/cloud configuration change, deployment, source
+activation, backfill, model operation or F11 approval was performed in this repair.
+All outstanding live acceptance below remains outstanding.
 
 ## Outstanding live acceptance (not completed here)
 
