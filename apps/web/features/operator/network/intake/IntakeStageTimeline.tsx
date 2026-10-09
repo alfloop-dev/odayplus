@@ -64,7 +64,11 @@ export function IntakeStageTimeline({
 
       {/* 1. Stepper without fake percentages */}
       {mode === "stages" ? <div
+        aria-label="收件處理階段（可橫向捲動）"
+        className={styles.timelineScroll}
         data-testid="timeline-stepper"
+        role="region"
+        tabIndex={0}
         style={{
           display: "flex",
           alignItems: "center",

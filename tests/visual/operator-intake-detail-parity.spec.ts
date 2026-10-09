@@ -108,6 +108,12 @@ for (const width of [1440, 390]) {
     await shot(page, info, `${phase}-detail-audit-${width}`);
     if (phase === "after") {
       expect(boxes.detail.gap).toBe("12px");
+      const stepper = page.getByTestId("timeline-stepper");
+      await stepper.focus();
+      await expect(stepper).toBeFocused();
+      const beforeScroll = await stepper.evaluate((element) => element.scrollLeft);
+      await page.keyboard.press("ArrowRight");
+      if (width === 390) await expect.poll(() => stepper.evaluate((element) => element.scrollLeft)).toBeGreaterThan(beforeScroll);
       const results = await new AxeBuilder({ page }).include('[data-testid="intake-detail-dialog"]').analyze();
       await writeFile(await artifact(info, `axe-detail-${width}.json`), JSON.stringify(results, null, 2));
       expect(results.violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual([]);

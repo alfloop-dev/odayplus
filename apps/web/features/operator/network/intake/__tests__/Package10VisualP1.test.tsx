@@ -119,6 +119,10 @@ describe("Package 10 intake visual P1", () => {
     // The operator shell owns the main landmark; continuous detail must not
     // mount a second nested main on either a direct route or workspace URL.
     expect(surface?.querySelector("main")).toBeNull();
+    expect(byTestId("timeline-stepper").getAttribute("tabindex")).toBe("0");
+    expect(byTestId("timeline-stepper").getAttribute("aria-label")).toContain("處理階段");
+    expect(byTestId("match-evidence-sr-summary").getAttribute("aria-label")).toBe("比對結果摘要");
+    expect(byTestId("intake-change-summary").getAttribute("aria-label")).toBe("欄位變更摘要");
   });
 
   it("renders a three-column desktop current/submitted comparison with text markers and a mobile fallback", () => {
