@@ -1,0 +1,303 @@
+{
+  "browserPostStatus": 200,
+  "durableReadStatus": 200,
+  "snapshot": {
+    "source": "api",
+    "reviews": [
+      {
+        "id": "RV-698",
+        "candidateId": "CS-1004",
+        "candidateTitle": "大安和平候選點",
+        "zoneLabel": "大安和平 74",
+        "recommendation": "REJECT",
+        "score": 49,
+        "risk": "租金 P90 · 回本 41 個月超品牌上限",
+        "requestedBy": "王若寧（拓展）",
+        "reviewerRole": "選址審核 / Site Reviewer",
+        "submittedAt": "2026-06-30 14:20",
+        "dueAt": "2026-07-15 18:00",
+        "payback": "41 個月",
+        "m12P50": "NT$268K",
+        "rentReasonableness": "過高（區間 P90）",
+        "cannibalization": "12%（中高）",
+        "sourceListingId": "L-2027",
+        "fieldVisit": "已完成（6/24 現勘）",
+        "brokerContact": "已聯絡",
+        "notes": "租金過高、回本期 41 個月超出品牌上限 30 個月，與大安和平店重疊 12%。",
+        "modelVersion": "SiteScore v2.3",
+        "datasetSnapshotId": "FS-20260630-0600",
+        "compareText": "不建議（REJECT 49，租金 P90 回本 41 個月）",
+        "candidateStatus": "pendingreview",
+        "eventChips": [
+          "SiteScore v2.3",
+          "Dataset FS-20260630-0600",
+          "現勘完成",
+          "比較 不建議"
+        ],
+        "history": [
+          {
+            "t": "2026-06-30 14:20",
+            "v": "SiteScore 完成 REJECT 49"
+          },
+          {
+            "t": "2026-06-30 14:20",
+            "v": "王若寧送審（拓展）"
+          }
+        ],
+        "status": "pending",
+        "statusLabel": "待審核",
+        "decision": null,
+        "candidateStatusLabel": "待審核",
+        "candidateMissingData": [],
+        "pending": true,
+        "decided": false,
+        "overrideAvailable": true
+      },
+      {
+        "id": "RV-702",
+        "candidateId": "CS-1001",
+        "candidateTitle": "信義松仁候選點",
+        "zoneLabel": "信義松仁 86",
+        "recommendation": "GO",
+        "score": 82,
+        "risk": "回本 22 個月 · 週末停車不易",
+        "requestedBy": "王若寧（拓展）",
+        "reviewerRole": "選址審核 / Site Reviewer",
+        "submittedAt": "2026-07-13 09:20",
+        "dueAt": "2026-07-16 18:00",
+        "payback": "22 個月",
+        "m12P50": "NT$428K",
+        "rentReasonableness": "合理（區間 P45）",
+        "cannibalization": "4%（低）",
+        "sourceListingId": "L-2024",
+        "fieldVisit": "已完成（現勘照片 6 張）",
+        "brokerContact": "已聯絡（王仲介）",
+        "notes": "住宅＋商辦混合，夜間洗烘需求強；既有店 650m 稀釋僅 4%。",
+        "modelVersion": "SiteScore v2.3",
+        "datasetSnapshotId": "FS-20260704-0600",
+        "compareText": "P1 主推（GO 82，領先板橋府中 6 分）",
+        "candidateStatus": "pendingreview",
+        "eventChips": [
+          "SiteScore v2.3",
+          "Dataset FS-20260704-0600",
+          "現勘完成",
+          "比較 P1"
+        ],
+        "history": [
+          {
+            "t": "2026-07-04 06:10",
+            "v": "SiteScore 完成 GO 82"
+          },
+          {
+            "t": "2026-07-13 09:20",
+            "v": "王若寧送審（拓展）"
+          }
+        ],
+        "status": "pending",
+        "statusLabel": "待審核",
+        "decision": null,
+        "candidateStatusLabel": "待審核",
+        "candidateMissingData": [],
+        "pending": true,
+        "decided": false,
+        "overrideAvailable": true
+      },
+      {
+        "id": "RV-701",
+        "candidateId": "CS-1002",
+        "candidateTitle": "板橋府中候選點",
+        "zoneLabel": "板橋府中 78",
+        "recommendation": "WAIT",
+        "score": 76,
+        "risk": "站前施工至 12 月 · 與府中店重疊 11%",
+        "requestedBy": "王若寧（拓展）",
+        "reviewerRole": "選址審核 / Site Reviewer",
+        "submittedAt": "2026-07-13 16:42",
+        "dueAt": "2026-07-17 18:00",
+        "payback": "27 個月",
+        "m12P50": "NT$372K",
+        "rentReasonableness": "偏高（區間 P70）",
+        "cannibalization": "11%（中）",
+        "sourceListingId": "L-2025",
+        "fieldVisit": "已完成（6/28 現勘）",
+        "brokerContact": "已聯絡（王仲介）",
+        "notes": "捷運通勤人流大，惟站前施工圍籬與府中店重疊需以條件管理。",
+        "modelVersion": "SiteScore v2.3",
+        "datasetSnapshotId": "FS-20260703-0600",
+        "compareText": "P2 備選（WAIT 76，條件改善後可重評）",
+        "candidateStatus": "onhold",
+        "eventChips": [
+          "SiteScore v2.3",
+          "Dataset FS-20260703-0600",
+          "現勘完成",
+          "比較 P2"
+        ],
+        "history": [
+          {
+            "t": "2026-10-09T17:29:08Z",
+            "v": "選址審核 / Site Reviewer決策 WAIT → On Hold"
+          },
+          {
+            "t": "2026-07-13 16:42",
+            "v": "王若寧送審（拓展）"
+          }
+        ],
+        "status": "onhold",
+        "statusLabel": "On Hold（WAIT）",
+        "decision": {
+          "decision": "WAIT",
+          "finalLabel": "On Hold",
+          "mappedStatus": "onhold",
+          "reason": "已核對選址資料與風險，將決策及原因寫入稽核紀錄。",
+          "conditions": "補齊晚間人流與現勘紀錄",
+          "requiredData": [],
+          "override": false,
+          "decidedAt": "2026-10-09T17:29:08Z",
+          "decidedBy": "operator-expansion-manager",
+          "actorRoleId": "site_reviewer",
+          "decisionId": "DEC-REVIEW-01d15174",
+          "approvalId": "AP-RV-701",
+          "auditId": "AUD-REVIEW-2fa6dcb82f"
+        },
+        "candidateStatusLabel": "On Hold（WAIT）",
+        "candidateMissingData": [],
+        "pending": false,
+        "decided": true,
+        "overrideAvailable": false
+      }
+    ],
+    "candidates": [
+      {
+        "id": "CS-1001",
+        "title": "信義松仁候選點",
+        "zoneLabel": "信義松仁 86",
+        "status": "pendingreview",
+        "statusLabel": "待審核",
+        "recommendation": "GO",
+        "score": 82,
+        "reviewId": "RV-702",
+        "missingData": []
+      },
+      {
+        "id": "CS-1002",
+        "title": "板橋府中候選點",
+        "zoneLabel": "板橋府中 78",
+        "status": "onhold",
+        "statusLabel": "On Hold（WAIT）",
+        "recommendation": "WAIT",
+        "score": 76,
+        "reviewId": "RV-701",
+        "missingData": []
+      },
+      {
+        "id": "CS-1004",
+        "title": "大安和平候選點",
+        "zoneLabel": "大安和平 74",
+        "status": "pendingreview",
+        "statusLabel": "待審核",
+        "recommendation": "REJECT",
+        "score": 49,
+        "reviewId": "RV-698",
+        "missingData": []
+      }
+    ],
+    "approvals": [
+      {
+        "id": "AP-RV-702",
+        "reviewId": "RV-702",
+        "candidateId": "CS-1001",
+        "title": "信義松仁候選點",
+        "systemRecommendation": "GO",
+        "risk": "回本 22 個月 · 週末停車不易",
+        "status": "pending",
+        "submittedAt": "2026-07-13 09:20",
+        "decidedAt": null,
+        "decidedBy": null
+      },
+      {
+        "id": "AP-RV-701",
+        "reviewId": "RV-701",
+        "candidateId": "CS-1002",
+        "title": "板橋府中候選點",
+        "systemRecommendation": "WAIT",
+        "risk": "站前施工至 12 月 · 與府中店重疊 11%",
+        "status": "on_hold",
+        "submittedAt": "2026-07-13 16:42",
+        "decidedAt": "2026-10-09T17:29:08Z",
+        "decidedBy": "operator-expansion-manager"
+      },
+      {
+        "id": "AP-RV-698",
+        "reviewId": "RV-698",
+        "candidateId": "CS-1004",
+        "title": "大安和平候選點",
+        "systemRecommendation": "REJECT",
+        "risk": "租金 P90 · 回本 41 個月超品牌上限",
+        "status": "pending",
+        "submittedAt": "2026-06-30 14:20",
+        "decidedAt": null,
+        "decidedBy": null
+      }
+    ],
+    "decisions": [
+      {
+        "id": "DEC-REVIEW-01d15174",
+        "reviewId": "RV-701",
+        "candidateId": "CS-1002",
+        "module": "Network 選址審核",
+        "item": "板橋府中候選點",
+        "systemRecommendation": "WAIT",
+        "decision": "WAIT",
+        "finalDecision": "On Hold",
+        "mappedStatus": "onhold",
+        "reason": "已核對選址資料與風險，將決策及原因寫入稽核紀錄。",
+        "conditions": "補齊晚間人流與現勘紀錄",
+        "requiredData": [],
+        "override": false,
+        "actor": "operator-expansion-manager",
+        "actorRoleId": "site_reviewer",
+        "decidedAt": "2026-10-09T17:29:08Z",
+        "modelVersion": "SiteScore v2.3",
+        "datasetSnapshot": "FS-20260703-0600",
+        "approvalId": "AP-RV-701",
+        "correlationId": "corr-r4-007-decide-RV-701"
+      }
+    ],
+    "auditEvents": [
+      {
+        "id": "AUD-REVIEW-2fa6dcb82f",
+        "occurredAt": "2026-10-09T17:29:08Z",
+        "actorRoleId": "site_reviewer",
+        "actorName": "operator-expansion-manager",
+        "category": "governance",
+        "action": "review.decision",
+        "targetType": "review",
+        "targetId": "RV-701",
+        "message": "RV-701 WAIT → On Hold for CS-1002",
+        "correlationId": "corr-r4-007-decide-RV-701",
+        "metadata": {
+          "decision": "WAIT",
+          "finalLabel": "On Hold",
+          "mappedStatus": "onhold",
+          "candidateId": "CS-1002",
+          "approvalId": "AP-RV-701",
+          "decisionId": "DEC-REVIEW-01d15174",
+          "override": false,
+          "systemRecommendation": "WAIT"
+        }
+      }
+    ],
+    "decisionMapping": {
+      "GO": "Approved",
+      "WAIT": "On Hold",
+      "RETURN": "Need Data",
+      "REJECT": "Rejected"
+    },
+    "counts": {
+      "reviews": 3,
+      "pending": 2,
+      "decided": 1
+    },
+    "correlationId": null
+  }
+}

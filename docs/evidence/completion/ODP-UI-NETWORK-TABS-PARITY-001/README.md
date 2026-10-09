@@ -172,14 +172,28 @@ Diagnostic failures are not hidden or counted as successful runs:
 These are local fixture/durable-test-backend receipts, not remote CI, live writes,
 release acceptance or independent reviewer approval.
 
+## Review Decision / required base advance increment
+
+[review-decision/README.md](review-decision/README.md) records dev `2fe3ef933794`
+composition through `4168e4f46b3f`, baseline `94eb6f55af81`, repair `b009ca5db2a6`,
+and GO/WAIT/Return/Reject 1440/390 design-before-after geometry, keyboard, scoped
+axe, actual POST200/durable GET200 and reload state pairs. Mobile is now centered
+350px/14px rather than bottom-aligned 370px/12px; Reject CTA is reference red.
+Required fields, pending-write guards and acknowledgement semantics are repaired
+without relaxing canonical override rules. Full web 718, supplemental 8, business
+Review 8, typecheck/lint/boundaries and unchanged 125/18 inventory passed. Failed
+cold BFF/read and response-body diagnostics remain recorded. This is another
+bounded owner checkpoint, not full acceptance or resubmission.
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
    axe are recorded in `intake-dialogs/`; continuous-detail baseline pairs and
    unavailable-authority/keyboard/reload checks are now in `intake-detail/`.
    Complete separate Transfer/Pause (requires actual resource read-model authority),
-   Promotion and Review Decision at 1440/390, plus all applicable permission/conflict
-   visual states and further full-scope detail density review.
+   Promotion at 1440/390. Review Decision baseline/validation/committed-reload pairs
+   are in `review-decision/`; complete further applicable permission/conflict visual
+   states and full-scope detail density review.
    Preserve VDC-001 conditional controls, conflict input preservation and receipts.
 2. Capture/inspect other Network tabs, batch score view and states. Reconcile the
    English `Blocked until candidate exists` stepper banner with actual selected
