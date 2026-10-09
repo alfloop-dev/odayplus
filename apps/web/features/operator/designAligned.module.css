@@ -1406,10 +1406,6 @@
 }
 
 @media (max-width: 1023px) {
-  .storeWorkspace {
-    padding: 14px 16px 36px;
-  }
-
   .storeOverview {
     grid-template-columns: 1fr;
   }

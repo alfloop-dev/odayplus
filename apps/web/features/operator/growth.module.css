@@ -1234,11 +1234,6 @@
 }
 
 @media (max-width: 900px) {
-  .screen {
-    padding-right: 14px;
-    padding-left: 14px;
-  }
-
   .headerStatus {
     width: 100%;
     margin-left: 0;
@@ -1263,10 +1258,6 @@
 }
 
 @media (max-width: 760px) {
-  .screen {
-    padding: 12px 10px 36px;
-  }
-
   .header {
     gap: 5px 10px;
   }
