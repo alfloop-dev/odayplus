@@ -299,7 +299,7 @@ export function inspectGovernanceSnapshot(
     return "seed";
   }
 
-  const statusBoard = snapshot.statusBoard;
+  const statusBoard = normalizeGovernanceStatusBoard(snapshot.statusBoard);
   const statusGroups = statusBoard
     ? [
         statusBoard.dataQuality,
@@ -318,12 +318,14 @@ export function inspectGovernanceSnapshot(
     Array.isArray(snapshot.evidencePackages) &&
     statusGroups.length === 5 &&
     statusGroups.every(Array.isArray);
+  if (!hasRequiredShape) return "empty";
   const hasRows = [
     snapshot.approvals,
     snapshot.decisions,
     snapshot.auditRows,
     snapshot.evidencePackages,
     ...statusGroups,
+    statusBoard?.recordCounts ?? [],
   ].some((rows) => rows.length > 0);
 
   return hasRequiredShape && hasRows ? "ready" : "empty";
@@ -465,19 +467,17 @@ export function GovernanceWorkspace({
     setLocalApprovals(apiApprovals);
     setLocalDecisions(apiDecisions);
     setLocalAuditRows(apiAuditRows);
-    if (statusBoard) setApiStatusBoard(statusBoard);
-    if (apiEvidencePackages.length) {
-      setEvdHist(
-        apiEvidencePackages.map((pkg) => ({
-          id: pkg.id,
-          range: pkg.range,
-          mod: pkg.mod,
-          fmt: pkg.fmt,
-          t: pkg.t,
-          by: pkg.by,
-        })),
-      );
-    }
+    setApiStatusBoard(statusBoard);
+    setEvdHist(
+      apiEvidencePackages.map((pkg) => ({
+        id: pkg.id,
+        range: pkg.range,
+        mod: pkg.mod,
+        fmt: pkg.fmt,
+        t: pkg.t,
+        by: pkg.by,
+      })),
+    );
     setSelectedApprovalId((current) =>
       apiApprovals.some((approval) => approval.id === current)
         ? current
@@ -1421,6 +1421,18 @@ export function GovernanceWorkspace({
             </div>
             <span>{dqRows.length + modelRows.length + connRows.length + slaRows.length} 個監控項目</span>
           </div>
+          {apiStatusBoard?.recordCounts ? (
+            <div className={styles.statusCard} data-testid="governance-record-counts">
+              <div className={styles.statusCardTitle}>持久化紀錄觀測（非模型／來源就緒證明）</div>
+              {apiStatusBoard.recordCounts.map((row) => (
+                <div className={styles.statusRow} key={row.name}>
+                  <span className={styles.statusNameWide}>{row.name}</span>
+                  <span>{row.count} 筆</span>
+                  <span className={styles.statusNote}>{row.status}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div className={styles.statusBoardGrid}>
           <div className={styles.statusCard}>
             <div className={styles.statusCardTitle}>Data Quality 監控</div>

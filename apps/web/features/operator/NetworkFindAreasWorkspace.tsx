@@ -362,10 +362,6 @@ export function inspectNetworkReviewsSnapshot(
     : "empty";
 }
 
-const NETWORK_OPERATOR_HEADERS = operatorSecurityHeaders(
-  "expansion-manager",
-);
-
 const NETWORK_ACTOR = {
   actorRoleId: "expansionManager",
 };
@@ -382,19 +378,8 @@ const NETWORK_ACTOR = {
 //   (canDecide=false). If a decide POST is still attempted it carries the
 //   role's own non-approving identity, so the API fails closed with 403 —
 //   defense in depth behind the hidden bar.
-const SITE_REVIEWER_REVIEW_HEADERS = operatorSecurityHeaders("site-reviewer");
-
-const EXPANSION_REVIEW_HEADERS = operatorSecurityHeaders(
-  "expansion-manager",
-);
-
-const SITE_REVIEWER_ACTOR = {
-  actorRoleId: "siteReviewer",
-};
-
-const EXPANSION_ACTOR = {
-  actorRoleId: "expansionManager",
-};
+// Never substitute a reviewer/expansion persona for the active console role.
+// The API resolves the durable identity and enforces its real grants.
 
 // Console roles authorized to decide a Network site review. Only the operations
 // lead carries an approval mandate on this surface; Expansion prepares/submits
@@ -409,19 +394,12 @@ type NetworkReviewIdentity = {
 };
 
 function resolveNetworkReviewIdentity(roleId: OperatorRoleId): NetworkReviewIdentity {
-  if (NETWORK_REVIEW_DECIDER_ROLE_IDS.has(roleId)) {
-    return {
-      canDecide: true,
-      readHeaders: SITE_REVIEWER_REVIEW_HEADERS,
-      decideHeaders: SITE_REVIEWER_REVIEW_HEADERS,
-      actor: SITE_REVIEWER_ACTOR,
-    };
-  }
+  const headers = operatorSecurityHeaders(roleId);
   return {
-    canDecide: false,
-    readHeaders: EXPANSION_REVIEW_HEADERS,
-    decideHeaders: EXPANSION_REVIEW_HEADERS,
-    actor: EXPANSION_ACTOR,
+    canDecide: NETWORK_REVIEW_DECIDER_ROLE_IDS.has(roleId),
+    readHeaders: headers,
+    decideHeaders: headers,
+    actor: { actorRoleId: roleId },
   };
 }
 
@@ -448,6 +426,7 @@ async function fetchNetworkReviewsSnapshot(
 async function fetchNetworkSnapshot(
   selectedHeatZoneId: string,
   lens: NetworkFindAreasLens,
+  roleId: OperatorRoleId,
 ): Promise<NetworkListingsSnapshot | null> {
   try {
     const params = new URLSearchParams({
@@ -457,7 +436,7 @@ async function fetchNetworkSnapshot(
     const response = await fetch(`/api/v1/operator/network-listings?${params.toString()}`, {
       cache: "no-store",
       headers: {
-        ...NETWORK_OPERATOR_HEADERS,
+        ...operatorSecurityHeaders(roleId),
         "X-Correlation-Id": `corr-r4-005-read-${selectedHeatZoneId}-${lens}`,
       },
     });
@@ -470,12 +449,12 @@ async function fetchNetworkSnapshot(
   }
 }
 
-async function fetchNetworkScoringSnapshot(): Promise<NetworkScoringSnapshot | null> {
+async function fetchNetworkScoringSnapshot(roleId: OperatorRoleId): Promise<NetworkScoringSnapshot | null> {
   try {
     const response = await fetch(`/api/v1/operator/network-scoring`, {
       cache: "no-store",
       headers: {
-        ...NETWORK_OPERATOR_HEADERS,
+        ...operatorSecurityHeaders(roleId),
         "X-Correlation-Id": "corr-r4-006-scoring-read",
       },
     });
@@ -488,12 +467,12 @@ async function fetchNetworkScoringSnapshot(): Promise<NetworkScoringSnapshot | n
   }
 }
 
-async function fetchNetworkRebalanceSnapshot(): Promise<NetworkRebalanceSnapshot | null> {
+async function fetchNetworkRebalanceSnapshot(roleId: OperatorRoleId): Promise<NetworkRebalanceSnapshot | null> {
   try {
     const response = await fetch("/api/v1/operator/network-rebalance", {
       cache: "no-store",
       headers: {
-        ...NETWORK_OPERATOR_HEADERS,
+        ...operatorSecurityHeaders(roleId),
         "X-Correlation-Id": "corr-r4-008-rebalance-read",
       },
     });
@@ -602,6 +581,7 @@ export function NetworkFindAreasWorkspace({
   const router = useRouter();
   const searchParams = useSearchParams();
   const fixturesAllowed = operatorFixturesAllowed();
+  const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId]);
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
   const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
@@ -802,7 +782,7 @@ export function NetworkFindAreasWorkspace({
 
   // True when every Network R4 binding is using the local/POC fixture path.
   const isFixtureFallback =
-    networkSnapshot?.source !== "api" &&
+    fixturesAllowed && networkSnapshot?.source !== "api" &&
     ((liveHeatZones !== undefined && liveHeatZones.source !== "api") ||
       (liveCandidates !== undefined && liveCandidates.source !== "api"));
 
@@ -839,7 +819,7 @@ export function NetworkFindAreasWorkspace({
         if (!fixturesAllowed) setNetworkLoadState("loading");
         return;
       }
-      const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
+      const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId);
       if (!cancelled && snapshot) {
         const inspection = inspectNetworkListingsSnapshot(snapshot);
         setNetworkSnapshot(
@@ -868,12 +848,12 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [effectiveLens, effectiveSelectedId, fixturesAllowed]);
+  }, [activeRoleId, effectiveLens, effectiveSelectedId, fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadScoring() {
-      const snapshot = await fetchNetworkScoringSnapshot();
+      const snapshot = await fetchNetworkScoringSnapshot(activeRoleId);
       if (!cancelled && snapshot) {
         const inspection = inspectNetworkScoringSnapshot(snapshot);
         setScoringSnapshot(
@@ -896,12 +876,12 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [fixturesAllowed]);
+  }, [activeRoleId, fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadRebalance() {
-      const snapshot = await fetchNetworkRebalanceSnapshot();
+      const snapshot = await fetchNetworkRebalanceSnapshot(activeRoleId);
       if (!cancelled && snapshot) {
         const inspection = inspectNetworkRebalanceSnapshot(snapshot);
         setRebalanceSnapshot(
@@ -930,7 +910,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [fixturesAllowed]);
+  }, [activeRoleId, fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1013,7 +993,7 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadScoringSnapshot() {
-    const snapshot = await fetchNetworkScoringSnapshot();
+    const snapshot = await fetchNetworkScoringSnapshot(activeRoleId);
     if (snapshot) {
       setScoringSnapshot(snapshot);
     }
@@ -1073,7 +1053,7 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadRebalanceSnapshot() {
-    const snapshot = await fetchNetworkRebalanceSnapshot();
+    const snapshot = await fetchNetworkRebalanceSnapshot(activeRoleId);
     if (snapshot) {
       setRebalanceSnapshot(snapshot);
       setRebalanceApiError(null);
@@ -1262,7 +1242,7 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadNetworkSnapshot() {
-    const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
+    const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId);
     if (snapshot) {
       setNetworkSnapshot(snapshot);
       setNetworkApiError(null);
