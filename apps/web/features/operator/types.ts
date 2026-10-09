@@ -215,6 +215,12 @@ export type EvidenceItem = {
   confidence: number;
   occurredAt: string;
   lockedReason?: string;
+  /** Optional source-provided payment metric; never derived from confidence. */
+  paymentTrend?: {
+    failureRate: number;
+    baselineDeltaPp: number;
+    relativeValues: number[];
+  };
 };
 
 export type Segment = {
