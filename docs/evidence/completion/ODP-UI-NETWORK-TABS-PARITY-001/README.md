@@ -343,6 +343,21 @@ the separate Operator Intake read model or provision its resources/targets.**
 No browser/durability/visual acceptance is inferred; those remain next work.
 Still not ready for full-scope review resubmission.
 
+## Transfer target fail-closed increment
+
+[`transfer-targets/README.md`](transfer-targets/README.md) records anchors
+`945db9c95d9f` and `7a8dc49d5128`: static people/queue targets and silent target
+substitution are removed; missing targets disable submission and target changes
+invalidate consent while preserving handoff drafts. Explicit fixture targets
+replace runtime defaults in mounted tests. 1440/390 design-before-after modal
+pairs, geometry, scoped axe and keyboard use **mocked resource GETs only**, not
+real provisioning/directory/write proof. Separate genuine local API probes still
+show absent Operator resource IDs/versions and no resource POST. Full web797,
+focused56, paired browser2+2, real-negative browser2, typecheck/lint/boundaries and
+inventory125-18 have original exit0 receipts. UUID shape is not identity/scope
+authorization; genuine provisioning, directory and server validation remain next.
+**Still not ready for full-scope resubmission.**
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped

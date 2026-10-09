@@ -1,0 +1,68 @@
+{
+  "evidenceMode": "mocked-read-ui-boundary-no-writes",
+  "record": {
+    "id": "IN-TARGET-UI-FIXTURE",
+    "sourceId": "fixture-source",
+    "originalUrl": "https://fixture.invalid/target",
+    "canonicalUrl": "https://fixture.invalid/target",
+    "stage": "NEEDS_REVIEW",
+    "policy": "APPROVED_RETRIEVAL",
+    "policyLabel": "Explicit UI fixture",
+    "policyReason": "Read projection only; no API provisioning proof",
+    "rawSnapshot": null,
+    "snapshotId": null,
+    "parserVersion": null,
+    "auditEvents": [],
+    "capturedAt": null,
+    "submitter": "Fixture submitter",
+    "owner": "Fixture owner",
+    "heatZoneId": "HZ-01",
+    "version": 71,
+    "assignmentId": "00000000-0000-0000-0000-000000000301",
+    "assignmentStatus": "CLAIMED",
+    "assignmentVersion": 14,
+    "slaInstanceId": null,
+    "matchResult": null,
+    "parsedFields": {}
+  },
+  "document": {
+    "width": 1440,
+    "scrollWidth": 1440
+  },
+  "dialog": {
+    "x": 490,
+    "y": 175.515625,
+    "width": 460,
+    "height": 548.96875,
+    "scrollWidth": 460,
+    "radius": "14px",
+    "overflowY": "auto"
+  },
+  "target": {
+    "x": 508,
+    "y": 318.65625,
+    "width": 424,
+    "height": 37,
+    "scrollWidth": 422,
+    "radius": "8px",
+    "overflowY": "visible"
+  },
+  "note": {
+    "x": 508,
+    "y": 457.09375,
+    "width": 424,
+    "height": 69,
+    "scrollWidth": 422,
+    "radius": "8px",
+    "overflowY": "auto"
+  },
+  "footer": {
+    "x": 490,
+    "y": 661.484375,
+    "width": 460,
+    "height": 63,
+    "scrollWidth": 460,
+    "radius": "0px",
+    "overflowY": "visible"
+  }
+}
