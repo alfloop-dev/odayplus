@@ -243,6 +243,97 @@ describe("Package 10 Network non-intake panels", () => {
     expect(screen.getByLabelText("Candidate priority")).toHaveTextContent("#1信義松仁82");
   });
 
+  it("binds Candidate detail to Gate notes, preserves failed rules and never invents missing facts", () => {
+    const candidate: ScoringCandidate = {
+      ...candidates[1],
+      listingId: null,
+      gate: {
+        ...candidates[1].gate,
+        okCount: 0,
+        checks: [
+          { key: "area", label: "坪數", state: "fail", note: "18坪" },
+          { key: "hardRule", label: "硬規則", state: "fail", note: "用途不符" },
+        ],
+      },
+    };
+    const view = render(<CandidatePanel candidates={[candidate]} fallbackRows={[]} />);
+    const detail = screen.getByLabelText("候選點詳情");
+    expect(detail).toHaveTextContent("0/2");
+    const values = within(detail).getByLabelText("候選點鍵值資訊");
+    expect(values).toHaveTextContent("18坪（未通過）");
+    expect(values).toHaveTextContent("用途不符（未通過）");
+    expect(detail).toHaveTextContent("未提供候選點 audit 記錄");
+    for (const fabricated of ["28 坪", "NT$58,000", "3/3 通過", "0.94", "王仲介", "吳孟哲", "650m", "L-2024"]) {
+      expect(detail).not.toHaveTextContent(fabricated);
+    }
+    view.rerender(<CandidatePanel candidates={[{ ...candidate, gate: { ...candidate.gate, checks: [] } }]} fallbackRows={[]} />);
+    expect(detail).toHaveTextContent("未提供逐項檢查記錄");
+    expect(detail).not.toHaveTextContent("3/3 通過");
+  });
+
+  it("disables unavailable Candidate mutations and restores eligible API batch scoring", () => {
+    const onScoreAll = vi.fn();
+    render(<CandidatePanel candidates={candidates} fallbackRows={[]} onScoreAll={onScoreAll} />);
+    const detail = screen.getByLabelText("候選點詳情");
+    for (const name of ["移出比較", "編輯候選點", "封存候選點"]) {
+      expect(within(detail).getByRole("button", { name })).toBeDisabled();
+    }
+    fireEvent.click(screen.getByTestId("candidate-score-all"));
+    expect(onScoreAll).toHaveBeenCalledExactlyOnceWith(["CS-1001"]);
+  });
+
+  it("batch selection submits only checked eligible candidates and disables blocked/busy execution", () => {
+    const onScoreAll = vi.fn();
+    const ready = { ...candidates[0], id: "CS-ready", title: "可評分候選", scored: false };
+    const view = render(<SiteScorePanel candidates={[...candidates, ready]} fallbackRows={[]} scorecards={scorecards} onScoreAll={onScoreAll} />);
+    fireEvent.click(screen.getByRole("button", { name: "批次評分" }));
+    const blocked = screen.getByRole("button", { name: /中壢中原候選點.*—/ });
+    expect(blocked).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /可評分候選/ }));
+    fireEvent.click(screen.getByRole("button", { name: /信義松仁候選點.*NT\$58,000/ }));
+    fireEvent.click(screen.getByTestId("sitescore-batch-run"));
+    expect(onScoreAll).toHaveBeenCalledExactlyOnceWith(["CS-ready"]);
+    expect(screen.queryByText(/批次執行完成/)).toBeNull();
+    view.rerender(<SiteScorePanel busyCandidateId="batch" candidates={[...candidates, ready]} fallbackRows={[]} scorecards={scorecards} onScoreAll={onScoreAll} />);
+    expect(screen.getByTestId("sitescore-batch-run")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /可評分候選/ })).toBeDisabled();
+  });
+
+  it("preserves zero revenue and unavailable API risk metadata without design mock defaults", () => {
+    render(<SiteScorePanel candidates={[]} fallbackRows={[]} scorecards={[{
+      ...scorecards[0], revenuePath: { m1: 0, m3: 0, m6: 0, m12: 0 },
+      generatedAt: "", confidence: "", subScores: {}, capex: "", rentAssumption: "",
+    }]} />);
+    const report = screen.getByTestId("sitescore-card-CS-1001");
+    expect(within(report).getAllByText("NT$0K")).toHaveLength(4);
+    expect(within(report).getByLabelText("Risk breakdown")).toHaveTextContent("未提供");
+    for (const bar of within(report).getByLabelText("月營收路徑（P50）").querySelectorAll("b")) {
+      expect(bar).toHaveStyle({ height: "0%" });
+    }
+    expect(report).not.toHaveTextContent("NT$920K");
+    expect(report).not.toHaveTextContent("280m 2家");
+    expect(report).not.toHaveTextContent("NT$3,800K");
+  });
+
+  it("does not announce durable writes for unavailable or rejected SiteScore/Compare actions", async () => {
+    const onToggleCompare = vi.fn().mockResolvedValue(false);
+    const view = render(<SiteScorePanel candidates={candidates} fallbackRows={[]} scorecards={scorecards} onToggleCompare={onToggleCompare} />);
+    const report = screen.getByTestId("sitescore-card-CS-1001");
+    for (const name of ["產生報告 preview", "送審（SiteScore Review）", "要求補資料", "標記不適合"]) {
+      expect(within(report).getByRole("button", { name })).toBeDisabled();
+    }
+    fireEvent.click(within(report).getByRole("button", { name: "加入／移出比較" }));
+    expect(onToggleCompare).toHaveBeenCalledExactlyOnceWith("CS-1001");
+    await Promise.resolve();
+    expect(screen.queryByRole("status")).toBeNull();
+    view.unmount();
+    render(<ComparePanel compare={compare} fallback={{ columns: [], metrics: [] }} />);
+    expect(screen.getByRole("button", { name: /送審首選/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /保留.*為備選/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /產生比較報告/ })).toBeDisabled();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   it("locks the canonical desktop, tablet and mobile layout breakpoints", () => {
     const css = readFileSync(
       resolve(process.cwd(), "features/operator/networkFindAreas.module.css"),

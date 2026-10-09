@@ -113,7 +113,7 @@ export function CandidatePanel({
             >
               {filteredRows.length ? (
                 filteredRows.map((row) => {
-                  const isBusy = busyCandidateId === row.id;
+                  const isBusy = !!busyCandidateId;
                   const tone = recommendationTone(row.recommendation);
                   return (
                     <article
@@ -204,7 +204,7 @@ export function CandidatePanel({
                 candidate={selected}
                 onScore={onScore}
                 onToggleCompare={onToggleCompare}
-                busy={busyCandidateId === selected.id}
+                busy={!!busyCandidateId}
               />
             ) : (
               <div className={styles.emptyState}>No candidate selected</div>

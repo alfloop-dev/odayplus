@@ -269,6 +269,101 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     expect(within(stats).getByText("進行中候選", { exact: false })).toHaveTextContent(`${rows.length} 進行中候選`);
   });
 
+  it.each(["candidates", "sitescore", "compare"])('persists Compare changes from %s with the active persona, without false success on 403', async (tab) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    navigation.search = `ws=network&tab=${tab}`;
+    const candidate: ScoringCandidate = {
+      ...apiCandidate, scored: true, score: 82, recommendation: "GO", inCompare: true,
+      gate: { ...apiCandidate.gate, passed: true, missing: [], okCount: 1 },
+    };
+    const snapshot: NetworkScoringSnapshot = {
+      source: "fixture", modelVersion: "v3", candidates: [candidate], batchResults: [], compareSet: [candidate.id],
+      scorecards: [{
+        id: candidate.id, title: candidate.title, zoneLabel: candidate.zoneLabel, heatZoneId: candidate.heatZoneId,
+        score: 82, recommendation: "GO", modelVersion: "v3", datasetSnapshotId: "live",
+        generatedAt: "", confidence: "", payback: "", revenuePath: { m1: 0, m3: 0, m6: 0, m12: 0 },
+        band: { p10: "", p50: "", p90: "" }, subScores: {}, capex: "", rentAssumption: "",
+        drivers: [], reasons: [], risks: [], conditions: [], conditionTitle: "",
+      }],
+      compare: { empty: false, recommendation: null, metrics: [], columns: [{
+        id: candidate.id, title: candidate.title, priority: "#1", score: 82, recommendation: "GO", isBest: true,
+      }] },
+    };
+    let denyWrite = true;
+    vi.mocked(fetch).mockImplementation((url, init) => {
+      if (String(url) === "/api/v1/operator/network-scoring/compare") {
+        if (denyWrite) return Promise.resolve(new Response("denied", { status: 403 }));
+        const body = JSON.parse(String(init?.body));
+        snapshot.compareSet = body.candidateIds;
+        snapshot.candidates = [{ ...candidate, inCompare: body.candidateIds.includes(candidate.id) }];
+        snapshot.compare = { empty: true, recommendation: null, metrics: [], columns: [] };
+        return Promise.resolve(new Response("{}"));
+      }
+      if (String(url) === "/api/v1/operator/network-scoring") return Promise.resolve(new Response(JSON.stringify(snapshot)));
+      return new Promise<Response>(() => undefined);
+    });
+    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" />);
+    const button = tab === "candidates"
+      ? await screen.findByTestId("candidate-detail-compare-CS-live")
+      : tab === "sitescore"
+        ? await screen.findByRole("button", { name: "加入／移出比較" })
+        : await screen.findByRole("button", { name: "移除 Live candidate" });
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByText("network-scoring compare failed (403)")).toBeInTheDocument());
+    expect(snapshot.compareSet).toEqual(["CS-live"]);
+    expect(screen.queryByText(/已更新候選點比較清單|已.*送審/)).toBeNull();
+    const post = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/compare"));
+    expect(post?.[1]?.headers).toMatchObject({ "X-Operator-Role": "expansion-manager" });
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ actorRoleId: "expansion-manager", candidateIds: [] });
+    denyWrite = false;
+    fireEvent.click(button);
+    await waitFor(() => expect(snapshot.compareSet).toEqual([]));
+    await waitFor(() => expect(screen.queryByText("network-scoring compare failed (403)")).toBeNull());
+    if (tab === "candidates") await waitFor(() => expect(button).toHaveTextContent("加入比較"));
+    if (tab === "compare") await waitFor(() => expect(screen.queryByRole("button", { name: "移除 Live candidate" })).toBeNull());
+  });
+
+  it("sends only eligible checked batch IDs, not the old all-candidate/no-op action", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    navigation.search = "ws=network&tab=sitescore";
+    const eligible = { ...apiCandidate, id: "CS-ready", title: "Ready candidate", gate: { ...apiCandidate.gate, passed: true, missing: [] } };
+    const snapshot: NetworkScoringSnapshot = {
+      source: "fixture", modelVersion: "v3", candidates: [eligible, apiCandidate], batchResults: [], compareSet: [],
+      scorecards: [], compare: { empty: true, recommendation: null, metrics: [], columns: [] },
+    };
+    vi.mocked(fetch).mockImplementation((url) => {
+      if (String(url) === "/api/v1/operator/network-scoring/score") return Promise.resolve(new Response("denied", { status: 403 }));
+      if (String(url) === "/api/v1/operator/network-scoring") return Promise.resolve(new Response(JSON.stringify(snapshot)));
+      return new Promise<Response>(() => undefined);
+    });
+    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" />);
+    fireEvent.click(await screen.findByRole("button", { name: "批次評分" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Ready candidate/ }));
+    expect(screen.getByRole("button", { name: /Live candidate/ })).toBeDisabled();
+    fireEvent.click(screen.getByTestId("sitescore-batch-run"));
+    await waitFor(() => expect(screen.getByText("network-scoring score failed (403)")).toBeInTheDocument());
+    const post = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/score"));
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ actorRoleId: "expansion-manager", candidateIds: ["CS-ready"] });
+    expect(post?.[1]?.headers).toMatchObject({ "X-Operator-Role": "expansion-manager", "Idempotency-Key": expect.stringMatching(/^network-batch-/) });
+    expect(screen.queryByText(/批次執行完成/)).toBeNull();
+  });
+
+  it.each(["ops-lead", "pm-audit", "platform-admin"] as const)("does not expose scoring writes to read-only persona %s", async (role) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    navigation.search = "ws=network&tab=candidates";
+    const snapshot: NetworkScoringSnapshot = {
+      source: "fixture", modelVersion: "v3", candidates: [{ ...apiCandidate, gate: { ...apiCandidate.gate, passed: true } }],
+      batchResults: [], compareSet: [], scorecards: [], compare: { empty: true, recommendation: null, metrics: [], columns: [] },
+    };
+    vi.mocked(fetch).mockImplementation((url) => String(url) === "/api/v1/operator/network-scoring"
+      ? Promise.resolve(new Response(JSON.stringify(snapshot))) : new Promise<Response>(() => undefined));
+    render(<NetworkFindAreasWorkspace activeRoleId={role} />);
+    expect(await screen.findByTestId("candidate-detail-score-CS-live")).toBeDisabled();
+    expect(screen.getByTestId("candidate-score-all")).toBeDisabled();
+    expect(screen.getByTestId("candidate-detail-compare-CS-live")).toBeDisabled();
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
   it("writes a history entry without dropping unrelated query parameters", () => {
     navigation.search =
       "ws=network&tab=radar&tenant=tw&selected=IN-3011&flag=a&flag=b";

@@ -186,7 +186,7 @@ export function SiteScorePanel({
             ))}
             {cards.map((card) => (
               <ScoreReport
-                busy={busyCandidateId === card.id}
+                busy={!!busyCandidateId}
                 card={card}
                 hidden={selectedCard?.id !== card.id}
                 key={card.id}
