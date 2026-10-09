@@ -124,16 +124,16 @@ export function AssignmentSlaSummary({
 
   return (
     <div
-      className={`${styles.sectionBox} ${className || ""}`}
+      className={`${styles.sectionBox} ${styles.assignmentSummary} ${className || ""}`}
       data-testid="assignment-sla-summary"
     >
       <div className={styles.sectionHead}>
         指派與 SLA 狀態 (ASSIGNMENT & SLA SUMMARY)
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", margin: "10px 0" }}>
+      <div className={styles.assignmentCards}>
         {/* Owner Card */}
-        <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+        <div className={styles.assignmentCard}>
           <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 600 }}>目前 Owner / 負責人</div>
           <div style={{ fontSize: "14px", fontWeight: 700, marginTop: "2px" }} data-testid="asg-owner">
             {currentOwner}
@@ -144,7 +144,7 @@ export function AssignmentSlaSummary({
         </div>
 
         {/* SLA Status Card with Text + Icon/Pattern */}
-        <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+        <div className={styles.assignmentCard}>
           <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 600 }}>SLA 處理狀態</div>
           <div
             style={{ fontSize: "14px", fontWeight: 700, marginTop: "2px", display: "flex", alignItems: "center", gap: "6px" }}
@@ -199,7 +199,7 @@ export function AssignmentSlaSummary({
       )}
 
       {/* Action Buttons */}
-      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "12px" }}>
+      <div className={styles.assignmentActions}>
         {onClaim && (
           <button
             className={styles.primaryButton}

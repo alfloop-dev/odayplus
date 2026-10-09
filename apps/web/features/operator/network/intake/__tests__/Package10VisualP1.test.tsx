@@ -114,6 +114,11 @@ describe("Package 10 intake visual P1", () => {
       '[data-screen-label="Intake 收件處理詳情頁"]',
     );
     expect(surface).not.toBeNull();
+    expect(surface?.tagName).toBe("SECTION");
+    expect(surface?.getAttribute("aria-label")).toBe("收件處理詳情");
+    // The operator shell owns the main landmark; continuous detail must not
+    // mount a second nested main on either a direct route or workspace URL.
+    expect(surface?.querySelector("main")).toBeNull();
   });
 
   it("renders a three-column desktop current/submitted comparison with text markers and a mobile fallback", () => {
