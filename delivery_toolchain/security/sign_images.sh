@@ -49,7 +49,7 @@ cosign_with_oidc_retry() (
     fi
     # A permanent authorization/trust failure wins even if another line looks
     # transient. Unknown errors fail closed, preserving the actual exit code.
-    if grep -Eiq 'unauthorized|forbidden|permission denied|access denied|invalid (token|audience|issuer)|expired token|certificate|x509|signature verification|(^|[^0-9])(401|403)([^0-9]|$)' "${diagnostic}" ||
+    if grep -Eiq 'unauthorized|unauthenticated|forbidden|denied|invalid.*(token|audience|issuer)|expired token|audience mismatch|issuer mismatch|trust|certificate|x509|signature verification|(^|[^0-9])(400|401|403)([^0-9]|$)' "${diagnostic}" ||
        ! grep -Eq "fetching ambient OIDC credentials: (invalid character 'u' looking for beginning of value|unexpected EOF|.*(429 Too Many Requests|500 Internal Server Error|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout))" "${diagnostic}"; then
       echo "Error: cosign $1 failed (attempt ${attempt}/3, exit ${rc}); non-retryable diagnostics withheld." >&2
       return "${rc}"
