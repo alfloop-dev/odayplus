@@ -61,10 +61,16 @@ def spy(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     return env, log, sbom
 
 
-def invoke(spy: tuple[dict[str, str], Path, Path], operation: str, failures: int, error: str):
+def invoke(
+    spy: tuple[dict[str, str], Path, Path],
+    operation: str,
+    failures: int,
+    error: str,
+    image: str = IMAGE,
+):
     env, log, sbom = spy
     env.update(SPY_FAILURES=str(failures), SPY_ERROR=error)
-    args = ["/bin/bash", str(SCRIPT), operation, IMAGE]
+    args = ["/bin/bash", str(SCRIPT), operation, image]
     if operation == "attest":
         args.append(str(sbom))
     result = subprocess.run(args, env=env, capture_output=True, text=True, timeout=10, check=False)
@@ -143,6 +149,52 @@ def test_permanent_and_unknown_errors_fail_closed_without_retry(spy, operation, 
     assert len(calls) == 1
     assert sleeps == []
     assert "successfully" not in result.stdout
+
+
+@pytest.mark.parametrize("operation", ["sign", "attest"])
+@pytest.mark.parametrize("digits", ["400", "401", "403"])
+def test_image_digest_digits_are_not_http_status(spy, operation, digits) -> None:
+    image = "registry.example.invalid/api@sha256:" + "a" * 30 + digits + "b" * 31
+    error = f"Error: signing {image}: {OIDC_ERROR}"
+    result, calls, sleeps = invoke(spy, operation, 1, error, image)
+    assert result.returncode == 0
+    assert len(calls) == 2
+    assert calls[0] == calls[1]
+    assert calls[0][-1] == image
+    assert sleeps == ["2"]
+    assert "successfully" in result.stdout
+
+
+@pytest.mark.parametrize("operation", ["sign", "attest"])
+@pytest.mark.parametrize("status", ["400", "401", "403"])
+@pytest.mark.parametrize(
+    "context",
+    [
+        "HTTP {status}",
+        "HTTP/1.1 {status}",
+        "HTTP/2 {status}",
+        "HTTP status code: {status}",
+        "status={status}",
+        "statusCode: {status}",
+        "response code: {status}",
+        "fetching ambient OIDC credentials: {status}",
+    ],
+)
+def test_permanent_http_status_vetoes_transient_error(spy, operation, status, context) -> None:
+    error = OIDC_ERROR + "\n" + context.format(status=status)
+    result, calls, sleeps = invoke(spy, operation, 1, error)
+    assert result.returncode == 23
+    assert len(calls) == 1
+    assert sleeps == []
+    assert "successfully" not in result.stdout
+
+
+@pytest.mark.parametrize("operation", ["sign", "attest"])
+def test_bad_request_reason_vetoes_transient_error(spy, operation) -> None:
+    result, calls, sleeps = invoke(spy, operation, 1, OIDC_ERROR + "\n400 Bad Request")
+    assert result.returncode == 23
+    assert len(calls) == 1
+    assert sleeps == []
 
 
 def test_verification_is_not_retried_and_keeps_trust_flags(spy) -> None:

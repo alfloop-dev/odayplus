@@ -48,8 +48,10 @@ cosign_with_oidc_retry() (
       rc=$?
     fi
     # A permanent authorization/trust failure wins even if another line looks
-    # transient. Unknown errors fail closed, preserving the actual exit code.
-    if grep -Eiq 'unauthorized|unauthenticated|forbidden|denied|invalid.*(token|audience|issuer)|expired token|audience mismatch|issuer mismatch|trust|certificate|x509|signature verification|(^|[^0-9])(400|401|403)([^0-9]|$)' "${diagnostic}" ||
+    # transient. HTTP codes need status context, not just digit boundaries:
+    # image digests in diagnostics may legitimately contain a400b/a401b/a403b.
+    # Unknown errors fail closed, preserving the actual exit code.
+    if grep -Eiq 'unauthorized|unauthenticated|forbidden|denied|invalid.*(token|audience|issuer)|expired token|audience mismatch|issuer mismatch|trust|certificate|x509|signature verification|400[[:space:]]+Bad Request|(^|[^[:alnum:]_])(HTTP(/[0-9.]+)?[[:space:]:=]+|status([[:space:]_-]*code)?[[:space:]:=]+|response([[:space:]_-]*code)?[[:space:]:=]+|fetching ambient OIDC credentials:[[:space:]]*)(400|401|403)([^[:alnum:]_]|$)' "${diagnostic}" ||
        ! grep -Eq "fetching ambient OIDC credentials: (invalid character 'u' looking for beginning of value|unexpected EOF|.*(429 Too Many Requests|500 Internal Server Error|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout))" "${diagnostic}"; then
       echo "Error: cosign $1 failed (attempt ${attempt}/3, exit ${rc}); non-retryable diagnostics withheld." >&2
       return "${rc}"
