@@ -1,0 +1,198 @@
+[
+  {
+    "action": "selected-fit",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-02&lens=fit"
+  },
+  {
+    "action": "reload-before-back",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-02&lens=fit",
+    "readStatus": 200,
+    "zoneId": "HZ-02",
+    "label": "板橋府中生活圈",
+    "lens": "fit",
+    "geometry": {
+      "detail": {
+        "x": 20,
+        "y": 509.25,
+        "width": 984,
+        "height": 1032.734375,
+        "scrollWidth": 982,
+        "columns": "950px",
+        "overflowX": "visible"
+      },
+      "map": {
+        "x": 216,
+        "y": -108.03125,
+        "width": 786,
+        "height": 424,
+        "scrollWidth": 786,
+        "columns": "none",
+        "overflowX": "visible"
+      },
+      "document": {
+        "width": 1024,
+        "scrollWidth": 1024
+      }
+    }
+  },
+  {
+    "action": "back-lens",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-02&lens=demand",
+    "readStatus": 200,
+    "zoneId": "HZ-02",
+    "label": "板橋府中生活圈",
+    "lens": "demand",
+    "geometry": {
+      "detail": {
+        "x": 20,
+        "y": 509.25,
+        "width": 984,
+        "height": 1032.734375,
+        "scrollWidth": 982,
+        "columns": "950px",
+        "overflowX": "visible"
+      },
+      "map": {
+        "x": 216,
+        "y": -108.03125,
+        "width": 786,
+        "height": 424,
+        "scrollWidth": 786,
+        "columns": "none",
+        "overflowX": "visible"
+      },
+      "document": {
+        "width": 1024,
+        "scrollWidth": 1024
+      }
+    }
+  },
+  {
+    "action": "back-zone",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-01&lens=demand",
+    "readStatus": 200,
+    "zoneId": "HZ-01",
+    "label": "信義松仁生活圈",
+    "lens": "demand",
+    "geometry": {
+      "detail": {
+        "x": 20,
+        "y": 1068.25,
+        "width": 984,
+        "height": 1082.828125,
+        "scrollWidth": 982,
+        "columns": "950px",
+        "overflowX": "visible"
+      },
+      "map": {
+        "x": 216,
+        "y": 450.96875,
+        "width": 786,
+        "height": 424,
+        "scrollWidth": 786,
+        "columns": "none",
+        "overflowX": "visible"
+      },
+      "document": {
+        "width": 1024,
+        "scrollWidth": 1024
+      }
+    }
+  },
+  {
+    "action": "forward-zone",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-02&lens=demand",
+    "readStatus": 200,
+    "zoneId": "HZ-02",
+    "label": "板橋府中生活圈",
+    "lens": "demand",
+    "geometry": {
+      "detail": {
+        "x": 20,
+        "y": 1068.25,
+        "width": 984,
+        "height": 1032.734375,
+        "scrollWidth": 982,
+        "columns": "950px",
+        "overflowX": "visible"
+      },
+      "map": {
+        "x": 216,
+        "y": 450.96875,
+        "width": 786,
+        "height": 424,
+        "scrollWidth": 786,
+        "columns": "none",
+        "overflowX": "visible"
+      },
+      "document": {
+        "width": 1024,
+        "scrollWidth": 1024
+      }
+    }
+  },
+  {
+    "action": "forward-lens",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-02&lens=fit",
+    "readStatus": 200,
+    "zoneId": "HZ-02",
+    "label": "板橋府中生活圈",
+    "lens": "fit",
+    "geometry": {
+      "detail": {
+        "x": 20,
+        "y": 1068.25,
+        "width": 984,
+        "height": 1032.734375,
+        "scrollWidth": 982,
+        "columns": "950px",
+        "overflowX": "visible"
+      },
+      "map": {
+        "x": 216,
+        "y": 450.96875,
+        "width": 786,
+        "height": 424,
+        "scrollWidth": 786,
+        "columns": "none",
+        "overflowX": "visible"
+      },
+      "document": {
+        "width": 1024,
+        "scrollWidth": 1024
+      }
+    }
+  },
+  {
+    "action": "reload-after-forward",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-02&lens=fit",
+    "readStatus": 200,
+    "zoneId": "HZ-02",
+    "label": "板橋府中生活圈",
+    "lens": "fit",
+    "geometry": {
+      "detail": {
+        "x": 20,
+        "y": 1068.25,
+        "width": 984,
+        "height": 1032.734375,
+        "scrollWidth": 982,
+        "columns": "950px",
+        "overflowX": "visible"
+      },
+      "map": {
+        "x": 216,
+        "y": 450.96875,
+        "width": 786,
+        "height": 424,
+        "scrollWidth": 786,
+        "columns": "none",
+        "overflowX": "visible"
+      },
+      "document": {
+        "width": 1024,
+        "scrollWidth": 1024
+      }
+    }
+  }
+]

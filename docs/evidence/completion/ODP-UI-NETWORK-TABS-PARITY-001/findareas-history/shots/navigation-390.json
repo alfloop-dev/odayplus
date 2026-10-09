@@ -1,0 +1,198 @@
+[
+  {
+    "action": "selected-fit",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-02&lens=fit"
+  },
+  {
+    "action": "reload-before-back",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-02&lens=fit",
+    "readStatus": 200,
+    "zoneId": "HZ-02",
+    "label": "板橋府中生活圈",
+    "lens": "fit",
+    "geometry": {
+      "detail": {
+        "x": 12,
+        "y": 1212.140625,
+        "width": 366,
+        "height": 1081.875,
+        "scrollWidth": 364,
+        "columns": "332px",
+        "overflowX": "visible"
+      },
+      "map": {
+        "x": 14,
+        "y": 497.078125,
+        "width": 362,
+        "height": 424,
+        "scrollWidth": 362,
+        "columns": "none",
+        "overflowX": "visible"
+      },
+      "document": {
+        "width": 390,
+        "scrollWidth": 390
+      }
+    }
+  },
+  {
+    "action": "back-lens",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-02&lens=demand",
+    "readStatus": 200,
+    "zoneId": "HZ-02",
+    "label": "板橋府中生活圈",
+    "lens": "demand",
+    "geometry": {
+      "detail": {
+        "x": 12,
+        "y": 1212.140625,
+        "width": 366,
+        "height": 1081.875,
+        "scrollWidth": 364,
+        "columns": "332px",
+        "overflowX": "visible"
+      },
+      "map": {
+        "x": 14,
+        "y": 497.078125,
+        "width": 362,
+        "height": 424,
+        "scrollWidth": 362,
+        "columns": "none",
+        "overflowX": "visible"
+      },
+      "document": {
+        "width": 390,
+        "scrollWidth": 390
+      }
+    }
+  },
+  {
+    "action": "back-zone",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-01&lens=demand",
+    "readStatus": 200,
+    "zoneId": "HZ-01",
+    "label": "信義松仁生活圈",
+    "lens": "demand",
+    "geometry": {
+      "detail": {
+        "x": 12,
+        "y": 1616.140625,
+        "width": 366,
+        "height": 1114.921875,
+        "scrollWidth": 364,
+        "columns": "332px",
+        "overflowX": "visible"
+      },
+      "map": {
+        "x": 14,
+        "y": 901.078125,
+        "width": 362,
+        "height": 424,
+        "scrollWidth": 362,
+        "columns": "none",
+        "overflowX": "visible"
+      },
+      "document": {
+        "width": 390,
+        "scrollWidth": 390
+      }
+    }
+  },
+  {
+    "action": "forward-zone",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-02&lens=demand",
+    "readStatus": 200,
+    "zoneId": "HZ-02",
+    "label": "板橋府中生活圈",
+    "lens": "demand",
+    "geometry": {
+      "detail": {
+        "x": 12,
+        "y": 1616.140625,
+        "width": 366,
+        "height": 1081.875,
+        "scrollWidth": 364,
+        "columns": "332px",
+        "overflowX": "visible"
+      },
+      "map": {
+        "x": 14,
+        "y": 901.078125,
+        "width": 362,
+        "height": 424,
+        "scrollWidth": 362,
+        "columns": "none",
+        "overflowX": "visible"
+      },
+      "document": {
+        "width": 390,
+        "scrollWidth": 390
+      }
+    }
+  },
+  {
+    "action": "forward-lens",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-02&lens=fit",
+    "readStatus": 200,
+    "zoneId": "HZ-02",
+    "label": "板橋府中生活圈",
+    "lens": "fit",
+    "geometry": {
+      "detail": {
+        "x": 12,
+        "y": 1616.140625,
+        "width": 366,
+        "height": 1081.875,
+        "scrollWidth": 364,
+        "columns": "332px",
+        "overflowX": "visible"
+      },
+      "map": {
+        "x": 14,
+        "y": 901.078125,
+        "width": 362,
+        "height": 424,
+        "scrollWidth": 362,
+        "columns": "none",
+        "overflowX": "visible"
+      },
+      "document": {
+        "width": 390,
+        "scrollWidth": 390
+      }
+    }
+  },
+  {
+    "action": "reload-after-forward",
+    "url": "http://localhost:3310/operator?ws=network&hz=HZ-02&lens=fit",
+    "readStatus": 200,
+    "zoneId": "HZ-02",
+    "label": "板橋府中生活圈",
+    "lens": "fit",
+    "geometry": {
+      "detail": {
+        "x": 12,
+        "y": 1616.140625,
+        "width": 366,
+        "height": 1081.875,
+        "scrollWidth": 364,
+        "columns": "332px",
+        "overflowX": "visible"
+      },
+      "map": {
+        "x": 14,
+        "y": 901.078125,
+        "width": 362,
+        "height": 424,
+        "scrollWidth": 362,
+        "columns": "none",
+        "overflowX": "visible"
+      },
+      "document": {
+        "width": 390,
+        "scrollWidth": 390
+      }
+    }
+  }
+]

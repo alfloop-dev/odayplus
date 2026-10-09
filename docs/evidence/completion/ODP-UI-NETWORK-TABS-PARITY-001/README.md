@@ -358,6 +358,19 @@ inventory125-18 have original exit0 receipts. UUID shape is not identity/scope
 authorization; genuine provisioning, directory and server validation remain next.
 **Still not ready for full-scope resubmission.**
 
+## Find Areas reload-before-back verification increment
+
+[`findareas-history/README.md`](findareas-history/README.md) records anchor
+`2aab1ab8f48c`: current-source 1440/1024/390 reload-before-back, two back and two
+forward zone/lens restoration, then another reload. Six hydrated state captures
+per width check genuine local API labels/canvas and contained geometry, with no
+Network writes and unchanged backend snapshots. Baseline3/final3/focused32/
+lint/typecheck/boundaries/inventory125-18 original exits0; six scoped initial/
+search axe scans clear. The old1024 failure was not reproduced; **no product code
+or design repair is claimed**. Existing design-before-after pairs remain unchanged.
+Resource authority, remaining negative states/density and independent VDC/final
+verification remain open. **Not ready for full-scope resubmission.**
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
@@ -379,7 +392,8 @@ authorization; genuine provisioning, directory and server validation remain next
    expanded-plan geometry/scoped AA and durable/gate/reload proof are now in
    `rebalance-surface/`; further applicable negative/permission/conflict pairs remain. Find Areas baseline hierarchy, actual scoped
    data, keyboard and back/forward-before-reload proof are in `findareas-surface/`;
-   follow up reload-before-back stability and full-scope detail density. Radar full-tab/source-empty pairs, tablet/mobile
+   reload-before-back now has current-source local browser proof in
+   `findareas-history/`; follow up full-scope detail density and remaining states. Radar full-tab/source-empty pairs, tablet/mobile
    geometry, keyboard/scoped AA and real source/write gates are in `radar-surface/`;
    remaining applicable error/permission/conflict visual states still need evidence.
    Review full-tab pairs, tablet/mobile geometry,
