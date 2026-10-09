@@ -28,7 +28,7 @@ export function CandidatePanel({
   candidates: ScoringCandidate[];
   fallbackRows: CandidatePipelineRow[];
   onScore?: (candidateId: string) => void;
-  onScoreAll?: () => void;
+  onScoreAll?: (candidateIds: string[]) => void;
   onToggleCompare?: (candidateId: string) => void;
 }) {
   const rows = candidates.length ? candidates : fallbackRows.map(fallbackToCandidate);
@@ -94,6 +94,15 @@ export function CandidatePanel({
                 地圖
               </button>
             </div>
+            <button
+              className={styles.secondaryButton}
+              data-testid="candidate-score-all"
+              disabled={!!busyCandidateId || !onScoreAll || !rows.some((row) => row.gate.passed)}
+              onClick={() => onScoreAll?.(rows.filter((row) => row.gate.passed).map((row) => row.id))}
+              type="button"
+            >
+              {busyCandidateId === "batch" ? "批次評分中…" : "批次執行 SiteScore"}
+            </button>
           </aside>
 
           {viewMode === "board" ? (
@@ -243,16 +252,15 @@ function CandidateDetailPane({
   const isScored = candidate.scored;
   const isPassed = candidate.gate.passed;
   const tone = isScored ? recommendationTone(candidate.recommendation) : isPassed ? "watch" : "risk";
-  const checks = candidate.gate.checks.length
-    ? candidate.gate.checks
-    : [
-        { key: "address", label: "地址", state: isPassed ? "ok" : "fail", note: candidate.address },
-        { key: "geocode", label: "Geocode", state: isPassed ? "ok" : "fail", note: isPassed ? "0.94" : "0.61" },
-        { key: "rent", label: "租金", state: "ok", note: "NT$58,000" },
-        { key: "area", label: "坪數", state: "ok", note: "28 坪" },
-        { key: "floor", label: "樓層", state: "ok", note: "1F" },
-        { key: "hardRule", label: "硬規則", state: "ok", note: "3/3 通過" },
-      ];
+  const checks = candidate.gate.checks;
+  // Gate completeness is not evidence of a measured value or a passed hard
+  // rule. Reuse the authoritative per-dimension notes, never prototype facts.
+  const checkNote = (key: string) => {
+    const check = checks.find((item) => item.key === key);
+    if (!check) return "未提供";
+    const note = check.note || "未提供";
+    return check.state === "fail" ? `${note}（未通過）` : check.state === "warn" ? `${note}（待確認）` : note;
+  };
 
   return (
     <div className={styles.candidateDetailContent}>
@@ -268,7 +276,7 @@ function CandidateDetailPane({
           </ToneBadge>
         </div>
         <h3>{candidate.title}</h3>
-        <p className={styles.candidateSource}>↳ 來源 {candidate.listingId || "L-2024"}</p>
+        <p className={styles.candidateSource}>↳ 來源 {candidate.listingId || "未提供"}</p>
       </div>
 
       {isScored ? (
@@ -281,10 +289,11 @@ function CandidateDetailPane({
         <div className={styles.candidateGateHead}>
           <span>資料完整度 GATE</span>
           <span className={styles.candidateGateCount}>
-            {candidate.gate.okCount || (isPassed ? 6 : 1)}/{candidate.gate.totalCount || 6}
+            {candidate.gate.okCount}/{candidate.gate.totalCount}
           </span>
         </div>
         <ul className={styles.gateGrid} data-testid={`candidate-gate-checks-${candidate.id}`}>
+          {!checks.length ? <li className={styles.muted}>未提供逐項檢查記錄</li> : null}
           {checks.map((check) => (
             <li className={styles.gateRowItem} data-state={check.state} key={check.key}>
               <span className={styles.gateMark} aria-hidden="true">
@@ -313,55 +322,53 @@ function CandidateDetailPane({
         </div>
         <div className={styles.kvRow}>
           <span className={styles.kvKey}>Geocode</span>
-          <span className={styles.kvVal}>{isPassed ? "0.94（高）" : "0.61（中）— 待確認"}</span>
+          <span className={styles.kvVal}>{checkNote("geocode")}</span>
         </div>
         <div className={styles.kvRow}>
           <span className={styles.kvKey}>租金／坪數</span>
-          <span className={styles.kvVal}>NT$58,000 · 28 坪</span>
+          <span className={styles.kvVal}>{checkNote("rent")} · {checkNote("area")}</span>
         </div>
         <div className={styles.kvRow}>
           <span className={styles.kvKey}>樓層</span>
-          <span className={styles.kvVal}>1F</span>
+          <span className={styles.kvVal}>{checkNote("floor")}</span>
         </div>
         <div className={styles.kvRow}>
           <span className={styles.kvKey}>硬規則</span>
-          <span className={styles.kvVal} style={{ color: "#1e7f4f", fontWeight: 600 }}>
-            3/3 通過
-          </span>
+          <span className={styles.kvVal}>{checkNote("hardRule")}</span>
         </div>
         <div className={styles.kvRow}>
           <span className={styles.kvKey}>HeatZone</span>
           <span className={styles.kvVal} style={{ color: "#0e7c8c", fontWeight: 600 }}>
-            {candidate.zoneLabel || candidate.heatZoneId}（適配 高）
+            {candidate.zoneLabel || candidate.heatZoneId || "未提供"}
           </span>
         </div>
         <div className={styles.kvRow}>
           <span className={styles.kvKey}>距既有店</span>
-          <span className={styles.kvVal}>650m</span>
+          <span className={styles.kvVal}>未提供</span>
         </div>
         <div className={styles.kvRow}>
           <span className={styles.kvKey}>距競店</span>
-          <span className={styles.kvVal}>280m</span>
+          <span className={styles.kvVal}>未提供</span>
         </div>
         <div className={styles.kvRow}>
           <span className={styles.kvKey}>POI</span>
-          <span className={styles.kvVal}>捷運＋商辦＋住宅</span>
+          <span className={styles.kvVal}>未提供</span>
         </div>
         <div className={styles.kvRow}>
           <span className={styles.kvKey}>仲介聯絡</span>
-          <span className={styles.kvVal}>王仲介（已聯絡）</span>
+          <span className={styles.kvVal}>未提供</span>
         </div>
         <div className={styles.kvRow}>
           <span className={styles.kvKey}>現勘</span>
-          <span className={styles.kvVal}>{isPassed ? "已完成（6/28）" : "未排定"}</span>
+          <span className={styles.kvVal}>未提供</span>
         </div>
         <div className={styles.kvRow}>
           <span className={styles.kvKey}>Owner／期限</span>
-          <span className={styles.kvVal}>吳孟哲 · 7/25</span>
+          <span className={styles.kvVal}>未提供</span>
         </div>
         <div className={styles.kvRow}>
           <span className={styles.kvKey}>備註</span>
-          <span className={styles.kvVal}>住宅＋商辦混合，夜間洗烘需求強</span>
+          <span className={styles.kvVal}>未提供</span>
         </div>
       </div>
 
@@ -391,15 +398,16 @@ function CandidateDetailPane({
           <button
             className={styles.secondaryButton}
             data-testid={`candidate-detail-compare-${candidate.id}`}
+            disabled={busy || !isScored || !onToggleCompare}
             onClick={() => onToggleCompare?.(candidate.id)}
             type="button"
           >
             {candidate.inCompare ? "移出比較" : "加入比較"}
           </button>
-          <button className={styles.secondaryButton} type="button">
+          <button className={styles.secondaryButton} disabled title="尚未提供候選點編輯服務" type="button">
             編輯候選點
           </button>
-          <button className={styles.secondaryButton} type="button">
+          <button className={styles.secondaryButton} disabled title="尚未提供候選點封存服務" type="button">
             封存候選點
           </button>
         </div>
@@ -409,16 +417,7 @@ function CandidateDetailPane({
         <div className={styles.auditTitle}>AUDIT</div>
         <div className={styles.auditList}>
           <div className={styles.auditItem}>
-            <span className={styles.auditTime}>今日 06:10</span>
-            <span className={styles.auditBody}>
-              <strong>系統</strong> {isScored ? `執行 SiteScore 評分 (${candidate.score} ${candidate.recommendation})` : "資料完整度檢查"}
-            </span>
-          </div>
-          <div className={styles.auditItem}>
-            <span className={styles.auditTime}>昨日 14:20</span>
-            <span className={styles.auditBody}>
-              <strong>吳孟哲</strong> 從 Listing 建立候選點
-            </span>
+            <span className={styles.auditBody}>未提供候選點 audit 記錄</span>
           </div>
         </div>
       </div>

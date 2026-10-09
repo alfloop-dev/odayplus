@@ -641,6 +641,9 @@ export function NetworkFindAreasWorkspace({
   const searchParams = useSearchParams();
   const fixturesAllowed = operatorFixturesAllowed();
   const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId]);
+  // Presentation gate mirrors sitescore:EXECUTE for console personas. The API
+  // still derives durable grants; never substitute an expansion persona.
+  const canExecuteScoring = activeRoleId === "expansion-manager";
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
   const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
@@ -1093,7 +1096,9 @@ export function NetworkFindAreasWorkspace({
     busyId: string | null,
     idempotencyKey?: string,
   ) {
+    if (!canExecuteScoring || busyCandidateId || !scoringSnapshot) return false;
     setBusyCandidateId(busyId);
+    setNetworkApiError(null);
     try {
       const response = await fetch(`/api/v1/operator/network-scoring/${path}`, {
         method: "POST",
@@ -1103,7 +1108,7 @@ export function NetworkFindAreasWorkspace({
           ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
           ...NETWORK_OPERATOR_HEADERS,
         },
-        body: JSON.stringify({ ...NETWORK_ACTOR, ...body }),
+        body: JSON.stringify({ actorRoleId: activeRoleId, ...body }),
       });
       if (!response.ok) {
         setNetworkApiError(`network-scoring ${path} failed (${response.status})`);
@@ -1120,24 +1125,29 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function runSiteScore(candidateId: string) {
+    if (!scoringSnapshot?.candidates.some((candidate) => candidate.id === candidateId && candidate.gate.passed)) return;
     await postScoringAction(
       `candidates/${candidateId}/score`,
       {},
       candidateId,
-      `r4-006-score-${candidateId}`,
+      `network-score-${crypto.randomUUID()}`,
     );
   }
 
-  async function scoreAllCandidates() {
-    await postScoringAction("score", {}, "batch", "r4-006-score-batch");
+  async function scoreAllCandidates(candidateIds: string[]) {
+    const eligible = new Set(scoringSnapshot?.candidates.filter((candidate) => candidate.gate.passed).map((candidate) => candidate.id));
+    const selected = [...new Set(candidateIds)].filter((id) => eligible.has(id));
+    if (!selected.length) return;
+    await postScoringAction("score", { candidateIds: selected }, "batch", `network-batch-${crypto.randomUUID()}`);
   }
 
   async function toggleCompareCandidate(candidateId: string) {
-    const current = scoringSnapshot?.compareSet ?? [];
+    if (!scoringSnapshot?.candidates.some((candidate) => candidate.id === candidateId && candidate.scored)) return;
+    const current = scoringSnapshot.compareSet;
     const next = current.includes(candidateId)
       ? current.filter((id) => id !== candidateId)
       : [...current, candidateId];
-    await postScoringAction("compare", { candidateIds: next }, candidateId, `r4-006-compare-${candidateId}`);
+    await postScoringAction("compare", { candidateIds: next }, candidateId);
   }
 
   async function reloadRebalanceSnapshot() {
@@ -1610,9 +1620,9 @@ export function NetworkFindAreasWorkspace({
             busyCandidateId={busyCandidateId}
             candidates={scoringSnapshot?.candidates ?? []}
             fallbackRows={fixturesAllowed ? viewModel.candidatePipeline : []}
-            onScore={runSiteScore}
-            onScoreAll={scoreAllCandidates}
-            onToggleCompare={toggleCompareCandidate}
+            onScore={canExecuteScoring && scoringSnapshot ? runSiteScore : undefined}
+            onScoreAll={canExecuteScoring && scoringSnapshot ? scoreAllCandidates : undefined}
+            onToggleCompare={canExecuteScoring && scoringSnapshot ? toggleCompareCandidate : undefined}
           />
         ) : activeTab === 3 ? (
           <SiteScorePanel
@@ -1620,13 +1630,17 @@ export function NetworkFindAreasWorkspace({
             candidates={scoringSnapshot?.candidates ?? []}
             fallbackRows={fixturesAllowed ? viewModel.siteScoreLab : []}
             modelVersion={scoringSnapshot?.modelVersion}
-            onRescore={runSiteScore}
+            onRescore={canExecuteScoring && scoringSnapshot ? runSiteScore : undefined}
+            onScoreAll={canExecuteScoring && scoringSnapshot ? scoreAllCandidates : undefined}
+            onToggleCompare={canExecuteScoring && scoringSnapshot ? toggleCompareCandidate : undefined}
             scorecards={scoringSnapshot?.scorecards ?? []}
           />
         ) : activeTab === 4 ? (
           <ComparePanel
+            busyCandidateId={busyCandidateId}
             compare={scoringSnapshot?.compare ?? null}
             fallback={fixturesAllowed ? viewModel.compare : { columns: [], metrics: [] }}
+            onRemoveCandidate={canExecuteScoring && scoringSnapshot ? toggleCompareCandidate : undefined}
           />
         ) : activeTab === 5 ? (
           <ReviewPanel

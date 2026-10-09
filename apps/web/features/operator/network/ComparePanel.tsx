@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import styles from "../networkFindAreas.module.css";
 import type { NetworkCompareViewModel } from "../networkFindAreasViewModel";
 import {
@@ -13,24 +13,19 @@ import {
 // and the system recommendation card (primary / alternate / avoid / priority ranking / action buttons).
 
 export function ComparePanel({
+  busyCandidateId,
   compare,
   fallback,
   onRemoveCandidate,
   onSubmitReview,
 }: {
+  busyCandidateId?: string | null;
   compare: NetworkScoringCompare | null;
   fallback: NetworkCompareViewModel;
   onRemoveCandidate?: (candidateId: string) => void;
   onSubmitReview?: (candidateId: string) => void;
 }) {
   const hasScoringCompare = compare != null && !compare.empty;
-  const [actionFeedback, setActionFeedback] = useState<string | null>(null);
-
-  function handleActionNotice(msg: string) {
-    setActionFeedback(msg);
-    setTimeout(() => setActionFeedback(null), 3000);
-  }
-
   const primaryRec = compare?.recommendation?.primary;
   const alternateRec = compare?.recommendation?.alternate;
   const avoidRec = compare?.recommendation?.avoid;
@@ -65,12 +60,6 @@ export function ComparePanel({
             </div>
           </div>
 
-          {actionFeedback ? (
-            <div className={styles.toastNotice} role="status">
-              {actionFeedback}
-            </div>
-          ) : null}
-
           <div className={styles.compareWorkspace}>
             <section className={styles.compareMain}>
               <div className={styles.tableWrap}>
@@ -96,6 +85,7 @@ export function ComparePanel({
                                 <button
                                   aria-label={`移除 ${column.title}`}
                                   className={styles.compareRemoveBtn}
+                                  disabled={!!busyCandidateId}
                                   onClick={() => onRemoveCandidate(column.id)}
                                   type="button"
                                 >
@@ -151,15 +141,15 @@ export function ComparePanel({
                   ))}
                   <span className={styles.miniMapStorePin} style={{ left: "15%", top: "70%" }}>
                     <i className={styles.pinCircle} />
-                    <span>既有店 A</span>
+                    <span>既有店（示意）</span>
                   </span>
                   <span className={styles.miniMapStorePin} style={{ left: "85%", top: "40%" }}>
                     <i className={styles.pinCircle} />
-                    <span>既有店 B</span>
+                    <span>既有店（示意）</span>
                   </span>
                 </div>
                 <div className={styles.miniMapFooter}>
-                  <span>比較候選點與既有門市空間相對分佈</span>
+                  <span>位置示意 · 非實際座標／距離</span>
                 </div>
               </div>
             </section>
@@ -208,10 +198,9 @@ export function ComparePanel({
 
                 <button
                   className={styles.detailPrimaryButton}
-                  onClick={() => {
-                    if (primaryRec) onSubmitReview?.(primaryRec.id);
-                    handleActionNotice(`已將首選 ${primaryRec?.title} 送出選址審核（SiteScore Review）`);
-                  }}
+                  disabled={!!busyCandidateId || !primaryRec || !onSubmitReview}
+                  title={!onSubmitReview ? "尚未提供送審服務" : undefined}
+                  onClick={() => { if (primaryRec) onSubmitReview?.(primaryRec.id); }}
                   type="button"
                 >
                   送審首選（{primaryRec?.title ?? "最佳候選點"}）
@@ -221,7 +210,8 @@ export function ComparePanel({
                   {alternateRec ? (
                     <button
                       className={styles.secondaryButton}
-                      onClick={() => handleActionNotice(`已將 ${alternateRec.title} 保留為備選名單`)}
+                      disabled
+                      title="尚未提供備選狀態變更服務"
                       type="button"
                     >
                       保留 {alternateRec.title} 為備選
@@ -230,7 +220,8 @@ export function ComparePanel({
                   {avoidRec ? (
                     <button
                       className={styles.secondaryButton}
-                      onClick={() => handleActionNotice(`已將 ${avoidRec.title} 封存（On Hold）`)}
+                      disabled
+                      title="尚未提供候選點封存服務"
                       type="button"
                     >
                       封存 {avoidRec.title}
@@ -238,10 +229,11 @@ export function ComparePanel({
                   ) : null}
                   <button
                     className={styles.secondaryButton}
-                    onClick={() => handleActionNotice("已產生多點比較報告 preview（mock）")}
+                    disabled
+                    title="尚未提供報告產生服務"
                     type="button"
                   >
-                    產生比較報告 preview（mock）
+                    產生比較報告 preview
                   </button>
                 </div>
               </aside>
