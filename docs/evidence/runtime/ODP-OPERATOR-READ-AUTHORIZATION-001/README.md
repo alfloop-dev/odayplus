@@ -812,6 +812,92 @@ git diff --check 8ce5cb14d eac9c17dd
 New exact-head CI and independent review are required. No live grant,
 deployment, source/model/StoreOps action, gate waiver or F11 claim.
 
+## R8 producer-consumer scope repair — 2026-10-09
+
+Exact-head review of PR #1435 at `09dd3a28e` (base `963090d6f`) rejected two
+producer-consumer gaps. Both are repaired on implementation anchor `efcf86852`.
+
+**P2-1. Withheld HeatZone aggregates discarded authorized rows.**
+`project_listing_snapshot` deliberately returns `heatZones=[]` for combined
+brand/region/store/assigned-area scope while keeping the visible listings and
+candidates. `inspectNetworkListingsSnapshot` required nonempty HeatZones and
+listing sources, so the production workspace discarded the whole valid snapshot
+and Listing Radar showed nothing. Snapshot readiness now requires the API source,
+array-shaped collections and at least one authorized HeatZone, listing or
+candidate. Availability is per tab: `resolveNetworkFindAreasLoadState` makes Find
+Areas (which renders HeatZones) report a ready snapshot without zones as `empty`,
+with a detail naming the withheld aggregate; Listing Radar renders the scoped
+rows. Empty, malformed (non-array/non-API) and seed snapshots are still refused.
+
+**P2-2. Collection VIEW relaxation reached unprojected callers.**
+`collection_filters_in_scope` (partial-filter check) applied to every role, but
+only `operator_viewer` reads are projected per row on the complete scope. A
+`site_reviewer` restricted to `brand-a` + `HZ-01` could request
+`?selectedHeatZoneId=HZ-01` and receive same-zone `brand-b` intakes/counts or the
+unprojected snapshot. `collection_rows_are_scope_projected(principal)` is now the
+single predicate for both sides: `authorize_intake_action` relaxes collection
+filters only for it, and both `/network-listings` and `/network-listings/intake`
+project rows on the same predicate before counts and pagination. Every other
+caller keeps the complete-envelope `SCOPE_DENIED`.
+
+Regressions:
+- `tests/security/test_operator_read_authorization.py::test_partial_collection_filters_stay_denied_for_unprojected_callers`:
+  restricted reviewer refused on the partial filter (unit and both routes,
+  `SCOPE_DENIED`), still admitted with a complete `brand-a`+`HZ-01` envelope;
+  the operator viewer with the same scope gets only the `brand-a` intake/listing
+  (foreign-brand `brand-b` row projected out, counts `ready=1`, `needsReview=0`)
+  and `HZ-02` is refused.
+- `tests/security/test_operator_network_read_scope.py`: the R7 test
+  `test_selected_zone_read_admits_restricted_nonviewer_without_new_projection`
+  asserted the rejected leak (restricted non-viewer admitted on `HZ-01` with
+  unprojected counts). It is replaced by
+  `test_selected_zone_read_keeps_complete_envelope_denial_for_unprojected_nonviewer`:
+  `SCOPE_DENIED` on both collection routes for `HZ-01` and `HZ-02`, state
+  unchanged (anchor `280328523`).
+- `NetworkConsoleScopedSnapshot.test.tsx`: full production `OperatorConsole`
+  with a snapshot carrying 1 listing and withheld HeatZones: Find Areas shows the
+  `empty` gate with the withheld-aggregate detail, header `0 HeatZones / 1
+  listings`, no selection injected; `tab=radar` renders `Scoped Road 1`, no gate,
+  no fixture label.
+- `productionWorkspaceData.test.tsx`: withheld zones stay `ready`, all-empty,
+  missing collection and non-API source stay `empty`, seed stays `seed`;
+  `resolveNetworkFindAreasLoadState` maps only ready+0 zones to `empty`.
+
+A/B (repaired files restored afterwards, `git diff --stat` re-checked):
+`r8-ab-old-authorization.log` — new backend test against `09dd3a28e`'s
+`intake_authorization.py` + `network_listings.py`: 1 failed, exit 1.
+`r8-ab-old-workspace.log` — new Console test against `09dd3a28e`'s
+`NetworkFindAreasWorkspace.tsx`: 1 failed, exit 1.
+
+Commands (`uv` from `~/.local/bin`, Python 3.12 locked env). Web, ruff and
+boundary receipts ran on `efcf86852`; `280328523` changes only the Python test
+above. The final broad backend receipt ran on `280328523`:
+
+```sh
+PATH="$HOME/.local/bin:$PATH" \
+uv run --frozen --python 3.12 pytest -q -p no:cacheprovider <R6 broad set> \
+  --junitxml=r8b-scope.xml
+(cd apps/web && npx tsc --noEmit && npx vitest run features/operator)
+uv run --frozen ruff check <changed .py files>
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check 09dd3a28e 280328523
+```
+
+| Check | Exit | Result |
+| --- | --- | --- |
+| A/B backend (`r8-ab-old-authorization.log`) | 1 | 1 `FAILED` on old authorization |
+| A/B Console composition (`r8-ab-old-workspace.log`) | 1 | 1 `FAILED` on old workspace |
+| First broad run on `efcf86852` (`r8-scope.log/.xml/.exit`) — **not a passing receipt** | 1 | JUnit 837 tests, 5 failures: the stale R7 leak assertion above (fixed in `280328523`) and 4 supply-chain/lock tests that subprocess `uv`, which was not on that shell's `PATH` (`FileNotFoundError: 'uv'`) |
+| Final broad backend regression on `280328523` (`r8b-scope.log/.xml/.exit`) | 0 | JUnit 837 tests, 0 failures/errors/skips (1291 s) |
+| Web typecheck (`r8-typecheck.log`) | 0 | `tsc --noEmit` clean |
+| Operator vitest (`r8-vitest.log`) | 0 | 40 files, 402 tests passed |
+| Changed Python ruff (`r8-ruff.log`) | 0 | All checks passed |
+| `check_code_boundaries.py` (`r8-boundaries.log`) | 0 | inventory unchanged |
+| `git diff --check 09dd3a28e 280328523` | 0 | clean |
+
+New exact-head CI and independent review are required. No live grant,
+deployment, source/model/StoreOps action, gate waiver or F11 claim.
+
 ## Outstanding live acceptance (not completed here)
 
 After required CI, independent exact-head review, merge and admitted deployment,
