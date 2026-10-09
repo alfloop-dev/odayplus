@@ -19,6 +19,14 @@ export type LensDefinition = {
   description: string;
 };
 
+export type ZoneScoreTier = "high" | "mid" | "watch" | "low";
+
+export type ZoneDetailRow = {
+  key: string;
+  label: string;
+  value: string;
+};
+
 export type NetworkFindAreasZoneViewModel = {
   zone: OperatorHeatZone;
   id: string;
@@ -46,6 +54,14 @@ export type NetworkFindAreasZoneViewModel = {
   lifeLabel: string;
   lensScore: number;
   lensLabel: string;
+  /** Active lens score on the 0–100 scale the Package 10 cards print. */
+  lensPoints: number;
+  lensTier: ZoneScoreTier;
+  /** Composite (brand-fit) score, shown as 「HeatZone 綜合」. */
+  overallPoints: number;
+  /** Listings still open for sourcing: everything except archived/expired. */
+  availableListingCount: number;
+  detailRows: ZoneDetailRow[];
   listingCount: number;
   candidateCount: number;
   candidateSummary: string;
@@ -231,6 +247,11 @@ export type NetworkFindAreasViewModel = {
     averageConfidence: string;
     reviews: number;
     rebalances: number;
+    /** Package 10 header chips and tab badges (S05 nwVals). */
+    newListings: number;
+    activeCandidates: number;
+    pendingReviews: number;
+    openRebalances: number;
   };
 };
 
@@ -245,58 +266,60 @@ export type BuildNetworkFindAreasViewModelInput = {
   activeLens?: NetworkFindAreasLens;
 };
 
+// Package 10 lens chips (S05 nwAreas LENS): one Chinese label per lens, in the
+// design's order. `shortLabel` stays the English code for titles and logs.
 export const NETWORK_FIND_AREAS_LENSES: LensDefinition[] = [
   {
     id: "demand",
-    label: "Demand Gap",
+    label: "需求熱度",
     shortLabel: "Demand",
     description: "Unserved demand intensity",
   },
   {
     id: "fit",
-    label: "Brand Fit",
+    label: "Oday G2 適配",
     shortLabel: "Fit",
     description: "Composite demand and operating fit",
   },
   {
     id: "competition",
-    label: "Competition",
+    label: "競店壓力",
     shortLabel: "Comp",
     description: "Lower direct competition scores higher",
   },
   {
     id: "cannibalization",
-    label: "Cannibalization",
+    label: "自家稀釋",
     shortLabel: "Cann",
     description: "Lower overlap risk scores higher",
   },
   {
     id: "rent",
-    label: "Rent Band",
+    label: "租金可行性",
     shortLabel: "Rent",
     description: "Lease affordability within current area supply",
   },
   {
     id: "life",
-    label: "Life Signal",
+    label: "住宅／學區／商圈",
     shortLabel: "Life",
     description: "Local activity and neighborhood mix fallback",
   },
   {
     id: "traffic",
-    label: "Traffic",
+    label: "交通／人流",
     shortLabel: "Traffic",
     description: "Footfall and transit proxy",
   },
   {
     id: "unmet",
-    label: "Unmet Demand",
+    label: "未滿足需求",
     shortLabel: "Unmet",
     description: "Demand gap after competition pressure",
   },
   {
     id: "confidence",
-    label: "Confidence",
+    label: "資料信心",
     shortLabel: "Conf",
     description: "Model confidence and evidence coverage",
   },
@@ -315,6 +338,23 @@ const RISK_LABEL: Record<RiskLevel, string> = {
   high: "High",
   critical: "Critical",
 };
+
+const RISK_LABEL_ZH: Record<RiskLevel, string> = {
+  low: "低",
+  medium: "中",
+  high: "高",
+  critical: "極高",
+};
+
+// Candidates still being worked: not yet in review and not decided.
+const ACTIVE_CANDIDATE_STATUSES: ReadonlySet<Candidate["status"]> = new Set([
+  "missingdata",
+  "scoring",
+  "wait",
+  "ready",
+]);
+
+const CLOSED_LISTING_STATUSES: ReadonlySet<Listing["status"]> = new Set(["archived", "expired"]);
 
 const ROLE_LABEL: Record<OperatorRoleId, string> = {
   opsLead: "營運主管",
@@ -455,6 +495,10 @@ export function buildNetworkFindAreasViewModel({
       listings: listings.length,
       rebalances: rebalanceStores.length,
       reviews: siteReviews.length,
+      newListings: listings.filter((listing) => listing.status === "new").length,
+      activeCandidates: candidates.filter((candidate) => ACTIVE_CANDIDATE_STATUSES.has(candidate.status)).length,
+      pendingReviews: siteReviews.filter((review) => review.status === "pending").length,
+      openRebalances: rebalanceStores.filter((store) => store.status !== "closed").length,
     },
     zones: zoneModels,
   };
@@ -733,6 +777,21 @@ function buildZoneViewModel({
   const mapPosition = coordinatePosition(zone, bounds);
   const bestCandidate = [...candidates].sort((left, right) => right.score - left.score)[0];
   const mapTone = zone.cannibalizationRisk === "high" || zone.cannibalizationRisk === "critical" ? "risk" : lensScore >= 0.72 ? "good" : "watch";
+  const lensPoints = Math.round(lensScore * 100);
+  const availableListingCount = listings.filter((listing) => !CLOSED_LISTING_STATUSES.has(listing.status)).length;
+  const detailRows: ZoneDetailRow[] = [
+    { key: "demand", label: "需求缺口", value: levelWithPercent(demandGap) },
+    { key: "competition", label: "競店壓力", value: levelWithPercent(competitionIndex) },
+    {
+      key: "cannibalization",
+      label: "自家稀釋",
+      value: RISK_LABEL_ZH[zone.cannibalizationRisk] ?? zone.cannibalizationRisk,
+    },
+    { key: "rentBand", label: "租金帶", value: zone.rentBand },
+    { key: "rentFeasibility", label: "租金可行性", value: levelWithPercent(rentScore) },
+    { key: "listings", label: "可用物件", value: `${availableListingCount} 筆` },
+    { key: "confidence", label: "資料信心", value: confidence !== null ? levelWithPercent(confidence) : "未評估" },
+  ];
 
   return {
     bestCandidate,
@@ -754,7 +813,12 @@ function buildZoneViewModel({
     id: zone.id,
     label: zone.label,
     lensLabel: formatPercent(lensScore),
+    lensPoints,
     lensScore,
+    lensTier: scoreTier(lensPoints),
+    overallPoints: Math.round(fitScore * 100),
+    availableListingCount,
+    detailRows,
     lifeLabel: formatPercent(lifeScore),
     lifeScore,
     listingCount: listings.length,
@@ -775,6 +839,19 @@ function buildZoneViewModel({
     unmetScore,
     zone,
   };
+}
+
+/** Package 10 colour bands: ≥80 teal, 70–79 indigo, 60–69 amber, below red. */
+export function scoreTier(points: number): ZoneScoreTier {
+  if (points >= 80) return "high";
+  if (points >= 70) return "mid";
+  if (points >= 60) return "watch";
+  return "low";
+}
+
+function levelWithPercent(value: number) {
+  const level = value >= 0.7 ? "高" : value >= 0.4 ? "中" : "低";
+  return `${level}（${formatPercent(value)}）`;
 }
 
 function lensValue(

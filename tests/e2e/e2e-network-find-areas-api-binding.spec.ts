@@ -38,10 +38,12 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     const workspace = page.getByTestId("network-find-areas-workspace");
     await expect(workspace).toBeVisible();
 
-    // The header should show summary counts.
-    await expect(workspace.getByText(/^\d+ HeatZones$/i)).toBeVisible();
-    await expect(workspace.getByText(/^\d+ listings$/i)).toBeVisible();
-    await expect(workspace.getByText(/^\d+ candidates$/i)).toBeVisible();
+    // The header shows the four Package 10 KPI chips.
+    const stats = workspace.getByTestId("network-header-stats");
+    await expect(stats.getByRole("listitem")).toHaveCount(4);
+    for (const label of ["今日新物件", "進行中候選", "待審 Review", "重配候選"]) {
+      await expect(stats.getByText(label)).toBeVisible();
+    }
   });
 
   test("Network workspace shows fixture data indicator when API is unavailable", async ({
@@ -108,6 +110,8 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     await expect(findAreasPanel).toBeVisible();
     // Zone markers should exist in the map canvas.
     const mapCanvas = findAreasPanel.getByTestId("heat-zone-map");
-    await expect(mapCanvas).toBeVisible();
+    // The map is its own deck.gl/MapLibre chunk; a dev-server first load takes
+    // well over the 5s default (8-18s measured locally on dev as well).
+    await expect(mapCanvas).toBeVisible({ timeout: 30_000 });
   });
 });

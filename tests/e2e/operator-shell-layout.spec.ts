@@ -264,3 +264,155 @@ test.describe("Operator shared header layout", () => {
     expect(withoutContent).toEqual(withContent);
   });
 });
+
+/**
+ * Network 找區域 against Package 10 S05 (audit content-parity-20261009 and
+ * ODP-UI-NETWORK-FIND-AREAS-PARITY-001). Design reference at 1440: one header
+ * row, tabs 212px below the header, a 206 / 836 / 330 grid, a 426px map with
+ * the tray directly under it, nine single-line lenses, and a zone detail with
+ * a big score, a fact table, why/risk lists, a next-step box and 1 + 5 actions.
+ */
+test.describe("Network Find Areas Package 10 layout", () => {
+  async function openFindAreas(page: Page, width: number) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript(() => window.sessionStorage.setItem("oday.operator.role", "expansion-manager"));
+    await page.goto("/operator?ws=network");
+    await expect(page.getByTestId("find-areas-zone-detail")).toBeVisible({ timeout: 30_000 });
+  }
+
+  test("1440px geometry matches the design grid", async ({ page }) => {
+    await openFindAreas(page, 1440);
+    const g = await page.evaluate(() => {
+      const box = (selector: string) => {
+        const element = document.querySelector<HTMLElement>(selector);
+        if (!element) throw new Error(`missing ${selector}`);
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y + window.scrollY, w: rect.width, h: rect.height, bottom: rect.bottom + window.scrollY };
+      };
+      const header = box('[data-testid="network-header"]');
+      const headerParts = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="network-header"] > h2, [data-testid="network-header"] > p, [data-testid="network-header-stats"] > li'),
+      ).map((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.y + rect.height / 2;
+      });
+      const panel = document.querySelector<HTMLElement>('[data-testid="network-panel-find-areas"]')!;
+      const lensButtons = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="find-areas-lens-list"] button'));
+      const actions = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="find-areas-zone-actions"] button'));
+      const tray = box('[data-testid="find-areas-tray"]');
+      return {
+        actions: actions.map((button) => ({ text: button.textContent, bg: getComputedStyle(button).backgroundColor })),
+        bigScoreFont: getComputedStyle(document.querySelector('[data-testid="find-areas-zone-score"]')!).fontSize,
+        columns: Array.from(panel.children).map((child) => Math.round(child.getBoundingClientRect().width)),
+        docScrollWidth: document.documentElement.scrollWidth,
+        factRows: document.querySelectorAll('[data-testid="find-areas-zone-facts"] > div').length,
+        header,
+        headerCenters: headerParts,
+        headerText: document.querySelector('[data-testid="network-header"]')!.textContent,
+        lensHeights: lensButtons.map((button) => Math.round(button.getBoundingClientRect().height)),
+        lensTexts: lensButtons.map((button) => button.textContent),
+        legend: document.querySelector('[aria-labelledby="find-areas-legend-title"]')!.textContent,
+        map: box('[data-testid="find-areas-map-frame"]'),
+        panelX: panel.getBoundingClientRect().x,
+        tabBadge: document.querySelector('[data-testid^="network-tab-count-"]')?.textContent ?? null,
+        tabs: box('[aria-label="Network tabs"]'),
+        trayHeadingY: box("#find-areas-tray-title").y,
+        trayY: tray.y,
+      };
+    });
+
+    expect(g.docScrollWidth).toBeLessThanOrEqual(1440);
+    // One header row: title, summary and four chips share a centre line.
+    expect(g.header.h).toBeLessThanOrEqual(44);
+    expect(g.headerCenters).toHaveLength(6);
+    for (const center of g.headerCenters) expect(Math.abs(center - g.headerCenters[0])).toBeLessThanOrEqual(4);
+    expect(g.headerText).not.toMatch(/HeatZones|listings|avg confidence|NETWORK/);
+    // Tabs sit right under header + stepper (design: 212px below the header top).
+    expect(g.tabs.y - g.header.y).toBeLessThanOrEqual(215);
+    expect(g.tabBadge).toMatch(/^[1-9]\d*$/);
+    // 206 / 836 / 330 with 14px gaps from the 20px content edge.
+    expect(Math.round(g.panelX)).toBe(20);
+    expect(g.columns).toEqual([206, 836, 330]);
+    // 426px map, tray heading right under it — no dead band.
+    expect(Math.round(g.map.h)).toBe(426);
+    expect(g.trayHeadingY - g.map.bottom).toBeLessThanOrEqual(12);
+    expect(g.trayY).toBeGreaterThan(g.map.bottom);
+    // Nine single-line Chinese lenses.
+    expect(g.lensTexts).toEqual([
+      "需求熱度", "Oday G2 適配", "競店壓力", "自家稀釋", "租金可行性", "住宅／學區／商圈", "交通／人流", "未滿足需求", "資料信心",
+    ]);
+    for (const height of g.lensHeights) expect(height).toBeLessThanOrEqual(34);
+    expect(g.legend).toContain("HeatZone ≥ 80");
+    expect(g.legend).not.toMatch(/High lens fit|Watch tradeoff|Risk pressure/);
+    // Zone detail: 22px score, seven facts, one filled primary and five outlined actions.
+    expect(g.bigScoreFont).toBe("22px");
+    expect(g.factRows).toBe(7);
+    expect(g.actions).toHaveLength(6);
+    expect(g.actions[0].bg).toBe("rgb(46, 58, 151)");
+    for (const action of g.actions.slice(1)) expect(action.bg).not.toBe("rgb(46, 58, 151)");
+  });
+
+  test("map draws the offline basemap under a lens caption without developer strings", async ({ page }) => {
+    await openFindAreas(page, 1440);
+    const status = page.getByTestId("heat-zone-map-status");
+    await expect(status).toHaveText(/^HeatZone Lens：需求熱度 · /, { timeout: 30_000 });
+    await expect(status).not.toHaveText(/snap-|network-ops-local|MapLibre|layers/);
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const map = window.__odpMaplibreMap;
+            return map?.isStyleLoaded() ? map.getStyle().layers.map((layer: { id: string }) => layer.id) : [];
+          }),
+        { timeout: 30_000 },
+      )
+      .toEqual(expect.arrayContaining(["odp-schematic-river", "odp-schematic-road", "odp-local-heatzone-fill"]));
+
+    await page.getByRole("button", { name: "資料信心" }).click();
+    await expect(status).toHaveText(/^HeatZone Lens：資料信心 · /);
+    await expect(page.getByText("依「資料信心」排序")).toBeVisible();
+  });
+
+  test("390px stacks lens, map and zone detail inside the viewport", async ({ page }) => {
+    await openFindAreas(page, 390);
+    const g = await page.evaluate(() => {
+      const rect = (selector: string) => document.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
+      const panel = document.querySelector<HTMLElement>('[data-testid="network-panel-find-areas"]')!;
+      const limit = document.documentElement.clientWidth + 0.5;
+      const insideScroller = (element: Element) => {
+        for (let node = element.parentElement; node && node !== panel; node = node.parentElement) {
+          if (["auto", "scroll"].includes(getComputedStyle(node).overflowX)) return true;
+        }
+        return false;
+      };
+      return {
+        detailTop: rect('[data-testid="find-areas-zone-detail"]').top,
+        docScrollWidth: document.documentElement.scrollWidth,
+        lensBottom: rect('[data-testid="find-areas-lens-list"]').bottom,
+        lensScrolls: getComputedStyle(document.querySelector('[data-testid="find-areas-lens-list"]')!).overflowX,
+        mapBottom: rect('[data-testid="find-areas-map-frame"]').bottom,
+        mapTop: rect('[data-testid="find-areas-map-frame"]').top,
+        offscreen: Array.from(panel.querySelectorAll("*"))
+          .filter((element) => element.getBoundingClientRect().width > 0)
+          .filter((element) => element.getBoundingClientRect().right > limit && !insideScroller(element))
+          .map((element) => element.tagName + "." + String(element.className).slice(0, 40)),
+        trayTop: rect('[data-testid="find-areas-tray"]').top,
+      };
+    });
+    expect(g.docScrollWidth).toBeLessThanOrEqual(390);
+    expect(g.offscreen).toEqual([]);
+    expect(g.lensScrolls).toBe("auto");
+    expect(g.mapTop).toBeGreaterThan(g.lensBottom);
+    expect(g.detailTop).toBeGreaterThan(g.mapBottom);
+    expect(g.trayTop).toBeGreaterThan(g.detailTop);
+  });
+
+  test("從網址新增物件 opens the intake dialog pre-set to the selected zone", async ({ page }) => {
+    await openFindAreas(page, 1440);
+    await page.getByRole("button", { name: "＋ 從網址新增物件（帶入本區）" }).click();
+    await expect(page.getByTestId("intake-url-input")).toBeVisible({ timeout: 30_000 });
+    await expect(page).toHaveURL(/tab=radar/);
+    await expect(page).toHaveURL(/dialog=add/);
+    await expect(page.getByTestId("intake-area-select")).toHaveValue("HZ-01");
+  });
+});
