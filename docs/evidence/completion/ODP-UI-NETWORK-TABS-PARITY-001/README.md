@@ -297,6 +297,22 @@ inventory125-18 original exits0. Controlled HTTP outcomes **are not backend dura
 proof**. Genuine generation/preview/decision/reload, other negative pairs, Intake
 resource authority and independent VDC scope remain open. **Not ready to resubmit.**
 
+## Spatial genuine API / SQLite increment
+
+[`spatial-durable/README.md`](spatial-durable/README.md) records before `b0b88e97d900`,
+contrast repair `cfe2df48f43d` and final verified source `153d3702e528`.
+Actual mounted generation/preview/approve/reject and browser reload now have
+1440/390 before-after captures, independent SQLite process readbacks, exact
+operator/reason/model/policy records, repeated-decision422 and audit-chain proof.
+Input history and matured inventory are explicitly test-generated, not live data
+readiness. Genuine rejection text exposed a missed AA contrast defect; both
+baseline violations are retained and all12 final scoped scans clear. Final isolated
+SQL browser4, controlled regression9, focused50/fullweb785, lint/typecheck/ruff/
+boundaries/inventory125-18 pass with original exit receipts; setup failures and
+missing-uv API-suite receipt remain. This does not prove PostgreSQL/live deployment,
+production WORM/auth, full server restart, split readiness or independent VDC.
+**Still not ready for full-scope resubmission.**
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
@@ -310,8 +326,10 @@ resource authority and independent VDC scope remain open. **Not ready to resubmi
    states and full-scope detail density review.
    Preserve VDC-001 conditional controls, conflict input preservation and receipts.
 2. Spatial baseline/later-spec integration is now recorded in `spatial-surface/`;
-   complete genuine generation/preview/decision/readback, split and modal/permission/
-   error state evidence (controlled reads alone are not durable acceptance), plus
+   local generated-history mounted generation/preview/decision/readback now has
+   SQLite persistence/audit proof in `spatial-durable/`. Complete applicable split
+   and modal/permission/error state evidence; never substitute the test maturity
+   seam for release-bound live readiness or PostgreSQL acceptance. Also complete
    remaining batch write/error/empty states. Rebalance initial/AVM/selected-blocked baseline,
    expanded-plan geometry/scoped AA and durable/gate/reload proof are now in
    `rebalance-surface/`; further applicable negative/permission/conflict pairs remain. Find Areas baseline hierarchy, actual scoped

@@ -1,0 +1,6 @@
+[WebServer] 2026/10/09 21:32:18 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 21:32:21 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 21:32:21 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] ERROR:    Error loading ASGI app factory: build_persistence() got an unexpected keyword argument 'worm_sink'
+Error: Process from config.webServer was not able to start. Exit code: 3
+

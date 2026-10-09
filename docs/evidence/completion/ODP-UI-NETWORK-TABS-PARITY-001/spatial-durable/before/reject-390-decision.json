@@ -1,0 +1,41 @@
+{
+  "status": 200,
+  "request": {
+    "reason": "本地 SQLite reject 390 決策；測試生成歷史，不是正式上線核准。"
+  },
+  "readback": {
+    "proposal_id": "a0785f67-a2b9-40ba-ba69-1a558d1d509f",
+    "zone_id": "MZ-ca05c0859cfe5762",
+    "tenant_id": "tenant-a",
+    "composition_kind": "MERGED",
+    "member_cell_ids": [
+      "cell-taipei-00",
+      "cell-taipei-01"
+    ],
+    "member_count": 2,
+    "parent_zone_id": null,
+    "ndcg_gain": 0.0761,
+    "cannibalization_variance_reduction": 0.4887,
+    "correlation_rho": 0.9983,
+    "disconnect_index": 0.0544,
+    "split_density_ratio": null,
+    "child_partitions": [],
+    "child_zone_ids": [],
+    "confidence": 0.972,
+    "model_version": "heatzone-composition-v1",
+    "policy_version_id": "heatzone-merge-v1:tenant-a",
+    "status": "REJECTED",
+    "reasons": [
+      "demand_correlation_over_8_shared_periods",
+      "demand_continuous_across_boundary",
+      "counterfactual_ndcg_outperformance",
+      "cannibalization_variance_reduced_under_joint_model",
+      "source_snapshot:pg16-production-model-inventory-2027-04-01-v1"
+    ],
+    "warnings": [],
+    "created_at": "2026-10-09T21:26:10.761752+00:00",
+    "approved_by": "spatial-durable-reject-390",
+    "approved_at": "2026-10-09T21:26:16.496243+00:00",
+    "rejection_reason": "本地 SQLite reject 390 決策；測試生成歷史，不是正式上線核准。"
+  }
+}

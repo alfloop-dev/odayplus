@@ -1,0 +1,107 @@
+{
+  "audit_chain": {
+    "issues": [],
+    "ok": true
+  },
+  "compositions": [
+    {
+      "composition_id": "f01a7ab7-bccb-4334-8358-890147dbf822",
+      "composition_kind": "MERGED",
+      "created_at": "2026-10-09T21:33:23.848267+00:00",
+      "decided_at": "2026-10-09T21:33:23.848267+00:00",
+      "decided_by": "spatial-durable-approve-1440",
+      "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+      "is_active": true,
+      "member_cell_id": "cell-taipei-00",
+      "model_version": "heatzone-composition-v1",
+      "override_reason": "本地 SQLite approve 1440 決策；測試生成歷史，不是正式上線核准。",
+      "parent_zone_id": null,
+      "reverted_at": null,
+      "tenant_id": "tenant-a",
+      "zone_id": "MZ-ca05c0859cfe5762"
+    },
+    {
+      "composition_id": "d86169c9-5b2b-498b-aa33-7bd783529995",
+      "composition_kind": "MERGED",
+      "created_at": "2026-10-09T21:33:23.848267+00:00",
+      "decided_at": "2026-10-09T21:33:23.848267+00:00",
+      "decided_by": "spatial-durable-approve-1440",
+      "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+      "is_active": true,
+      "member_cell_id": "cell-taipei-01",
+      "model_version": "heatzone-composition-v1",
+      "override_reason": "本地 SQLite approve 1440 決策；測試生成歷史，不是正式上線核准。",
+      "parent_zone_id": null,
+      "reverted_at": null,
+      "tenant_id": "tenant-a",
+      "zone_id": "MZ-ca05c0859cfe5762"
+    }
+  ],
+  "events": [
+    {
+      "action": "approve",
+      "actor": "spatial-durable-approve-1440",
+      "correlation_id": "corr-hz006-proposal-approve-02cacfae-c862-45c9-b59d-1e272d0a4d10",
+      "event_id": "98c62595-5f6c-499e-84b1-e0636944a7e1",
+      "event_type": "heatzone.composition.proposal.approved.v1",
+      "integrity": {
+        "event_hash": "364cfff4362d698398c60687ce11b6c09e042550e9b7be04b78186f21c3e5ab7",
+        "previous_hash": "e491981e77b278a7586ae8af472a99e4d6af24b7978a291c909fdf2672fc195d",
+        "sequence": 17,
+        "signature_alg": "sha256-hash-chain",
+        "signature_key_id": "odp-audit-hash-chain-key-v1",
+        "signature_version": "2026-07-15.v1",
+        "worm_sink_id": "file:///tmp/network-spatial-durable-run-20261009-08/audit-worm"
+      },
+      "job_id": null,
+      "metadata": {
+        "created_count": 2,
+        "decided_by": "spatial-durable-approve-1440",
+        "notes": "本地 SQLite approve 1440 決策；測試生成歷史，不是正式上線核准。",
+        "proposal_id": "02cacfae-c862-45c9-b59d-1e272d0a4d10",
+        "zone_id": "MZ-ca05c0859cfe5762"
+      },
+      "occurred_at": "2026-10-09T21:33:23.851219+00:00",
+      "outcome": "approved",
+      "resource": "heatzone/proposals/02cacfae-c862-45c9-b59d-1e272d0a4d10",
+      "result": "approved"
+    }
+  ],
+  "evidence_mode": "local-sqlite-generated-history-not-live",
+  "fresh_process": true,
+  "proposal": {
+    "approved_at": "2026-10-09T21:33:23.848267+00:00",
+    "approved_by": "spatial-durable-approve-1440",
+    "cannibalization_variance_reduction": 0.4887,
+    "child_partitions": [],
+    "child_zone_ids": [],
+    "composition_kind": "MERGED",
+    "confidence": 0.972,
+    "correlation_rho": 0.9983,
+    "created_at": "2026-10-09T21:33:14.852496+00:00",
+    "disconnect_index": 0.0544,
+    "member_cell_ids": [
+      "cell-taipei-00",
+      "cell-taipei-01"
+    ],
+    "member_count": 2,
+    "model_version": "heatzone-composition-v1",
+    "ndcg_gain": 0.0761,
+    "parent_zone_id": null,
+    "policy_version_id": "heatzone-merge-v1:tenant-a",
+    "proposal_id": "02cacfae-c862-45c9-b59d-1e272d0a4d10",
+    "reasons": [
+      "demand_correlation_over_8_shared_periods",
+      "demand_continuous_across_boundary",
+      "counterfactual_ndcg_outperformance",
+      "cannibalization_variance_reduced_under_joint_model",
+      "source_snapshot:pg16-production-model-inventory-2027-04-01-v1"
+    ],
+    "rejection_reason": null,
+    "split_density_ratio": null,
+    "status": "APPROVED",
+    "tenant_id": "tenant-a",
+    "warnings": [],
+    "zone_id": "MZ-ca05c0859cfe5762"
+  }
+}

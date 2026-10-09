@@ -1,0 +1,33 @@
+{
+  "box": {
+    "x": 20,
+    "y": 283.234375,
+    "width": 350,
+    "height": 333.53125,
+    "scrollWidth": 350
+  },
+  "controls": [
+    {
+      "x": 36,
+      "y": 470.203125,
+      "width": 318,
+      "height": 78.421875,
+      "scrollWidth": 316
+    },
+    {
+      "x": 161,
+      "y": 562.625,
+      "width": 60,
+      "height": 38.140625,
+      "scrollWidth": 58
+    },
+    {
+      "x": 229,
+      "y": 562.625,
+      "width": 125,
+      "height": 38.140625,
+      "scrollWidth": 123
+    }
+  ],
+  "documentWidth": 390
+}

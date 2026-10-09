@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal '02cacfae-c862-45c9-b59d-1e272d0a4d10' is already APPROVED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal '02cacfae-c862-45c9-b59d-1e272d0a4d10' is already APPROVED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-09T21:33:28.787Z",
+      "details": [],
+      "correlation_id": "d24898dc-1984-4e99-af0a-570b9bd77cfd"
+    }
+  }
+}

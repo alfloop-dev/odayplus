@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal '40b84d83-d893-4c08-9502-35b47b500fa5' is already REJECTED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal '40b84d83-d893-4c08-9502-35b47b500fa5' is already REJECTED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-09T21:25:38.465Z",
+      "details": [],
+      "correlation_id": "e9eeb23c-736f-463d-9413-cdac8914874a"
+    }
+  }
+}

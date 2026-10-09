@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal '364b99c4-462b-40e1-b817-257759adaaf8' is already APPROVED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal '364b99c4-462b-40e1-b817-257759adaaf8' is already APPROVED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-09T21:25:59.243Z",
+      "details": [],
+      "correlation_id": "033dc123-2c5f-493d-81c1-dc5c3f17194e"
+    }
+  }
+}

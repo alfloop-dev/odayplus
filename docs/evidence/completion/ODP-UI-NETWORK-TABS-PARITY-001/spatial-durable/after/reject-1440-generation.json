@@ -1,0 +1,256 @@
+{
+  "tenant_id": "tenant-a",
+  "abstained": false,
+  "abstain_reasons": [],
+  "readiness": {
+    "eligible": true,
+    "reasons": [],
+    "metrics": {
+      "observation_days": 224,
+      "mature_labels_count": 240,
+      "active_store_count": 106,
+      "adjacent_pairs_count": 30,
+      "metro_clusters_count": 2,
+      "spatial_contiguity_ratio": 1,
+      "absorption_ratio_cv": 0.09924007179643932,
+      "drift_psi": 0,
+      "wasserstein_distance": 0.00048815917968750245,
+      "outcome_period_count": 8,
+      "basis_source_id_count": 256,
+      "source_snapshot_id": "pg16-production-model-inventory-2027-04-01-v1",
+      "source_snapshot_sha256": "af227f60c929fa990fd54f7af5488baff139fb309eac69a5844cfa2cd41e48b2",
+      "governed_disabled": false
+    },
+    "checked_at": "2026-10-09T21:33:34.364526+00:00"
+  },
+  "proposals": [
+    {
+      "proposal_id": "5e971f6f-3a09-4320-adfa-dba71438e940",
+      "zone_id": "MZ-ca05c0859cfe5762",
+      "tenant_id": "tenant-a",
+      "composition_kind": "MERGED",
+      "member_cell_ids": [
+        "cell-taipei-00",
+        "cell-taipei-01"
+      ],
+      "member_count": 2,
+      "parent_zone_id": null,
+      "ndcg_gain": 0.0761,
+      "cannibalization_variance_reduction": 0.4887,
+      "correlation_rho": 0.9983,
+      "disconnect_index": 0.0544,
+      "split_density_ratio": null,
+      "child_partitions": [],
+      "confidence": 0.972,
+      "model_version": "heatzone-composition-v1",
+      "policy_version_id": "heatzone-merge-v1:tenant-a",
+      "reasons": [
+        "demand_correlation_over_8_shared_periods",
+        "demand_continuous_across_boundary",
+        "counterfactual_ndcg_outperformance",
+        "cannibalization_variance_reduced_under_joint_model",
+        "source_snapshot:pg16-production-model-inventory-2027-04-01-v1"
+      ],
+      "warnings": []
+    }
+  ],
+  "proposal_count": 1,
+  "declined_candidates": [
+    {
+      "candidate": "cell-kaohsiung-00+cell-kaohsiung-01",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-01+cell-kaohsiung-02",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-02+cell-kaohsiung-03",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-03+cell-kaohsiung-04",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-04+cell-kaohsiung-05",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-05+cell-kaohsiung-06",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-06+cell-kaohsiung-07",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-07+cell-kaohsiung-08",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-08+cell-kaohsiung-09",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-09+cell-kaohsiung-10",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-10+cell-kaohsiung-11",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-11+cell-kaohsiung-12",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-12+cell-kaohsiung-13",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2500 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-13+cell-kaohsiung-14",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2499 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-kaohsiung-14+cell-kaohsiung-15",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.2499 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-01+cell-taipei-02",
+      "kind": "MERGED",
+      "reason": "demand_disconnect_above_threshold: 0.4958 > 0.2000",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-02+cell-taipei-03",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-03+cell-taipei-04",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-04+cell-taipei-05",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-05+cell-taipei-06",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-06+cell-taipei-07",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-07+cell-taipei-08",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-08+cell-taipei-09",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-09+cell-taipei-10",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-10+cell-taipei-11",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-11+cell-taipei-12",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-12+cell-taipei-13",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-13+cell-taipei-14",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    },
+    {
+      "candidate": "cell-taipei-14+cell-taipei-15",
+      "kind": "MERGED",
+      "reason": "correlation_below_threshold: -0.8000 < 0.7500",
+      "paired_periods": 8
+    }
+  ],
+  "evidence": {
+    "tenant_id": "tenant-a",
+    "snapshot": {
+      "inventory_version": "pg16-production-model-inventory-2027-04-01-v1",
+      "content_sha256": "af227f60c929fa990fd54f7af5488baff139fb309eac69a5844cfa2cd41e48b2",
+      "observed_at": "2027-04-01T00:00:00Z",
+      "relation": "model_ready.heatzone_training_view",
+      "view_version": "heatzone-training-view-v2",
+      "observed_count": 260,
+      "eligible_count": 240,
+      "minimum_rows": 200,
+      "auto_seeded": false,
+      "governed_disabled": false
+    },
+    "cell_count": 32,
+    "adjacency_edge_count": 30,
+    "existing_zone_count": 0,
+    "assembled_at": "2026-10-09T21:33:34.363418+00:00"
+  },
+  "evaluated_at": "2026-10-09T21:33:34.363431+00:00",
+  "model_version": "heatzone-composition-v1",
+  "policy_version_id": "heatzone-merge-v1:tenant-a"
+}
