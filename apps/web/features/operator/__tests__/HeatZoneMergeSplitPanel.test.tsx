@@ -174,6 +174,56 @@ describe("HeatZoneMergeSplitPanel", () => {
     expect(children).toHaveTextContent("核准一次即同時建立以上全部子熱區");
   });
 
+  it("keeps detail inside the selected filter", () => {
+    render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal, { ...splitProposal, status: "REJECTED" }]} />);
+    fireEvent.click(screen.getByTestId(`proposal-item-${sampleProposal.proposal_id}`));
+    fireEvent.change(screen.getByTestId("proposal-status-filter"), { target: { value: "REJECTED" } });
+    expect(screen.getByTestId("proposal-detail")).toHaveTextContent(splitProposal.zone_id);
+    expect(screen.queryByTestId("btn-open-approve")).not.toBeInTheDocument();
+  });
+
+  it("disables unavailable callbacks and exposes source warnings/zeros", () => {
+    render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[{ ...sampleProposal, ndcg_gain: 0, warnings: ["boundary-review-required"] }]} />);
+    expect(screen.getByTestId("btn-preview-proposal")).toBeDisabled();
+    expect(screen.getByTestId("btn-open-approve")).toBeDisabled();
+    expect(screen.getByTestId("btn-open-reject")).toBeDisabled();
+    expect(screen.getByText("boundary-review-required")).toBeVisible();
+    expect(screen.getByText("+0.00%")).toBeVisible();
+    expect(screen.getByTestId(`proposal-item-${sampleProposal.proposal_id}`)).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows null preview as an error, not success", async () => {
+    render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal]} onPreviewProposal={vi.fn().mockResolvedValue(null)} />);
+    fireEvent.click(screen.getByTestId("btn-preview-proposal"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("無可用的提案預覽回應");
+    expect(screen.queryByTestId("preview-box")).not.toBeInTheDocument();
+  });
+
+  it("does not attach an old preview to a replacement proposal", async () => {
+    let resolvePreview!: (value: unknown) => void;
+    const preview = vi.fn(() => new Promise((resolve) => { resolvePreview = resolve; }));
+    const { rerender } = render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal]} onPreviewProposal={preview as any} />);
+    fireEvent.click(screen.getByTestId("btn-preview-proposal"));
+    expect(screen.getByTestId("proposal-status-filter")).toBeDisabled();
+    rerender(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[splitProposal]} onPreviewProposal={preview as any} />);
+    resolvePreview({ proposal: sampleProposal, proposed_member_cells: [], current_active_compositions: [], expected_ndcg_gain: 0 });
+    await waitFor(() => expect(screen.getByTestId("btn-preview-proposal")).toBeEnabled());
+    expect(screen.queryByTestId("preview-box")).not.toBeInTheDocument();
+    expect(screen.getByTestId("proposal-detail")).toHaveTextContent(splitProposal.zone_id);
+  });
+
+  it("preserves rejection input on failed write and prevents selection while pending", async () => {
+    const reject = vi.fn().mockRejectedValue(new Error("409 conflict"));
+    render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal, splitProposal]} onRejectProposal={reject} />);
+    fireEvent.click(screen.getByTestId("btn-open-reject"));
+    fireEvent.change(screen.getByPlaceholderText(/行政區邊界不連續/), { target: { value: "保留理由" } });
+    expect(screen.getByTestId(`proposal-item-${splitProposal.proposal_id}`)).toBeDisabled();
+    fireEvent.click(screen.getByTestId("btn-confirm-reject"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("409 conflict");
+    expect(screen.getByPlaceholderText(/行政區邊界不連續/)).toHaveValue("保留理由");
+    expect(screen.getByTestId("reject-modal")).toBeVisible();
+  });
+
   it("does not offer a child breakdown for a merge", () => {
     render(
       <HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal]} />
