@@ -633,6 +633,95 @@ regression and Governance/Network DTO receipts above are unaffected. CI
 review are required. No live grant, deployment, source/model/StoreOps action,
 gate waiver or F11 claim.
 
+## Merge relationship scope repair (R6) — 2026-10-09
+
+Owner: Claude. Codex reopen (P2) on exact head `bbe7af78efa1`:
+`project_listing_snapshot` cleared only `mergedIntoId` for an excluded merge
+target, but `merge_listing` also writes `duplicateOfId` on the source,
+`mergedSourceListingIds` on the target, a shared `mergeReason`/`mergedAt`, and
+copies the source's `sourceEvidence` refs onto the target. All are persisted
+listing metadata and reload unchanged, so a cross-zone merge (L-2029 HZ-02 into
+L-2024 HZ-01) disclosed the excluded counterpart to a heat-zone-restricted
+`operator_viewer` on both sides.
+
+Producer field inventory (every `NetworkListingService` listing writer: seed,
+repository reload `_listing_to_dict` + `_sync_listing_to_repo` metadata,
+convert, merge, archive, intake decide create/revise/duplicate, plus route
+read fields such as legal hold/proposer):
+
+| Class | Fields | Scoped-reader rule |
+| --- | --- | --- |
+| Own state | id, tenant/scope axes, source ids/URL, address/geo, status, rent/area/floor/frontage, confidences, hard rules, fitScore, firstSeen/converted/archived(+reason), SiteScore prior-90d cell fields, legal hold, proposer/submitter/owner, masked contact/raw fields | `LISTING_OWN_FIELDS` allowlist; clearance masking still applies after |
+| Listing references | `duplicateOfId`, `mergedIntoId`, `mergedSourceListingIds` | kept only if the referenced listing is visible; malformed values become `null`/`[]` |
+| Merge-wide context | `mergeReason`, `mergedAt` | kept only when every merge counterpart is visible (the target keeps only the latest reason, so it cannot be attributed to one merge) |
+| Candidate reference | `candidateId` | kept only for a visible candidate |
+| Evidence refs | `sourceEvidence` (`EV-<listing or intake id>-<kind>`; merge copies source refs, intake revise/duplicate append intake refs) | kept only when the longest matching known id is a visible listing/intake; unattributable or non-string refs withheld |
+| Anything else | unclassified | withheld — a new producer field is not scoped evidence until classified |
+
+Listing `status: duplicate` stays: it is the record's own lifecycle state and
+names no counterpart. Other returned objects were re-checked: candidates carry
+only their visible parent `listingId` and projected `reviewId`; site reviews
+only a visible `candidateId`; intakes already drop `matchResult` unless its
+target is visible and keep only allowlisted audit keys; top-level audit events
+keep no message/metadata; heat-zone prose is gated by zone scope; expansion
+steps stay empty. The operator_network-only grants from the previous repair are
+unchanged.
+
+Regressions (`tests/security/test_operator_network_read_scope.py`): a real
+HTTP merge by an authorized `expansion-manager` (listing UPDATE) into a durable
+SQLite store, then a fresh service reload behind the real router, read by
+(1) a source-visible HZ-02 viewer, (2) a target-visible HZ-01 viewer and
+(3) an unrestricted viewer control that still sees the full relationship. The
+fixture asserts the relationship persisted before projection. A fourth test
+covers malformed merge fields, out-of-contract fields, intake-derived and
+look-alike-prefix evidence refs.
+
+A/B (`r6-ab-old-scope.log`): with `bbe7af78e`'s `network_read_scope.py`
+restored, the source-visible, target-visible and contract tests fail
+(exit 1); the unrestricted control passes. Repaired module restored afterwards.
+
+Commands (anchor `547e45ad932d`; `uv` from `~/.local/bin`, Python 3.12, locked env):
+
+```sh
+uv run --frozen --python 3.12 pytest -q -p no:cacheprovider \
+  tests/security tests/contract/test_operator_api.py \
+  tests/contract/test_operator_assisted_listing_api.py \
+  tests/contract/test_operator_governance_api.py tests/contract/test_operator_growth_api.py \
+  tests/contract/test_operator_network_listings_api.py \
+  tests/contract/test_operator_network_rebalance_api.py \
+  tests/contract/test_operator_network_review_api.py \
+  tests/contract/test_operator_network_scoring_api.py tests/contract/test_operator_shell_api.py \
+  tests/contract/test_assisted_listing_promotion_api.py \
+  tests/contract/test_assisted_listing_v1_runtime.py \
+  tests/e2e/test_live_e2e_gate_dev_admin.py tests/e2e/test_acceptance_coverage.py \
+  tests/identity/test_identity_user_role_management.py \
+  tests/integration/test_operator_live_domain_modules.py --junitxml=r6-scope.xml
+uv run --frozen --python 3.12 ruff check <changed .py files>
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check bbe7af78e 547e45ad9
+```
+
+Results (original terminal exits; counts read from the completed JUnit, no rerun):
+
+| Check | Exit | Result |
+| --- | --- | --- |
+| A/B new tests against old `network_read_scope.py` (`r6-ab-old-scope.log`) | 1 | 3 `FAILED` (source-visible, target-visible, contract); unrestricted control passes |
+| Broad regression above (`r6-scope.log`, `r6-scope.xml`, `r6-scope.exit`) | 0 | JUnit 830 tests, 0 failures/errors/skips |
+| Changed Python ruff (`r6-ruff.log`) | 0 | All checks passed |
+| `check_code_boundaries.py` (`r6-boundaries.log`) | 0 | inventory unchanged |
+| `git diff --check bbe7af78e 547e45ad9` | 0 | clean |
+
+The six host-environment failures recorded for the previous broad run (missing
+`uv` on the worker PATH, canonical-venv NOTICE drift) do not occur here because
+this run used the locked `uv` environment; they were never authorization
+failures.
+
+No Web/E2E source changed (the frontend reads only contract fields:
+id/status/address/rent/area/floor/geocode/hard rules/fitScore/source*/
+heatZoneId/candidateId/duplicateOfId/mergedIntoId/sourceEvidence/
+archivedReason). New exact-head CI and independent review are required. No live
+grant, deployment, source/model/StoreOps action, gate waiver or F11 claim.
+
 ## Outstanding live acceptance (not completed here)
 
 After required CI, independent exact-head review, merge and admitted deployment,
