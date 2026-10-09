@@ -205,6 +205,7 @@
 
 /* --- dialogs --- */
 .overlay {
+  box-sizing: border-box;
   position: fixed;
   inset: 0;
   z-index: 100;
@@ -223,8 +224,10 @@
   background: #ffffff;
   border-radius: 14px;
   box-shadow: 0 24px 64px rgba(12, 18, 44, 0.3);
-  max-height: 92vh;
+  box-sizing: border-box;
+  max-height: min(92vh, calc(100dvh - 40px));
   overflow-y: auto;
+  overflow-wrap: anywhere;
   width: 560px;
   max-width: 94vw;
   color: #1c2333;
@@ -316,6 +319,27 @@
   flex-wrap: wrap;
 }
 
+.panelNarrow .dialogHead,
+.panelDecide .dialogHead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.panelNarrow .dialogTitle {
+  font-size: 14.5px;
+}
+
+.dialogHead .dialogTitle {
+  min-width: 0;
+}
+
+/* Keep keyboard focus visible without changing the Package 10 button shape. */
+.panel button:focus-visible,
+.panel input[type="checkbox"]:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
 .dialogTitle {
   font-size: 15px;
   font-weight: 700;
@@ -356,10 +380,10 @@
 }
 
 .dialogBody {
-  padding: 13px 18px 4px;
+  padding: 12px 18px 4px;
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 10px;
 }
 
 .timelineHeader {
@@ -387,7 +411,8 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 14px 18px 16px;
+  padding: 12px 18px 16px;
+  flex-wrap: wrap;
 }
 
 .fieldLabel {
@@ -401,6 +426,8 @@
 .input,
 .textarea,
 .select {
+  box-sizing: border-box;
+  min-width: 0;
   width: 100%;
   border: 1px solid #d6dce8;
   border-radius: 8px;
@@ -961,27 +988,29 @@
 
 .summaryRow {
   display: flex;
-  gap: 8px;
-  padding: 5px 10px;
-  font-size: 10.5px;
-  border-top: 1px solid #f4f6fa;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 11px;
+  border-top: 1px solid #f1f3f8;
 }
 
 .summaryKey {
   width: 70px;
   flex: none;
   color: #5a6478;
+  font-weight: 600;
 }
 
 .summaryValue {
-  word-break: break-all;
-  color: #3a4362;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #1c2333;
 }
 
 .riskSummaryText {
-  padding: 9px 10px;
-  font-size: 11px;
-  line-height: 1.7;
+  padding: 8px 11px;
+  font-size: 10.5px;
+  line-height: 1.55;
   color: #3a4362;
 }
 
@@ -1370,6 +1399,6 @@
   }
 
   .panel {
-    max-height: 96vh;
+    max-height: min(96vh, calc(100dvh - 40px));
   }
 }
