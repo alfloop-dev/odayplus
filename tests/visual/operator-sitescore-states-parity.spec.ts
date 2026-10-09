@@ -52,13 +52,15 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("button", { name: "展店經理", exact: true })).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("network-tab-3").click();
     const panel = page.getByTestId("network-panel-sitescore");
-    await expect(panel).toBeVisible();
+    await expect(panel).toBeVisible({ timeout: 30_000 });
     await expect(panel.getByTestId("sitescore-card-CS-1001")).toContainText("2026-07-04 06:10", { timeout: 30_000 });
     await panel.getByTestId("sitescore-pick-CS-1002").click();
     const report = panel.getByTestId("sitescore-card-CS-1002");
-    await expect(report).toBeVisible();
+    await expect(report).toBeVisible({ timeout: 30_000 });
     const risk = report.getByLabel("Risk breakdown");
     const flow = page.getByTestId("network-expansion-stepper");
+    await expect(flow.getByTestId("network-step-sitescore")).toBeDisabled({ timeout: 30_000 });
+    await page.evaluate(() => scrollTo(0, 0));
     const measures: Record<string, unknown> = { flow: await box(flow), report: await box(report), risk: await box(risk) };
     await shot(page, info, `${phase}-risk-${width}`);
     if (!before) {

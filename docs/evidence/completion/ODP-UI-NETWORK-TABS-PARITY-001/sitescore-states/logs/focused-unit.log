@@ -1,0 +1,13 @@
+
+> @oday-plus/web@0.1.0 test
+> vitest run features/operator/network/__tests__/Package10NetworkPanels.test.tsx
+
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+   Start at  18:22:15
+   Duration  1.90s (transform 400ms, setup 0ms, import 659ms, tests 568ms, environment 439ms)
+

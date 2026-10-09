@@ -198,6 +198,20 @@ no authority or commit gates were weakened. Full web 720, focused UI 37,
 API promotion tests, typecheck/lint/boundaries and unchanged 125/18 inventory
 passed. This is a bounded checkpoint, not full acceptance or resubmission.
 
+## SiteScore risk / batch / scoped flow increment
+
+[sitescore-states/README.md](sitescore-states/README.md) records baseline
+`796a9fc8df1a`, repair `5462d12f5790` and access repair `df06d4810a21`.
+Stable 1440/390 design-before-after pairs show the duplicate global warning row
+removed without enabling the blocked listings journey, explicit fixture risk tones
+with neutral missing-metadata fallback, and mobile batch stacking with a 340px
+keyboard-scrollable result viewport instead of 158px. Risk values are semantic
+key/value pairs, preserve full text and pass scoped contrast/axe checks. Full web
+722, supplemental 2, durable scoring E2E 4, API contract 6, lint/typecheck/ruff/
+boundaries and unchanged 125/18 inventory passed; failed diagnostics are retained.
+Other tabs/dialog state pairs, independent VDC outcomes and full verification/CI
+integration remain open. **Not ready for formal review resubmission.**
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
@@ -210,13 +224,15 @@ passed. This is a bounded checkpoint, not full acceptance or resubmission.
    are in `review-decision/`; complete further applicable permission/conflict visual
    states and full-scope detail density review.
    Preserve VDC-001 conditional controls, conflict input preservation and receipts.
-2. Capture/inspect other Network tabs, batch score view and states. Reconcile the
-   English `Blocked until candidate exists` stepper banner with actual selected
-   flow and Package 10 density **without deleting its underlying gate**.
+2. Capture/inspect other Network tabs and remaining batch write/error states.
+   Batch baseline/no-selection geometry, keyboard and scoped axe plus compact
+   flow hint are recorded in `sitescore-states/`. Backend flow gates are preserved;
+   do not infer listings conversion from the separate scoring candidate count.
 3. Candidate hardcoded facts/audit, no-op success notices, missing Compare wiring,
    unreachable batch scoring and zero-revenue defaults are repaired in the linked
-   owner increment. Complete SiteScore risk-tone/accessibility review, inspect
-   fallback/empty-data states, and explain disabled unsupported actions before
+   owner increment. Source-declared fixture risk tones and scoped accessibility
+   are now recorded in `sitescore-states/`; inspect fallback/empty-data visual
+   states and explain disabled unsupported actions before
    full acceptance. Gate completeness must never imply invented hard-rule success.
 4. Document the supported schematic mini-map versus actual map integration and
    any later-spec features absent from Package 10 in the final PR explanation.
