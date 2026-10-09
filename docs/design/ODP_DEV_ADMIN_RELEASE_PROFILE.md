@@ -240,6 +240,10 @@ execution, export, publication, admin grant or cross-tenant bypass is added.
 It selects the existing `pm-audit` console persona; a read-enabled administrator
 may also select their existing `platform-admin` persona. Network requests retain
 the active verified persona instead of impersonating an expansion/reviewer role.
+Network review controls use the canonical `expansion-manager` persona backed by
+`site_reviewer` / `executive`; `ops-lead` alone is not a SiteScore approver. The
+API still requires `sitescore:approve` and derives the decision actor from the
+verified principal, ignoring caller-supplied actor fields. No grants are added.
 
 Identity role editing remains the existing tenant-scoped `/operator/users` API
 and atomic `identity.account.roles_updated` audit transaction. There is **no

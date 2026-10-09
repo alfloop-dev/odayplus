@@ -113,6 +113,79 @@ regenerated with `python3 delivery_toolchain/governance/check_code_boundaries.py
 --write-inventory`; only task-owned new paths are added. Finalization must verify
 that inventory and lint before publishing the PR.
 
+## CI repair dispatch — 2026-10-09
+
+PR #1435 at `17bc7a1c` failed CI run `37885795073`: unit/security had
+exactly two obsolete `18`-role assertions; E2E had two Network review decision
+failures. Other required lanes reported success; the aggregate product failure
+was downstream of unit/security. This was not a transient-infrastructure retry.
+
+Repair anchors: `1dbe790e005e`, `b132e56c6577`, `f0e2daf408a4`.
+
+- Role catalog tests require exactly the canonical enum set, including
+  `operator_viewer`, not just a replacement magic count.
+- Review UI uses canonical `expansion-manager` (verified reviewer/executive)
+  rather than impersonating a reviewer as `ops-lead`. The API retains its
+  APPROVE guard and derives role/name from its authenticated principal. Body
+  actor fields cannot promote an operations manager, expansion staff, or
+  admin+viewer, and cannot forge audit attribution. No RBAC grants changed.
+- Browser positives explicitly select the reviewer persona; the read-only
+  presentation negative uses operations manager. The Network smoke requires a
+  200 API listing response for that active persona before inspecting rows.
+  Expansion-user API denial remains tested with the actual expansion_user
+  role (the old contract fixture incorrectly declared site_reviewer).
+
+Original tool completion receipts for the focused repairs:
+
+| Check | Tested implementation head | Exit | Result |
+|---|---|---:|---|
+| Python role management, Network review contract, operator read authorization | `b132e56c6577` | 0 | 40 tests; JUnit: no failures/errors/skips |
+| Network route/persona Web tests | `1dbe790e005e` | 0 | 16 tests |
+| Web typecheck | `1dbe790e005e` | 0 | No diagnostics |
+| Changed Python ruff | `b132e56c6577` | 0 | All checks passed |
+| Browser Network review + six-tab smoke | `f0e2daf408a4` | 0 | 9 tests passed (real local Next/API + Chromium, fixture runtime only) |
+
+The earlier `b132e56c` commit trailer's Web count of 22 was a transcription
+error; the original Vitest receipt records **16**, as above. Python's initial
+exit 1 concerned two new assertions using `auditEvent.actor` instead of the
+actual `auditEvent.actorName`; the corrected DTO assertions passed. First
+browser attempt passed 8 review tests but failed the smoke on local fallback
+rows, with cold Next JSON parsing errors. One bounded retry still failed the
+same smoke. The explicit active-persona API response wait fixed that race; the
+smoke and final combined run exited 0 after that test change. None of those
+failed attempts is claimed as a passing receipt.
+
+Commands (logs/JUnit copied to `ci-repair-*` alongside this README):
+
+```sh
+timeout 360 "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q \
+  tests/security/test_user_role_management.py \
+  tests/contract/test_operator_network_review_api.py \
+  tests/security/test_operator_read_authorization.py \
+  --junitxml="$ORCH_SCRATCH_DIR/pytest-ci-repair-final.xml"
+npm test --workspace=@oday-plus/web -- \
+  features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx
+npm run typecheck --workspace=@oday-plus/web
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check \
+  apps/api/app/routes/operator_modules/network_reviews.py \
+  tests/contract/test_operator_network_review_api.py \
+  tests/security/test_user_role_management.py
+timeout 300 env NODE_PATH="$PWD/node_modules" \
+  ODP_API_BASE_URL=http://127.0.0.1:8217 npx playwright test \
+  --config /tmp/odp-read-auth-playwright.config.ts \
+  tests/e2e/operator-network-review.spec.ts tests/e2e/e2e-operator-console.spec.ts \
+  --grep 'Network Review decision|Network workspace exposes all six'
+```
+
+The temporary Playwright config (preserved as `ci-repair-playwright-config.txt`)
+imports the **existing repository config** and only relocates ports, interpreter,
+output directory and server cwd for this isolated worker. It uses the existing
+fixture-mode test runtime; no parallel authentication harness or live data
+claim is introduced. The final combined browser run used clean committed head
+`f0e2daf408a4`; subsequent documentation/receipt copies do not change test inputs.
+Required remote CI on the resubmitted head and independent exact-head review
+remain outstanding; these local checks are not the full product E2E gate.
+
 ## Outstanding live acceptance (not completed here)
 
 After required CI, independent exact-head review, merge and admitted deployment,
