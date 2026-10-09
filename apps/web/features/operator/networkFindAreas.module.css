@@ -1174,6 +1174,80 @@
   gap: 8px;
 }
 
+/* Radar-only accessibility/density repairs; shared panel tones stay unchanged. */
+.tabPanel[data-screen-label="Network 物件雷達"] .filterTitle,
+.tabPanel[data-screen-label="Network 物件雷達"] .muted,
+.tabPanel[data-screen-label="Network 物件雷達"] .emptyState,
+.tabPanel[data-screen-label="Network 物件雷達"] .radarInboxHeader span,
+.tabPanel[data-screen-label="Network 物件雷達"] .radarEvidence small,
+.tabPanel[data-screen-label="Network 物件雷達"] .detailIdLine > span:first-child,
+.tabPanel[data-screen-label="Network 物件雷達"] .listingDetailPanel p,
+.tabPanel[data-screen-label="Network 物件雷達"] .listingPhotoPlaceholder,
+.tabPanel[data-screen-label="Network 物件雷達"] .listingDetailRows dt {
+  color: #5a6478;
+}
+
+.tabPanel[data-screen-label="Network 物件雷達"] .zoneFilterChip,
+.tabPanel[data-screen-label="Network 物件雷達"] .zoneMini {
+  color: #096775 !important;
+}
+
+.tabPanel[data-screen-label="Network 物件雷達"] .sourceCardHead .toneBadge {
+  flex: none;
+  white-space: nowrap;
+}
+
+.tabPanel[data-screen-label="Network 物件雷達"] .listingDetailPanel p {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.radarSelectionButton {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #1c2333;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.radarSelectionButton strong {
+  display: block;
+}
+
+.radarSelectionButton:focus-visible,
+.tabPanel[data-screen-label="Network 物件雷達"] button:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+.radarSecondaryActions {
+  display: grid;
+  gap: 6px;
+}
+
+.radarSecondaryActions button {
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #3a4362;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 12px;
+}
+
+.radarSecondaryActions button:disabled,
+.radarViewToggle button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .radarToolbar {
   display: flex;
   align-items: center;

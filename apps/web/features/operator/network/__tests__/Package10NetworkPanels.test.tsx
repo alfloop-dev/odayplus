@@ -7,6 +7,11 @@ import { CandidatePanel } from "../CandidatePanel";
 import { ComparePanel } from "../ComparePanel";
 import { ExpansionStepper } from "../ExpansionStepper";
 import { NetworkShell } from "../NetworkShell";
+import { ListingRadarPanel } from "../ListingRadarPanel";
+import type { ListingRadarRow } from "../../networkFindAreasViewModel";
+import type { Listing } from "../../types";
+
+vi.mock("../intake/AssistedIntakeSection", () => ({ AssistedIntakeSection: () => null }));
 import { SiteScorePanel } from "../SiteScorePanel";
 import type {
   NetworkScoringCompare,
@@ -15,6 +20,77 @@ import type {
 } from "../networkScoringTypes";
 
 afterEach(cleanup);
+
+const radarListing: Listing & { frontageMeters: number } = {
+  id: "L-2024", sourceId: "591", heatZoneId: "HZ-01", address: "台北市信義區松仁路 96 號",
+  status: "new", rentPerMonth: 58000, areaPing: 18, geocodeConfidence: 0.94,
+  hardRuleFailures: [], frontageMeters: 0,
+};
+const radarRow: ListingRadarRow = {
+  ...radarListing, sourceName: "591", sourceStatus: "connected", complianceNote: "licensed",
+  zoneLabel: "信義", statusLabel: "新進", rentLabel: "NT$58,000", geocodeConfidenceLabel: "94%",
+  isDuplicate: false, tone: "good",
+};
+const radarSources = [
+  { id: "591", name: "591", status: "connected" as const, complianceNote: "licensed" },
+  { id: "broker", name: "仲介", status: "manualOnly" as const, complianceNote: "manual" },
+];
+
+describe("Radar source-backed detail and reachable controls", () => {
+  it("retires off-filter detail and writes when the source selection is empty", () => {
+    render(<ListingRadarPanel activeRoleId="expansion-manager" listings={[radarListing]} rows={[radarRow]} sources={radarSources} selectedHeatZoneId="HZ-01" />);
+    expect(within(screen.getByLabelText("Listing detail")).getByText("L-2024")).toBeInTheDocument();
+    fireEvent.click(within(screen.getByLabelText("來源篩選")).getByRole("button", { name: "仲介 0" }));
+    expect(screen.getByLabelText("Listing detail")).toHaveTextContent("此篩選下沒有物件");
+    expect(screen.queryByTestId("listing-detail-primary")).toBeNull();
+    expect(screen.queryByTestId("network-listing-table")).toBeNull();
+  });
+
+  it("has focusable selected-state detail controls and does not fabricate missing facts", () => {
+    render(<ListingRadarPanel activeRoleId="expansion-manager" listings={[radarListing]} rows={[radarRow]} sources={radarSources} />);
+    const pick = screen.getByRole("button", { name: "查看 L-2024 物件詳情" });
+    pick.focus();
+    expect(pick).toHaveFocus();
+    fireEvent.click(pick);
+    expect(pick).toHaveAttribute("aria-pressed", "true");
+    const detail = screen.getByLabelText("Listing detail");
+    expect(detail).toHaveTextContent("未提供檢查結果");
+    expect(detail).toHaveTextContent("0m");
+    expect(detail).not.toHaveTextContent("3/3 通過");
+    expect(screen.getByRole("button", { name: "地圖", exact: true })).toBeDisabled();
+    expect(screen.getByTestId("listing-detail-primary")).toBeDisabled();
+    for (const label of ["加入 Watchlist", "聯絡仲介", "直接送 SiteScore（資料足夠）", "標記不適合／封存"]) {
+      expect(screen.getByRole("button", { name: label, exact: true })).toBeDisabled();
+    }
+  });
+
+  it("uses identical hard-rule and pending-write gates in the row and detail", () => {
+    const onConvert = vi.fn();
+    const view = render(<ListingRadarPanel activeRoleId="expansion-manager" listings={[radarListing]} rows={[{ ...radarRow, hardRuleFailures: ["floor_not_ground_level"] }]} sources={radarSources} onConvert={onConvert} />);
+    expect(screen.getByTestId("listing-detail-primary")).toBeDisabled();
+    expect(screen.queryByTestId("convert-L-2024")).toBeNull();
+    fireEvent.click(screen.getByTestId("listing-detail-primary"));
+    expect(onConvert).not.toHaveBeenCalled();
+    view.rerender(<ListingRadarPanel activeRoleId="expansion-manager" listings={[radarListing]} rows={[radarRow]} sources={radarSources} onConvert={onConvert} busyListingId="L-2024" />);
+    expect(screen.getByTestId("listing-detail-primary")).toBeDisabled();
+    expect(screen.getByTestId("convert-L-2024")).toBeDisabled();
+    view.rerender(<ListingRadarPanel activeRoleId="expansion-manager" listings={[radarListing]} rows={[radarRow]} sources={radarSources} onConvert={onConvert} />);
+    fireEvent.click(screen.getByTestId("listing-detail-primary"));
+    expect(onConvert).toHaveBeenCalledExactlyOnceWith("L-2024");
+  });
+
+  it("retires candidate no-op navigation and terminal merge without granting new actions", () => {
+    const onMerge = vi.fn();
+    const view = render(<ListingRadarPanel activeRoleId="expansion-manager" listings={[{ ...radarListing, status: "candidate", candidateId: "CS-1001" }]} rows={[{ ...radarRow, status: "candidate", candidateId: "CS-1001" }]} sources={radarSources} />);
+    expect(screen.getByTestId("listing-detail-primary")).toBeDisabled();
+    expect(screen.getByLabelText("Listing detail")).toHaveTextContent("候選點請至候選點分頁查看");
+    view.rerender(<ListingRadarPanel activeRoleId="expansion-manager" listings={[{ ...radarListing, id: "L-2029", status: "duplicate", duplicateOfId: "L-2025", mergedIntoId: "L-2025" }]} rows={[{ ...radarRow, id: "L-2029", status: "duplicate", duplicateOfId: "L-2025", isDuplicate: true }]} sources={radarSources} onMerge={onMerge} />);
+    expect(screen.getByTestId("listing-detail-primary")).toBeDisabled();
+    expect(screen.getByTestId("listing-detail-primary")).toHaveTextContent("已標記重複至 L-2025");
+    expect(screen.queryByTestId("merge-L-2029")).toBeNull();
+    expect(onMerge).not.toHaveBeenCalled();
+  });
+});
 
 const gateChecks = [
   { key: "address", label: "地址", state: "ok" as const, note: "已正規化" },
@@ -378,7 +454,7 @@ describe("Package 10 Network non-intake panels", () => {
     expect(css).toContain("grid-template-columns: minmax(0, 1fr) 300px");
     // A CSS module silently returns undefined for missing keys. The inherited
     // detail and secondary-action markup had no corresponding style rules.
-    for (const panel of ["CandidatePanel", "SiteScorePanel", "ComparePanel"]) {
+    for (const panel of ["CandidatePanel", "SiteScorePanel", "ComparePanel", "ListingRadarPanel"]) {
       const source = readFileSync(resolve(process.cwd(), `features/operator/network/${panel}.tsx`), "utf8");
       for (const [, name] of source.matchAll(/styles\.([A-Za-z_][A-Za-z_0-9]*)/g)) {
         expect(css, `${panel}: missing .${name}`).toMatch(new RegExp(`\\.${name}\\b`));
