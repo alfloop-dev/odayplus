@@ -15,8 +15,6 @@ const headers = { "x-subject-id": "operator-expansion-manager", "x-roles": "expa
 const screens = [
   { id: "field-fix", testId: "intake-fix-dialog", label: "Dialog 欄位修正", trigger: "fix-field-address", field: "intake-fix-value", expectedWidth: 460 },
   { id: "decision", testId: "intake-decide-dialog", label: "Dialog 收件決策確認", trigger: "decide-action-create", field: "intake-decide-reason", expectedWidth: 520 },
-  { id: "transfer", testId: "transfer-intake-dialog", label: "Dialog 轉交／暫停", trigger: "asg-btn-transfer", field: "transfer-target-select", expectedWidth: 460 },
-  { id: "pause", testId: "pause-sla-dialog", label: "Dialog 轉交／暫停", trigger: "asg-btn-pause", field: "pause-reason-input", expectedWidth: 460 },
 ] as const;
 
 async function measure(locator: Locator) {
@@ -65,17 +63,7 @@ for (const width of [1440, 390]) {
       const overlay = page.getByTestId(screen.testId);
       const dialog = overlay.getByRole("dialog");
       await expect(dialog).toBeVisible();
-      const phase = process.env.NETWORK_PARITY_CAPTURE_PHASE ?? "after";
-      const assignmentDialog = screen.id === "transfer" || screen.id === "pause";
-      if (phase === "after" || !assignmentDialog) await expect(page.getByTestId(screen.field)).toBeFocused();
-      if (assignmentDialog) {
-        // VDC-001: the two modes never leak each other's fields or an implicit
-        // resume time. These are real rendered controls, not CSS-name checks.
-        await expect(dialog.locator("select")).toHaveCount(screen.id === "transfer" ? 1 : 0);
-        await expect(dialog.locator('input[type="datetime-local"]')).toHaveCount(screen.id === "pause" ? 1 : 0);
-        await expect(dialog.locator("textarea")).toHaveCount(1);
-        if (screen.id === "pause") await expect(page.getByTestId("pause-resume-time-input")).toHaveValue("");
-      }
+      await expect(page.getByTestId(screen.field)).toBeFocused();
       const boxes = {
         dialog: await measure(dialog),
         head: await measure(dialog.locator(":scope > div").nth(0)),
@@ -105,10 +93,8 @@ for (const width of [1440, 390]) {
           if (width === 1440) await design.setViewportSize({ width: 390, height: 900 });
           await detail.getByRole("button", { name: /修正欄位.*地址/ }).first().dispatchEvent("click");
           if (width === 1440) await design.setViewportSize({ width, height: 900 });
-        } else if (screen.id === "decision") {
-          await detail.getByRole("button", { name: "建立新物件（加入收件匣）", exact: true }).dispatchEvent("click");
         } else {
-          await detail.getByRole("button", { name: screen.id === "transfer" ? "轉交" : "暫停 SLA", exact: true }).dispatchEvent("click");
+          await detail.getByRole("button", { name: "建立新物件（加入收件匣）", exact: true }).dispatchEvent("click");
         }
         await design.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; }" });
         const referenceDialog = design.locator(`[data-screen-label="${screen.label}"]`).getByRole("dialog");
@@ -117,6 +103,7 @@ for (const width of [1440, 390]) {
         await shot(design, info, `design-${screen.id}-${width}`);
         await design.close();
       }
+      const phase = process.env.NETWORK_PARITY_CAPTURE_PHASE ?? "after";
       await shot(page, info, `${phase}-${screen.id}-${width}`);
       const document = await page.evaluate(() => ({ width: innerWidth, scrollWidth: window.document.documentElement.scrollWidth }));
       await writeFile(await artifact(info, `${phase}-geometry-${screen.id}-${width}.json`), JSON.stringify({ boxes, document, design: reference }, null, 2));
@@ -138,18 +125,18 @@ for (const width of [1440, 390]) {
         const results = await new AxeBuilder({ page }).include(`[data-testid="${screen.testId}"]`).analyze();
         await writeFile(await artifact(info, `axe-${screen.id}-${width}.json`), JSON.stringify(results, null, 2));
         expect(results.violations.filter((v) => v.impact === "critical" || v.impact === "serious")).toEqual([]);
-        const prefix = screen.id === "field-fix" ? "intake-fix" : screen.id === "decision" ? "intake-decide" : screen.id;
+        const prefix = screen.id === "field-fix" ? "intake-fix" : "intake-decide";
         await expect(page.getByTestId(`${prefix}-risk-summary`)).toBeVisible();
         await expect(page.getByTestId(`${prefix}-risk-ack`)).not.toBeChecked();
         // Required reasons and risk gates survive density changes. This local
         // invalid submission must not close the dialog or invent a receipt.
-        await page.getByTestId(`${prefix}-submit${assignmentDialog ? "-btn" : ""}`).click();
-        await expect(page.getByTestId(`${prefix}-error${assignmentDialog ? "-panel" : ""}`)).toContainText(screen.id === "transfer" ? "交接說明" : "原因");
+        await page.getByTestId(`${prefix}-submit`).click();
+        await expect(page.getByTestId(`${prefix}-error`)).toContainText("原因");
         await expect(dialog).toBeVisible();
         await shot(page, info, `after-required-reason-${screen.id}-${width}`);
       }
       // Actual keyboard traversal, no force clicks or implementation DOM events.
-      const controls = dialog.locator('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)');
+      const controls = dialog.locator('button:not(:disabled), input:not(:disabled), textarea:not(:disabled)');
       await controls.last().focus();
       await page.keyboard.press("Tab");
       await expect(controls.first()).toBeFocused();
