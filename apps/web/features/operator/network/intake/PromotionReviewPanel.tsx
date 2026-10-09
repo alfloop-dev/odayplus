@@ -164,8 +164,11 @@ function PromotionConfirmationDialog({
   idempotencyKey,
   onClose,
   onConfirm,
+  onReasonChange,
+  onRiskChange,
   promotion,
   reason,
+  riskAcknowledged,
   record,
 }: {
   busy: boolean;
@@ -176,8 +179,11 @@ function PromotionConfirmationDialog({
   idempotencyKey: string;
   onClose: () => void;
   onConfirm: () => void;
+  onReasonChange: (reason: string) => void;
+  onRiskChange: (acknowledged: boolean) => void;
   promotion: PromotionDecisionReceipt;
   reason: string;
+  riskAcknowledged: boolean;
   record: AssistedIntake;
 }) {
   const panelRef = useModalDialogBehavior({ dismissible: !busy, onClose });
@@ -210,7 +216,6 @@ function PromotionConfirmationDialog({
         <header className={styles.promotionConfirmHeader}>
           <div>
             <h3 className={styles.promotionConfirmTitle}>核准 Candidate Site promotion</h3>
-            <p className={styles.promotionConfirmSubtitle}>決策送出前，請再次核對影響實體與持久化控制。</p>
           </div>
           <button
             aria-label="關閉 Promotion 核准"
@@ -224,30 +229,54 @@ function PromotionConfirmationDialog({
         </header>
 
         <div className={styles.promotionConfirmBody}>
-          <div className={styles.reviewSummary} data-testid="promotion-review-summary">
-            <div className={styles.sectionHead}>決策前檢視 REVIEW SUMMARY</div>
-            {summary.map(([label, value]) => (
-              <div className={styles.reviewSummaryRow} key={label}>
-                <span className={styles.reviewSummaryKey}>{label}</span>
-                <span className={styles.reviewSummaryValue}>{value}</span>
-              </div>
-            ))}
-          </div>
-
+          <p className={styles.promotionContext}>
+            Promotion：{promotion.listing_id || "—"} → Candidate Site · 提出者 {promotion.proposer_subject_id || record.submitter || "—"}
+          </p>
           <div className={styles.promotionImpact} id="promotion-confirmation-impact">
-            <strong>影響實體：Listing → 新 Candidate</strong>
-            <span>
-              前：無候選點。後：Candidate 建立並排入 SiteScore job。核准後依序執行
-              CANDIDATE_CREATING → CANDIDATE_CREATED → SCORE_QUEUED。
-            </span>
-            <span>Candidate ID、job ID 與 receipt 僅在伺服器 commit 後顯示，不做 optimistic 更新。</span>
+            影響實體：Listing → 新 Candidate（前：無候選點 → 後：Candidate 建立＋SiteScore job）。
+            核准後依序執行 CANDIDATE_CREATING → CANDIDATE_CREATED → SCORE_QUEUED；
+            ID 與 receipt 於 commit 後顯示，不做 optimistic 更新。
           </div>
-
-          <div className={styles.promotionControlSummary}>
-            <span>✓ 已完成 second-actor 風險確認</span>
+          <div>
+            <label className={styles.fieldLabel} htmlFor="promotion-confirm-reason">核准原因（必填 — 寫入 Decision Log）</label>
+            <textarea
+              className={styles.textarea}
+              data-autofocus
+              data-testid="promotion-confirm-reason"
+              disabled={busy}
+              id="promotion-confirm-reason"
+              onChange={(event) => onReasonChange(event.target.value)}
+              placeholder="例：資料完整、比對唯一、租金落於區間 P50 內，同意進入評分…"
+              required
+              rows={3}
+              value={reason}
+            />
+          </div>
+          <button
+            aria-pressed={riskAcknowledged}
+            className={styles.promotionRiskAck}
+            data-testid="promotion-confirm-ack"
+            disabled={busy}
+            onClick={() => onRiskChange(!riskAcknowledged)}
+            type="button"
+          >
+            <span aria-hidden="true">{riskAcknowledged ? "☑" : "☐"}</span>
+            <span>我已審視來源證據、欄位校正與比對結果，並確認此 promotion 的風險（RISK_ACKNOWLEDGEMENT）。</span>
+          </button>
+          <details className={styles.promotionAuditDetails}>
+            <summary>決策前檢視與持久化控制</summary>
+            <div className={styles.reviewSummary} data-testid="promotion-review-summary">
+              <div className={styles.sectionHead}>決策前檢視 REVIEW SUMMARY</div>
+              {summary.map(([label, value]) => (
+                <div className={styles.reviewSummaryRow} key={label}>
+                  <span className={styles.reviewSummaryKey}>{label}</span>
+                  <span className={styles.reviewSummaryValue}>{value}</span>
+                </div>
+              ))}
+            </div>
             <code data-testid="promotion-confirm-ifmatch">If-Match W/&quot;{promotion.version}&quot;</code>
             <code data-testid="promotion-confirm-key">Idempotency-Key {idempotencyKey}</code>
-          </div>
+          </details>
 
           {errorMessage ? (
             <div className={styles.errorPanel} data-testid="promotion-confirmation-error" role="alert">
@@ -264,7 +293,6 @@ function PromotionConfirmationDialog({
           </button>
           <button
             className={styles.primaryButton}
-            data-autofocus
             data-testid="promotion-confirm-approve-btn"
             disabled={busy}
             onClick={onConfirm}
@@ -289,7 +317,7 @@ export function PromotionReviewPanel({
   canRequest = true,
   canReview = true,
   canReplayScore = false,
-  busy = false,
+  busy: serverBusy = false,
   error = null,
   idempotencyReplayed = false,
   onRequestPromotion,
@@ -309,6 +337,9 @@ export function PromotionReviewPanel({
   const [localError, setLocalError] = useState<string | null>(null);
   const [attempted, setAttempted] = useState(false);
   const [reviewConfirmationOpen, setReviewConfirmationOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const writePending = useRef(false);
+  const busy = serverBusy || submitting;
 
   // Stable idempotency keys. The request key survives retries for the same
   // draft; a fresh request after a REJECTED decision gets a new scope (the
@@ -349,7 +380,7 @@ export function PromotionReviewPanel({
 
   // ---- handlers (non-optimistic: state changes only via server receipts) ----
   async function handleRequest() {
-    if (busy || !onRequestPromotion) return;
+    if (busy || writePending.current || !canRequest || !requestOpen || !onRequestPromotion) return;
     if (!targetFormatCode) {
       setLocalError("請選擇晉升目標型態（target_format_code）。");
       return;
@@ -364,6 +395,8 @@ export function PromotionReviewPanel({
     }
     setLocalError(null);
     setAttempted(true);
+    writePending.current = true;
+    setSubmitting(true);
     try {
       await onRequestPromotion({
         targetFormatCode,
@@ -378,11 +411,14 @@ export function PromotionReviewPanel({
         (err as Error)?.message ||
           "晉升申請未確認寫入。你的輸入已保留，可以同一 Idempotency-Key 重試或查詢決策狀態。",
       );
+    } finally {
+      writePending.current = false;
+      setSubmitting(false);
     }
   }
 
   async function handleReview(decision: "APPROVE" | "REJECT") {
-    if (busy || !onReviewPromotion || !promotion || !reviewKey) return;
+    if (busy || writePending.current || !canReview || !reviewOpen || !onReviewPromotion || !promotion || !reviewKey) return;
     if (isSelfReview) {
       setLocalError("提案者不得審查自己的晉升申請（SELF_REVIEW_DENIED）。");
       return;
@@ -397,6 +433,8 @@ export function PromotionReviewPanel({
     }
     setLocalError(null);
     setAttempted(true);
+    writePending.current = true;
+    setSubmitting(true);
     try {
       await onReviewPromotion({
         decision,
@@ -410,6 +448,9 @@ export function PromotionReviewPanel({
         (err as Error)?.message ||
           "審查未確認寫入。你的輸入已保留，可以同一 Idempotency-Key 重試。",
       );
+    } finally {
+      writePending.current = false;
+      setSubmitting(false);
     }
   }
 
@@ -777,7 +818,7 @@ export function PromotionReviewPanel({
                 <button
                   className={styles.primaryButton}
                   data-testid="promotion-approve-btn"
-                  disabled={busy || !reviewAck || reviewReason.trim().length < 3}
+                  disabled={busy || !onReviewPromotion}
                   onClick={() => setReviewConfirmationOpen(true)}
                   type="button"
                 >
@@ -882,8 +923,11 @@ export function PromotionReviewPanel({
           idempotencyKey={reviewKey}
           onClose={() => setReviewConfirmationOpen(false)}
           onConfirm={() => void handleReview("APPROVE")}
+          onReasonChange={setReviewReason}
+          onRiskChange={setReviewAck}
           promotion={promotion}
-          reason={reviewReason.trim()}
+          reason={reviewReason}
+          riskAcknowledged={reviewAck}
           record={record}
         />
       ) : null}

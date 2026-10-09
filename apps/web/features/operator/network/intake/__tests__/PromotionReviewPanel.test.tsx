@@ -4,6 +4,7 @@
 // VDC-001: tests assert control PRESENCE AND ABSENCE per state, not just
 // internal defaults.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import "@testing-library/jest-dom/vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { JobReceipt, PromotionDecisionReceipt, PromotionStatus } from "@oday-plus/openapi-client";
@@ -376,7 +377,9 @@ describe("PromotionReviewPanel — independent second-actor review", () => {
     expect(screen.queryByTestId("promotion-self-review-denied")).toBeNull();
 
     const approve = screen.getByTestId("promotion-approve-btn") as HTMLButtonElement;
-    expect(approve.disabled).toBe(true);
+    // Opening a confirmation is not authorization to write; the modal owns
+    // the required reason/risk gates, matching Package 10.
+    expect(approve.disabled).toBe(false);
     fireEvent.change(screen.getByTestId("promotion-review-reason"), {
       target: { value: "已核對 gate snapshot，核准。" },
     });
@@ -398,6 +401,53 @@ describe("PromotionReviewPanel — independent second-actor review", () => {
     expect(input.ifMatch).toBe('W/"7"');
     expect(input.riskAcknowledged).toBe(true);
     expect(input.idempotencyKey).toBeTruthy();
+  });
+
+  it("collects reason and risk inside the confirmation without writing invalid drafts", async () => {
+    const onReviewPromotion = vi.fn();
+    renderPanel({ promotion: promo("PENDING_REVIEW"), proposerId: "OP-100", onReviewPromotion });
+    fireEvent.click(screen.getByTestId("promotion-approve-btn"));
+    expect(screen.getByTestId("promotion-confirm-reason")).toHaveFocus();
+    expect(screen.getByTestId("promotion-confirm-reason")).toBeRequired();
+    expect(screen.getByTestId("promotion-confirm-ack")).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
+    expect(screen.getByTestId("promotion-confirmation-error")).toHaveTextContent("理由");
+    expect(onReviewPromotion).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByTestId("promotion-confirm-reason"), { target: { value: "已獨立核對來源與比對。" } });
+    fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
+    expect(screen.getByTestId("promotion-confirmation-error")).toHaveTextContent("風險");
+    expect(onReviewPromotion).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("promotion-confirm-ack"));
+    expect(screen.getByTestId("promotion-confirm-ack")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
+    await flush();
+    expect(onReviewPromotion).toHaveBeenCalledTimes(1);
+    expect(onReviewPromotion.mock.calls[0][0]).toMatchObject({ reason: "已獨立核對來源與比對。", riskAcknowledged: true, ifMatch: 'W/"7"' });
+  });
+
+  it("guards pending writes, preserves failed drafts and retries with the same key", async () => {
+    let rejectWrite!: (error: Error) => void;
+    const onReviewPromotion = vi.fn().mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectWrite = reject; })).mockResolvedValue(undefined);
+    renderPanel({ promotion: promo("PENDING_REVIEW"), proposerId: "OP-100", onReviewPromotion });
+    fireEvent.click(screen.getByTestId("promotion-approve-btn"));
+    fireEvent.change(screen.getByTestId("promotion-confirm-reason"), { target: { value: "核對來源與風險後核准。" } });
+    fireEvent.click(screen.getByTestId("promotion-confirm-ack"));
+    fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
+    expect(screen.getByTestId("promotion-confirm-approve-btn")).toBeDisabled();
+    expect(screen.getByTestId("promotion-confirm-reason")).toBeDisabled();
+    expect(screen.getByTestId("promotion-confirm-ack")).toBeDisabled();
+    act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(screen.getByTestId("promotion-confirmation-dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
+    expect(onReviewPromotion).toHaveBeenCalledTimes(1);
+    await act(async () => rejectWrite(new Error("回應遺失")));
+    expect(screen.getByTestId("promotion-confirmation-error")).toHaveTextContent("回應遺失");
+    expect(screen.getByTestId("promotion-confirm-reason")).toHaveValue("核對來源與風險後核准。");
+    expect(screen.getByTestId("promotion-confirm-ack")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
+    await flush();
+    expect(onReviewPromotion).toHaveBeenCalledTimes(2);
+    expect(onReviewPromotion.mock.calls[1][0].idempotencyKey).toBe(onReviewPromotion.mock.calls[0][0].idempotencyKey);
   });
 
   it("blocks self-review: proposer sees SELF_REVIEW_DENIED and no approve/reject controls", () => {
