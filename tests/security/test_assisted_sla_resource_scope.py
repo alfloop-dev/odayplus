@@ -138,6 +138,10 @@ def test_pause_interval_retains_disclosure_inputs_and_elapsed_time_once(seeded, 
     store.intakes[intake_id]["scope"].update({axis: ALLOWED for axis, _ in AXES})
     scope = {header: ALLOWED for _, header in AXES}
     intake_before = copy.deepcopy(store.intakes[intake_id])
+    before = copy.deepcopy((store.slas, store.replays))
+    stale_pause = command(client, sla_id, "pause", intake_before["version"], scope=scope)
+    assert stale_pause.status_code == 409
+    assert (store.slas, store.replays) == before
     pause_key, resume_key = f"sla-pause-{uuid4()}", f"sla-resume-{uuid4()}"
     paused = command(client, sla_id, "pause", scope=scope, key=pause_key)
     assert paused.status_code == 200, paused.text
@@ -154,6 +158,10 @@ def test_pause_interval_retains_disclosure_inputs_and_elapsed_time_once(seeded, 
     Clock.current += timedelta(seconds=125)
     assert command(client, sla_id, "pause", scope=scope, key=pause_key).json() == paused.json()
     assert len(store.slas[sla_id]["pause_intervals"]) == 1
+    before = copy.deepcopy((store.slas, store.replays))
+    stale_resume = command(client, sla_id, "resume", 23, scope=scope)
+    assert stale_resume.status_code == 409
+    assert (store.slas, store.replays) == before
     resumed = command(client, sla_id, "resume", 24, scope=scope, key=resume_key)
     assert resumed.status_code == 200, resumed.text
     assert resumed.json()["paused_duration_seconds"] == 19 + 125

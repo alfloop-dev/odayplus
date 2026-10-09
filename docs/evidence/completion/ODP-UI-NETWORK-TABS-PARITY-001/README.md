@@ -371,6 +371,21 @@ or design repair is claimed**. Existing design-before-after pairs remain unchang
 Resource authority, remaining negative states/density and independent VDC/final
 verification remain open. **Not ready for full-scope resubmission.**
 
+## SLA action authority prerequisite increment
+
+[`sla-action-authority/README.md`](sla-action-authority/README.md) records anchors
+`89945ca06f96` and `8ef3290a6b18`: linked Intake scope gates before SLA pause/resume
+and replay; retained pause reason/resume time, actor/version/receipt identifiers,
+closed intervals and once-only elapsed duration. Original product fails all32 new
+regressions; repaired final security32, existing contract60 and local PostgreSQL4
+exit0. Explicit seeded SLA fixtures are disclosed: real API actions/restart and
+independent DB reload are **not genuine Operator provisioning/shared read-model
+or identity-directory proof**. No layout changes/new screenshots, calendar policy
+or global event/audit publication are claimed. Generated boundary inventory adds
+only the new security-test row. Provisioning/scoped directory/server target
+validation and full Transfer/Pause success UI pairs remain next.
+**Still not ready for full-scope resubmission.**
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped

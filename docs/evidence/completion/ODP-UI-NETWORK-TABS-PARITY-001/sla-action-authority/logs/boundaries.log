@@ -1,0 +1,2 @@
+Code boundary checks failed:
+- boundary inventory is stale: run delivery_toolchain/governance/check_code_boundaries.py --write-inventory

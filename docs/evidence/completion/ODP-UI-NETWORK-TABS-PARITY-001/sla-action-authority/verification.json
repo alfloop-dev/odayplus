@@ -1,0 +1,34 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "owner": "Pi",
+  "reviewer": "Codex2",
+  "scope": "backend SLA linked-resource authority and retained intervals only",
+  "baseline_product_head": "6808020f7d993259364f1c544c3577acfbcc4241",
+  "product_anchor": "89945ca06f96",
+  "postgresql_probe_anchor": "8ef3290a6b18",
+  "origin_dev_initial": "2fe3ef933794d0bb293449b74dffe9602d53f767",
+  "origin_dev_checked": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+  "receipts": [
+    {"log": "logs/focused.log", "status": "tool_timeout_after_120s", "exit_code": null, "claimed_success": false},
+    {"log": "logs/before.log", "exit": "logs/before.exit", "exit_code": 1, "junit": "logs/before.xml", "tests": 32, "failures": 32, "expected_failure": true},
+    {"log": "logs/focused-complete.log", "exit": "logs/focused-complete.exit", "exit_code": 0, "tests": 32},
+    {"log": "logs/final-security.log", "exit": "logs/final-security.exit", "exit_code": 0, "junit": "logs/final-security.xml", "tests": 32, "failures": 0, "skipped": 0},
+    {"log": "logs/contract.log", "exit": "logs/contract.exit", "exit_code": 0, "junit": "logs/contract.xml", "tests": 60, "failures": 0, "skipped": 0},
+    {"log": "logs/postgresql.log", "exit": "logs/postgresql.exit", "exit_code": 0, "tests": 4, "skipped": 0, "postgis_case_excluded": true},
+    {"log": "logs/boundaries.log", "exit": "logs/boundaries.exit", "exit_code": 1, "reason": "new test missing from generated inventory; repaired by one-row regeneration"},
+    {"log": "logs/boundaries-final.log", "exit": "logs/boundaries-final.exit", "exit_code": 0, "files": 1212},
+    {"log": "logs/ruff-final.log", "exit": "logs/ruff-final.exit", "exit_code": 0},
+    {"log": "logs/business-inventory.log", "exit": "logs/business-inventory.exit", "exit_code": 0, "tests": 125, "files": 18, "execution": false},
+    {"log": "logs/diff.log", "exit": "logs/diff.exit", "exit_code": 0}
+  ],
+  "evidence_limitations": [
+    "Explicit linked SLA fixtures, not genuine Operator provisioning",
+    "No identity-directory authorization or shared Operator resource read-model proof",
+    "Local PostgreSQL test fixtures, canonical relation stubs and provider validation test helper; not cloud deployment",
+    "No layout changes, new screenshot pairs or independent VDC approval",
+    "No business-calendar derivation, scheduled resume, escalation or global event/audit publication claim",
+    "No business E2E execution, full API suite, web suite/build or remote CI claim"
+  ],
+  "review_ready": false,
+  "task_status": "in_progress"
+}
