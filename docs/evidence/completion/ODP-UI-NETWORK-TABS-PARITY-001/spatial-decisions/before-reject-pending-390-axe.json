@@ -1,0 +1,15 @@
+{
+  "violations": [],
+  "incomplete": [],
+  "passes": [
+    "avoid-inline-spacing",
+    "button-name",
+    "color-contrast",
+    "form-field-multiple-labels",
+    "label",
+    "nested-interactive",
+    "target-size"
+  ],
+  "timestamp": "2026-10-09T21:04:52.669Z",
+  "url": "http://localhost:3310/operator?ws=network&tab=composition"
+}

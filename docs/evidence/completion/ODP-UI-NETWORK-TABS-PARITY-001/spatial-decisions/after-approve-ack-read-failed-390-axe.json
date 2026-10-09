@@ -1,0 +1,23 @@
+{
+  "violations": [],
+  "incomplete": [],
+  "passes": [
+    "aria-allowed-attr",
+    "aria-conditional-attr",
+    "aria-deprecated-role",
+    "aria-prohibited-attr",
+    "aria-required-attr",
+    "aria-roles",
+    "aria-valid-attr-value",
+    "aria-valid-attr",
+    "avoid-inline-spacing",
+    "button-name",
+    "color-contrast",
+    "form-field-multiple-labels",
+    "nested-interactive",
+    "select-name",
+    "target-size"
+  ],
+  "timestamp": "2026-10-09T21:05:55.170Z",
+  "url": "http://localhost:3310/operator?ws=network&tab=composition"
+}

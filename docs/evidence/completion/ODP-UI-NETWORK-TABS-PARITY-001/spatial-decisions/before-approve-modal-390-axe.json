@@ -1,0 +1,118 @@
+{
+  "violations": [
+    {
+      "id": "color-contrast",
+      "impact": "serious",
+      "tags": [
+        "cat.color",
+        "wcag2aa",
+        "wcag143",
+        "TTv5",
+        "TT13.c",
+        "EN-301-549",
+        "EN-9.1.4.3",
+        "ACT",
+        "RGAAv4",
+        "RGAA-3.2.1"
+      ],
+      "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+      "help": "Elements must meet minimum color contrast ratio thresholds",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/color-contrast?application=playwright",
+      "nodes": [
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#ffffff",
+                "bgColor": "#16a34a",
+                "contrastRatio": 3.29,
+                "fontSize": "10.0pt (13.3333px)",
+                "fontWeight": "bold",
+                "messageKey": null,
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [
+                {
+                  "html": "<button type=\"button\" data-testid=\"btn-confirm-approve\" style=\"padding: 8px 16px; border-radius: 6px; border-width: medium; border-style: none; border-color: currentcolor; border-image: initial; background-color: rgb(22, 163, 74); color: rgb(255, 255, 255); font-weight: 700; cursor: pointer;\">",
+                  "target": [
+                    "button[data-testid=\"btn-confirm-approve\"]"
+                  ]
+                }
+              ],
+              "impact": "serious",
+              "message": "Element has insufficient color contrast of 3.29 (foreground color: #ffffff, background color: #16a34a, font size: 10.0pt (13.3333px), font weight: bold). Expected contrast ratio of 4.5:1"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": "serious",
+          "html": "<button type=\"button\" data-testid=\"btn-confirm-approve\" style=\"padding: 8px 16px; border-radius: 6px; border-width: medium; border-style: none; border-color: currentcolor; border-image: initial; background-color: rgb(22, 163, 74); color: rgb(255, 255, 255); font-weight: 700; cursor: pointer;\">",
+          "target": [
+            "button[data-testid=\"btn-confirm-approve\"]"
+          ],
+          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.29 (foreground color: #ffffff, background color: #16a34a, font size: 10.0pt (13.3333px), font weight: bold). Expected contrast ratio of 4.5:1"
+        }
+      ]
+    }
+  ],
+  "incomplete": [
+    {
+      "id": "color-contrast",
+      "impact": "serious",
+      "tags": [
+        "cat.color",
+        "wcag2aa",
+        "wcag143",
+        "TTv5",
+        "TT13.c",
+        "EN-301-549",
+        "EN-9.1.4.3",
+        "ACT",
+        "RGAAv4",
+        "RGAA-3.2.1"
+      ],
+      "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+      "help": "Elements must meet minimum color contrast ratio thresholds",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/color-contrast?application=playwright",
+      "nodes": [
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "contrastRatio": 0,
+                "fontSize": "9.8pt (13px)",
+                "fontWeight": "normal",
+                "messageKey": "elmPartiallyObscuring",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element's background color could not be determined because it partially overlaps other elements"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": "serious",
+          "html": "<p style=\"font-size: 13px; color: rgb(71, 85, 105); margin: 0px 0px 16px;\">核准將寫入 <code>expansion.heatzone_composition</code> Append-Only 歷史，並將現有衝突活躍關聯自動軟性回滾 (Soft-Rollback)。</p>",
+          "target": [
+            "div[data-testid=\"approve-modal\"] > div > p"
+          ],
+          "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it partially overlaps other elements"
+        }
+      ]
+    }
+  ],
+  "passes": [
+    "avoid-inline-spacing",
+    "button-name",
+    "color-contrast",
+    "form-field-multiple-labels",
+    "label",
+    "nested-interactive",
+    "target-size"
+  ],
+  "timestamp": "2026-10-09T21:04:44.375Z",
+  "url": "http://localhost:3310/operator?ws=network&tab=composition"
+}

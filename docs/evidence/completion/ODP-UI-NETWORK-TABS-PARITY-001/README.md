@@ -282,6 +282,21 @@ and missing-uv diagnostics remain. These are UI-only controlled-read receipts,
 not durable decision proof; inherited modals/real proposal generation/permission/
 error states remain open. **Not full acceptance or review resubmission.**
 
+## Spatial decision authority / acknowledgement increment
+
+[`spatial-decisions/README.md`](spatial-decisions/README.md) records baseline
+`ed196bd00ff1`, implementation `e0b8a5dd89d1` and harness `1974b6aeaaac`:
+1440/390 approve/reject modal, pending, controlled-conflict, POST-ack/GET-failure
+and terminal-retry before-after pairs. Confirmation pins proposal/persona;
+revoked/unavailable/replaced authority cannot submit; pending input/cancel/Escape
+freeze; failed requests preserve input. Acknowledged POST and unconfirmed GET are
+explicitly separate, and locally acknowledged IDs cannot be re-decided. Malformed
+items/duplicate IDs/incomplete split topology fail closed. Twenty after scoped AA
+scans clear; full web785/focused50/modal4/render-regression5/lint/typecheck/boundaries/
+inventory125-18 original exits0. Controlled HTTP outcomes **are not backend durable
+proof**. Genuine generation/preview/decision/reload, other negative pairs, Intake
+resource authority and independent VDC scope remain open. **Not ready to resubmit.**
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped

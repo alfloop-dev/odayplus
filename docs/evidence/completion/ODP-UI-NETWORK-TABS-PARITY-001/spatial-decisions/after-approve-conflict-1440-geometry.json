@@ -1,0 +1,33 @@
+{
+  "box": {
+    "x": 480,
+    "y": 264.734375,
+    "width": 480,
+    "height": 370.53125,
+    "scrollWidth": 480
+  },
+  "children": [
+    {
+      "x": 500,
+      "y": 433.90625,
+      "width": 440,
+      "height": 78.421875,
+      "scrollWidth": 438
+    },
+    {
+      "x": 747,
+      "y": 577.125,
+      "width": 60,
+      "height": 38.140625,
+      "scrollWidth": 58
+    },
+    {
+      "x": 815,
+      "y": 577.125,
+      "width": 125,
+      "height": 38.140625,
+      "scrollWidth": 123
+    }
+  ],
+  "documentWidth": 1440
+}

@@ -1,0 +1,46 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "owner": "Pi",
+  "reviewer": "Codex2",
+  "source_head": "1974b6aeaaac729043f75df2942f9d06675f9836",
+  "baseline": "ed196bd00ff12691972df3ddb7bd103aa910aaef",
+  "origin_dev": "2fe3ef933794d0bb293449b74dffe9602d53f767",
+  "evidence_mode": "controlled-http-ui-only-not-durable-live",
+  "task_complete": false,
+  "exit_receipts": {
+    "after.exit": 0,
+    "before-startup-failed.exit": 1,
+    "before.exit": 0,
+    "boundaries.exit": 0,
+    "diff.exit": 0,
+    "focused.exit": 0,
+    "inventory.exit": 0,
+    "lint.exit": 0,
+    "render-regression.exit": 0,
+    "typecheck.exit": 0,
+    "unit.exit": 0
+  },
+  "test_results": {
+    "focused": 50,
+    "full_web": 785,
+    "modal_before": 4,
+    "modal_after": 4,
+    "previous_render_regression": 5,
+    "business_inventory": {
+      "tests": 125,
+      "files": 18
+    }
+  },
+  "after_scoped_axe_scans": 20,
+  "after_scoped_axe_violations": 0,
+  "source_sha256": {
+    "apps/web/features/operator/NetworkFindAreasWorkspace.tsx": "b419416c4cc4c361cf6fb5670b08a5c807a0bf1b8291f1765f39bb77366a95ef",
+    "apps/web/features/operator/network/HeatZoneMergeSplitPanel.tsx": "5cca6a553fab16d922738d9124db389837c07a9e6147398d209590a3fe23fd67",
+    "apps/web/features/operator/network/heatZoneCompositionClient.ts": "ce4cba8071f4265b588143c6b743dd4622bd9987e457f6ec183f7a564f5971c4",
+    "apps/web/features/operator/network/spatialGovernance.module.css": "4867877a30fc519cdd9200bb1230eaa7e7cfa5369a8d272df7032e4f575f7f26",
+    "apps/web/features/operator/__tests__/HeatZoneMergeSplitPanel.test.tsx": "2282d82cd738d8080cd68ef9fd6759b7d8259a5f5b21d65a2b1cd574b88fb463",
+    "apps/web/features/operator/network/__tests__/heatZoneCompositionClient.test.ts": "f6a3cd3e079e4a5e28030d2e7d2963eb09ea8230980476c83e1dfc6e66958251",
+    "apps/web/features/operator/network/__tests__/SpatialProposalAvailability.test.tsx": "1b45ae882231a798958fa57ff0601b1a625ce6d140e04a45640ee48ccc1cd5b7",
+    "tests/visual/operator-spatial-surface-parity.spec.ts": "8d0d3c944202d5a523ccf1f8eeec0fc0b3ae72f3333a0686ea1a0771774285c5"
+  }
+}
