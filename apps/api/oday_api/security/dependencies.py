@@ -666,6 +666,7 @@ _OPERATOR_ROLE_BY_PLATFORM_ROLE: dict[Role, tuple[str, ...]] = {
     Role.EXPANSION_USER: ("expansion-staff",),
     Role.SITE_REVIEWER: ("expansion-manager",),
     Role.AUDITOR: ("pm-audit",),
+    Role.OPERATOR_VIEWER: ("pm-audit",),
     Role.EXECUTIVE: ("ops-lead", "expansion-manager", "pm-audit"),
 }
 

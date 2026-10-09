@@ -199,6 +199,9 @@ def authorize_intake_action(
         else None
     )
 
+    if principal.has_role(Role.OPERATOR_VIEWER) and target_tenant != principal.tenant_id:
+        _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED")
+
     tenant_decision = check_tenant_isolation(
         principal=principal,
         resource_tenant_id=target_tenant,
@@ -250,8 +253,12 @@ def authorize_intake_action(
         "privacyOfficer",
     )
 
-    # Deny platform admin from accessing business data
-    if is_admin and not (is_manager or is_staff or is_steward):
+    # An explicit verified read grant composes with administration, but only
+    # for VIEW. A caller-selected persona can never manufacture this grant.
+    is_operator_viewer = principal.has_role(Role.OPERATOR_VIEWER)
+    if is_admin and not (
+        is_manager or is_staff or is_steward or (action == "view" and is_operator_viewer)
+    ):
         _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     def _is_owner(owner: Any, submitter: Any) -> bool:
@@ -270,7 +277,7 @@ def authorize_intake_action(
             if not _is_owner(owner, submitter):
                 _raise_and_audit(status_code=403, detail="OWNERSHIP_REQUIRED")
         # Ensure allowed roles
-        if not (is_staff or is_manager or is_steward or is_governance or is_privacy):
+        if not (is_staff or is_manager or is_steward or is_governance or is_privacy or is_operator_viewer):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action in ("submit_url", "submit_csv"):

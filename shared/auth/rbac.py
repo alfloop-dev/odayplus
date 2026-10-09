@@ -79,6 +79,15 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         # Admin manages configuration but does not get blanket business-data
         # visibility (ODP-SA-04 §3 ROLE-ADMIN limitation).
     ),
+    # The console aggregates StoreOps/Growth/Governance under operator_console.
+    # Network has separate listing, SiteScore and HeatZone read guards. Keep
+    # this finite: no export, wildcard, administration or business mutation.
+    Role.OPERATOR_VIEWER: frozenset(
+        _grant("operator_console", Action.VIEW)
+        | _grant("listing", Action.VIEW)
+        | _grant("sitescore", Action.VIEW)
+        | _grant("heatzone", Action.VIEW)
+    ),
     Role.ARCHITECTURE_OWNER: frozenset(_grant("audit", Action.VIEW)),
     Role.DATA_OWNER: frozenset(
         _grant("integration", Action.VIEW, Action.CREATE, Action.UPDATE)
@@ -196,6 +205,8 @@ def rbac_allows(principal: Principal, resource: str, action: Action) -> bool:
     """True if any of the principal's roles grant ``action`` on ``resource``."""
 
     if not principal.authenticated:
+        return False
+    if principal.has_role(Role.OPERATOR_VIEWER) and not principal.tenant_id:
         return False
     for permission in permissions_for(principal.roles):
         if permission.matches(resource, action):

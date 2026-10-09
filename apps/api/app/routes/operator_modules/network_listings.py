@@ -23,6 +23,7 @@ from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.external_data.security import contains_sensitive_submission_material
 from modules.listing.application.intake_authorization import (
     authorize_intake_action,
+    intake_resource_in_scope,
     mask_intake,
     mask_listing,
 )
@@ -145,6 +146,9 @@ def create_network_listings_sub_router(
         authorize_intake_action(
             principal,
             "view",
+            collection_scope=(
+                {"heatZoneId": selected_heat_zone_id} if selected_heat_zone_id else None
+            ),
             operator_role_id=operator_role_id,
             audit_log=audit_log,
             correlation_id=x_correlation_id,
@@ -186,6 +190,13 @@ def create_network_listings_sub_router(
                     for intake in snap["assistedIntakes"]
                     if is_record_owner(principal, intake)
                 ]
+
+        if principal.has_role(Role.OPERATOR_VIEWER):
+            for key in ("listings", "assistedIntakes"):
+                if key in snap:
+                    snap[key] = [
+                        row for row in snap[key] if intake_resource_in_scope(principal, row)
+                    ]
 
         if "listings" in snap:
             snap["listings"] = [mask_listing(principal, lst) for lst in snap["listings"]]
@@ -514,6 +525,8 @@ def create_network_listings_sub_router(
 
         if is_staff:
             intakes = [intake for intake in intakes if is_record_owner(principal, intake)]
+        if principal.has_role(Role.OPERATOR_VIEWER):
+            intakes = [i for i in intakes if intake_resource_in_scope(principal, i)]
         visible = [mask_intake(principal, intake) for intake in intakes]
         processing_stages = {
             "SUBMITTED",
