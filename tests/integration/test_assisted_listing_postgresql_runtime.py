@@ -321,7 +321,35 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
     state = app.state.assisted_intake_store
     state.refresh(TENANT_ID)
     state.intakes[receipt["intake_id"]]["state"] = "NEEDS_REVIEW"
+    # Explicit SLA provisioning fixture: the API still has no approved SLA
+    # creation endpoint. The actions below, persistence and restart are real;
+    # this does not prove Operator provisioning or its shared read-model.
+    sla_id = str(uuid4())
+    state.slas[sla_id] = {
+        "sla_instance_id": sla_id,
+        "intake_id": receipt["intake_id"],
+        "tenant_id": TENANT_ID,
+        "state": "ON_TRACK",
+        "due_at": "2026-07-30T12:00:00Z",
+        "paused_duration_seconds": 17,
+        "version": 23,
+        "audit_event_id": str(uuid4()),
+        "correlation_id": str(uuid4()),
+    }
     state.flush()
+    pause_body = {
+        "reason": "Awaiting independent source feedback",
+        "expected_resume_at": "2027-01-10T12:00:00Z",
+    }
+    pause_headers = {
+        **_headers(ACTOR_ID, key=f"production-sla-pause-{uuid4()}"),
+        "If-Match": 'W/"23"',
+    }
+    paused = client.post(
+        f"/api/v1/sla-instances/{sla_id}/actions/pause",
+        json=pause_body, headers=pause_headers,
+    )
+    assert paused.status_code == 200, paused.text
     corrected = client.post(
         f"/api/v1/intakes/{receipt['intake_id']}/corrections",
         json={
@@ -350,6 +378,47 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
         )
         assert detail.status_code == 200, detail.text
         assert detail.json()["assignment_id"] == assigned.json()["assignment_id"]
+        assert detail.json()["sla_instance_id"] == sla_id
+        assert detail.json()["sla_state"] == "PAUSED"
+        assert detail.json()["sla_version"] == paused.json()["version"] == 24
+        # Lost-response replay must retain the same interval and receipt after
+        # restart; it must not reopen the pause or count elapsed time twice.
+        pause_replay = restarted_client.post(
+            f"/api/v1/sla-instances/{sla_id}/actions/pause",
+            json=pause_body, headers=pause_headers,
+        )
+        assert pause_replay.status_code == 200, pause_replay.text
+        assert pause_replay.json() == paused.json()
+        resumed = restarted_client.post(
+            f"/api/v1/sla-instances/{sla_id}/actions/resume",
+            json={"reason": "Independent feedback received"},
+            headers={
+                **_headers(ACTOR_ID, key=f"production-sla-resume-{uuid4()}"),
+                "If-Match": 'W/"24"',
+            },
+        )
+        assert resumed.status_code == 200, resumed.text
+        assert resumed.json()["state"] == "ON_TRACK"
+        assert resumed.json()["version"] == 25
+        restarted.state.assisted_intake_store.refresh(TENANT_ID)
+        sla = restarted.state.assisted_intake_store.slas[sla_id]
+        assert len(sla["pause_intervals"]) == 1
+        interval = sla["pause_intervals"][0]
+        assert interval["reason"] == pause_body["reason"]
+        assert interval["expected_resume_at"] == pause_body["expected_resume_at"]
+        assert interval["pause_interval_id"] == paused.json()["active_pause_interval_id"]
+        assert interval["resume_reason"] == "Independent feedback received"
+        assert interval["resumed_by_subject_id"] == ACTOR_ID
+        assert interval["ended_at"] is not None
+        assert sla["paused_duration_seconds"] >= 17
+        # Independently reload the completed interval using another DB-backed
+        # store, not the API replica's already-mutated in-memory snapshot.
+        reloaded = build_persistence(mode="postgresql")
+        try:
+            reloaded.assisted_intake_store.refresh(TENANT_ID)
+            assert reloaded.assisted_intake_store.slas[sla_id] == sla
+        finally:
+            reloaded.engine.close()
 
         job = restarted_client.get(
             f"/api/v1/jobs/{receipt['job_id']}/receipt",
