@@ -90,6 +90,45 @@ PATH (exit 127), and system `python3 -m pytest` lacked pytest (exit 1). The
 successful command uses the known existing project environment without syncing
 or modifying its dependencies.
 
+## Codex P2 review repair: HTTP status context
+
+Codex reopened PR #1441 at `b50f7f656da3ed46448e3360ee2cd728862d68ca`:
+non-digit boundaries around bare 400/401/403 also matched valid image SHA
+segments (for example `a401b`) in the ambient-OIDC diagnostic. Repair anchor:
+`425c9d63b965`. Re-fetched `origin/dev` remains
+`1b064bb00cda3a031d2cbb6007488afeceea8379`.
+
+Permanent numeric status recognition now requires HTTP, status/code, response/code
+or ambient-OIDC response context with alphanumeric token boundaries. The
+`400 Bad Request` reason phrase and existing authorization/trust indicators
+remain vetoes. No bare numeric scan of image hashes remains. Retry bounds,
+private diagnostics, arguments, workflow and all release authorities are unchanged.
+
+Added real-shell sign/attest regressions for valid 64-hex image digests containing
+400/401/403: the image-bearing observed decode error succeeds on attempt two,
+with identical arguments and one 2s sleep. Mixed transient diagnostics plus
+actual HTTP/1.1, HTTP/2, HTTP, status/code, response/code and ambient-OIDC
+400/401/403 still stop on attempt one, preserve exit 23 and never sleep.
+
+The same five-file `uv run --frozen --no-sync pytest -q` command above, with
+`--junitxml=/tmp/odp-cosign-retry-http-context-junit.xml`, ran at the repair
+anchor. Original terminal completion: **exit 0**; existing JUnit reports
+**281 tests, 0 failures, 0 errors, 0 skipped**, 49.270s. Counts were read from
+that receipt, not obtained by rerunning tests. Subsequent commit changes only
+this evidence note.
+
+- `/tmp/odp-cosign-retry-http-context-pytest.log` SHA-256:
+  `0c4e225586def4503dabfd0d2e6f1fab11ce6f7dbd3e0096fa59e544c420f384`.
+- `/tmp/odp-cosign-retry-http-context-junit.xml` SHA-256:
+  `c53de71c1096e7fe99d1c5faa3bc2653eb9f4fbe400767ce88bec1bb331b920c`.
+- Same four-file Ruff check, `bash -n delivery_toolchain/security/sign_images.sh`
+  and `git diff --check`: each **exit 0**.
+- Original failure log SHA-256 rechecked and unchanged. No cloud, tag, workflow
+  dispatch, account, IAM, source or model mutation was performed.
+
+The previous head's CI/review is not approval of this repair. The newly
+published exact head needs fresh required CI and independent Codex review.
+
 ## Release / review handoff
 
 Exact submitted-head remote CI and independent Codex review are still required;
