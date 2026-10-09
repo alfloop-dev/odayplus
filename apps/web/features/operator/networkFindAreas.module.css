@@ -867,6 +867,7 @@
   grid-template-areas:
     "lens map detail"
     "lens tray detail";
+  grid-template-rows: 426px auto;
   gap: 14px;
   align-items: flex-start;
 }
@@ -895,9 +896,27 @@
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .lensButton {
-  min-height: 40px;
+  display: block;
+  min-height: 30px;
   border-radius: 8px;
-  padding: 7px 10px;
+  padding: 6px 11px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .lensButton span {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .lensButton[aria-pressed="true"] {
+  background: #2e3a97;
+  border-color: #2e3a97;
+  color: #fff;
+}
+
+.findAreasCaption {
+  color: #59667c;
+  font-size: 10px;
+  letter-spacing: 0.04em;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .legend {
@@ -913,8 +932,25 @@
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .mapPanel {
+  position: relative;
   grid-area: map;
+  height: 426px;
   overflow: hidden;
+  border-radius: 14px;
+}
+
+.findAreasMapCaption {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  left: 12px;
+  max-width: calc(100% - 24px);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #59667c;
+  padding: 3px 8px;
+  font-size: 10px;
+  pointer-events: none;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .trayPanel {
@@ -926,21 +962,138 @@
 
 .tabPanel[data-screen-label="Network 找區域"] .detailPanel {
   grid-area: detail;
-  gap: 14px;
-  padding: 14px;
+  gap: 11px;
+  padding: 15px 16px;
+  border-radius: 12px;
+}
+
+.findAreasDetailHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.findAreasDetailHeader h3,
+.findAreasDetailHeader p {
+  margin: 0;
+}
+
+.findAreasDetailHeader h3 {
+  font-size: 14px;
+}
+
+.findAreasDetailHeader > strong {
+  color: #096a78;
+  font-family: var(--operator-font-mono, ui-monospace, monospace);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.findAreasDetailHeader p {
+  grid-column: 1 / -1;
+  color: #59667c;
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+.findAreasFacts {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  font-size: 11.5px;
+}
+
+.findAreasFacts > div {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.findAreasFacts dt {
+  color: #59667c;
+}
+
+.findAreasFacts dd {
+  margin: 0;
+  text-align: right;
+  color: #3a4362;
+  overflow-wrap: anywhere;
+}
+
+.findAreasActions {
+  display: grid;
+  gap: 6px;
+}
+
+.findAreasActions button {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #fff;
+  color: #3a4362;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.findAreasActions .findAreasPrimary {
+  border-color: #2e3a97;
+  border-radius: 9px;
+  padding: 10px 14px;
+  background: #2e3a97;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.findAreasActions button:disabled {
+  cursor: not-allowed;
+  background: #f8f9fc;
+  color: #59667c;
+}
+
+.findAreasActions small {
+  color: #59667c;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.findAreasActions button:focus-visible,
+.findAreasSearch summary:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+.findAreasSearch {
+  margin-bottom: 10px;
+  border: 1px solid #d6dce8;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.findAreasSearch summary {
+  padding: 8px 12px;
+  color: #3a4362;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map"]) {
-  grid-template-rows: minmax(430px, 1fr);
-  min-height: 430px;
+  grid-template-rows: 424px;
+  min-height: 424px;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map-canvas"]) {
-  min-height: 430px;
+  min-height: 424px;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .mapPanel .mapLoading {
-  min-height: 430px;
+  min-height: 424px;
   border: 0;
   border-radius: 0;
 }
@@ -985,7 +1138,7 @@
 .tabPanel[data-screen-label="Network 找區域"] .rank {
   grid-area: rank;
   align-self: flex-end;
-  color: #7a8496;
+  color: #59667c;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .zoneRowMain {
@@ -998,6 +1151,7 @@
 
 .tabPanel[data-screen-label="Network 找區域"] .zoneRowMain small {
   white-space: normal;
+  color: #59667c;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .zoneRowScore {
@@ -1005,7 +1159,7 @@
   align-self: flex-start;
   border-radius: 999px;
   background: #e2f4f6;
-  color: #0e7c8c;
+  color: #096a78;
   padding: 4px 8px;
 }
 
@@ -1030,6 +1184,46 @@
 
 .tabPanel[data-screen-label="Network 找區域"] .detailGrid {
   grid-template-columns: 1fr;
+  gap: 11px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailGrid > section {
+  border: 0;
+  padding: 0;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailGrid h4 {
+  font-size: 11px;
+  color: #1e7f4f;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailGrid section:nth-child(2) h4 {
+  color: #96610b;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailGrid li {
+  font-size: 11px;
+  line-height: 1.55;
+  padding: 2px 0;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailGrid .findAreasNextStep {
+  border: 1px solid #d9dff5;
+  border-radius: 9px;
+  background: #eef1fb;
+  padding: 8px 11px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .findAreasNextStep h4 {
+  color: #2e3a97;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .findAreasNextStep p {
+  font-size: 11.5px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .pipelineStats {
+  color: #59667c;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .linkedRows {
@@ -4533,6 +4727,7 @@
 
   .tabPanel[data-screen-label="Network 找區域"] {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
     grid-template-areas:
       "lens"
       "map"
@@ -4550,7 +4745,13 @@
   }
 
   .tabPanel[data-screen-label="Network 找區域"] .lensButton {
-    flex: 0 0 132px;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .tabPanel[data-screen-label="Network 找區域"] .findAreasCaption {
+    flex: 0 0 auto;
+    align-self: center;
   }
 
   .tabPanel[data-screen-label="Network 找區域"] .legend {

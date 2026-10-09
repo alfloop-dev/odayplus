@@ -1,0 +1,140 @@
+[WebServer] 2026/10/09 19:31:16 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 19:31:18 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 19:31:18 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [2107203]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8312 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T19:31:22.177356+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b2a9451a-826a-4bcf-bcfc-8b3b5aa9106e", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 3 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T19:31:41.335226+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "e6b78928-0aea-4856-9fd5-a48f2e6d04cc", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-listings/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:41.366729+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "57a69f8a-2032-4299-817e-3b15f8f5ef83", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:43.779575+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "95fcf250-8cfe-406e-bdae-291d131f5357", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:46.808639+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:47.335256+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:47.340330+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:47.340866+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:49.019632+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:49.022470+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:49.023804+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:49.582845+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:49.633363+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-f0f69d18-a465-4aca-802d-d8770ae50f67", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:56.850183+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-02-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:31:57.411616+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-02-fit", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+  ✘  1 [chromium] › tests/visual/operator-findareas-surface-parity.spec.ts:35:7 › Find Areas hierarchy and truthful navigation at 1440 (23.2s)
+[WebServer] {"timestamp": "2026-10-09T19:32:03.642621+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4db6c08b-0671-45e9-af16-89f48b2ac07b", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-listings/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:03.672195+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "82029f74-9501-4161-8eb2-fece7c671f8a", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:03.753980+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "42ba11db-6d29-4dc2-b2c8-70b06c3123be", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:06.318994+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:06.484514+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:06.485035+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:06.489841+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:06.887990+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:06.947627+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:06.956127+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:07.093925+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:07.224212+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-6bfdca86-e021-49cf-bf99-6a2fa6bc2575", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:14.738649+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-02-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:15.462179+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-02-fit", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+  ✘  2 [chromium] › tests/visual/operator-findareas-surface-parity.spec.ts:35:7 › Find Areas hierarchy and truthful navigation at 1024 (17.0s)
+[WebServer] {"timestamp": "2026-10-09T19:32:21.651376+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "551bc65a-9bb6-493b-98cd-1fb683ff55e7", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-listings/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:21.682155+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "c22b4c17-3550-49ec-b3f8-3d4d25d50f86", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:21.764663+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4988c862-ed7f-41c2-9f18-50644595d6ce", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:23.851779+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:23.925257+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:23.935752+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:23.939954+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:24.264823+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:24.287328+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:24.294110+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:24.444586+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-6c95d3a5-a7ac-4c6c-950b-d2cdd4e02589", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:24.446235+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:31.892684+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-02-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T19:32:32.325783+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-02-fit", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+  ✘  3 [chromium] › tests/visual/operator-findareas-surface-parity.spec.ts:35:7 › Find Areas hierarchy and truthful navigation at 390 (15.8s)
+
+
+  1) [chromium] › tests/visual/operator-findareas-surface-parity.spec.ts:35:7 › Find Areas hierarchy and truthful navigation at 1440 
+
+    Error: expect(page).toHaveURL(expected) failed
+
+    Expected pattern: /lens=fit/
+    Received string:  "http://localhost:3312/operator?ws=network&hz=HZ-01&lens=demand"
+    Timeout: 5000ms
+
+    Call log:
+      - Expect "toHaveURL" with timeout 5000ms
+        13 × unexpected value "http://localhost:3312/operator?ws=network&hz=HZ-01&lens=demand"
+
+
+      102 |     await page.keyboard.press("Enter");
+      103 |     await expect(fit).toHaveAttribute("aria-pressed", "true");
+    > 104 |     await expect(page).toHaveURL(/lens=fit/);
+          |                        ^
+      105 |     await page.reload();
+      106 |     await expect(page.getByLabel("Selected HeatZone detail")).toContainText("HZ-02");
+      107 |     await expect(page.getByLabel("HeatZone lenses").getByRole("button", { name: "品牌適配", exact: true })).toHaveAttribute("aria-pressed", "true");
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-findareas-surface-parity.spec.ts:104:24
+
+    Error Context: test-results/operator-findareas-surface-67454-truthful-navigation-at-1440-chromium/error-context.md
+
+    Error Context: test-results/operator-findareas-surface-67454-truthful-navigation-at-1440-chromium/error-context.md
+
+  2) [chromium] › tests/visual/operator-findareas-surface-parity.spec.ts:35:7 › Find Areas hierarchy and truthful navigation at 1024 
+
+    Error: expect(page).toHaveURL(expected) failed
+
+    Expected pattern: /lens=fit/
+    Received string:  "http://localhost:3312/operator?ws=network&hz=HZ-01&lens=demand"
+    Timeout: 5000ms
+
+    Call log:
+      - Expect "toHaveURL" with timeout 5000ms
+        13 × unexpected value "http://localhost:3312/operator?ws=network&hz=HZ-01&lens=demand"
+
+
+      102 |     await page.keyboard.press("Enter");
+      103 |     await expect(fit).toHaveAttribute("aria-pressed", "true");
+    > 104 |     await expect(page).toHaveURL(/lens=fit/);
+          |                        ^
+      105 |     await page.reload();
+      106 |     await expect(page.getByLabel("Selected HeatZone detail")).toContainText("HZ-02");
+      107 |     await expect(page.getByLabel("HeatZone lenses").getByRole("button", { name: "品牌適配", exact: true })).toHaveAttribute("aria-pressed", "true");
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-findareas-surface-parity.spec.ts:104:24
+
+    Error Context: test-results/operator-findareas-surface-afad5-truthful-navigation-at-1024-chromium/error-context.md
+
+    Error Context: test-results/operator-findareas-surface-afad5-truthful-navigation-at-1024-chromium/error-context.md
+
+  3) [chromium] › tests/visual/operator-findareas-surface-parity.spec.ts:35:7 › Find Areas hierarchy and truthful navigation at 390 
+
+    Error: expect(page).toHaveURL(expected) failed
+
+    Expected pattern: /lens=fit/
+    Received string:  "http://localhost:3312/operator?ws=network&hz=HZ-01&lens=demand"
+    Timeout: 5000ms
+
+    Call log:
+      - Expect "toHaveURL" with timeout 5000ms
+        13 × unexpected value "http://localhost:3312/operator?ws=network&hz=HZ-01&lens=demand"
+
+
+      102 |     await page.keyboard.press("Enter");
+      103 |     await expect(fit).toHaveAttribute("aria-pressed", "true");
+    > 104 |     await expect(page).toHaveURL(/lens=fit/);
+          |                        ^
+      105 |     await page.reload();
+      106 |     await expect(page.getByLabel("Selected HeatZone detail")).toContainText("HZ-02");
+      107 |     await expect(page.getByLabel("HeatZone lenses").getByRole("button", { name: "品牌適配", exact: true })).toHaveAttribute("aria-pressed", "true");
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-findareas-surface-parity.spec.ts:104:24
+
+    Error Context: test-results/operator-findareas-surface-a433c--truthful-navigation-at-390-chromium/error-context.md
+
+    Error Context: test-results/operator-findareas-surface-a433c--truthful-navigation-at-390-chromium/error-context.md
+
+  3 failed
+    [chromium] › tests/visual/operator-findareas-surface-parity.spec.ts:35:7 › Find Areas hierarchy and truthful navigation at 1440 
+    [chromium] › tests/visual/operator-findareas-surface-parity.spec.ts:35:7 › Find Areas hierarchy and truthful navigation at 1024 
+    [chromium] › tests/visual/operator-findareas-surface-parity.spec.ts:35:7 › Find Areas hierarchy and truthful navigation at 390 

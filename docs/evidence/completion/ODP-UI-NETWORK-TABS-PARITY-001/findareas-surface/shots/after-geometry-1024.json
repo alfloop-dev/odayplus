@@ -1,0 +1,62 @@
+{
+  "boxes": {
+    "panel": {
+      "x": 20,
+      "y": 448.96875,
+      "width": 984,
+      "height": 1702.109375,
+      "scrollWidth": 984,
+      "columns": "180px 790px",
+      "overflowX": "visible"
+    },
+    "lenses": {
+      "x": 20,
+      "y": 448.96875,
+      "width": 180,
+      "height": 556.453125,
+      "scrollWidth": 180,
+      "columns": "180px",
+      "overflowX": "visible"
+    },
+    "firstLens": {
+      "x": 35,
+      "y": 484.46875,
+      "width": 150,
+      "height": 34.140625,
+      "scrollWidth": 148,
+      "columns": "none",
+      "overflowX": "visible"
+    },
+    "map": {
+      "x": 216,
+      "y": 450.96875,
+      "width": 786,
+      "height": 424,
+      "scrollWidth": 786,
+      "columns": "none",
+      "overflowX": "visible"
+    },
+    "tray": {
+      "x": 214,
+      "y": 888.96875,
+      "width": 790,
+      "height": 165.28125,
+      "scrollWidth": 790,
+      "columns": "none",
+      "overflowX": "visible"
+    },
+    "detail": {
+      "x": 20,
+      "y": 1068.25,
+      "width": 984,
+      "height": 1082.828125,
+      "scrollWidth": 982,
+      "columns": "950px",
+      "overflowX": "visible"
+    }
+  },
+  "document": {
+    "width": 1024,
+    "scrollWidth": 1024
+  }
+}

@@ -1329,13 +1329,9 @@ export function NetworkFindAreasWorkspace({
 
   function scoreCandidate() {
     if (selectedZone?.bestCandidate) {
+      // Navigation is not a scoring write or a review receipt.
+      changeActiveTab(3);
       callbacks?.onScoreCandidate?.(selectedZone.bestCandidate, selectedZone.zone);
-    }
-  }
-
-  function submitReview() {
-    if (selectedZone) {
-      callbacks?.onSubmitReview?.(selectedZone.zone);
     }
   }
 
@@ -1687,7 +1683,6 @@ export function NetworkFindAreasWorkspace({
             onToggleTracked={toggleTracked}
             onSourceListings={sourceListings}
             onScoreCandidate={scoreCandidate}
-            onSubmitReview={submitReview}
           />
         )}
       </NetworkShell>
@@ -1712,7 +1707,6 @@ type FindAreasPanelProps = {
   onToggleTracked: () => void;
   onSourceListings: () => void;
   onScoreCandidate: () => void;
-  onSubmitReview: () => void;
 };
 
 function FindAreasPanel({
@@ -1727,7 +1721,6 @@ function FindAreasPanel({
   onScoreCandidate,
   onSelectZone,
   onSourceListings,
-  onSubmitReview,
   onToggleTracked,
   selectedZone,
   viewModel,
@@ -1751,10 +1744,17 @@ function FindAreasPanel({
   // §5, UX-SCR-EXP-001), so this surface shows what WOULD be persisted, with
   // its audit fields, instead of silently dropping the operator's decision.
   const [geocodeReceipt, setGeocodeReceipt] = useState<GeocodeAuditEvent | null>(null);
+  const lensLabels: Record<NetworkFindAreasLens, string> = {
+    demand: "需求熱度", fit: "品牌適配", competition: "競店壓力",
+    cannibalization: "自家稀釋", rent: "租金可行性", life: "住宅／學區／商圈",
+    traffic: "交通／人流", unmet: "未滿足需求", confidence: "資料信心",
+  };
+  const activeLensLabel = lensLabels[effectiveLens];
   return (
     <div className={styles.tabPanel} data-screen-label="Network 找區域" data-testid="network-panel-find-areas" role="tabpanel">
       <section className={styles.lensBar} aria-label="HeatZone lenses">
         <div className={styles.lensSelector}>
+          <strong className={styles.findAreasCaption}>LENS · 分數越高越有利</strong>
           {viewModel.lenses.map((lens) => (
             <button
               aria-pressed={effectiveLens === lens.id}
@@ -1764,32 +1764,31 @@ function FindAreasPanel({
               title={lens.description}
               type="button"
             >
-              <span>{lens.shortLabel}</span>
-              <small>{lens.label}</small>
+              <span>{lensLabels[lens.id]}</span>
             </button>
           ))}
         </div>
         <div className={styles.legend} aria-label="Map legend">
+          <strong className={styles.findAreasCaption}>圖例</strong>
           <span className={styles.legendItem}>
-            <i className={styles.legendGood} aria-hidden="true" /> High lens fit
+            <i className={styles.legendGood} aria-hidden="true" /> 高適配
           </span>
           <span className={styles.legendItem}>
-            <i className={styles.legendWatch} aria-hidden="true" /> Watch tradeoff
+            <i className={styles.legendWatch} aria-hidden="true" /> 需留意
           </span>
           <span className={styles.legendItem}>
-            <i className={styles.legendRisk} aria-hidden="true" /> Risk pressure
+            <i className={styles.legendRisk} aria-hidden="true" /> 風險壓力
           </span>
           <span className={styles.legendItem}>
-            <i className={styles.legendCandidate} aria-hidden="true" /> Candidate
+            <i className={styles.legendCandidate} aria-hidden="true" /> 候選點
           </span>
         </div>
       </section>
 
       <section className={styles.mainGrid} aria-label="Find Areas workbench">
         <div className={styles.mapPanel}>
-          <div className={styles.panelHeader}>
-            <h3>HeatZone Lens Map</h3>
-            <span>{viewModel.activeLens}</span>
+          <div className={styles.findAreasMapCaption}>
+            HeatZone Lens：{activeLensLabel} · {fixturesAllowed ? "本機示範座標" : "API 區域資料"}
           </div>
           <HeatZoneMap
             dataSource={fixturesAllowed ? "fixture" : "api"}
@@ -1803,11 +1802,9 @@ function FindAreasPanel({
         </div>
 
         <aside className={styles.trayPanel} aria-label="Recommended find area tray">
-          {/*
-            Address search sits in the tray rather than in .mapPanel: that panel
-            is a fixed-height grid area with overflow:hidden on this screen, so
-            anything stacked above the canvas is clipped.
-          */}
+          {/* Later-spec search stays reachable, outside the bounded map canvas. */}
+          <details className={styles.findAreasSearch}>
+          <summary>地址定位搜尋</summary>
           <GeocoderSearchPanel
             actorRoleId={activeRoleId}
             canSearch={canSearchAddress(activeRoleId)}
@@ -1841,9 +1838,10 @@ function FindAreasPanel({
               </span>
             </div>
           ) : null}
+          </details>
           <div className={styles.panelHeader}>
-            <h3>Recommended Areas</h3>
-            <span>{viewModel.rankedZones.length} ranked</span>
+            <h3>推薦找點區域</h3>
+            <span>依「{activeLensLabel}」排序 · {viewModel.rankedZones.length} 區</span>
           </div>
           <div className={styles.zoneList}>
             {viewModel.rankedZones.map((zone, index) => (
@@ -1860,7 +1858,7 @@ function FindAreasPanel({
                     {zone.id} · {zone.label}
                   </strong>
                   <small>
-                    demand {zone.demandLabel} · fit {zone.fitLabel} · comp {zone.competitionLabel}
+                    需求 {zone.demandLabel} · 適配 {zone.fitLabel} · 競店 {zone.competitionLabel}
                   </small>
                 </span>
                 <span className={styles.zoneRowScore}>{zone.lensLabel}</span>
@@ -1872,44 +1870,25 @@ function FindAreasPanel({
         <article className={styles.detailPanel} aria-label="Selected HeatZone detail">
           {selectedZone ? (
             <>
-              <div className={styles.detailTopline}>
-                <div>
-                  <span className={styles.kicker}>{selectedZone.id}</span>
-                  <h3>{selectedZone.label}</h3>
-                  <p>{selectedZone.centroidLabel}</p>
-                </div>
-                <div className={styles.detailActions}>
-                  <button aria-pressed={isSelectedTracked} onClick={onToggleTracked} type="button">
-                    {isSelectedTracked ? "Tracked" : "Track"}
-                  </button>
-                  <button onClick={onSourceListings} type="button">
-                    Source Listings
-                  </button>
-                  <button disabled={!selectedZone.bestCandidate} onClick={onScoreCandidate} type="button">
-                    Score Candidate
-                  </button>
-                  <button onClick={onSubmitReview} type="button">
-                    Submit Review
-                  </button>
-                </div>
-              </div>
+              <header className={styles.findAreasDetailHeader}>
+                <h3>{selectedZone.label}</h3>
+                <strong aria-label={`${activeLensLabel}分數`}>{selectedZone.lensLabel}</strong>
+                <p>{selectedZone.id} · Lens：{activeLensLabel} · {selectedZone.centroidLabel}</p>
+              </header>
 
-              <div className={styles.metricGrid}>
-                <Metric label="Demand" value={selectedZone.demandLabel} meter={selectedZone.demandGap} />
-                <Metric label="Fit" value={selectedZone.fitLabel} meter={selectedZone.fitScore} />
-                <Metric label="Competition" value={selectedZone.competitionLabel} meter={selectedZone.competitionIndex} />
-                <Metric
-                  label="Cannibalization"
-                  value={selectedZone.cannibalizationLabel}
-                  meter={1 - selectedZone.cannibalizationScore}
-                />
-                <Metric label="Rent" value={selectedZone.rentBand} meter={selectedZone.rentScore} />
-                <Metric label="Confidence" value={selectedZone.confidenceLabel} meter={selectedZone.confidence} />
-              </div>
+              <dl className={styles.findAreasFacts} data-testid="find-areas-facts">
+                <div><dt>需求缺口</dt><dd>{selectedZone.demandLabel}</dd></div>
+                <div><dt>品牌適配</dt><dd>{selectedZone.fitLabel}</dd></div>
+                <div><dt>競店壓力</dt><dd>{selectedZone.competitionLabel}</dd></div>
+                <div><dt>自家稀釋</dt><dd>{selectedZone.cannibalizationLabel}</dd></div>
+                <div><dt>租金帶</dt><dd>{selectedZone.rentBand}</dd></div>
+                <div><dt>可用物件</dt><dd>{selectedZone.listingCount} 筆</dd></div>
+                <div><dt>資料信心</dt><dd>{selectedZone.confidenceLabel}</dd></div>
+              </dl>
 
               <div className={styles.detailGrid}>
                 <section>
-                  <h4>Reasons</h4>
+                  <h4>為什麼是這一區</h4>
                   <ul>
                     {selectedZone.reasons.map((reason) => (
                       <li key={reason}>{reason}</li>
@@ -1917,34 +1896,50 @@ function FindAreasPanel({
                   </ul>
                 </section>
                 <section>
-                  <h4>Risks</h4>
+                  <h4>主要風險</h4>
                   <ul>
                     {selectedZone.risks.map((risk) => (
                       <li key={risk}>{risk}</li>
                     ))}
                   </ul>
                 </section>
-                <section>
-                  <h4>Next Step</h4>
+                <section className={styles.findAreasNextStep}>
+                  <h4>下一步</h4>
                   <p>{selectedZone.nextStep}</p>
                 </section>
                 <section>
-                  <h4>Pipeline</h4>
+                  <h4>候選流程</h4>
                   <dl className={styles.pipelineStats}>
                     <div>
-                      <dt>Listings</dt>
+                      <dt>物件</dt>
                       <dd>{selectedZone.listingCount}</dd>
                     </div>
                     <div>
-                      <dt>Candidates</dt>
+                      <dt>候選點</dt>
                       <dd>{selectedZone.candidateCount}</dd>
                     </div>
                     <div>
-                      <dt>Best</dt>
+                      <dt>最高分</dt>
                       <dd>{selectedZone.candidateSummary}</dd>
                     </div>
                   </dl>
                 </section>
+              </div>
+
+              <div className={styles.findAreasActions}>
+                <button className={styles.findAreasPrimary} data-testid="find-areas-primary" onClick={onSourceListings} type="button">
+                  查看本區物件（{selectedZone.listingCount}）
+                </button>
+                <button disabled type="button">＋ 從網址新增物件（帶入本區）</button>
+                <button aria-pressed={isSelectedTracked} onClick={onToggleTracked} type="button">
+                  {isSelectedTracked ? "✓ 本次工作階段已追蹤（點擊移除）" : "加入本次工作階段追蹤"}
+                </button>
+                <button disabled type="button">指派找點任務</button>
+                <button disabled type="button">建立物件搜尋條件</button>
+                <button disabled type="button">加入季度展店計畫</button>
+                <small>追蹤僅保留於本次工作階段；網址帶區、任務、搜尋條件及季度計畫尚未接上服務，請至物件雷達收件。</small>
+                <button disabled={!selectedZone.bestCandidate} onClick={onScoreCandidate} type="button">開啟 SiteScore</button>
+                <small>開啟評分頁不會執行評分或送審；送審須走候選點的正式流程。</small>
               </div>
 
               <div className={styles.linkedRows} aria-label="Linked listings and candidates">
@@ -1963,29 +1958,10 @@ function FindAreasPanel({
               </div>
             </>
           ) : (
-            <div className={styles.emptyState}>No HeatZones</div>
+            <div className={styles.emptyState}>目前沒有可讀取的區域</div>
           )}
         </article>
       </section>
-    </div>
-  );
-}
-
-function Metric({ label, meter, value }: { label: string; meter?: number | null; value: string }) {
-  return (
-    <div className={styles.metric}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <i aria-hidden="true">
-        <b
-          style={{
-            width:
-              meter == null
-                ? "0%"
-                : `${Math.max(4, Math.min(100, Math.round(meter * 100)))}%`,
-          }}
-        />
-      </i>
     </div>
   );
 }
