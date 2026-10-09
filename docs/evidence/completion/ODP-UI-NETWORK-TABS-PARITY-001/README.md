@@ -185,13 +185,28 @@ Review 8, typecheck/lint/boundaries and unchanged 125/18 inventory passed. Faile
 cold BFF/read and response-body diagnostics remain recorded. This is another
 bounded owner checkpoint, not full acceptance or resubmission.
 
+## Promotion confirmation / durable reviewer increment
+
+[promotion/README.md](promotion/README.md) records baseline `670c780e9018`,
+modal repair `ee101d6051b5`, and reviewer readback repair `58ad432bb249`.
+1440/390 design-before-after pairs reduce initial heights from 565.5/713.4px
+to 412.6/480.7px with reference hierarchy, direct reason/risk fields and a
+collapsed later-spec audit/control disclosure. Both widths pass geometry,
+scoped axe, keyboard and actual write-controls/POST200/GET200/reload checks.
+The genuine POST-only reviewer projection is repaired and contract-tested;
+no authority or commit gates were weakened. Full web 720, focused UI 37,
+API promotion tests, typecheck/lint/boundaries and unchanged 125/18 inventory
+passed. This is a bounded checkpoint, not full acceptance or resubmission.
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
    axe are recorded in `intake-dialogs/`; continuous-detail baseline pairs and
    unavailable-authority/keyboard/reload checks are now in `intake-detail/`.
-   Complete separate Transfer/Pause (requires actual resource read-model authority),
-   Promotion at 1440/390. Review Decision baseline/validation/committed-reload pairs
+   Complete separate Transfer/Pause (requires actual resource read-model authority).
+   Promotion confirmation/reason/risk/self-review/committed-reload pairs are now
+   in `promotion/`; further applicable saga/permission/conflict visual states remain.
+   Review Decision baseline/validation/committed-reload pairs
    are in `review-decision/`; complete further applicable permission/conflict visual
    states and full-scope detail density review.
    Preserve VDC-001 conditional controls, conflict input preservation and receipts.

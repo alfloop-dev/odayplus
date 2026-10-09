@@ -1,0 +1,50 @@
+
+> @oday-plus/web@0.1.0 test
+> vitest run features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx
+
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+
+ ❯ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx (31 tests | 2 failed) 819ms
+     × collects reason and risk inside the confirmation without writing invalid drafts 37ms
+     × guards pending writes, preserves failed drafts and retries with the same key 66ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — independent second-actor review > collects reason and risk inside the confirmation without writing invalid drafts
+Error: Invalid Chai property: toHaveFocus
+ ❯ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx:409:59
+    407|     renderPanel({ promotion: promo("PENDING_REVIEW"), proposerId: "OP-…
+    408|     fireEvent.click(screen.getByTestId("promotion-approve-btn"));
+    409|     expect(screen.getByTestId("promotion-confirm-reason")).toHaveFocus…
+       |                                                           ^
+    410|     expect(screen.getByTestId("promotion-confirm-reason")).toBeRequire…
+    411|     expect(screen.getByTestId("promotion-confirm-ack")).toHaveAttribut…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — independent second-actor review > guards pending writes, preserves failed drafts and retries with the same key
+Error: Invalid Chai property: toBeDisabled
+ ❯ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx:435:64
+    433|     fireEvent.click(screen.getByTestId("promotion-confirm-ack"));
+    434|     fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"…
+    435|     expect(screen.getByTestId("promotion-confirm-approve-btn")).toBeDi…
+       |                                                                ^
+    436|     expect(screen.getByTestId("promotion-confirm-reason")).toBeDisable…
+    437|     expect(screen.getByTestId("promotion-confirm-ack")).toBeDisabled();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  2 failed | 35 passed (37)
+   Start at  17:59:40
+   Duration  3.35s (transform 1.38s, setup 0ms, import 2.14s, tests 1.99s, environment 1.10s)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+npm error workspace @oday-plus/web@0.1.0
+npm error location /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+npm error command failed
+npm error command sh -c vitest run features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx

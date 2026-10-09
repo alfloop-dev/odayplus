@@ -136,10 +136,21 @@ for (const width of [1440, 390]) {
     await page.keyboard.press("Escape"); await expect(overlay).toBeHidden(); await expect(trigger).toBeFocused();
     await trigger.click();
     await expect(page.getByTestId("promotion-confirm-reason")).toHaveValue("資料完整、來源與比對唯一，同意建立候選點並排入評分。");
+    await dialog.locator("summary").click();
+    await expect(page.getByTestId("promotion-review-summary")).toContainText("00000000-0000-4000-8000-000000000002");
+    const key = (await page.getByTestId("promotion-confirm-key").innerText()).replace("Idempotency-Key ", "");
+    const ifMatch = (await page.getByTestId("promotion-confirm-ifmatch").innerText()).replace("If-Match ", "");
+    await shot(page, info, `after-audit-controls-${width}`);
+    await dialog.locator("summary").click();
     const responsePromise = page.waitForResponse((r) => r.url().endsWith(`/api/v1/promotion-decisions/${decisionId}/actions/review`) && r.request().method() === "POST");
     await page.getByTestId("promotion-confirm-approve-btn").click();
     const response = await responsePromise;
     expect(response.status()).toBe(200);
+    const writeHeaders = response.request().headers();
+    const writePayload = response.request().postDataJSON();
+    expect(writeHeaders["if-match"]).toBe(ifMatch);
+    expect(writeHeaders["idempotency-key"]).toBe(key);
+    expect(writePayload).toMatchObject({ decision: "APPROVE", reason: "資料完整、來源與比對唯一，同意建立候選點並排入評分。", risk_acknowledged: true });
     await ready(overlay).toBeHidden();
     await ready(page.getByTestId("promotion-candidate-id")).toBeVisible();
     const persisted = await request.get(`${api}/api/v1/promotion-decisions/${decisionId}`, { headers: { ...headers, "x-subject-id": "00000000-0000-4000-8000-000000000002" } });
@@ -149,10 +160,12 @@ for (const width of [1440, 390]) {
     expect(receipt.candidate_site_id).toBeTruthy();
     expect(receipt.site_score_job_id).toBeTruthy();
     expect(receipt.audit_event_id).toBeTruthy();
-    await writeFile(await artifact(info, `receipt-${width}.json`), JSON.stringify({ browserPostStatus: response.status(), durableReadStatus: persisted.status(), receipt }, null, 2));
+    await writeFile(await artifact(info, `receipt-${width}.json`), JSON.stringify({ browserPostStatus: response.status(), writeControls: { ifMatch, idempotencyKey: key }, writePayload, durableReadStatus: persisted.status(), receipt }, null, 2));
     await shot(page, info, `after-committed-${width}`);
     await page.reload();
     await ready(page.getByTestId("promotion-candidate-id")).toHaveText(receipt.candidate_site_id);
     await ready(page.getByTestId("promotion-score-job-id")).toHaveText(receipt.site_score_job_id);
+    await ready(page.getByTestId("promotion-receipt-reviewer")).toContainText(receipt.reviewer_subject_id);
+    await shot(page, info, `after-reloaded-${width}`);
   });
 }

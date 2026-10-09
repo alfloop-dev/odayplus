@@ -1,0 +1,37 @@
+
+> @oday-plus/web@0.1.0 test
+> vitest run features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx
+
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+
+ ❯ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx (31 tests | 1 failed) 2481ms
+     × guards pending writes, preserves failed drafts and retries with the same key 298ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx > PromotionReviewPanel — independent second-actor review > guards pending writes, preserves failed drafts and retries with the same key
+TypeError: fireEvent.keyDown is not a function
+ ❯ features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx:439:15
+    437|     expect(screen.getByTestId("promotion-confirm-reason")).toBeDisable…
+    438|     expect(screen.getByTestId("promotion-confirm-ack")).toBeDisabled();
+    439|     fireEvent.keyDown(document, { key: "Escape" });
+       |               ^
+    440|     expect(screen.getByTestId("promotion-confirmation-dialog")).toBeIn…
+    441|     fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 36 passed (37)
+   Start at  18:00:00
+   Duration  9.71s (transform 3.34s, setup 0ms, import 5.71s, tests 5.50s, environment 3.95s)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+npm error workspace @oday-plus/web@0.1.0
+npm error location /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+npm error command failed
+npm error command sh -c vitest run features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx
