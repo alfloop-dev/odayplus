@@ -109,6 +109,9 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     const findAreasPanel = page.getByTestId("network-panel-find-areas");
     await expect(findAreasPanel).toBeVisible();
     // Zone markers should exist in the map canvas.
+    // The map is a lazy client chunk. Await its declared loading boundary
+    // before asserting the canvas, as other API snapshot checks do.
+    await expect(findAreasPanel.getByTestId("heat-zone-map-loading")).toHaveCount(0, { timeout: 15_000 });
     const mapCanvas = findAreasPanel.getByTestId("heat-zone-map");
     await expect(mapCanvas).toBeVisible();
   });

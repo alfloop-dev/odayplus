@@ -254,6 +254,14 @@ describe("Package 10 Network non-intake panels", () => {
     expect(css).toContain("@media (max-width: 759px)");
     expect(css).toContain("grid-template-columns: 180px minmax(0, 1fr) 348px");
     expect(css).toContain("grid-template-columns: 250px minmax(0, 1fr)");
-    expect(css).toContain("grid-template-columns: minmax(0, 1fr) 348px");
+    expect(css).toContain("grid-template-columns: minmax(0, 1fr) 300px");
+    // A CSS module silently returns undefined for missing keys. The inherited
+    // detail and secondary-action markup had no corresponding style rules.
+    for (const panel of ["CandidatePanel", "SiteScorePanel", "ComparePanel"]) {
+      const source = readFileSync(resolve(process.cwd(), `features/operator/network/${panel}.tsx`), "utf8");
+      for (const [, name] of source.matchAll(/styles\.([A-Za-z_][A-Za-z_0-9]*)/g)) {
+        expect(css, `${panel}: missing .${name}`).toMatch(new RegExp(`\\.${name}\\b`));
+      }
+    }
   });
 });

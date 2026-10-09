@@ -4301,6 +4301,23 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .scoreIdentity {
+    flex-wrap: wrap;
+  }
+
+  .scoreIdentity .scoreNumber {
+    white-space: nowrap;
+  }
+
+  .scoreReport .riskBreakdownGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scoreReport .riskCardVal {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .reasonCols {
     grid-template-columns: 1fr;
   }
