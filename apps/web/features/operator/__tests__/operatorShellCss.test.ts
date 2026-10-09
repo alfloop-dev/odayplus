@@ -48,7 +48,8 @@ describe("operator.module.css shared chrome contract", () => {
   it("establishes the design font chain and border-box model on the console root", () => {
     const [root] = rulesFor(".console");
     expect(root.body).toMatch(/font-family:\s*var\(--operator-font-family\)/);
-    expect(root.body).toMatch(/--operator-font-family:\s*"Noto Sans TC"/);
+    expect(root.body).toMatch(/--operator-font-family:\s*var\(--font-noto-sans-tc, "Noto Sans TC"\)/);
+    expect(root.body).toMatch(/--operator-font-mono:\s*var\(--font-ibm-plex-mono, "IBM Plex Mono"\)/);
     expect(root.body).toMatch(/font-size:\s*13px/);
     expect(root.body).toMatch(/line-height:\s*1\.55/);
 

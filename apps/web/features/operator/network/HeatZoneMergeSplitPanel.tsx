@@ -171,7 +171,7 @@ export function HeatZoneMergeSplitPanel({
     <div className={styles.panel} data-testid="heatzone-merge-split-panel">
       <div className={styles.panelHeader}>
         <div>
-          <span className={styles.kicker}>ODP-FR-HZ-006 空間治理</span>
+          <span className={styles.kicker}>空間治理</span>
           <h3 style={{ margin: "4px 0" }}>熱區合併／拆分提案審批 (Merge & Split Governance)</h3>
           <p className={styles.headerSummary}>
             依據 HZ-004 實績吸收證據、空間相關性及邊界異質性自動產生之熱區拓撲變更提案。

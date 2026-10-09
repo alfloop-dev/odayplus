@@ -4,10 +4,8 @@
  * docs_archive/00_source_zips/operator_console/r7-20260720-package-10/
  */
 
+/* The Operator shell already applies the 1720 / 16-20-44 page container. */
 .screen {
-  max-width: 1720px;
-  margin: 0 auto;
-  padding: 16px 20px 44px;
   color: #1c2333;
   font-size: 12.5px;
 }
@@ -182,7 +180,7 @@
 .trend_down {
   flex: none;
   margin-left: auto;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 11px;
   font-weight: 700;
 }
@@ -201,7 +199,7 @@
 
 .segCount {
   color: #2e3a97;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 17px;
   font-weight: 600;
   line-height: 1;
@@ -304,7 +302,7 @@
 
 .priceMono,
 .pricePositive {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
 }
 
 .pricePositive {
@@ -315,7 +313,7 @@
 .priceCandidate {
   display: block;
   color: #2e3a97;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-weight: 600;
 }
 
@@ -462,7 +460,7 @@
 
 .chipCount {
   margin-left: auto;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
 }
 
@@ -548,7 +546,7 @@
 
 .mono {
   color: #6e7891;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
 }
 
@@ -631,7 +629,7 @@
 
 .metricV {
   color: #1c2333;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 12px;
   font-weight: 600;
 }
@@ -933,7 +931,7 @@
   width: 58px;
   flex: none;
   color: #6b7590;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
 }
 
 .modalBackdrop {
