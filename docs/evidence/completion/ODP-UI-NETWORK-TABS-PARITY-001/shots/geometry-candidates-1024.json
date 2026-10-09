@@ -1,0 +1,68 @@
+{
+  "boxes": {
+    "panel": {
+      "x": 20,
+      "y": 448.96875,
+      "width": 984,
+      "height": 1465.203125,
+      "scrollWidth": 984,
+      "columns": "984px",
+      "overflowX": "visible",
+      "radius": "0px"
+    },
+    "pipeline": {
+      "x": 20,
+      "y": 448.96875,
+      "width": 180,
+      "height": 266.828125,
+      "scrollWidth": 178,
+      "columns": "150px",
+      "overflowX": "visible",
+      "radius": "12px"
+    },
+    "board": {
+      "x": 214,
+      "y": 448.96875,
+      "width": 790,
+      "height": 500.28125,
+      "scrollWidth": 790,
+      "columns": "256.656px 256.672px 256.656px",
+      "overflowX": "visible",
+      "radius": "0px"
+    },
+    "detail": {
+      "x": 20,
+      "y": 963.25,
+      "width": 984,
+      "height": 950.921875,
+      "scrollWidth": 982,
+      "columns": "950px",
+      "overflowX": "visible",
+      "radius": "12px"
+    },
+    "photo": {
+      "x": 37,
+      "y": 1600.34375,
+      "width": 950,
+      "height": 56,
+      "scrollWidth": 948,
+      "columns": "928px",
+      "overflowX": "visible",
+      "radius": "8px"
+    },
+    "facts": {
+      "x": 37,
+      "y": 1318.890625,
+      "width": 950,
+      "height": 271.453125,
+      "scrollWidth": 950,
+      "columns": "950px",
+      "overflowX": "visible",
+      "radius": "0px"
+    }
+  },
+  "document": {
+    "width": 1024,
+    "scrollWidth": 1024
+  }
+}

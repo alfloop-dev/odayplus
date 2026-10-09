@@ -1,0 +1,71 @@
+{
+  "boxes": {
+    "panel": {
+      "x": 20,
+      "y": 403.203125,
+      "width": 1400,
+      "height": 806.8125,
+      "scrollWidth": 1400,
+      "columns": "1400px",
+      "overflowX": "visible"
+    },
+    "picker": {
+      "x": 20,
+      "y": 447.796875,
+      "width": 250,
+      "height": 484.375,
+      "scrollWidth": 250,
+      "columns": "250px",
+      "overflowX": "visible"
+    },
+    "report": {
+      "x": 284,
+      "y": 447.796875,
+      "width": 1136,
+      "height": 762.21875,
+      "scrollWidth": 1134,
+      "columns": "1098px",
+      "overflowX": "visible"
+    },
+    "map": {
+      "x": 20,
+      "y": 722.171875,
+      "width": 250,
+      "height": 210,
+      "scrollWidth": 248,
+      "columns": "none",
+      "overflowX": "hidden"
+    },
+    "revenue": {
+      "x": 303,
+      "y": 574.03125,
+      "width": 590.171875,
+      "height": 110,
+      "scrollWidth": 590,
+      "columns": "140.031px 140.047px 140.047px 140.047px",
+      "overflowX": "visible"
+    },
+    "risks": {
+      "x": 303,
+      "y": 931.046875,
+      "width": 1098,
+      "height": 100.875,
+      "scrollWidth": 1098,
+      "columns": "362px 362px 362px",
+      "overflowX": "visible"
+    }
+  },
+  "document": {
+    "width": 1440,
+    "scrollWidth": 1440
+  },
+  "design": {
+    "x": 20,
+    "y": 189.84375,
+    "width": 1400,
+    "height": 789.9375,
+    "scrollWidth": 1400,
+    "columns": "none",
+    "overflowX": "visible"
+  }
+}

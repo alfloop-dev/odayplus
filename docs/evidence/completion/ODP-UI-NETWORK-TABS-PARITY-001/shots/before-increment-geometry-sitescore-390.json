@@ -1,0 +1,71 @@
+{
+  "boxes": {
+    "panel": {
+      "x": 12,
+      "y": 848.390625,
+      "width": 366,
+      "height": 1519.140625,
+      "scrollWidth": 366,
+      "columns": "366px",
+      "overflowX": "visible"
+    },
+    "picker": {
+      "x": 12,
+      "y": 917.25,
+      "width": 366,
+      "height": 219,
+      "scrollWidth": 954,
+      "columns": "none",
+      "overflowX": "auto"
+    },
+    "report": {
+      "x": 12,
+      "y": 1150.25,
+      "width": 366,
+      "height": 1217.28125,
+      "scrollWidth": 364,
+      "columns": "338px",
+      "overflowX": "visible"
+    },
+    "map": {
+      "x": 964,
+      "y": 923.25,
+      "width": 2,
+      "height": 210,
+      "scrollWidth": 48,
+      "columns": "none",
+      "overflowX": "hidden"
+    },
+    "revenue": {
+      "x": 26,
+      "y": 1312.921875,
+      "width": 338,
+      "height": 110,
+      "scrollWidth": 338,
+      "columns": "77px 77px 77px 77px",
+      "overflowX": "visible"
+    },
+    "risks": {
+      "x": 26,
+      "y": 1935.46875,
+      "width": 338,
+      "height": 100.875,
+      "scrollWidth": 338,
+      "columns": "108.656px 108.672px 108.656px",
+      "overflowX": "visible"
+    }
+  },
+  "document": {
+    "width": 390,
+    "scrollWidth": 390
+  },
+  "design": {
+    "x": -83,
+    "y": 415.421875,
+    "width": 350,
+    "height": 2764.640625,
+    "scrollWidth": 575,
+    "columns": "none",
+    "overflowX": "visible"
+  }
+}

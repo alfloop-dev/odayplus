@@ -1,0 +1,648 @@
+[WebServer] 2026/10/09 14:22:54 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 14:22:57 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 14:22:57 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [1839770]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T14:23:05.649809+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ba7e9553-b6af-4ea6-a34e-9aca6cfce1ff", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 9 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T14:23:49.275743+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "17110559-2c59-41e6-90cd-08721f37ddfb", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T14:23:49.305315+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "16829657-7804-4349-9bee-9b31a6760ecd", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T14:24:03.435478+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T14:24:03.444755+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T14:24:03.445237+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T14:24:03.450959+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-1b76d835-4727-442b-895f-3174a2db9594", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T14:24:03.465359+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+  ✓  1 [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › candidates content geometry at 1440 (23.5s)
+[WebServer] {"timestamp": "2026-10-09T14:24:09.618053+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "f03a526b-4890-46a9-8d59-1654b9d8fbb2", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T14:24:09.634517+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "45d10c60-ac45-47c7-aac6-b053f3730393", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/app-paths-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/app-paths-manifest.json',
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/app-paths-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/app-paths-manifest.json',
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+  ✘  2 [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › sitescore content geometry at 1440 (13.9s)
+[WebServer] {"timestamp": "2026-10-09T14:24:25.426904+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "90cec778-c201-4f34-96c1-def6b2490da8", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T14:24:25.465008+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "795b74a7-03ba-4ab9-9cf3-98e123a08058", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer]  ⨯ Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+  ✘  3 [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › compare content geometry at 1440 (6.2s)
+[WebServer] {"timestamp": "2026-10-09T14:24:33.006534+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "cad9f5e9-592f-4546-953b-e7a4a4230a00", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T14:24:33.039341+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "3857b191-67fa-460a-a75b-e57bdbd30ac3", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer]  ⨯ Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+  ✘  4 [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › candidates content geometry at 1024 (6.2s)
+[WebServer] {"timestamp": "2026-10-09T14:24:40.582124+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4ae9e631-0490-4ce2-9464-028867a94249", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T14:24:40.611869+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "45c6a10e-81c3-47d7-84d4-5049744eb484", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer]  ⨯ Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+  ✘  5 [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › sitescore content geometry at 1024 (6.2s)
+[WebServer] {"timestamp": "2026-10-09T14:24:47.916886+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "823a673e-323e-4b98-98f8-77a7db01e9ad", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T14:24:47.942248+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "379ea24c-6586-4454-bb5e-929cbcbed219", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer]  ⨯ Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+  ✘  6 [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › compare content geometry at 1024 (6.5s)
+[WebServer] {"timestamp": "2026-10-09T14:24:55.558121+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "9f0da737-407e-4568-820f-09964766e6da", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T14:24:55.578881+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "36feec02-67be-4be2-995d-4181e777e28b", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer]  ⨯ Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+  ✘  7 [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › candidates content geometry at 390 (6.1s)
+[WebServer] {"timestamp": "2026-10-09T14:25:02.963498+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b4181738-baf3-4fc5-a136-177940f6f0c5", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T14:25:02.995284+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d1e990be-111c-43b9-a3af-68f140104faf", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer]  ⨯ Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+[WebServer]  ⨯ [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+[WebServer] [Error: ENOENT: no such file or directory, open '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'] {
+[WebServer]   errno: -2,
+[WebServer]   code: 'ENOENT',
+[WebServer]   syscall: 'open',
+[WebServer]   path: '/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/routes-manifest.json'
+[WebServer] }
+  ✘  8 [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › sitescore content geometry at 390 (6.6s)
+[WebServer] {"timestamp": "2026-10-09T14:25:10.870609+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "12eff57d-8fd3-42fa-8c7f-b4b92b251388", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T14:25:10.929600+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "f61a0ac6-740f-4425-a3e8-d98264642179", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer]  ⨯ Error: Cannot find module './331.js'
+[WebServer] Require stack:
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/webpack-runtime.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/.next/server/pages/_document.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/require.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/load-components.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/utils.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/options.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/swc/index.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/parse-module.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/build/analysis/get-page-static-info.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/router-server.js
+[WebServer] - /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/node_modules/next/dist/server/lib/start-server.js
+[WebServer]     at <unknown> (.next/server/app/operator/page.js:2:16755)
+[WebServer]     at Object.<anonymous> (.next/server/app/operator/page.js:2:16828) {
+[WebServer]   code: 'MODULE_NOT_FOUND',
+[WebServer]   requireStack: [Array],
+[WebServer]   page: '/operator'
+[WebServer] }
+  ✘  9 [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › compare content geometry at 390 (6.2s)
+
+
+  1) [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › sitescore content geometry at 1440 
+
+    TimeoutError: page.goto: Timeout 10000ms exceeded.
+    Call log:
+      - navigating to "http://localhost:3310/operator?ws=network", waiting until "load"
+
+
+      56 |       const payload = await snapshot.json();
+      57 |       await page.route("**/api/v1/operator/network-scoring", (route) => route.fulfill({ json: payload }));
+    > 58 |       await page.goto("/operator?ws=network");
+         |                  ^
+      59 |       await expect(page.getByLabel("Network Find Areas state")).toContainText("4 進行中候選");
+      60 |       await page.getByTestId(`network-tab-${screen.tab}`).click();
+      61 |       const panel = page.getByTestId(`network-panel-${screen.id}`);
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-network-tabs-parity.spec.ts:58:18
+
+    Error Context: test-results/operator-network-tabs-pari-89893-re-content-geometry-at-1440-chromium/error-context.md
+
+  2) [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › compare content geometry at 1440 
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: getByLabel('Network Find Areas state')
+    Expected substring: "4 進行中候選"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toContainText" with timeout 5000ms
+      - waiting for getByLabel('Network Find Areas state')
+
+
+      57 |       await page.route("**/api/v1/operator/network-scoring", (route) => route.fulfill({ json: payload }));
+      58 |       await page.goto("/operator?ws=network");
+    > 59 |       await expect(page.getByLabel("Network Find Areas state")).toContainText("4 進行中候選");
+         |                                                                 ^
+      60 |       await page.getByTestId(`network-tab-${screen.tab}`).click();
+      61 |       const panel = page.getByTestId(`network-panel-${screen.id}`);
+      62 |       await expect(panel).toBeVisible();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-network-tabs-parity.spec.ts:59:65
+
+    Error Context: test-results/operator-network-tabs-pari-e6747-re-content-geometry-at-1440-chromium/error-context.md
+
+  3) [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › candidates content geometry at 1024 
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: getByLabel('Network Find Areas state')
+    Expected substring: "4 進行中候選"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toContainText" with timeout 5000ms
+      - waiting for getByLabel('Network Find Areas state')
+
+
+      57 |       await page.route("**/api/v1/operator/network-scoring", (route) => route.fulfill({ json: payload }));
+      58 |       await page.goto("/operator?ws=network");
+    > 59 |       await expect(page.getByLabel("Network Find Areas state")).toContainText("4 進行中候選");
+         |                                                                 ^
+      60 |       await page.getByTestId(`network-tab-${screen.tab}`).click();
+      61 |       const panel = page.getByTestId(`network-panel-${screen.id}`);
+      62 |       await expect(panel).toBeVisible();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-network-tabs-parity.spec.ts:59:65
+
+    Error Context: test-results/operator-network-tabs-pari-06902-es-content-geometry-at-1024-chromium/error-context.md
+
+  4) [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › sitescore content geometry at 1024 
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: getByLabel('Network Find Areas state')
+    Expected substring: "4 進行中候選"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toContainText" with timeout 5000ms
+      - waiting for getByLabel('Network Find Areas state')
+
+
+      57 |       await page.route("**/api/v1/operator/network-scoring", (route) => route.fulfill({ json: payload }));
+      58 |       await page.goto("/operator?ws=network");
+    > 59 |       await expect(page.getByLabel("Network Find Areas state")).toContainText("4 進行中候選");
+         |                                                                 ^
+      60 |       await page.getByTestId(`network-tab-${screen.tab}`).click();
+      61 |       const panel = page.getByTestId(`network-panel-${screen.id}`);
+      62 |       await expect(panel).toBeVisible();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-network-tabs-parity.spec.ts:59:65
+
+    Error Context: test-results/operator-network-tabs-pari-473d5-re-content-geometry-at-1024-chromium/error-context.md
+
+  5) [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › compare content geometry at 1024 
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: getByLabel('Network Find Areas state')
+    Expected substring: "4 進行中候選"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toContainText" with timeout 5000ms
+      - waiting for getByLabel('Network Find Areas state')
+
+
+      57 |       await page.route("**/api/v1/operator/network-scoring", (route) => route.fulfill({ json: payload }));
+      58 |       await page.goto("/operator?ws=network");
+    > 59 |       await expect(page.getByLabel("Network Find Areas state")).toContainText("4 進行中候選");
+         |                                                                 ^
+      60 |       await page.getByTestId(`network-tab-${screen.tab}`).click();
+      61 |       const panel = page.getByTestId(`network-panel-${screen.id}`);
+      62 |       await expect(panel).toBeVisible();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-network-tabs-parity.spec.ts:59:65
+
+    Error Context: test-results/operator-network-tabs-pari-74a27-re-content-geometry-at-1024-chromium/error-context.md
+
+  6) [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › candidates content geometry at 390 
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: getByLabel('Network Find Areas state')
+    Expected substring: "4 進行中候選"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toContainText" with timeout 5000ms
+      - waiting for getByLabel('Network Find Areas state')
+
+
+      57 |       await page.route("**/api/v1/operator/network-scoring", (route) => route.fulfill({ json: payload }));
+      58 |       await page.goto("/operator?ws=network");
+    > 59 |       await expect(page.getByLabel("Network Find Areas state")).toContainText("4 進行中候選");
+         |                                                                 ^
+      60 |       await page.getByTestId(`network-tab-${screen.tab}`).click();
+      61 |       const panel = page.getByTestId(`network-panel-${screen.id}`);
+      62 |       await expect(panel).toBeVisible();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-network-tabs-parity.spec.ts:59:65
+
+    Error Context: test-results/operator-network-tabs-pari-46473-tes-content-geometry-at-390-chromium/error-context.md
+
+  7) [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › sitescore content geometry at 390 
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: getByLabel('Network Find Areas state')
+    Expected substring: "4 進行中候選"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toContainText" with timeout 5000ms
+      - waiting for getByLabel('Network Find Areas state')
+
+
+      57 |       await page.route("**/api/v1/operator/network-scoring", (route) => route.fulfill({ json: payload }));
+      58 |       await page.goto("/operator?ws=network");
+    > 59 |       await expect(page.getByLabel("Network Find Areas state")).toContainText("4 進行中候選");
+         |                                                                 ^
+      60 |       await page.getByTestId(`network-tab-${screen.tab}`).click();
+      61 |       const panel = page.getByTestId(`network-panel-${screen.id}`);
+      62 |       await expect(panel).toBeVisible();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-network-tabs-parity.spec.ts:59:65
+
+    Error Context: test-results/operator-network-tabs-pari-7cb6b-ore-content-geometry-at-390-chromium/error-context.md
+
+  8) [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › compare content geometry at 390 
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: getByLabel('Network Find Areas state')
+    Expected substring: "4 進行中候選"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toContainText" with timeout 5000ms
+      - waiting for getByLabel('Network Find Areas state')
+
+
+      57 |       await page.route("**/api/v1/operator/network-scoring", (route) => route.fulfill({ json: payload }));
+      58 |       await page.goto("/operator?ws=network");
+    > 59 |       await expect(page.getByLabel("Network Find Areas state")).toContainText("4 進行中候選");
+         |                                                                 ^
+      60 |       await page.getByTestId(`network-tab-${screen.tab}`).click();
+      61 |       const panel = page.getByTestId(`network-panel-${screen.id}`);
+      62 |       await expect(panel).toBeVisible();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-network-tabs-parity.spec.ts:59:65
+
+    Error Context: test-results/operator-network-tabs-parity-compare-content-geometry-at-390-chromium/error-context.md
+
+  8 failed
+    [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › sitescore content geometry at 1440 
+    [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › compare content geometry at 1440 
+    [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › candidates content geometry at 1024 
+    [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › sitescore content geometry at 1024 
+    [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › compare content geometry at 1024 
+    [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › candidates content geometry at 390 
+    [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › sitescore content geometry at 390 
+    [chromium] › tests/visual/operator-network-tabs-parity.spec.ts:45:9 › compare content geometry at 390 
+  1 passed (2.5m)
