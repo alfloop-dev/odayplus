@@ -115,6 +115,7 @@ for (const width of [1440, 390]) {
       expect(persisted.audit_chain).toEqual({ ok: true, issues: [] });
       expect(persisted.events).toHaveLength(1);
       expect(persisted.events[0].actor).toBe(subject);
+      expect(persisted.events[0].integrity.worm_sink_id).toBe(`file://${path.resolve(process.env.NETWORK_SPATIAL_DURABLE_DIR!, "audit-worm")}`);
       expect(persisted.events[0].metadata[kind === "approve" ? "notes" : "reason"]).toBe(note);
       if (kind === "approve") {
         const created = persisted.compositions.filter((record: { decided_by: string }) => record.decided_by === subject);

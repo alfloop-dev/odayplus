@@ -15,6 +15,15 @@ export default defineConfig({
     ...server,
     reuseExistingServer: false,
     ...(index === 0 ? {
+      env: {
+        ...server.env,
+        ODP_PERSISTENCE: "memory",
+        ODP_DEPLOY_ENV: "e2e",
+        ODP_DATA_BINDING_MODE: "fixture",
+        ODP_E2E_MODE: "true",
+        ODP_AUDIT_WORM_SINK_URI: "",
+        ODP_AUDIT_WORM_LOCAL_PATH: `${process.env.NETWORK_SPATIAL_DURABLE_DIR}/audit-worm`,
+      },
       command: `.venv/bin/python -m uvicorn tests.visual.spatial_durable_backend:create_test_app --factory --host 127.0.0.1 --port ${process.env.ODP_API_PORT ?? 8099}`,
     } : {}),
   })) : base.webServer,
