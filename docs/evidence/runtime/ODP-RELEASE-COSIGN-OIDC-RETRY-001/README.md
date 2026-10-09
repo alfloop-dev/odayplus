@@ -46,7 +46,7 @@ account grant, credential/IAM, business/source/model mutation was performed.
 ## Offline verification
 
 Implementation/tests anchor: `b113c1fb8d74` (following routing anchor
-`5faa8b0b8d59`). Subsequent evidence commit changes documentation only.
+`5faa8b0b8d59`). Subsequent evidence/inventory commits change documentation only.
 Spies execute the **real helper and actual workflow publication shell** with
 private fake external binaries. They are regression inputs, **not live signing,
 deployment, UI acceptance or permission-grant evidence**.
@@ -80,6 +80,10 @@ Existing workflow and release-profile regressions also pass.
   files: **exit 0**, all checks passed.
 - `bash -n delivery_toolchain/security/sign_images.sh`: **exit 0**.
 - `git diff --check`: **exit 0**.
+- The first `task_finalize.sh` preflight refused a stale boundary inventory
+  before push/PR creation. Regenerated with
+  `uv run --frozen --no-sync python delivery_toolchain/governance/check_code_boundaries.py --write-inventory`:
+  **exit 0**, 1210 files checked. The CSV diff adds only the two new test paths.
 
 Initial launcher attempts failed before collecting tests: bare `uv` was not on
 PATH (exit 127), and system `python3 -m pytest` lacked pytest (exit 1). The
