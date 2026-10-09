@@ -194,15 +194,17 @@ async function openDesign(page: Page) {
   await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; }" });
 }
 async function openDesignDialog(page: Page, id: string) {
-  await page.getByText("ISS-1024", { exact: true }).first().click();
-  await page.getByRole("button", { name: "Google 評價", exact: true }).click();
-  if (id === "assign") await page.getByText("ISS-1015", { exact: true }).first().click();
-  if (id === "outcome") await page.getByText("ISS-1008", { exact: true }).first().click();
+  // Reference-only DOM events: the archived 390px prototype clips its tabs
+  // (known VDC-002 defect). Actual application interactions above use real clicks.
+  await page.getByText("ISS-1024", { exact: true }).first().dispatchEvent("click");
+  await page.getByRole("button", { name: "Google 評價", exact: true }).dispatchEvent("click");
+  if (id === "assign") await page.getByText("ISS-1015", { exact: true }).first().dispatchEvent("click");
+  if (id === "outcome") await page.getByText("ISS-1008", { exact: true }).first().dispatchEvent("click");
   if (id === "cameraPurpose") {
-    await page.getByRole("button", { name: "Camera", exact: true }).click();
-    await page.getByRole("button", { name: "輸入調閱目的以檢視", exact: true }).click();
+    await page.getByRole("button", { name: "Camera", exact: true }).dispatchEvent("click");
+    await page.getByRole("button", { name: "輸入調閱目的以檢視", exact: true }).dispatchEvent("click");
     return;
   }
   const buttons: Record<string, string> = { triage: "完成 Triage", assign: "指派 Owner", action: "採用建議並建立處置", outcome: "判斷成效", escalate: "升級（Growth／Network／Govern）", replyReview: "回覆評價" };
-  await page.getByRole("button", { name: buttons[id], exact: true }).click();
+  await page.getByRole("button", { name: buttons[id], exact: true }).dispatchEvent("click");
 }

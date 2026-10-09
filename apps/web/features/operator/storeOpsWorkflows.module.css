@@ -54,6 +54,18 @@
 .dialog[data-workflow="replyReview"] textarea { min-height: 110px; }
 .field small { color: #5a6478; font-weight: 400; line-height: 1.4; }
 .fullWidth { grid-column: 1 / -1; }
+.comparison { width: 100%; border: 1px solid #eef1f6; border-radius: 10px; border-spacing: 0; font-size: 12px; overflow: hidden; }
+.comparison caption { padding-bottom: 5px; text-align: left; color: #5a6478; font-size: 11px; font-weight: 700; }
+.comparison th, .comparison td { padding: 8px 12px; text-align: left; border-top: 1px solid #eef1f6; font-weight: 400; }
+.comparison thead th { color: #5a6478; background: #f8fafd; font-size: 10px; font-weight: 700; }
+.choices { display: grid; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.choices legend { margin-bottom: 6px; color: #5a6478; font-size: 11px; font-weight: 700; }
+.choices label { display: flex; gap: 8px; padding: 9px 12px; border: 1px solid #d6dce8; border-radius: 9px; cursor: pointer; }
+.choices label[data-selected="true"] { background: #eef1fb; border-color: #2e3a97; }
+.choices input { flex: none; margin: 2px 0 0; accent-color: #2e3a97; }
+.choices span { display: grid; gap: 2px; }
+.choices strong { color: #1c2333; font-size: 12.5px; }
+.choices small { color: #5a6478; font-size: 11px; }
 .checkGrid { display: flex; gap: 10px; flex-wrap: wrap; }
 .checkbox { display: flex; align-items: flex-start; gap: 7px; min-width: 0; color: #3a4362; }
 .checkbox input { flex: none; width: 14px; height: 14px; margin: 2px 0 0; accent-color: #2e3a97; }

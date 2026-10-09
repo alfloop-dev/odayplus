@@ -53,8 +53,8 @@ describe("StoreOpsWorkflowDialogs production guards", () => {
     const onOutcome = vi.fn();
     render(<StoreOpsWorkflowDialogs activeDialog="outcome" issue={liveIssue} callbacks={{ onOutcome }} onClose={vi.fn()} />);
     expect(screen.queryByLabelText("後續工作台")).not.toBeInTheDocument();
-    const outcome = screen.getByRole("combobox", { name: "成效判斷" });
-    fireEvent.change(outcome, { target: { value: "ineffective" } });
+    const outcome = screen.getByRole("radio", { name: /^無效/ });
+    fireEvent.click(outcome);
     expect(screen.queryByRole("checkbox", { name: /審查後結案/ })).not.toBeInTheDocument();
     fireEvent.submit(outcome.closest("form")!);
     expect(onOutcome).not.toHaveBeenCalled();

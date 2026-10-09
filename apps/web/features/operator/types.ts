@@ -201,6 +201,8 @@ export type Issue = {
   evidenceIds: string[];
   relatedApprovalId?: string;
   relatedGrowthId?: string;
+  /** Optional source-provided before/after comparison; absence is not success. */
+  outcomeMetrics?: Array<{ label: string; before: string; after: string }>;
   summary: string;
 };
 

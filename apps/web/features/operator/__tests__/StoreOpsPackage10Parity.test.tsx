@@ -36,7 +36,7 @@ describe("Package 10 Store Ops parity", () => {
     render(<DesignStoreOpsWorkspace onOpenWorkflow={onOpenWorkflow} />);
     const source = screen.getByRole("region", { name: "證據來源明細卡片" });
     expect(source).toContainElement(screen.getByRole("tablist"));
-    const fusion = screen.getByRole("heading", { name: "證據融合", exact: true }).closest("section")!;
+    const fusion = screen.getByRole("heading", { name: "證據融合" }).closest("section")!;
     expect(fusion).not.toContainElement(screen.getByRole("tablist"));
     expect(screen.getByLabelText("付款失敗率趨勢")).toHaveTextContent("12.4%");
     expect(screen.getByRole("region", { name: "事件與處置時間軸" })).not.toContainElement(screen.getByRole("tablist"));

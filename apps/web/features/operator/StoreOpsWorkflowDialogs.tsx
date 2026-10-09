@@ -500,8 +500,6 @@ function ActionForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           value={actionType}
         />
         <TextField label="Observation window" onChange={setObservationWindow} value={observationWindow} />
-        <TextField className={styles.fullWidth} label="Action title" onChange={setTitle} required value={title} />
-        <TextAreaField className={styles.fullWidth} label="Instructions" onChange={setInstructions} value={instructions} />
         <TextAreaField
           className={styles.fullWidth}
           hint="One item per line."
@@ -520,6 +518,13 @@ function ActionForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           value={remoteRestartAuditNote}
         /> : null}
       </div>
+      <details className={styles.advanced}>
+        <summary>處置標題與執行說明</summary>
+        <div className={styles.grid}>
+          <TextField className={styles.fullWidth} label="Action title" onChange={setTitle} required value={title} />
+          <TextAreaField className={styles.fullWidth} label="Instructions" onChange={setInstructions} value={instructions} />
+        </div>
+      </details>
       <div className={styles.checkGrid}>
         <CheckboxField
           checked={needEvidence}
@@ -651,18 +656,21 @@ function OutcomeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   return (
     <form className={styles.form} onSubmit={submit}>
       <div className={styles.grid}>
-        <SelectField
-          label="Outcome"
-          onChange={(value) => {
-            setOutcome(value);
-            setError("");
-          }}
+        <table className={`${styles.comparison} ${styles.fullWidth}`}>
+          <caption>處置前後指標</caption>
+          <thead><tr><th>指標</th><th>處置前</th><th>處置後</th></tr></thead>
+          <tbody>{issue.outcomeMetrics?.length ? issue.outcomeMetrics.map((metric) => (
+            <tr key={metric.label}><th scope="row">{metric.label}</th><td>{metric.before}</td><td>{metric.after}</td></tr>
+          )) : <tr><td colSpan={3}>來源未提供處置前後指標，請核對證據後記錄判斷。</td></tr>}</tbody>
+        </table>
+        <ChoiceField<StoreOpsOutcomeStatus>
+          label="成效判斷" value={outcome}
+          onChange={(value) => { setOutcome(value); setError(""); }}
           options={[
-            { label: "Effective", value: "effective" },
-            { label: "Ineffective", value: "ineffective" },
-            { label: "Inconclusive", value: "inconclusive" },
+            { label: "有效", description: "指標恢復營運門檻，可於審查後結案", value: "effective" },
+            { label: "無效", description: "指標未改善，必須升級或延長，不可結案", value: "ineffective" },
+            { label: "無法判定", description: "證據不足或干擾因素過多，需補證據或延長觀察", value: "inconclusive" },
           ]}
-          value={outcome}
         />
         {needsFollowUp ? <SelectField<StoreOpsFollowUpTarget>
           label="Follow-up target"
@@ -726,15 +734,13 @@ function EscalateForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   return (
     <form className={styles.form} onSubmit={submit}>
       <div className={styles.grid}>
-        <SelectField<StoreOpsEscalationTarget>
-          label="Target workspace"
-          onChange={setTarget}
+        <ChoiceField<StoreOpsEscalationTarget>
+          label="升級目標" onChange={setTarget} value={target}
           options={[
-            { label: "Growth", value: "growth" },
-            { label: "Network", value: "network" },
-            { label: "Govern", value: "govern" },
+            { label: "營收成長", description: "促銷、會員召回與營收改善", value: "growth" },
+            { label: "展店與店網", description: "門市體質重估與店網方案", value: "network" },
+            { label: "治理稽核", description: "跨部門核准與稽核檢討", value: "govern" },
           ]}
-          value={target}
         />
         <SelectField<StoreOpsUrgency>
           label="Urgency"
@@ -819,11 +825,16 @@ function CameraPurposeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           required
           value={purpose}
         />
-        <TextField label="Camera location" onChange={setCameraLocation} required value={cameraLocation} />
-        <TextField label="Time window" onChange={setTimeWindow} required value={timeWindow} />
-        <NumberField label="Retention hours" max={72} min={1} onChange={setRetentionHours} value={retentionHours} />
         <TextAreaField className={styles.fullWidth} label="Audit note" onChange={setAuditNote} value={auditNote} />
       </div>
+      <details className={styles.advanced}>
+        <summary>調閱範圍與保留設定</summary>
+        <div className={styles.grid}>
+          <TextField label="Camera location" onChange={setCameraLocation} required value={cameraLocation} />
+          <TextField label="Time window" onChange={setTimeWindow} required value={timeWindow} />
+          <NumberField label="Retention hours" max={72} min={1} onChange={setRetentionHours} value={retentionHours} />
+        </div>
+      </details>
       <CheckboxField
         checked={privacyAcknowledged}
         description="I understand this access is logged and purpose-limited."
@@ -1103,6 +1114,21 @@ function SelectField<TValue extends string>({
       </select>
     </label>
   );
+}
+
+function ChoiceField<TValue extends string>({ label, onChange, options, value }: {
+  label: string;
+  onChange: (value: TValue) => void;
+  options: Array<{ label: string; description: string; value: TValue }>;
+  value: TValue;
+}) {
+  return <fieldset className={`${styles.choices} ${styles.fullWidth}`}>
+    <legend>{label}</legend>
+    {options.map((option) => <label key={option.value} data-selected={value === option.value}>
+      <input data-autofocus type="radio" name={label} checked={value === option.value} onChange={() => onChange(option.value)} />
+      <span><strong>{option.label}</strong><small>{option.description}</small></span>
+    </label>)}
+  </fieldset>;
 }
 
 function CheckboxField({
