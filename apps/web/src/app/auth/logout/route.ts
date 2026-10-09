@@ -9,7 +9,7 @@ import {
 import {
   isOidcEnabled,
   isProductionWebRuntime,
-  resolveWebBaseUrl,
+  resolveRequestWebBaseUrl,
   verifyCsrfOrigin,
 } from "../../../lib/auth/runtime";
 import { getDefaultSessionStore } from "../../../lib/auth/sessionStore";
@@ -36,7 +36,7 @@ async function logout(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const baseUrl = resolveWebBaseUrl(request.nextUrl.origin);
+  const baseUrl = resolveRequestWebBaseUrl(request);
   let session = null;
   try {
     session = await readWebSession(
