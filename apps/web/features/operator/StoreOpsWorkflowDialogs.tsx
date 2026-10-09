@@ -1074,7 +1074,7 @@ function TextAreaField({
   return (
     <label className={className ? `${styles.field} ${className}` : styles.field}>
       <span>{workflowText(label)}</span>
-      <textarea onChange={(event) => onChange(event.target.value)} required={required} value={value} />
+      <textarea data-autofocus onChange={(event) => onChange(event.target.value)} required={required} value={value} />
       {hint ? <small>{workflowText(hint)}</small> : null}
     </label>
   );
@@ -1094,7 +1094,7 @@ function SelectField<TValue extends string>({
   return (
     <label className={styles.field}>
       <span>{workflowText(label)}</span>
-      <select onChange={(event) => onChange(event.target.value as TValue)} value={value}>
+      <select data-autofocus onChange={(event) => onChange(event.target.value as TValue)} value={value}>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {workflowText(option.label)}

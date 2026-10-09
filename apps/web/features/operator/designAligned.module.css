@@ -942,16 +942,16 @@
 
 .storeStrip small,
 .evidenceCards small {
-  color: #8794aa;
-  font-size: 11px;
-  font-weight: 850;
+  color: #5a6478;
+  font-size: 10px;
+  font-weight: 750;
   text-transform: uppercase;
 }
 
 .storeStrip strong,
 .evidenceCards strong {
   color: #172139;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .storeLightRow {
@@ -1015,9 +1015,9 @@
 }
 
 .evidenceCards p {
-  margin: 8px 0 0;
-  color: #6f7d93;
-  font-size: 12px;
+  margin: 4px 0 0;
+  color: #5a6478;
+  font-size: 10.5px;
   line-height: 1.4;
 }
 
@@ -1134,26 +1134,28 @@
   gap: 20px;
   align-items: end;
   margin-top: 12px;
-  padding: 14px;
+  padding: 12px 14px;
+  background: #fbfcfe;
   border: 1px solid #dfe6f1;
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 .metricChart small,
 .metricChart span {
   display: block;
-  color: #8794aa;
-  font-size: 12px;
+  color: #5a6478;
+  font-size: 10px;
 }
 
 .metricChart strong {
   display: block;
   margin: 7px 0;
-  color: #c7352d;
-  font-size: 28px;
+  color: #b3261e;
+  font-size: 21px;
 }
 
 .bars {
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: 5px;
@@ -1161,6 +1163,8 @@
   border-bottom: 1px dashed #c7d1df;
 }
 
+.bars[data-baseline="true"]::before { content: ""; position: absolute; inset: auto 0 var(--payment-baseline); border-top: 1.5px dashed #98a1b3; }
+.bars[data-baseline="true"]::after { content: "baseline"; position: absolute; right: 0; bottom: var(--payment-baseline); background: #fbfcfe; color: #5a6478; font-size: 9px; }
 .bars i {
   flex: 1;
   min-width: 0;
@@ -1195,8 +1199,9 @@
 
 .evidenceLists p {
   margin: 5px 0;
-  color: #53617a;
-  font-size: 13px;
+  color: #3a4362;
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 .aiBox {

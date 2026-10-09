@@ -906,7 +906,7 @@ export function DesignStoreOpsWorkspace({
   };
 
   const primaryActionLabel = getPrimaryActionLabel(issue);
-  const secondaryActionLabels = getSecondaryActionLabels(issue);
+  const secondaryActionLabels = getSecondaryActionLabels(issue).filter((label) => label !== primaryActionLabel);
   const hasActiveFilters =
     Boolean(
       searchQuery ||
@@ -1315,7 +1315,9 @@ export function DesignStoreOpsWorkspace({
                 <span>{evPayment?.paymentTrend ? `較 baseline +${evPayment.paymentTrend.baselineDeltaPp}pp` : "來源未提供付款失敗率序列"}</span>
                 <small>{evPayment?.paymentTrend ? "近 14 日付款失敗率（相對值）" : "不以信心度代替付款失敗率"}</small>
               </div>
-              <div className={styles.bars} role="img" aria-label={evPayment?.paymentTrend ? "付款失敗率每日相對值長條圖" : "付款失敗率圖表無資料"}>
+              <div className={styles.bars} role="img" aria-label={evPayment?.paymentTrend ? "付款失敗率每日相對值長條圖" : "付款失敗率圖表無資料"}
+                data-baseline={evPayment?.paymentTrend?.baselineRelativeValue !== undefined}
+                style={{ "--payment-baseline": `${Math.max(0, Math.min(100, evPayment?.paymentTrend?.baselineRelativeValue ?? 0))}%` } as CSSProperties}>
                 {evPayment?.paymentTrend?.relativeValues.map((value, index) => (
                   <i key={index} style={{ height: `${Math.max(0, Math.min(100, value))}%` }} />
                 ))}
@@ -1357,6 +1359,20 @@ export function DesignStoreOpsWorkspace({
               {availableEvidenceTabs.map((kind) => (
                 <button
                   aria-selected={activeEvidenceTab === kind}
+                  aria-controls="store-evidence-panel"
+                  id={`store-evidence-tab-${kind}`}
+                  tabIndex={activeEvidenceTab === kind ? 0 : -1}
+                  onKeyDown={(event) => {
+                    const index = availableEvidenceTabs.indexOf(kind);
+                    const nextIndex = event.key === "ArrowRight" ? (index + 1) % availableEvidenceTabs.length
+                      : event.key === "ArrowLeft" ? (index - 1 + availableEvidenceTabs.length) % availableEvidenceTabs.length
+                      : event.key === "Home" ? 0 : event.key === "End" ? availableEvidenceTabs.length - 1 : -1;
+                    if (nextIndex < 0) return;
+                    event.preventDefault();
+                    const nextKind = availableEvidenceTabs[nextIndex];
+                    setActiveEvidenceTab(nextKind);
+                    document.getElementById(`store-evidence-tab-${nextKind}`)?.focus();
+                  }}
                   data-active={activeEvidenceTab === kind}
                   key={kind}
                   onClick={() => setActiveEvidenceTab(kind)}
@@ -1370,7 +1386,7 @@ export function DesignStoreOpsWorkspace({
             </div>
 
             {activeEvidenceTab !== "forecastOps" && activeEvidenceItem ? (
-              <div className={styles.evidenceDetail} role="tabpanel">
+              <div className={styles.evidenceDetail} role="tabpanel" id="store-evidence-panel" aria-labelledby={`store-evidence-tab-${activeEvidenceTab}`} tabIndex={0}>
                 <span>
                   <small>{evidenceTabLabels[activeEvidenceItem.kind]}</small>
                   <strong>{activeEvidenceItem.title}</strong>
@@ -1399,7 +1415,7 @@ export function DesignStoreOpsWorkspace({
             ) : null}
 
             {activeEvidenceTab === "forecastOps" ? (fixturesAllowed ? (
-              <div className={styles.forecastChartSection}>
+              <div className={styles.forecastChartSection} role="tabpanel" id="store-evidence-panel" aria-labelledby="store-evidence-tab-forecastOps" tabIndex={0}>
               <h4>28 天門市營運營收預測與異常帶 (Forecast Band Chart)</h4>
               <svg
                 width="100%"
@@ -1437,7 +1453,7 @@ export function DesignStoreOpsWorkspace({
                   <>
                     <circle cx={chartParams.getX(13)} cy={chartParams.getY(forecastData[13].actual!)} r="5" fill="#ef4444" />
                     <circle cx={chartParams.getX(13)} cy={chartParams.getY(forecastData[13].actual!)} r="10" fill="none" stroke="#ef4444" strokeWidth="1.5" opacity="0.7">
-                      <animate attributeName="r" values="5;12;5" dur="2s" repeatCount="indefinite" />
+
                     </circle>
                   </>
                 )}
@@ -1461,7 +1477,7 @@ export function DesignStoreOpsWorkspace({
               </div>
               </div>
             ) : (
-              <div className={styles.forecastChartSection} data-testid="store-forecast-unavailable">
+              <div className={styles.forecastChartSection} data-testid="store-forecast-unavailable" role="tabpanel" id="store-evidence-panel" aria-labelledby="store-evidence-tab-forecastOps" tabIndex={0}>
                 <h4>28 天門市營運營收預測與異常帶</h4>
                 <p>FORECAST_DATA_UNAVAILABLE · Store Ops API 未提供正式 ForecastOps 序列。</p>
               </div>

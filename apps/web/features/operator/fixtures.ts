@@ -328,7 +328,7 @@ export const EVIDENCE_FIXTURES: EvidenceItem[] = [
     confidence: 0.78,
     occurredAt: "2026-07-04T20:40:00.000Z",
     // Package 10 mock series, available only in the fixture lane.
-    paymentTrend: { failureRate: 12.4, baselineDeltaPp: 8.1, relativeValues: [18, 16, 20, 22, 19, 24, 21, 26, 23, 28, 34, 42, 58, 96] },
+    paymentTrend: { failureRate: 12.4, baselineDeltaPp: 8.1, baselineRelativeValue: 30, relativeValues: [18, 16, 20, 22, 19, 24, 21, 26, 23, 28, 34, 42, 58, 96] },
   },
   {
     id: "EV-1024-FOUR",

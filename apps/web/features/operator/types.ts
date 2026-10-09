@@ -219,6 +219,7 @@ export type EvidenceItem = {
   paymentTrend?: {
     failureRate: number;
     baselineDeltaPp: number;
+    baselineRelativeValue?: number;
     relativeValues: number[];
   };
 };
