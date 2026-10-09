@@ -67,7 +67,7 @@
 .headerStats strong {
   margin-right: 6px;
   color: #2e3a97;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 16px;
   font-weight: 700;
 }
@@ -1167,9 +1167,10 @@
   padding: 2px 6px;
 }
 
+/* auto-fill keeps a card at column width when only a few sources exist. */
 .sourceSummaryGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
   gap: 8px;
 }
 
@@ -1331,7 +1332,7 @@
 
 .radarInboxHeader span {
   color: #8a93a8;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 11px;
 }
 
@@ -1469,7 +1470,7 @@
 
 .detailIdLine > span {
   color: #8a93a8;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -1496,7 +1497,7 @@
   border-radius: 9px;
   background: repeating-linear-gradient(45deg, #e8ecf3, #e8ecf3 8px, #eff2f8 8px, #eff2f8 16px);
   color: #8a93a8;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
 }
 
@@ -2737,7 +2738,7 @@
 }
 
 .revenueBar small {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
   color: #5a6472;
 }
@@ -2764,7 +2765,7 @@
 }
 
 .bandTile strong {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 13px;
 }
 
@@ -2841,7 +2842,7 @@
   border-radius: 999px;
   background: #eef1f5;
   color: #5a6472;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -2901,7 +2902,7 @@
 }
 
 .reviewQueueId {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
   color: #8a93a8;
 }
@@ -2924,7 +2925,7 @@
 
 .reviewQueueDue {
   margin-left: auto;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   color: #96610b;
 }
 
@@ -3549,7 +3550,7 @@
 
 .pipelineFilterList button b {
   margin-left: auto;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
 }
 
@@ -3618,7 +3619,7 @@
 .candidateCardHead > span:first-child,
 .candidateSnapshot {
   color: #6e7891;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
 }
 
@@ -3715,7 +3716,7 @@
 
 .scoreLabToolbar > span {
   margin-left: auto;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -3807,7 +3808,7 @@
 
 .scoreLabPicker small {
   color: #6e7891;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
 }
 
@@ -3837,7 +3838,7 @@
 
 .scoreNumber {
   color: #1c2333;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 34px;
   font-weight: 650;
 }
@@ -3871,7 +3872,7 @@
 .scoreReportTitle small,
 .scoreReportTitle span {
   color: #6e7891;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 9.5px;
 }
 
@@ -3980,7 +3981,7 @@
 
 .comparePriorityList span {
   color: #6e7891;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 9.5px;
 }
 
@@ -3993,7 +3994,7 @@
 
 .comparePriorityList b {
   color: #2e3a97;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
 }
 
 .reviewDetail,

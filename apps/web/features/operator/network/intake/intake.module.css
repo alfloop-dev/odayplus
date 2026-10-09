@@ -441,6 +441,34 @@
   gap: 10px;
 }
 
+/* Inbox filter row: one line of search + compact selects, wrapping as a row. */
+.inboxFilterBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.inboxFilterSearch {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.inboxFilterControls {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inboxFilterControls .select {
+  width: auto;
+  max-width: 220px;
+}
+
 .noteBox {
   background: #f8fafd;
   border: 1px solid #eef1f6;

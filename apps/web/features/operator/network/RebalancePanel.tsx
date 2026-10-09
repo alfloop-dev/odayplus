@@ -615,10 +615,14 @@ export function RebalancePanel({
             </section>
           ) : null}
 
-          <section className={styles.rebalanceBoundary} data-testid={`rebalance-boundary-${selected.id}`}>
-            <strong>執行邊界 / Execution boundary</strong>
+          <section
+            className={styles.rebalanceBoundary}
+            data-relocation-executed={String(Boolean(selected.relocationExecuted))}
+            data-testid={`rebalance-boundary-${selected.id}`}
+          >
+            <strong>執行邊界</strong>
             <span>
-              relocationExecuted={String(Boolean(selected.relocationExecuted))} ·{" "}
+              {selected.relocationExecuted ? "已執行搬遷" : "尚未執行搬遷"} ·{" "}
               {selected.executionBoundary ?? "Govern approval required before relocation execution."}
             </span>
             {selected.relatedApprovalId ? <b>Govern approval {selected.relatedApprovalId}</b> : null}

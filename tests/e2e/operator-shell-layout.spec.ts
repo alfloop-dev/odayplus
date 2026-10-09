@@ -166,6 +166,89 @@ test.describe("Operator shared header layout", () => {
     expect(hitTest).toEqual({ admin: true, logout: true, headerOverflowY: "visible" });
   });
 
+  test("workspace content sits on the shared page container without a second chrome", async ({ page }) => {
+    for (const width of [1440, 1024, 768, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const [workspace, titleSelector] of [
+        ["store", '[data-screen-label="Store Ops 門市營運"] :is(h1, h2)'],
+        ["growth", '[data-screen-label="Growth 營收成長"] [class*="headerTitle"]'],
+      ] as const) {
+        await openWorkspace(page, workspace);
+        // Measure the row holding the workspace title, not the workspace box: a
+        // second padding layer keeps the box in place but moves its content.
+        const title = page.locator(titleSelector).first();
+        await expect(title).toBeVisible();
+        const { rowX, shellContentX, rowWidth, shellContentWidth } = await title.evaluate((element) => {
+          const shell = document.querySelector('[data-testid="operator-console"] > main') as HTMLElement;
+          const style = getComputedStyle(shell);
+          const shellBox = shell.getBoundingClientRect();
+          const row = element.parentElement!.getBoundingClientRect();
+          const left = parseFloat(style.paddingLeft);
+          return {
+            rowX: row.x,
+            rowWidth: row.width,
+            shellContentX: shellBox.x + left,
+            shellContentWidth: shellBox.width - left - parseFloat(style.paddingRight),
+          };
+        });
+        // The shell already applies the Package 10 container padding at every
+        // breakpoint; workspaces must not pad again.
+        expect(Math.round(rowX), `${workspace} title row x at ${width}px`).toBe(Math.round(shellContentX));
+        expect(Math.round(rowWidth), `${workspace} title row width at ${width}px`).toBeGreaterThanOrEqual(
+          Math.round(shellContentWidth) - 4,
+        );
+      }
+    }
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openWorkspace(page, "govern");
+    await expect(page.getByTestId("governance-workspace")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "治理稽核" })).toHaveCount(1);
+    await expect(page.getByRole("heading", { level: 1, name: "治理稽核" })).toBeVisible();
+    await expect(page.locator("main")).toHaveCount(1);
+  });
+
+  test("Store Ops detail fits a 390px viewport except for its scrollable strips", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openWorkspace(page, "store");
+    const detail = page.locator('[data-screen-label="Store Ops 門市營運"] section[aria-label$=" detail"]');
+    await expect(detail).toBeVisible();
+    await expect(page.locator("main")).toHaveCount(1);
+    const clipped = await detail.evaluate((root) => {
+      const limit = root.getBoundingClientRect().right + 1;
+      const insideScroller = (element: Element) => {
+        for (let node = element.parentElement; node && node !== root; node = node.parentElement) {
+          if (["auto", "scroll"].includes(getComputedStyle(node).overflowX)) return true;
+        }
+        return false;
+      };
+      return Array.from(root.querySelectorAll("*"))
+        .filter((element) => element.getBoundingClientRect().width > 0)
+        .filter((element) => element.getBoundingClientRect().right > limit && !insideScroller(element))
+        .map((element) => element.tagName + "." + String(element.className).slice(0, 40));
+    });
+    expect(clipped).toEqual([]);
+  });
+
+  test("Listing inbox filters stay on one compact row", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.addInitScript(() => window.sessionStorage.setItem("oday.operator.role", "expansion-manager"));
+    await page.goto("/operator?ws=network&tab=radar");
+    const search = page.getByTestId("intake-search-input");
+    await expect(search).toBeVisible({ timeout: 30_000 });
+    const boxes = await Promise.all(
+      ["intake-search-input", "intake-filter-method", "intake-filter-stage", "intake-filter-outcome"].map(
+        async (id) => page.getByTestId(id).boundingBox(),
+      ),
+    );
+    const [searchBox, ...selects] = boxes.map((box) => box!);
+    expect(searchBox.height).toBeLessThan(48);
+    for (const box of selects) {
+      expect(box.width).toBeLessThanOrEqual(230);
+      expect(Math.abs(box.y - selects[0].y)).toBeLessThan(2);
+    }
+  });
+
   test("header does not change when workspace content is replaced by a data gate", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openWorkspace(page, "today");

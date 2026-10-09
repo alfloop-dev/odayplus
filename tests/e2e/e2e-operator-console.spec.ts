@@ -376,9 +376,11 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({
   await expect(page.getByTestId("rebalance-primary-action")).toContainText(
     "建立 AVM 估值請求",
   );
-  await expect(page.getByTestId("rebalance-boundary-RB-801")).toContainText(
-    "relocationExecuted=false",
+  await expect(page.getByTestId("rebalance-boundary-RB-801")).toHaveAttribute(
+    "data-relocation-executed",
+    "false",
   );
+  await expect(page.getByTestId("rebalance-boundary-RB-801")).toContainText("尚未執行搬遷");
 
   // Back to Find Areas remains functional.
   await page.getByTestId("network-tab-0").click();
