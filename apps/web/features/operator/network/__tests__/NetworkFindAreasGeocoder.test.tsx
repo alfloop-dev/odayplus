@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiBinding } from "../../../../src/lib/api/binding";
 import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
@@ -81,6 +81,44 @@ describe("Find Areas geocoder wiring (UX-SCR-EXP-001)", () => {
 
     expect(screen.getByTestId("geocoder-denied")).toBeInTheDocument();
     expect(screen.queryByTestId("geocoder-query-input")).toBeNull();
+  });
+
+  it("has authoritative facts and fails closed for unavailable secondary writes", () => {
+    renderFindAreas("expansion-manager");
+    const detail = within(screen.getByLabelText("Selected HeatZone detail"));
+    expect(detail.getByTestId("find-areas-facts")).toHaveTextContent("資料信心");
+    for (const name of ["指派找點任務", "建立物件搜尋條件", "加入季度展店計畫", "＋ 從網址新增物件（帶入本區）"]) {
+      expect(detail.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(detail.queryByRole("button", { name: "Submit Review" })).toBeNull();
+    expect(detail.getByText(/開啟評分頁不會執行評分或送審/)).toBeInTheDocument();
+  });
+
+  it("restores URL hints and navigates to actual Radar and SiteScore tabs", () => {
+    navigation.search = "ws=network&tab=areas&hz=HZ-02&lens=fit&flag=a&flag=b";
+    renderFindAreas("expansion-manager");
+    const detail = within(screen.getByLabelText("Selected HeatZone detail"));
+    expect(detail.getByText(/HZ-02 · Lens：品牌適配/)).toBeInTheDocument();
+    const lenses = within(screen.getByLabelText("HeatZone lenses"));
+    expect(lenses.getByRole("button", { name: "品牌適配" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(lenses.getByRole("button", { name: "競店壓力" }));
+    expect(navigation.push).toHaveBeenLastCalledWith(
+      "/operator?ws=network&tab=areas&hz=HZ-02&lens=competition&flag=a&flag=b", { scroll: false },
+    );
+    fireEvent.click(detail.getByTestId("find-areas-primary"));
+    expect(navigation.push).toHaveBeenLastCalledWith(
+      "/operator?ws=network&tab=radar&hz=HZ-02&lens=fit&flag=a&flag=b", { scroll: false },
+    );
+  });
+
+  it("labels the in-memory tracking toggle as non-durable", () => {
+    renderFindAreas("expansion-manager");
+    const detail = within(screen.getByLabelText("Selected HeatZone detail"));
+    const track = detail.getByRole("button", { name: /本次工作階段已追蹤/ });
+    expect(track).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(track);
+    expect(detail.getByRole("button", { name: "加入本次工作階段追蹤" })).toHaveAttribute("aria-pressed", "false");
+    expect(detail.getByText(/追蹤僅保留於本次工作階段/)).toBeInTheDocument();
   });
 
   it("shows no geocode receipt until an action has been taken", () => {

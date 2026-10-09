@@ -97,6 +97,7 @@ for (const width of [1440, 1024, 390]) {
     await zonePick.focus();
     await page.keyboard.press("Enter");
     await expect(detail).toContainText("HZ-02");
+    await expect(page).toHaveURL(/hz=HZ-02/);
     const fit = panel.getByLabel("HeatZone lenses").getByRole("button", { name: "品牌適配", exact: true });
     await fit.focus();
     await page.keyboard.press("Enter");
@@ -105,6 +106,18 @@ for (const width of [1440, 1024, 390]) {
     await page.reload();
     await expect(page.getByLabel("Selected HeatZone detail")).toContainText("HZ-02");
     await expect(page.getByLabel("HeatZone lenses").getByRole("button", { name: "品牌適配", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await page.goBack();
+    await expect(panel.getByLabel("HeatZone lenses").getByRole("button", { name: "需求熱度", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await page.goForward();
+    await expect(panel.getByLabel("HeatZone lenses").getByRole("button", { name: "品牌適配", exact: true })).toHaveAttribute("aria-pressed", "true");
+    // Later-spec search remains reachable without covering the map or detail.
+    await panel.locator("summary").click();
+    await expect(panel.getByTestId("geocoder-query-input")).toBeVisible();
+    await shot(page, info, `after-search-open-${width}`);
+    const searchAxe = await new AxeBuilder({ page }).include('[data-testid="network-panel-find-areas"]').withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+    await save(info, `after-search-axe-${width}.json`, searchAxe);
+    expect(searchAxe.violations).toEqual([]);
+    await panel.locator("summary").click();
     await panel.getByTestId("find-areas-primary").click();
     await expect(page.getByTestId("network-panel-listings")).toBeVisible();
     await expect(page.getByTestId("listing-zone-filter-chip")).toContainText("HZ-02");

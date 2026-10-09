@@ -42,7 +42,9 @@ import type {
   ProposalPreviewData,
 } from "./network/HeatZoneMergeSplitPanel";
 import {
+  buildFindAreasHref,
   buildNetworkTabHref,
+  parseFindAreasUrlState,
   parseNetworkTabIndex,
 } from "./network/networkUrlState";
 import type { ExpansionStep } from "./network/ExpansionStepper";
@@ -639,6 +641,7 @@ export function NetworkFindAreasWorkspace({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const urlAreasState = parseFindAreasUrlState(searchParams);
   const fixturesAllowed = operatorFixturesAllowed();
   const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId]);
   // Presentation gate mirrors sitescore:EXECUTE for console personas. The API
@@ -652,9 +655,15 @@ export function NetworkFindAreasWorkspace({
   const siteReviews = siteReviewsInput ?? (fixturesAllowed ? SITE_REVIEW_FIXTURES : EMPTY_SITE_REVIEWS);
   const reviewIdentity = useMemo(() => resolveNetworkReviewIdentity(activeRoleId), [activeRoleId]);
   const [localSelectedId, setLocalSelectedId] = useState(
-    selectedHeatZoneId ?? (fixturesAllowed ? "HZ-01" : ""),
+    selectedHeatZoneId ?? urlAreasState.heatZoneId ?? (fixturesAllowed ? "HZ-01" : ""),
   );
-  const [localLens, setLocalLens] = useState<NetworkFindAreasLens>(activeLens ?? "demand");
+  const [localLens, setLocalLens] = useState<NetworkFindAreasLens>(activeLens ?? urlAreasState.lens);
+  useEffect(() => {
+    // Deep links and history restoration must not depend on component/session state.
+    // Controlled props remain authoritative; URL hints never widen API read grants.
+    setLocalSelectedId(selectedHeatZoneId ?? urlAreasState.heatZoneId ?? (fixturesAllowed ? "HZ-01" : ""));
+    setLocalLens(activeLens ?? urlAreasState.lens);
+  }, [activeLens, fixturesAllowed, selectedHeatZoneId, urlAreasState.heatZoneId, urlAreasState.lens]);
   const [localTrackedIds, setLocalTrackedIds] = useState(
     () => new Set(trackedHeatZoneIds ?? (fixturesAllowed ? ["HZ-01"] : [])),
   );
@@ -1291,13 +1300,22 @@ export function NetworkFindAreasWorkspace({
   const selectedZone = viewModel.selectedZone;
   const isSelectedTracked = selectedZone ? trackedSet.has(selectedZone.id) : false;
 
+  function pushFindAreasState(zoneId: string, lens: NetworkFindAreasLens) {
+    router.push(buildFindAreasHref(
+      pathname, zoneId, lens, searchParams,
+      typeof window === "undefined" ? "" : window.location.hash,
+    ), { scroll: false });
+  }
+
   function selectHeatZone(zone: NetworkFindAreasZoneViewModel) {
     setLocalSelectedId(zone.id);
+    pushFindAreasState(zone.id, effectiveLens);
     callbacks?.onSelectHeatZone?.(zone.zone);
   }
 
   function changeLens(lens: NetworkFindAreasLens) {
     setLocalLens(lens);
+    pushFindAreasState(effectiveSelectedId, lens);
     callbacks?.onChangeLens?.(lens);
   }
 

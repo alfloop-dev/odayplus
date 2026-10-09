@@ -1,0 +1,13 @@
+
+> @oday-plus/web@0.1.0 test
+> vitest run features/operator/network/__tests__/NetworkFindAreasGeocoder.test.tsx features/operator/network/__tests__/networkUrlState.test.ts features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx
+
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+
+
+ Test Files  3 passed (3)
+      Tests  16 passed (16)
+   Start at  19:35:00
+   Duration  6.45s (transform 4.02s, setup 0ms, import 5.73s, tests 2.94s, environment 3.41s)
+
