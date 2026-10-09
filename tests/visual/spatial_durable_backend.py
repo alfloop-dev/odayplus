@@ -14,7 +14,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from modules.heatzone.application import merge_split_evidence
-from shared.audit.worm import LocalAppendOnlyWormSink
 from shared.infrastructure.persistence import build_persistence
 from tests.integration._heatzone_evidence import (
     build_evidence_repository,
@@ -27,6 +26,16 @@ def scratch_root() -> Path:
     if not root.is_dir():
         raise RuntimeError("Create an isolated scratch directory before starting")
     return root
+
+
+def test_bundle(database: Path):
+    # The public factory selects WORM from environment, not a constructor arg.
+    # Scope the override to construction and explicitly forbid a cloud sink.
+    with patch.dict(os.environ, {
+        "ODP_AUDIT_WORM_SINK_URI": "",
+        "ODP_AUDIT_WORM_LOCAL_PATH": str(scratch_root() / "audit-worm"),
+    }):
+        return build_persistence(mode="durable", db_path=database)
 
 
 def seed_generated_history(bundle) -> None:
@@ -72,9 +81,7 @@ def create_test_app():
     # Refuse stale data instead of silently treating a previous run as evidence.
     if database.exists():
         raise RuntimeError("Spatial test backend requires a fresh scratch directory")
-    bundle = build_persistence(
-        mode="durable", db_path=database, worm_sink=LocalAppendOnlyWormSink(root / "audit-worm")
-    )
+    bundle = test_bundle(database)
     seed_generated_history(bundle)
     receipt = matured_receipt(root / "fixture-matured-inventory.json")
     real_loader = merge_split_evidence.load_model_ready_receipt
@@ -95,10 +102,7 @@ def inspect(proposal_id: str) -> dict:
     database = scratch_root() / "spatial.sqlite3"
     if not database.is_file():
         raise RuntimeError("Missing test database")
-    bundle = build_persistence(
-        mode="durable", db_path=database,
-        worm_sink=LocalAppendOnlyWormSink(scratch_root() / "audit-worm"),
-    )
+    bundle = test_bundle(database)
     proposal = bundle.heatzone_composition_repository.get_proposal(proposal_id, "tenant-a")
     if proposal is None:
         raise RuntimeError("Proposal not persisted")
