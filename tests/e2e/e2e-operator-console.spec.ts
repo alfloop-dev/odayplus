@@ -282,10 +282,14 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({
 
   // ODP-OC-R4-007: reset the review service before the panel first fetches so
   // the golden GO review (RV-702) is pending and decidable in this smoke.
-  await request
-    .post(`${API_BASE_URL}/api/v1/operator/network-reviews/reset`)
-    .catch(() => undefined);
+  const resetReviews = await request.post(`${API_BASE_URL}/api/v1/operator/network-reviews/reset`);
+  expect(resetReviews.status()).toBe(200);
 
+  // Use the canonical reviewer persona for this approving flow. Ops-lead
+  // must not be silently promoted to a reviewer by the Network workspace.
+  await page.addInitScript(() => {
+    window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
+  });
   await page.goto("/operator");
 
   // Enter the Network (展店與店網) workspace.

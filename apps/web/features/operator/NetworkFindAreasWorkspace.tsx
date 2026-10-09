@@ -376,10 +376,11 @@ const NETWORK_ACTOR = {
 // Never substitute a reviewer/expansion persona for the active console role.
 // The API resolves the durable identity and enforces its real grants.
 
-// Console roles authorized to decide a Network site review. Only the operations
-// lead carries an approval mandate on this surface; Expansion prepares/submits
-// but cannot decide (ODP-OC-R4-007 acceptance).
-const NETWORK_REVIEW_DECIDER_ROLE_IDS: ReadonlySet<OperatorRoleId> = new Set(["ops-lead"]);
+// The canonical expansion-manager persona requires site_reviewer/executive
+// grants; ops-lead alone is operations_manager, not a SiteScore approver.
+// This only controls presentation. The API verifies APPROVE and derives the
+// decision actor from its authenticated principal, never from this persona.
+const NETWORK_REVIEW_DECIDER_ROLE_IDS: ReadonlySet<OperatorRoleId> = new Set(["expansion-manager"]);
 
 type NetworkReviewIdentity = {
   canDecide: boolean;

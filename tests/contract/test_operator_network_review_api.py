@@ -28,8 +28,8 @@ REVIEWER_HEADERS = {
 # Expansion holds sitescore VIEW/EXECUTE only (may submit, not decide).
 EXPANSION_HEADERS = {
     "x-subject-id": "operator-expansion-manager",
-    "x-roles": "site_reviewer",
-    "x-operator-role": "expansion-manager",
+    "x-roles": "expansion_user",
+    "x-operator-role": "expansion-staff",
     "x-tenant-id": "tenant-a",
 }
 
@@ -83,7 +83,7 @@ def test_go_decision_syncs_five_records_and_survives_reload() -> None:
             "decision": "GO",
             "reason": "人流量體大且回本期可接受，核准進展店閘。",
             "actorRoleId": "siteReviewer",
-            "actorName": "陳審核",
+            "actorName": "forged-client-actor",
         },
     )
     assert response.status_code == 200, response.text
@@ -97,6 +97,9 @@ def test_go_decision_syncs_five_records_and_survives_reload() -> None:
     assert body["decision"]["finalDecision"] == "Approved"
     assert body["decision"]["mappedStatus"] == "approved"
     assert body["auditEvent"]["action"] == "review.decision"
+    assert body["auditEvent"]["actor"] == REVIEWER_HEADERS["x-subject-id"]
+    assert body["auditEvent"]["actorRoleId"] == "site_reviewer"
+    assert body["decision"]["actorRoleId"] == "site_reviewer"
     assert body["records"] == {
         "candidateId": "CS-1001",
         "reviewId": "RV-702",
@@ -343,6 +346,51 @@ def test_expansion_role_may_submit_read_but_not_decide() -> None:
         },
     )
     assert decide.status_code == 403, decide.text
+
+
+def test_decision_uses_verified_role_not_client_actor_fields() -> None:
+    client = _client()
+    response = client.post(
+        "/api/v1/operator/network-reviews/RV-702/decide",
+        headers=REVIEWER_HEADERS,
+        json={
+            "decision": "GO",
+            "reason": "approve this strong site now.",
+            "actorRoleId": "expansion-manager",  # canonical UI persona, not a grant
+            "actorName": "forged-client-actor",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["auditEvent"]["actorRoleId"] == "site_reviewer"
+    assert response.json()["auditEvent"]["actor"] == REVIEWER_HEADERS["x-subject-id"]
+
+
+def test_client_reviewer_claim_cannot_promote_read_only_roles() -> None:
+    client = _client()
+    for roles, persona in (
+        ("operations_manager", "ops-lead"),
+        ("platform_admin,operator_viewer", "pm-audit"),
+        ("expansion_user", "expansion-staff"),
+    ):
+        response = client.post(
+            "/api/v1/operator/network-reviews/RV-702/decide",
+            headers={
+                "x-subject-id": "read-only-actor",
+                "x-roles": roles,
+                "x-operator-role": persona,
+                "x-tenant-id": "tenant-a",
+            },
+            json={
+                "decision": "GO",
+                "reason": "approve this strong site now.",
+                "actorRoleId": "siteReviewer",
+                "actorName": "forged-reviewer",
+            },
+        )
+        assert response.status_code == 403, response.text
+    snapshot = _snapshot(client)
+    assert snapshot["counts"]["decided"] == 0
+    assert snapshot["auditEvents"] == []
 
 
 def test_unauthenticated_reads_and_writes_fail_closed() -> None:

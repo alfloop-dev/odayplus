@@ -28,6 +28,12 @@ vi.mock("../ListingRadarPanel", () => ({
   },
 }));
 
+vi.mock("../ReviewPanel", () => ({
+  ReviewPanel: ({ canDecide }: { canDecide: boolean }) => (
+    <div data-testid="review-authority" data-can-decide={String(canDecide)} />
+  ),
+}));
+
 function unavailableBinding<T>(): ApiBinding<T> {
   return {
     error: "snapshot unavailable",
@@ -87,6 +93,18 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     for (const [, init] of vi.mocked(fetch).mock.calls) {
       expect(init?.headers).toMatchObject({ "X-Operator-Role": "pm-audit" });
     }
+  });
+
+  it.each([
+    ["expansion-manager", "true"],
+    ["ops-lead", "false"],
+    ["pm-audit", "false"],
+    ["platform-admin", "false"],
+  ] as const)("presents review authority for %s without impersonation", (roleId, canDecide) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    navigation.search = "ws=network&tab=review";
+    render(<NetworkFindAreasWorkspace activeRoleId={roleId} initialTabId="review" />);
+    expect(screen.getByTestId("review-authority")).toHaveAttribute("data-can-decide", canDecide);
   });
 
   it("cold-opens Radar even when every unrelated Network snapshot is unavailable", async () => {
