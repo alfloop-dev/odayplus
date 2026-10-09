@@ -722,6 +722,96 @@ heatZoneId/candidateId/duplicateOfId/mergedIntoId/sourceEvidence/
 archivedReason). New exact-head CI and independent review are required. No live
 grant, deployment, source/model/StoreOps action, gate waiver or F11 claim.
 
+## Base advance and R7 scoped Network read repair — 2026-10-09
+
+Owner: Claude2 (owner-churn reassignment after R7). Codex reopen (P2 x2) on
+exact head `8ce5cb14d765`.
+
+**Base advance.** `origin/dev` `963090d6fc32` (PR #1437 UI content parity) is
+merged as `4fa7d39f2` (normal two-parent merge, no rebase/force). The only
+conflict was `EXPECTED_PLAYWRIGHT_TEST_COUNT`: this task added three Today
+viewport regressions (119 -> 122) and dev independently added three shell layout
+regressions (119 -> 122) to `operator-shell-layout.spec.ts`. The merged spec set
+has both, so the constant is 125 and the inventory unit test
+(`tests/e2e/test_acceptance_coverage.py`) is aligned; `npx playwright test
+--list --project=chromium` on the merge reports `Total: 125 tests in 18 files`.
+`git rev-list --count HEAD..origin/dev` = 0.
+
+**1. Selected-zone reads with combined scope axes.** The route passed
+`collection_scope={heatZoneId: selected}` and `authorize_intake_action` applied
+the complete-envelope `intake_resource_in_scope` to it, so a viewer restricted on
+brand/region/store/assigned-area plus heat zone got `403 SCOPE_DENIED` for
+`?selectedHeatZoneId=HZ-01` (no brand in the query) while the queryless read
+succeeded. `collection_filters_in_scope` now checks only the axes a read
+collection request supplies; each supplied value must be allowed. Records,
+relationships and aggregates are still projected on the full scope
+(`project_listing_snapshot`, intake filtering unchanged). Target objects and
+creates (`submit_url`/`submit_csv`, which land an object) keep the
+complete-envelope check.
+
+**2. Production Network initialisation.** The actual Console mount supplies no
+`selectedHeatZoneId`/`heatZones`; the legacy `/heatzones` read is 403 for the
+operator-only grant (intended), so no zone was ever selected and the scoped
+snapshot was never requested; Find Areas gated on the denied legacy binding.
+`NetworkFindAreasWorkspace` now requests the scoped snapshot without a selection,
+adopts the API-named `selectedHeatZoneId` when it is a visible zone, and the
+Find Areas gate reads only that authoritative snapshot (it already supersedes
+the legacy heatzone/candidate bindings for rendering). An authorized empty
+snapshot shows the `empty` gate. General-domain grants stay denied
+(`shared/auth/rbac.py` unchanged).
+
+Regressions:
+- `tests/security/test_operator_network_read_scope.py`: for brand/region/store/
+  assigned-area each combined with `HZ-01`, queryless and `?selectedHeatZoneId=HZ-01`
+  both return 200 with only `L-2024` (same-zone `L-2030` projected out),
+  candidate/review/count projection, withheld zone aggregates, the intake list
+  with the selected zone, an excluded-zone `HZ-02` `SCOPE_DENIED` control on both
+  routes and no state mutation; a restricted non-viewer reviewer keeps the full
+  envelope and the HZ-02 denial.
+- `tests/security/test_operator_read_authorization.py`: supplied filter axes are
+  enforced, target objects still need every restricted axis, and `submit_url`
+  still needs a complete envelope.
+- `apps/web/.../NetworkConsoleScopedSnapshot.test.tsx`: full production
+  `OperatorConsole` (`ws=network`, no injected selection, live bootstrap,
+  `/heatzones` + `/listings/candidates` 403). Nonempty: first snapshot request has
+  no `selectedHeatZoneId`, the API-named `HZ-SCOPED-02` (not the first array item)
+  is then requested, persona header retained, Find Areas renders 2 zones /
+  1 listing, no gate, no fixture label. Empty: `empty` gate, no selection.
+- `productionWorkspaceData.test.tsx`: Find Areas gate follows only the scoped
+  snapshot state.
+
+A/B (repaired files restored afterwards, `git diff --stat` re-checked):
+`r7-ab-old-authorization.log` — new backend tests against `8ce5cb14d`'s
+`intake_authorization.py`: 6 failed, exit 1. `r7-ab-old-workspace.log` — new
+Console composition tests against `8ce5cb14d`'s `NetworkFindAreasWorkspace.tsx`:
+2 failed, exit 1.
+
+Implementation anchor `eac9c17dd`; all receipts below ran on that content
+(`uv` from `~/.local/bin`, Python 3.12 locked env):
+
+```sh
+uv run --frozen --python 3.12 pytest -q -p no:cacheprovider <R6 broad set> \
+  --junitxml=r7-scope.xml
+(cd apps/web && npx tsc --noEmit && npx vitest run features/operator)
+uv run --frozen ruff check <changed .py files>
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check 8ce5cb14d eac9c17dd
+```
+
+| Check | Exit | Result |
+| --- | --- | --- |
+| A/B backend (`r7-ab-old-authorization.log`) | 1 | 6 `FAILED` on old authorization |
+| A/B Console composition (`r7-ab-old-workspace.log`) | 1 | 2 `FAILED` on old workspace |
+| Broad backend regression (`r7-scope.log`, `r7-scope.xml`, `r7-scope.exit`) | 0 | JUnit 836 tests, 0 failures/errors/skips (2661 s) |
+| Web typecheck (`r7-typecheck.log`) | 0 | `tsc --noEmit` clean |
+| Operator vitest (`r7-vitest.log`) | 0 | 40 files, 400 tests passed |
+| Changed Python ruff (`r7-ruff.log`) | 0 | All checks passed |
+| `check_code_boundaries.py` (`r7-boundaries.log`) | 0 | inventory unchanged |
+| `git diff --check 8ce5cb14d eac9c17dd` | 0 | clean |
+
+New exact-head CI and independent review are required. No live grant,
+deployment, source/model/StoreOps action, gate waiver or F11 claim.
+
 ## Outstanding live acceptance (not completed here)
 
 After required CI, independent exact-head review, merge and admitted deployment,
