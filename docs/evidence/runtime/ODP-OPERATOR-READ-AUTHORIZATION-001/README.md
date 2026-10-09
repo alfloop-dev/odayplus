@@ -404,6 +404,66 @@ Admitted deployment, bounded audited grant, real remote readback and independent
 F11/live acceptance remain outstanding. StoreOps/source/model/admission holds
 are unchanged.
 
+## Base advance and canonical inventory CI repair — 2026-10-09
+
+The owner repair dispatch is in progress (not immutable approved closeout).
+Clean task head `277f1de3b230` was composed with fetched `origin/dev`
+`43286b34e8c0d840f96d94cc6b1a24be87942a10` through merge `9f3fb29ad`.
+No conflicts, reset, history discard, rebase or force-push. The existing task
+commits are preserved. The base adds Web runtime-cookie/auth-route repairs;
+focused merged auth, administration, Governance and Network tests pass below.
+
+[CI37898688381](https://github.com/alfloop-dev/odayplus/actions/runs/37898688381)
+on old head `277f1de3b230` failed three Python assertions and the dev-merge E2E
+static preflight on the same cause: canonical inventory still required119 tests
+although the three new Today viewport cases make **122 tests in18 files**.
+The aggregate product failure is downstream, not a transient infra failure.
+The browser gate did not start in that failed CI run.
+
+Implementation anchor/tested clean head: `156748aad889`. The canonical count
+now includes those three cases; exact file/count checks remain mandatory.
+Regression tests require rejection of119/123 tests,17 files, missing totals and
+nonzero runner exits, and accept only122/18. No scenario, historical raw report,
+full-product receipt, release registry, gate waiver or live acceptance is rewritten.
+
+Original tool terminal exits were all **0**:
+
+```sh
+npx playwright test --list
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge
+timeout 180 "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q \
+  tests/e2e/test_acceptance_coverage.py tests/e2e/test_release_gate_registry.py \
+  --junitxml="$ORCH_SCRATCH_DIR/inventory-final.xml"
+npm test --workspace=@oday-plus/web -- \
+  src/lib/auth/__tests__/runtime.test.ts tests/login-route.test.ts \
+  features/operator/__tests__/OperatorAdminAccess.test.tsx \
+  features/operator/__tests__/GovernanceWorkspace.test.tsx \
+  features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx
+npm run typecheck --workspace=@oday-plus/web
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check \
+  delivery_toolchain/e2e/product_e2e_receipt.py tests/e2e/test_acceptance_coverage.py
+python3 delivery_toolchain/governance/check_code_boundaries.py
+timeout 300 env NODE_PATH="$PWD/node_modules" \
+  ODP_API_BASE_URL=http://127.0.0.1:8217 npx playwright test \
+  --config "$ORCH_SCRATCH_DIR/base-playwright.config.ts" \
+  tests/e2e/operator-shell-layout.spec.ts tests/e2e/operator-shell-today.spec.ts
+git diff --check
+```
+
+Python JUnit records **98 tests**, zero failures/errors/skips; Web records
+**130 tests in5 files**; actual Chromium/Next/API records **18 passed**, no
+retries (2.0 minutes). Counts come from existing completed receipts, not reruns.
+Inventory lists122/18; static dev-merge gate, lint, boundary and typecheck pass.
+Logs/JUnit/list/config are preserved as `base-*` alongside this README.
+The temporary config imports the repository config with isolated ports/cwd,
+interpreter/output only. Browser tests use disposable fixture state, not live
+accounts/data; no parallel auth harness or full E2E/live proof is claimed.
+
+The following evidence-only commit does not alter these tested inputs. Required
+remote CI and independent review must bind the newly submitted exact PR head;
+old CI receipts cannot approve it. No grant/deployment/source/model operation
+or F11 self-approval was performed. Live obligations below remain outstanding.
+
 ## Outstanding live acceptance (not completed here)
 
 After required CI, independent exact-head review, merge and admitted deployment,

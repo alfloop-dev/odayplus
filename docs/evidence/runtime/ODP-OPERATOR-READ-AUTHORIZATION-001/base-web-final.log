@@ -1,0 +1,13 @@
+
+> @oday-plus/web@0.1.0 test
+> vitest run src/lib/auth/__tests__/runtime.test.ts tests/login-route.test.ts features/operator/__tests__/OperatorAdminAccess.test.tsx features/operator/__tests__/GovernanceWorkspace.test.tsx features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx
+
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-operator-read-authorization-001/apps/web
+
+
+ Test Files  5 passed (5)
+      Tests  130 passed (130)
+   Start at  07:43:44
+   Duration  10.61s (transform 9.90s, setup 0ms, import 14.27s, tests 3.22s, environment 8.34s)
+
