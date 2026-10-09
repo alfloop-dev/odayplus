@@ -69,6 +69,8 @@ export type HeatZoneMergeSplitPanelProps = {
   selectedProposalId?: string | null;
   onSelectProposal?: (proposalId: string) => void;
   isLoading?: boolean;
+  apiError?: string | null;
+  onReloadProposals?: () => Promise<void>;
 };
 
 export function HeatZoneMergeSplitPanel({
@@ -80,6 +82,8 @@ export function HeatZoneMergeSplitPanel({
   selectedProposalId: controlledSelectedId,
   onSelectProposal,
   isLoading = false,
+  apiError = null,
+  onReloadProposals,
 }: HeatZoneMergeSplitPanelProps) {
   const [internalSelectedId, setInternalSelectedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
@@ -103,8 +107,9 @@ export function HeatZoneMergeSplitPanel({
   }, [proposals, statusFilter]);
 
   const activeProposal = useMemo(() => {
+    if (isLoading || apiError) return null;
     return filteredProposals.find((p) => p.proposal_id === selectedId) || filteredProposals[0] || null;
-  }, [selectedId, filteredProposals]);
+  }, [selectedId, filteredProposals, isLoading, apiError]);
   const previewGeneration = useRef(0);
   useEffect(() => {
     previewGeneration.current += 1;
@@ -191,7 +196,7 @@ export function HeatZoneMergeSplitPanel({
             aria-label="提案狀態篩選"
             data-testid="proposal-status-filter"
             value={statusFilter}
-            disabled={actionInProgress || previewLoading || showApproveModal || showRejectModal}
+            disabled={isLoading || !!apiError || actionInProgress || previewLoading || showApproveModal || showRejectModal}
             onChange={(e) => setStatusFilter(e.target.value)}
             style={{
               padding: "6px 12px",
@@ -201,7 +206,7 @@ export function HeatZoneMergeSplitPanel({
               fontWeight: 600,
             }}
           >
-            <option value="ALL">全部提案 ({proposals.length})</option>
+            <option value="ALL">{isLoading || apiError ? "全部提案（尚未確認）" : `全部提案 (${proposals.length})`}</option>
             <option value="PROPOSED">待審批 (PROPOSED)</option>
             <option value="APPROVED">已核准 (APPROVED)</option>
             <option value="REJECTED">已拒絕 (REJECTED)</option>
@@ -228,8 +233,15 @@ export function HeatZoneMergeSplitPanel({
       )}
 
       {isLoading ? (
-        <div style={{ padding: "32px", textAlign: "center", color: "#475569" }}>
+        <div role="status" data-testid="loading-proposals" style={{ padding: "32px", textAlign: "center", color: "#475569" }}>
           正在載入熱區合併／拆分提案數據…
+        </div>
+      ) : apiError ? (
+        <div className={spatial.readError} data-testid="proposal-read-error">
+          <p role="alert">{apiError}。尚無法確認目前提案，請重新載入。</p>
+          <button type="button" disabled={!onReloadProposals} onClick={() => void onReloadProposals?.()}>
+            重新載入提案
+          </button>
         </div>
       ) : filteredProposals.length === 0 ? (
         <div style={{ padding: "32px", textAlign: "center", color: "#475569" }} data-testid="empty-proposals">

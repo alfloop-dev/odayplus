@@ -37,10 +37,14 @@ export function buildHeatZoneCompositionClient(
         },
       });
       if (!response.ok) {
-        return [];
+        // A denied/failed read is not an authoritative empty list.
+        throw new Error(`提案清單讀取失敗（HTTP ${response.status}）`);
       }
       const data = await response.json();
-      return (data.items || []) as HeatZoneProposal[];
+      if (!data || !Array.isArray(data.items)) {
+        throw new Error("提案清單回應格式不正確");
+      }
+      return data.items as HeatZoneProposal[];
     },
 
     async getProposal(proposalId: string): Promise<HeatZoneProposal | null> {

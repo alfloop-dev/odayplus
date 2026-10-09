@@ -51,6 +51,28 @@ describe("HeatZoneMergeSplitPanel", () => {
     expect(screen.getByTestId("empty-proposals")).toBeInTheDocument();
   });
 
+  it("does not label a pending list as empty or offer stale detail actions", () => {
+    render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal]} isLoading onApproveProposal={vi.fn()} />);
+    expect(screen.getByTestId("loading-proposals")).toHaveAttribute("role", "status");
+    expect(screen.queryByTestId("empty-proposals")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("proposal-detail")).not.toBeInTheDocument();
+    expect(screen.getByTestId("proposal-status-filter")).toBeDisabled();
+    expect(screen.getByTestId("proposal-status-filter")).toHaveTextContent("尚未確認");
+  });
+
+  it("renders a failed read separately from empty and exposes retry", () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal]} apiError="HTTP 403" onReloadProposals={reload} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("HTTP 403");
+    expect(screen.queryByTestId("empty-proposals")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("proposal-detail")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重新載入提案" }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    rerender(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[]} />);
+    expect(screen.getByTestId("empty-proposals")).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("renders proposal details, metrics, and handles preview action", async () => {
     const onPreview = vi.fn().mockResolvedValue({
       proposal: sampleProposal,

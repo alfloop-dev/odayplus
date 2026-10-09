@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -353,7 +353,12 @@ export function resolveNetworkTabGateState({
     return resolveNetworkDataUnavailableState([rebalanceLoadState]);
   }
   if (activeTab === 7) {
-    return proposalsLoadState ? resolveNetworkDataUnavailableState([proposalsLoadState]) : null;
+    // Spatial owns loading, empty and retryable read failure in its panel.
+    // Keep the production seed-data guard, but do not replace these states
+    // with the generic gate (which has no proposal retry control).
+    return proposalsLoadState === "seed" || proposalsLoadState === "fixture"
+      ? "seed"
+      : null;
   }
   return null;
 }
@@ -714,10 +719,9 @@ export function NetworkFindAreasWorkspace({
   const [reviewError, setReviewError] = useState<string | null>(null);
 
   const [proposals, setProposals] = useState<HeatZoneProposal[]>([]);
-  const [proposalsLoadState, setProposalsLoadState] = useState<OperatorDataAvailability>(
-    fixturesAllowed ? "fixture" : "loading",
-  );
+  const [proposalsLoadState, setProposalsLoadState] = useState<OperatorDataAvailability>("loading");
   const [proposalsApiError, setProposalsApiError] = useState<string | null>(null);
+  const proposalsReadGeneration = useRef(0);
 
   const getCompositionClient = useCallback(async () => {
     const { buildHeatZoneCompositionClient } = await import(
@@ -727,54 +731,33 @@ export function NetworkFindAreasWorkspace({
   }, [activeRoleId]);
 
   const reloadProposals = useCallback(async () => {
+    const generation = ++proposalsReadGeneration.current;
+    setProposalsLoadState("loading");
+    setProposalsApiError(null);
     try {
       const client = await getCompositionClient();
       const items = await client.fetchProposals();
-      if (items.length > 0 || !fixturesAllowed) {
-        setProposals(items);
-        setProposalsLoadState("ready");
-      } else {
-        setProposals([]);
-        setProposalsLoadState(fixturesAllowed ? "fixture" : "empty");
-      }
-      setProposalsApiError(null);
-    } catch {
-      setProposalsLoadState(fixturesAllowed ? "fixture" : "error");
-      setProposalsApiError("Failed to load merge/split proposals");
+      if (generation !== proposalsReadGeneration.current) return;
+      setProposals(items);
+      setProposalsLoadState(items.length > 0 ? "ready" : "empty");
+    } catch (error) {
+      if (generation !== proposalsReadGeneration.current) return;
+      // Never present stale decision controls, or a fixture/empty success,
+      // when this read scope cannot confirm the current proposal list.
+      setProposals([]);
+      setProposalsLoadState("error");
+      setProposalsApiError(error instanceof Error ? error.message : "提案清單讀取失敗");
     }
-  }, [fixturesAllowed, getCompositionClient]);
+  }, [getCompositionClient]);
 
   useEffect(() => {
-    if (activeTab !== 7) {
-      return;
-    }
-    let cancelled = false;
-    async function load() {
-      try {
-        const client = await getCompositionClient();
-        const items = await client.fetchProposals();
-        if (!cancelled) {
-          if (items.length > 0 || !fixturesAllowed) {
-            setProposals(items);
-            setProposalsLoadState("ready");
-          } else {
-            setProposals([]);
-            setProposalsLoadState(fixturesAllowed ? "fixture" : "empty");
-          }
-          setProposalsApiError(null);
-        }
-      } catch {
-        if (!cancelled) {
-          setProposalsLoadState(fixturesAllowed ? "fixture" : "error");
-          setProposalsApiError("Failed to load merge/split proposals");
-        }
-      }
-    }
-    load();
+    if (activeTab !== 7) return;
+    void reloadProposals();
     return () => {
-      cancelled = true;
+      // Ignore late results after changing tab/persona or starting a newer read.
+      proposalsReadGeneration.current += 1;
     };
-  }, [activeTab, fixturesAllowed, getCompositionClient]);
+  }, [activeTab, reloadProposals]);
 
   const handleApproveProposal = useCallback(
     async (proposalId: string, notes?: string) => {
@@ -1680,6 +1663,8 @@ export function NetworkFindAreasWorkspace({
           <HeatZoneMergeSplitPanel
             activeRoleId={activeRoleId}
             isLoading={proposalsLoadState === "loading"}
+            apiError={proposalsApiError}
+            onReloadProposals={reloadProposals}
             onApproveProposal={handleApproveProposal}
             onPreviewProposal={handlePreviewProposal}
             onRejectProposal={handleRejectProposal}
