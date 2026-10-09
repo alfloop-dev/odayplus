@@ -26,6 +26,18 @@ Required later-spec risk acknowledgement remains visible, with compact design
 spacing. Continuous detail, Transfer/Pause, Promotion, Review Decision and
 permission/conflict visual states remain pending; this is not full acceptance.
 
+## Continuous detail / current base increment
+
+[intake-detail/README.md](intake-detail/README.md) records merge `f3006f748`
+composing dev `7869551a58e8`, continuous-detail 1440/390 design-before-after
+geometry, unclipped summary values, compact explicit assignment/SLA unavailable
+states, single main landmark, keyboard-scrollable stages and reload/Radar-return
+repair. Full web 713, supplemental detail 2, durable Intake E2E 3, lint/typecheck/
+boundaries/inventory passed. Actual read receipts lack assignment/SLA resource
+IDs/versions: Transfer/Pause product modal/state pairs remain unavailable, not
+mocked or falsely approved. Promotion/Review Decision/all-tab/VDC scope remains
+open; **not ready for review resubmission**.
+
 ## History-preserving base advance
 
 - Resumed clean task branch at `8e5183f47e3a`.
@@ -163,9 +175,11 @@ release acceptance or independent reviewer approval.
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
-   axe are recorded in `intake-dialogs/`. Complete paired continuous Intake detail,
-   separate Transfer/Pause, Promotion and Review Decision at 1440/390, plus their
-   geometry/focus and all applicable permission/conflict visual states.
+   axe are recorded in `intake-dialogs/`; continuous-detail baseline pairs and
+   unavailable-authority/keyboard/reload checks are now in `intake-detail/`.
+   Complete separate Transfer/Pause (requires actual resource read-model authority),
+   Promotion and Review Decision at 1440/390, plus all applicable permission/conflict
+   visual states and further full-scope detail density review.
    Preserve VDC-001 conditional controls, conflict input preservation and receipts.
 2. Capture/inspect other Network tabs, batch score view and states. Reconcile the
    English `Blocked until candidate exists` stepper banner with actual selected

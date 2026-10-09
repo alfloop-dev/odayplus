@@ -1,0 +1,170 @@
+{
+  "status": 200,
+  "record": {
+    "id": "IN-3001",
+    "tenantId": "tenant-a",
+    "originalUrl": "https://www.synthetic.example/detail-77120345.html",
+    "canonicalUrl": "https://www.synthetic.example/detail-77120345.html",
+    "submitter": "展店經理",
+    "owner": "展店經理",
+    "heatZoneId": "HZ-01",
+    "intakeMethod": "URL",
+    "stage": "READY",
+    "sourceId": "SRC-SYNTHETIC",
+    "policy": "APPROVED_RETRIEVAL",
+    "policyLabel": "已核准擷取",
+    "policyReason": "模擬測試專用之核准擷取來源（控制實驗 fixture）。",
+    "rawSnapshot": {
+      "source_listing_id": "synthetic-77120345",
+      "title": "新莊副都心 興德路一樓店面",
+      "address_raw": "新北市新莊區興德路 30 號 1F",
+      "rent_text": "NT$45,000 / 月",
+      "rent_amount": 45000,
+      "area_text": "16 坪",
+      "area_ping": 16,
+      "floor": "1F",
+      "listing_type": "店面",
+      "listing_status": "active",
+      "management_fee": 2000,
+      "deposit": "二個月",
+      "available_from": "2026-08-01",
+      "confidence": 0.92
+    },
+    "snapshotId": "96dd3104-61ed-5965-9858-1e7006410378",
+    "capturedAt": "2026-10-09T17:01:20.426536Z",
+    "parserVersion": "listing-parser v1.4",
+    "correlationId": "corr-684fdabe-d869-4224-9da7-e5d68242aaa7",
+    "parsedFields": {
+      "providerListingId": {
+        "key": "providerListingId",
+        "label": "提供者物件 ID",
+        "sourceValue": "synthetic-77120345",
+        "normalizedValue": "synthetic-77120345",
+        "correctedValue": null,
+        "correctionReason": null,
+        "identity": true,
+        "lowConfidence": false
+      },
+      "address": {
+        "key": "address",
+        "label": "地址",
+        "sourceValue": "新北市新莊區興德路 30 號 1F",
+        "normalizedValue": "新北市新莊區興德路30號",
+        "correctedValue": null,
+        "correctionReason": null,
+        "identity": true,
+        "lowConfidence": false
+      },
+      "rent": {
+        "key": "rent",
+        "label": "租金",
+        "sourceValue": "NT$45,000 / 月",
+        "normalizedValue": 45000,
+        "correctedValue": null,
+        "correctionReason": null,
+        "identity": true,
+        "lowConfidence": false
+      },
+      "areaPing": {
+        "key": "areaPing",
+        "label": "坪數",
+        "sourceValue": "16 坪",
+        "normalizedValue": 16,
+        "correctedValue": null,
+        "correctionReason": null,
+        "identity": true,
+        "lowConfidence": false
+      },
+      "floor": {
+        "key": "floor",
+        "label": "樓層",
+        "sourceValue": "1F",
+        "normalizedValue": "1F",
+        "correctedValue": null,
+        "correctionReason": null,
+        "identity": false,
+        "lowConfidence": false
+      },
+      "listingType": {
+        "key": "listingType",
+        "label": "型態／用途",
+        "sourceValue": "店面",
+        "normalizedValue": "店面",
+        "correctedValue": null,
+        "correctionReason": null,
+        "identity": false,
+        "lowConfidence": false
+      },
+      "listingStatus": {
+        "key": "listingStatus",
+        "label": "來源狀態",
+        "sourceValue": "active",
+        "normalizedValue": "active",
+        "correctedValue": null,
+        "correctionReason": null,
+        "identity": false,
+        "lowConfidence": false
+      }
+    },
+    "matchResult": {
+      "outcome": "NEW",
+      "outcomeLabel": "新物件",
+      "confidence": 0.2,
+      "targetListingId": null,
+      "agreeingSignals": [
+        {
+          "key": "floor",
+          "label": "樓層",
+          "agrees": true,
+          "detail": "送件 1F · 既有 1F"
+        }
+      ],
+      "contradictingSignals": [
+        {
+          "key": "normalizedAddress",
+          "label": "正規化地址",
+          "agrees": false,
+          "detail": "送件 新北市新莊區興德路30號 · 既有 台北市信義區松仁路96號"
+        },
+        {
+          "key": "areaPing",
+          "label": "坪數",
+          "agrees": false,
+          "detail": "送件 16 · 既有 18"
+        },
+        {
+          "key": "rent",
+          "label": "租金",
+          "agrees": false,
+          "detail": "送件 45000 · 既有 58000"
+        },
+        {
+          "key": "listingType",
+          "label": "物件型態",
+          "agrees": false,
+          "detail": "送件 店面 · 既有 None"
+        }
+      ],
+      "summary": "無可靠的既有物件比對結果，可建立為新物件。"
+    },
+    "auditEvents": [
+      {
+        "id": "AUD-INTAKE-ae1f47d1",
+        "occurredAt": "2026-10-09T17:01:20Z",
+        "actorRoleId": "expansion-manager",
+        "actorName": "展店經理",
+        "action": "intake.create",
+        "targetId": "IN-3001",
+        "message": "Intake record IN-3001 created for https://www.synthetic.example/detail-77120345.html.",
+        "correlationId": "corr-684fdabe-d869-4224-9da7-e5d68242aaa7",
+        "metadata": {
+          "policy": "APPROVED_RETRIEVAL",
+          "stage": "READY",
+          "matchOutcome": "NEW"
+        }
+      }
+    ],
+    "idempotencyKey": "intake-synthetic-example-detail-77120345-html-9484a99f-3e8e-4162-86ee-600c33a275a2",
+    "version": 1
+  }
+}
