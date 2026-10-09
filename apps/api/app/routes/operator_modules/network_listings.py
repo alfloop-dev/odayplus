@@ -33,6 +33,7 @@ from modules.opsboard.application.network_listings import (
     NetworkListingPolicyError,
     NetworkListingService,
 )
+from modules.opsboard.application.network_read_scope import project_listing_snapshot
 from shared.audit import InMemoryAuditLog
 from shared.auth import Principal, Role
 
@@ -192,11 +193,7 @@ def create_network_listings_sub_router(
                 ]
 
         if principal.has_role(Role.OPERATOR_VIEWER):
-            for key in ("listings", "assistedIntakes"):
-                if key in snap:
-                    snap[key] = [
-                        row for row in snap[key] if intake_resource_in_scope(principal, row)
-                    ]
+            snap = project_listing_snapshot(principal, snap)
 
         if "listings" in snap:
             snap["listings"] = [mask_listing(principal, lst) for lst in snap["listings"]]

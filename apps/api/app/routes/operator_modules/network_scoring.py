@@ -21,6 +21,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
+from shared.auth import Role
+
 from apps.api.app.routes._common import reset_allowed_guard
 from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.network_scoring import (
@@ -53,6 +55,7 @@ def create_network_scoring_sub_router(
     require_write_permission_fn: Callable[..., Any],
     service_resolver: Callable[[Request], Any] | None = None,
     allow_reset: bool = True,
+    read_scope_snapshot_fn: Callable[[Request], dict[str, Any]] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-scoring")
 
@@ -68,9 +71,14 @@ def create_network_scoring_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return resolve_service(request, service, service_resolver).snapshot(
-                correlation_id=x_correlation_id
-            )
+            principal = request.state.operator_principal
+            kwargs: dict[str, Any] = {"correlation_id": x_correlation_id}
+            if principal.has_role(Role.OPERATOR_VIEWER):
+                kwargs.update(
+                    principal=principal,
+                    scope_snapshot=(read_scope_snapshot_fn(request) if read_scope_snapshot_fn else {}),
+                )
+            return resolve_service(request, service, service_resolver).snapshot(**kwargs)
         except NetworkScoringRuntimeUnavailable as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

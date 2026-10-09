@@ -39,6 +39,7 @@ from modules.opsboard.application.network_reviews import (
     NetworkReviewRuntimeUnavailable,
     NetworkReviewService,
 )
+from modules.opsboard.application.network_read_scope import project_review_snapshot
 from shared.auth import Role
 
 
@@ -71,6 +72,7 @@ def create_network_review_sub_router(
     require_decide_permission_fn: Callable[..., Any],
     service_resolver: Callable[[Request], Any] | None = None,
     allow_reset: bool = True,
+    read_scope_snapshot_fn: Callable[[Request], dict[str, Any]] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-reviews")
 
@@ -86,9 +88,16 @@ def create_network_review_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return resolve_service(request, service, service_resolver).snapshot(
+            snapshot = resolve_service(request, service, service_resolver).snapshot(
                 correlation_id=x_correlation_id
             )
+            principal = request.state.operator_principal
+            if principal.has_role(Role.OPERATOR_VIEWER):
+                return project_review_snapshot(
+                    principal, snapshot,
+                    read_scope_snapshot_fn(request) if read_scope_snapshot_fn else {},
+                )
+            return snapshot
         except NetworkReviewRuntimeUnavailable as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

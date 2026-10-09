@@ -879,6 +879,10 @@ def create_operator_router(
             after_save=save_governance_growth,
         )
 
+        def network_read_scope_snapshot(request: Request) -> dict[str, Any]:
+            principal = request.state.operator_principal
+            return listing_resolver(request).snapshot(tenant_id=principal.tenant_id)
+
         router.include_router(
             create_network_listings_sub_router(
                 NetworkListingService(seed_fixtures=False),
@@ -903,6 +907,7 @@ def create_operator_router(
                     "sitescore", Action.EXECUTE, engine=authz_engine
                 ),
                 service_resolver=scoring_resolver,
+                read_scope_snapshot_fn=network_read_scope_snapshot,
                 allow_reset=allow_test_reset,
             )
         )
@@ -916,6 +921,7 @@ def create_operator_router(
                     "sitescore", Action.APPROVE, engine=authz_engine
                 ),
                 service_resolver=review_resolver,
+                read_scope_snapshot_fn=network_read_scope_snapshot,
                 allow_reset=allow_test_reset,
             )
         )
