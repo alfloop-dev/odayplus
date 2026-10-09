@@ -1734,7 +1734,7 @@ def _read_admin_roles(roles: Any) -> bool:
                            for a in ("view", "create", "update", "delete")},
         "auditor": {(r, "view") for r in ("operator_console", "avm", "listing", "audit",
                                           "model", "decision", "data_quality")} | {("audit", "export")},
-        "operator_viewer": {(r, "view") for r in ("operator_console", "listing", "sitescore", "heatzone")},
+        "operator_viewer": {(r, "view") for r in ("operator_console", "operator_network")},
     }
     if not set(roles) <= expected.keys() or not set(roles) & {"auditor", "operator_viewer"}:
         return False

@@ -171,6 +171,7 @@ def create_operator_router(
     """
     from apps.api.oday_api.security.dependencies import (
         OPERATOR_CONSOLE_RESOURCE,
+        OPERATOR_NETWORK_READ_RESOURCE,
         OPERATOR_TENANT_ID,
         build_engine,
         require_operator_permission,
@@ -887,7 +888,10 @@ def create_operator_router(
             create_network_listings_sub_router(
                 NetworkListingService(seed_fixtures=False),
                 require_view_permission_fn=require_operator_permission(
-                    "listing", Action.VIEW, engine=authz_engine
+                    "listing",
+                    Action.VIEW,
+                    engine=authz_engine,
+                    scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
                 ),
                 require_write_permission_fn=require_operator_permission(
                     "listing", Action.UPDATE, engine=authz_engine
@@ -901,7 +905,10 @@ def create_operator_router(
             create_network_scoring_sub_router(
                 NetworkScoringService(seed_fixtures=False),
                 require_view_permission_fn=require_operator_permission(
-                    "sitescore", Action.VIEW, engine=authz_engine
+                    "sitescore",
+                    Action.VIEW,
+                    engine=authz_engine,
+                    scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
                 ),
                 require_write_permission_fn=require_operator_permission(
                     "sitescore", Action.EXECUTE, engine=authz_engine
@@ -915,7 +922,10 @@ def create_operator_router(
             create_network_review_sub_router(
                 NetworkReviewService(seed_fixtures=False),
                 require_view_permission_fn=require_operator_permission(
-                    "sitescore", Action.VIEW, engine=authz_engine
+                    "sitescore",
+                    Action.VIEW,
+                    engine=authz_engine,
+                    scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
                 ),
                 require_decide_permission_fn=require_operator_permission(
                     "sitescore", Action.APPROVE, engine=authz_engine
@@ -1053,7 +1063,10 @@ def create_operator_router(
         create_network_listings_sub_router(
             network_listing_service,
             require_view_permission_fn=require_operator_permission(
-                "listing", Action.VIEW, engine=authz_engine
+                "listing",
+                Action.VIEW,
+                engine=authz_engine,
+                scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
             ),
             require_write_permission_fn=require_operator_permission(
                 "listing", Action.UPDATE, engine=authz_engine
@@ -1070,7 +1083,10 @@ def create_operator_router(
             NetworkScoringService(),
             read_scope_snapshot_fn=local_network_read_scope_snapshot,
             require_view_permission_fn=require_operator_permission(
-                "sitescore", Action.VIEW, engine=authz_engine
+                "sitescore",
+                Action.VIEW,
+                engine=authz_engine,
+                scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
             ),
             require_write_permission_fn=require_operator_permission(
                 "sitescore", Action.EXECUTE, engine=authz_engine
@@ -1088,7 +1104,10 @@ def create_operator_router(
             NetworkReviewService(),
             read_scope_snapshot_fn=local_network_read_scope_snapshot,
             require_view_permission_fn=require_operator_permission(
-                "sitescore", Action.VIEW, engine=authz_engine
+                "sitescore",
+                Action.VIEW,
+                engine=authz_engine,
+                scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
             ),
             require_decide_permission_fn=require_operator_permission(
                 "sitescore", Action.APPROVE, engine=authz_engine

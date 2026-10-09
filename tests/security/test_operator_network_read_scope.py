@@ -9,7 +9,10 @@ from fastapi.testclient import TestClient
 from apps.api.app.routes.operator_modules.network_listings import create_network_listings_sub_router
 from apps.api.app.routes.operator_modules.network_reviews import create_network_review_sub_router
 from apps.api.app.routes.operator_modules.network_scoring import create_network_scoring_sub_router
-from apps.api.oday_api.security.dependencies import require_operator_permission
+from apps.api.oday_api.security.dependencies import (
+    OPERATOR_NETWORK_READ_RESOURCE,
+    require_operator_permission,
+)
 from modules.opsboard.application.network_listings import NetworkListingService
 from modules.opsboard.application.network_reviews import NetworkReviewService
 from modules.opsboard.application.network_scoring import NetworkScoringService
@@ -57,16 +60,16 @@ def services_and_client(axis: str = "heatZoneId", allowed: str = "HZ-01"):
         return listings.snapshot(tenant_id=request.state.operator_principal.tenant_id)
 
     app.include_router(create_network_listings_sub_router(
-        listings, require_view_permission_fn=require_operator_permission("listing", Action.VIEW),
+        listings, require_view_permission_fn=require_operator_permission("listing", Action.VIEW, scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE),
         require_write_permission_fn=require_operator_permission("listing", Action.UPDATE),
     ))
     app.include_router(create_network_scoring_sub_router(
-        scoring, require_view_permission_fn=require_operator_permission("sitescore", Action.VIEW),
+        scoring, require_view_permission_fn=require_operator_permission("sitescore", Action.VIEW, scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE),
         require_write_permission_fn=require_operator_permission("sitescore", Action.EXECUTE),
         read_scope_snapshot_fn=scope_snapshot,
     ))
     app.include_router(create_network_review_sub_router(
-        reviews, require_view_permission_fn=require_operator_permission("sitescore", Action.VIEW),
+        reviews, require_view_permission_fn=require_operator_permission("sitescore", Action.VIEW, scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE),
         require_decide_permission_fn=require_operator_permission("sitescore", Action.APPROVE),
         read_scope_snapshot_fn=scope_snapshot,
     ))

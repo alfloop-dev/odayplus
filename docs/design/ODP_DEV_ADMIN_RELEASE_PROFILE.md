@@ -234,10 +234,17 @@ The full profile and all existing API/gate refusal policies are unchanged.
 
 `operator_viewer` is an **opt-in persisted identity role**, not a new auth path
 or a privilege implied by `platform_admin`. Its finite grants are only
-`VIEW` on `operator_console`, `listing`, `sitescore`, and `heatzone`. The console
-already aggregates StoreOps/Growth/Governance under `operator_console`; domain
-reads outside this list remain refused. No wildcard, business write, approval,
-execution, export, publication, admin grant or cross-tenant bypass is added.
+`VIEW` on the two operator-only resources `operator_console` and
+`operator_network`. The console already aggregates StoreOps/Growth/Governance
+under `operator_console`. `operator_network` is accepted only by the Operator
+Console Network listings/intake, scoring and review read guards, whose handlers
+project the verified tenant and object scope. It grants **no** general domain
+`listing`, `sitescore` or `heatzone` VIEW: those routers (for example
+`/sitescore/realized`, `/heatzones/map`, `/listings/*`, `/market-survey/*`) are
+RBAC-only, not tenant/scope filtered, and stay refused, as does Network
+rebalance until it has its own scoped projection. No wildcard, business write,
+approval, execution, export, publication, admin grant or cross-tenant bypass is
+added.
 It selects the existing `pm-audit` console persona; a read-enabled administrator
 may also select their existing `platform-admin` persona. Network requests retain
 the active verified persona instead of impersonating an expansion/reviewer role.

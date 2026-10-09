@@ -540,6 +540,8 @@ def require_permission(
     caller's role permit ``action`` on ``resource_type``" (RBAC, ODP-SA-04 §6).
     Both allow and denial decisions write a security audit event (Contract §8.1, T20).
     High-risk actions immediately verify session validity (Contract §5.4, T21).
+    ``scoped_read_resource`` additionally admits VIEW holders of that resource;
+    pass it only where the handler projects the principal's tenant/object scope.
     """
 
     active_engine = engine or build_engine()
@@ -650,6 +652,9 @@ def known_roles(values: Iterable[str]) -> frozenset[Role]:
 
 
 OPERATOR_CONSOLE_RESOURCE = "operator_console"
+# Operator-only read grant for Network routes whose handlers project verified
+# tenant/object scope. General domain routers never accept it.
+OPERATOR_NETWORK_READ_RESOURCE = "operator_network"
 OPERATOR_TENANT_ID = "tenant-a"
 
 _OPERATOR_ROLE_BY_PLATFORM_ROLE: dict[Role, tuple[str, ...]] = {
@@ -875,6 +880,7 @@ def require_operator_permission(
     engine: AuthorizationEngine | None = None,
     boundary: AuthenticationBoundary | None = None,
     session_service: Any = None,
+    scoped_read_resource: str | None = None,
 ):
     """FastAPI dependency for Operator Console auth/RBAC/tenant isolation.
 
@@ -886,6 +892,8 @@ def require_operator_permission(
     handlers do not rely on spoofable role headers.
     Both allow and denial decisions write a security audit event (Contract §8.1, T20).
     High-risk actions immediately verify session validity (Contract §5.4, T21).
+    ``scoped_read_resource`` additionally admits VIEW holders of that resource;
+    pass it only where the handler projects the principal's tenant/object scope.
     """
 
     active_engine = engine or build_engine()
@@ -959,7 +967,14 @@ def require_operator_permission(
             _record_denial(active_engine, access, role_decision)
             _raise_forbidden(role_decision)
 
-        if not rbac_allows(principal, resource_type, action):
+        if not (
+            rbac_allows(principal, resource_type, action)
+            or (
+                action == Action.VIEW
+                and scoped_read_resource is not None
+                and rbac_allows(principal, scoped_read_resource, Action.VIEW)
+            )
+        ):
             decision = Decision.deny(
                 f"role does not permit {action.value} on {resource_type}",
                 policy_id="rbac",

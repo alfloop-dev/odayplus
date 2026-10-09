@@ -80,13 +80,14 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         # visibility (ODP-SA-04 §3 ROLE-ADMIN limitation).
     ),
     # The console aggregates StoreOps/Growth/Governance under operator_console.
-    # Network has separate listing, SiteScore and HeatZone read guards. Keep
-    # this finite: no export, wildcard, administration or business mutation.
+    # Network reads use the operator-only operator_network resource, accepted
+    # solely by Operator Console routes that project verified tenant/object
+    # scope. Never grant the general listing/sitescore/heatzone domain
+    # resources here: those routers are RBAC-only and not scope-filtered.
+    # Keep this finite: no export, wildcard, administration or mutation.
     Role.OPERATOR_VIEWER: frozenset(
         _grant("operator_console", Action.VIEW)
-        | _grant("listing", Action.VIEW)
-        | _grant("sitescore", Action.VIEW)
-        | _grant("heatzone", Action.VIEW)
+        | _grant("operator_network", Action.VIEW)
     ),
     Role.ARCHITECTURE_OWNER: frozenset(_grant("audit", Action.VIEW)),
     Role.DATA_OWNER: frozenset(
