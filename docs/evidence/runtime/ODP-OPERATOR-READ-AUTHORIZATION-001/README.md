@@ -604,7 +604,7 @@ PYTHONPATH=. "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q -p no:cachepr
   --junitxml=repair-scope.xml
 "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check <changed .py files>
 python3 delivery_toolchain/governance/check_code_boundaries.py
-git diff --check b968c303e HEAD
+git diff --check b968c303e b4b8c381e   # implementation range
 ```
 
 Results (original terminal exits; counts read from completed JUnit, no rerun):
@@ -615,7 +615,7 @@ Results (original terminal exits; counts read from completed JUnit, no rerun):
 | Broad regression above on clean `b4b8c381ef7a` | 1 | JUnit 816 tests, 810 pass, **6 environmental failures**, 0 errors/skips |
 | Changed Python ruff | 0 | All checks passed (after an initial import-order fix) |
 | `check_code_boundaries.py` | 0 | no new files; inventory unchanged |
-| `git diff --check b968c303e HEAD` | 0 | clean |
+| `git diff --check b968c303e b4b8c381e` | 0 | implementation/test/doc range clean; raw pytest receipts keep pytest's own trailing whitespace, like earlier receipts |
 
 The six failures are unrelated host-environment checks, not authorization:
 five (`test_lock_consistency`, `test_notice_check_cli_passes`, three
