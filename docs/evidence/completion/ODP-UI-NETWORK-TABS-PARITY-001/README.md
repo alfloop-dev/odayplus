@@ -267,6 +267,21 @@ Full web742/focused26/visual3/business1/typecheck/lint/boundaries and unchanged1
 inventory pass with original exits; failed test-reader/typed-fixture/cold-load
 receipts retained. This is a bounded checkpoint, **not full-scope resubmission**.
 
+## Spatial later-spec integration increment
+
+[`spatial-surface/README.md`](spatial-surface/README.md) records baseline
+`cd641ae3be83`, integration `10e23c1eace8` and contrast `60c8687dc8ac`.
+Package 10 has no Spatial reference: unchanged Network landing captures and
+absence assertions explicitly document this boundary, not invented parity.
+Controlled read-model empty/proposal 1440/390 before-after pairs and tablet
+geometry restore reachable mobile detail (729px clipped content →366px stacked
+panels), keyboard rows, visible source warnings, zero preservation and safe
+filter/preview identity. Six scoped AA receipts clear; full web747/focused12/
+visual3/lint/typecheck/boundaries/inventory125-18 original exits0. Failed contrast
+and missing-uv diagnostics remain. These are UI-only controlled-read receipts,
+not durable decision proof; inherited modals/real proposal generation/permission/
+error states remain open. **Not full acceptance or review resubmission.**
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
@@ -279,8 +294,10 @@ receipts retained. This is a bounded checkpoint, **not full-scope resubmission**
    are in `review-decision/`; complete further applicable permission/conflict visual
    states and full-scope detail density review.
    Preserve VDC-001 conditional controls, conflict input preservation and receipts.
-2. Capture/inspect Spatial, plus remaining
-   batch write/error/empty states. Rebalance initial/AVM/selected-blocked baseline,
+2. Spatial baseline/later-spec integration is now recorded in `spatial-surface/`;
+   complete genuine generation/preview/decision/readback, split and modal/permission/
+   error state evidence (controlled reads alone are not durable acceptance), plus
+   remaining batch write/error/empty states. Rebalance initial/AVM/selected-blocked baseline,
    expanded-plan geometry/scoped AA and durable/gate/reload proof are now in
    `rebalance-surface/`; further applicable negative/permission/conflict pairs remain. Find Areas baseline hierarchy, actual scoped
    data, keyboard and back/forward-before-reload proof are in `findareas-surface/`;

@@ -1,0 +1,26 @@
+{
+  "panel": {
+    "x": 12,
+    "y": 805.890625,
+    "width": 366,
+    "height": 817.875,
+    "scrollWidth": 366
+  },
+  "children": [
+    {
+      "x": 12,
+      "y": 954.671875,
+      "width": 366,
+      "height": 95.234375,
+      "scrollWidth": 364
+    },
+    {
+      "x": 12,
+      "y": 1063.90625,
+      "width": 366,
+      "height": 559.859375,
+      "scrollWidth": 364
+    }
+  ],
+  "documentWidth": 390
+}

@@ -1,0 +1,46 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "evidence_mode": "controlled-read-ui-only",
+  "full_acceptance": false,
+  "render_head": "60c8687dc8ac67e97299e6501ea89047c8cc5ad2",
+  "base": "2fe3ef933794d0bb293449b74dffe9602d53f767",
+  "source_sha256": {
+    "apps/web/features/operator/network/HeatZoneMergeSplitPanel.tsx": "639c8b19a8a4032684bf6808d43b58787ff88b810d9232e11b2272f051675168",
+    "apps/web/features/operator/network/spatialGovernance.module.css": "8574ebd7ba21679bd69d8f4ef4d206ad2ea9d9522e8965a74245b5d4546a7e95",
+    "apps/web/features/operator/__tests__/HeatZoneMergeSplitPanel.test.tsx": "8d5d63d83b59eab31f113566c9a09f11eea34f6da3fac7ab43946c4abd5a99a0",
+    "tests/visual/operator-spatial-surface-parity.spec.ts": "bb0b1f3ef51f0cd669e12bc1a3960d71faa5d5d77eeca768ceb5e6852e84052d",
+    "tests/visual/operator-network-tabs-parity.config.ts": "1295cf59171826ecbe38f7a6c90583bd8b4c0cba3019f5bf356633e026e300fb",
+    "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/oday-plus-console-r7-standalone.html": "1aefb8068faa39666599ceeafe74ba24f1ddc8abd57ba9a6513a724abaee7d0f"
+  },
+  "original_terminal_exit_codes": {
+    "inventory": 0,
+    "focused": 0,
+    "after-initial": 1,
+    "boundaries": 0,
+    "after-row-contrast": 1,
+    "unit": 0,
+    "boundaries-uv-missing": 127,
+    "typecheck": 0,
+    "before": 0,
+    "diff": 0,
+    "after": 0,
+    "lint": 0,
+    "typecheck-final": 0
+  },
+  "final_web_tests": 747,
+  "final_focused_tests": 12,
+  "final_visual_tests": 3,
+  "business_inventory": {
+    "tests": 125,
+    "files": 18
+  },
+  "scoped_axe": {
+    "after-proposal-axe-1024.json": 0,
+    "after-empty-axe-1024.json": 0,
+    "after-empty-axe-1440.json": 0,
+    "after-proposal-axe-1440.json": 0,
+    "after-proposal-axe-390.json": 0,
+    "after-empty-axe-390.json": 0
+  },
+  "no_durable_write_claim": true
+}

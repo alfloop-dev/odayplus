@@ -1,0 +1,13 @@
+
+> @oday-plus/web@0.1.0 test
+> vitest run features/operator/__tests__/HeatZoneMergeSplitPanel.test.tsx
+
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+   Start at  20:28:00
+   Duration  1.61s (transform 294ms, setup 0ms, import 512ms, tests 453ms, environment 433ms)
+
