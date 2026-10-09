@@ -167,7 +167,7 @@ export function RebalancePanel({
   if (!rows.length || !selected) {
     return (
       <div className={styles.tabPanel} data-screen-label="Network 低效重配" data-testid="network-panel-rebalance" role="tabpanel">
-        <div className={styles.emptyState}>No rebalance candidates</div>
+        <div className={styles.emptyState}>目前沒有重配候選門市。</div>
       </div>
     );
   }
@@ -203,7 +203,7 @@ export function RebalancePanel({
   return (
     <div className={styles.tabPanel} data-screen-label="Network 低效重配" data-testid="network-panel-rebalance" role="tabpanel">
       {apiError ? (
-        <div className={styles.rebalanceError} data-testid="rebalance-api-error">
+        <div className={styles.rebalanceError} data-testid="rebalance-api-error" role="alert">
           {apiError}
         </div>
       ) : null}
@@ -227,13 +227,12 @@ export function RebalancePanel({
               </span>
               <span>{row.healthNote ?? row.summary}</span>
               <span className={styles.rebalanceStoreMeta}>
-                <b>{row.monthlyRevenueLabel ?? "—"}</b>
-                <b>利用率 {row.utilizationLabel ?? "—"}</b>
-              </span>
-              <span className={styles.rebalanceLights} aria-label="eight-week light history">
-                {(row.lightHistory ?? []).map((light, index) => (
-                  <i key={`${light}-${index}`} style={{ background: lightTone[light] ?? "#98a1b3" }} />
-                ))}
+                <span>{row.monthlyRevenueLabel ?? "—"} · 利用率 {row.utilizationLabel ?? "—"}</span>
+                <span className={styles.rebalanceLights} role="img" aria-label={`近 8 週四燈（左舊右新）：${row.lightHistory?.join("、") || "未提供"}`}>
+                  {(row.lightHistory ?? []).map((light, index) => (
+                    <i key={`${light}-${index}`} style={{ background: lightTone[light] ?? "#98a1b3" }} />
+                  ))}
+                </span>
               </span>
             </button>
           ))}
@@ -242,15 +241,16 @@ export function RebalancePanel({
 
         <article className={styles.rebalanceDetail} data-testid={`rebalance-detail-${selected.id}`}>
           <header className={styles.rebalanceDetailHeader}>
-            <div>
-              <span className={styles.kicker}>{selected.id}</span>
+            <div className={styles.rebalanceIdentity}>
               <h4>{selected.storeName}</h4>
-              <p>{selected.summary}</p>
+              <span className={styles.rebalanceStatusPill}>{selected.statusLabel}</span>
+              {selected.sourceIssueId ? <span className={styles.rebalanceSourceIssue}>↳ 來自 Issue {selected.sourceIssueId}</span> : null}
+              <span className={styles.kicker}>{selected.id}</span>
             </div>
-            <span className={styles.rebalanceStatusPill}>{selected.statusLabel}</span>
+            <p>{selected.healthNote ?? selected.summary}</p>
           </header>
 
-          <div className={styles.rebalanceStepper} aria-label="Rebalance workflow">
+          <div className={styles.rebalanceStepper} role="group" aria-label="Rebalance workflow">
             {stepLabels.map((label, index) => {
               const current = workflowStep(selected.status);
               return (
@@ -267,39 +267,32 @@ export function RebalancePanel({
             })}
           </div>
 
-          <div className={styles.rebalanceSignalGrid}>
-            <div>
-              <span>月營收</span>
-              <strong>{selected.monthlyRevenueLabel ?? "—"}</strong>
-            </div>
-            <div>
-              <span>利用率</span>
-              <strong>{selected.utilizationLabel ?? "—"}</strong>
-            </div>
-            <div>
-              <span>來源 Issue</span>
-              <strong>{selected.sourceIssueId ?? "—"}</strong>
-            </div>
-          </div>
-
-          <div className={styles.rebalanceTrend} aria-label="90 day revenue trend">
-            {(selected.trend ?? []).map((value, index, values) => (
-              <i
-                key={`${value}-${index}`}
-                style={{
-                  height: `${Math.max(6, value)}%`,
-                  background: index === values.length - 1 ? "#c4342c" : "#c6cfea",
-                }}
-              />
-            ))}
-          </div>
-
-          {selected.runtimeState ? (
-            <div className={styles.rebalanceRuntimeState} data-testid={`rebalance-runtime-${selected.id}`}>
-              <strong>{selected.runtimeState.model} 暫時無法使用</strong>
-              <span>可重試 · {selected.runtimeState.retryAfterSeconds ?? 300} 秒後再試</span>
-            </div>
-          ) : null}
+          <div className={styles.rebalanceAnalysisGrid} data-testid="rebalance-analysis">
+            <section className={styles.rebalanceSignals} aria-label="營運訊號">
+              <dl className={styles.rebalanceSignalGrid}>
+                <div><dt>月營收</dt><dd>{selected.monthlyRevenueLabel ?? "—"}</dd></div>
+                <div><dt>利用率</dt><dd>{selected.utilizationLabel ?? "—"}</dd></div>
+                <div>
+                  <dt>近 8 週四燈</dt>
+                  <dd>
+                    <span className={styles.rebalanceLights} role="img" aria-label={`近 8 週四燈（左舊右新）：${selected.lightHistory?.join("、") || "未提供"}`}>
+                      {selected.lightHistory?.length ? selected.lightHistory.map((light, index) => (
+                        <i key={`${light}-${index}`} style={{ background: lightTone[light] ?? "#98a1b3" }} />
+                      )) : "—"}
+                    </span>
+                  </dd>
+                </div>
+              </dl>
+              <h5 className={styles.rebalanceChartTitle}>90 天營收趨勢</h5>
+              {selected.trend?.length ? (
+                <div className={styles.rebalanceTrend} role="img" aria-label={`90 天營收趨勢（來源相對值）：${selected.trend.join("、")}`}>
+                  {selected.trend.map((value, index, values) => (
+                    <i key={`${value}-${index}`} style={{ height: `${Math.max(0, Math.min(100, value))}%`, background: index === values.length - 1 ? "#c4342c" : "#c6cfea" }} />
+                  ))}
+                </div>
+              ) : <p className={styles.muted}>尚未提供趨勢資料</p>}
+            </section>
+            <div className={styles.rebalanceValuation}>
 
           {avmP50 !== null ? (
             <section className={styles.rebalanceAvmBlock} data-testid={`rebalance-avm-${selected.id}`}>
@@ -422,6 +415,16 @@ export function RebalancePanel({
             </section>
           ) : null}
 
+            </div>
+          </div>
+
+          {selected.runtimeState ? (
+            <div className={styles.rebalanceRuntimeState} data-testid={`rebalance-runtime-${selected.id}`}>
+              <strong>{selected.runtimeState.model} 暫時無法使用</strong>
+              <span>可重試 · {selected.runtimeState.retryAfterSeconds ?? 300} 秒後再試</span>
+            </div>
+          ) : null}
+
           {selected.selectedScenarioId ? (
             <section className={styles.rebalanceSelection} data-testid={`rebalance-selection-${selected.id}`}>
               <strong>Selected: {selectedScenario?.name ?? selected.selectedScenarioId}</strong>
@@ -429,6 +432,8 @@ export function RebalancePanel({
                 Owner {selected.selectedScenarioOwner?.actorName ?? "—"} · Evidence{" "}
                 {selected.selectedScenarioEvidenceId ?? "—"}
               </span>
+              <details className={styles.rebalancePlanDisclosure} data-testid="rebalance-plan-disclosure">
+                <summary>執行計畫與完整限制揭露</summary>
               <PlanGanttChart
                 scenarioId={selectedScenario?.id ?? selected.selectedScenarioId}
                 scenarioName={selectedScenario?.name ?? `NetPlan: ${selected.storeName}`}
@@ -450,6 +455,7 @@ export function RebalancePanel({
                 dependencies={selectedScenario?.dependencies}
                 diagnostics={selectedScenario?.diagnostics}
               />
+              </details>
             </section>
           ) : null}
 
@@ -624,7 +630,7 @@ export function RebalancePanel({
             onClick={handlePrimary}
             type="button"
           >
-            {actionBusy ? "Working..." : cta.label}
+            {actionBusy ? "處理中…" : cta.label}
           </button>
           {cta.note ? <small className={styles.muted}>{cta.note}</small> : null}
         </article>
