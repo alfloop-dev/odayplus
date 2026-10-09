@@ -1,0 +1,46 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "scope": "bounded Find Areas hierarchy, truthful navigation, URL hints and supplemental evidence",
+  "review_ready": false,
+  "baseline_anchor": "9a47d6238c25",
+  "hierarchy_anchor": "12f3a9346c0e",
+  "product_head": "a9a5e71ee2d8",
+  "canonical_base": "2fe3ef933794d0bb293449b74dffe9602d53f767",
+  "receipt_method": "Original synchronous shell command exit, immediately saved to logs/<name>.exit",
+  "accepted_runs": {
+    "before": { "exit": 0, "passed": 2 },
+    "after-navigation": { "exit": 0, "passed": 3 },
+    "focused": { "exit": 0, "passed": 16 },
+    "unit": { "exit": 0, "files": 69, "passed": 735 },
+    "durable-e2e-final": { "exit": 0, "passed": 15 },
+    "typecheck": { "exit": 0 },
+    "typecheck-final": { "exit": 0 },
+    "lint": { "exit": 0 },
+    "boundaries": { "exit": 0 },
+    "inventory": { "exit": 0, "tests": 125, "files": 18 },
+    "diff-check": { "exit": 0 }
+  },
+  "diagnostic_runs": {
+    "after": { "exit": 1, "reason": "genuine missing zone/lens URL persistence; repaired" },
+    "after-restoration": { "exit": 0, "passed": 3, "reason": "optional expanded-search transient fallback capture superseded by hydrated captures" },
+    "durable-e2e": { "exit": 1, "passed": 14, "reason": "obsolete English Lens locator; localized locator and URL waits preserve map/write assertions" },
+    "after-hydrated": { "exit": 1, "passed": 2, "reason": "cold-start API hydration exceeded 5-second assertion; final timeout 30 seconds" },
+    "after-final": { "exit": 1, "passed": 2, "reason": "1024 reload-before-back ordering timeout; not certified; final back/forward-before-reload sequence is separate proof" }
+  },
+  "scoped_axe": {
+    "baseline": { "1440": { "rules": 1, "nodes": 6 }, "390": { "rules": 1, "nodes": 6 } },
+    "final_collapsed": { "1440": 0, "1024": 0, "390": 0 },
+    "final_search_open": { "1440": 0, "1024": 0, "390": 0 }
+  },
+  "still_required": [
+    "Rebalance and Spatial paired visual/geometry/AA evidence",
+    "remaining batch/error/empty/permission/conflict states",
+    "genuine Transfer/Pause authority IDs and versions",
+    "reload-before-back ordering stability",
+    "full-scope density and acceptance review",
+    "final verification and required CI integration",
+    "PR explanation of later-spec integration and unsupported map/secondary boundaries",
+    "independent VDC discipline outcomes",
+    "atomic full-scope task_finalize resubmission"
+  ]
+}

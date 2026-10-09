@@ -238,6 +238,20 @@ durable Listing Radar E2E 8, typecheck/lint/boundaries and unchanged 125/18
 inventory passed. Original missing-identity/typecheck diagnostics are retained.
 Other tab/negative-state/authority/VDC scope remains open; **not ready to resubmit**.
 
+## Find Areas hierarchy / URL increment
+
+[`findareas-surface/README.md`](findareas-surface/README.md) records actual
+1440/390 design-before-after and supplemental 1024 captures, single-line lenses,
+a bounded map, source-backed key/value detail and explicit primary/secondary
+behavior. Unavailable writes are disabled; local tracking is labeled non-durable;
+geocoder remains accessible through native disclosure; SiteScore navigation is
+real and the toast-only Find Areas review CTA is retired. Validated zone/lens URL
+hints restore back/forward/reload without changing scoped API authority. Final
+collapsed/expanded-search scoped AA is zero at all widths. Full web 735, focused
+16 and Find Areas/Radar business E2E 15 passed; diagnostics are retained, including
+an uncertified reload-before-back ordering timeout requiring follow-up. This is
+still a bounded checkpoint, **not ready for full-scope resubmission**.
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
@@ -250,8 +264,10 @@ Other tab/negative-state/authority/VDC scope remains open; **not ready to resubm
    are in `review-decision/`; complete further applicable permission/conflict visual
    states and full-scope detail density review.
    Preserve VDC-001 conditional controls, conflict input preservation and receipts.
-2. Capture/inspect Find Areas, Rebalance and Spatial, plus remaining
-   batch write/error/empty states. Radar full-tab/source-empty pairs, tablet/mobile
+2. Capture/inspect Rebalance and Spatial, plus remaining
+   batch write/error/empty states. Find Areas baseline hierarchy, actual scoped
+   data, keyboard and back/forward-before-reload proof are in `findareas-surface/`;
+   follow up reload-before-back stability and full-scope detail density. Radar full-tab/source-empty pairs, tablet/mobile
    geometry, keyboard/scoped AA and real source/write gates are in `radar-surface/`;
    remaining applicable error/permission/conflict visual states still need evidence.
    Review full-tab pairs, tablet/mobile geometry,

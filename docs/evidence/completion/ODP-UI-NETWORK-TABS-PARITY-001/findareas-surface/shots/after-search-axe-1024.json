@@ -8,13 +8,13 @@
   },
   "testEnvironment": {
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.7827.55 Safari/537.36",
-    "windowWidth": 1440,
+    "windowWidth": 1024,
     "windowHeight": 900,
     "orientationAngle": 0,
     "orientationType": "landscape-primary"
   },
-  "timestamp": "2026-10-09T19:48:42.880Z",
-  "url": "http://localhost:3312/operator?ws=network&hz=HZ-01&lens=demand",
+  "timestamp": "2026-10-09T19:49:19.526Z",
+  "url": "http://localhost:3312/operator?ws=network&hz=HZ-02&lens=fit",
   "toolOptions": {
     "runOnly": {
       "type": "tag",
@@ -309,25 +309,6 @@
       "nodes": []
     },
     {
-      "id": "form-field-multiple-labels",
-      "impact": null,
-      "tags": [
-        "cat.forms",
-        "wcag2a",
-        "wcag332",
-        "TTv5",
-        "TT5.c",
-        "EN-301-549",
-        "EN-9.3.3.2",
-        "RGAAv4",
-        "RGAA-11.2.1"
-      ],
-      "description": "Ensure form field does not have multiple label elements",
-      "help": "Form field must not have multiple label elements",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/form-field-multiple-labels?application=playwright",
-      "nodes": []
-    },
-    {
       "id": "frame-focusable-content",
       "impact": null,
       "tags": [
@@ -511,28 +492,6 @@
       "description": "Ensure <input type=\"image\"> elements have alternative text",
       "help": "Image buttons must have alternative text",
       "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/input-image-alt?application=playwright",
-      "nodes": []
-    },
-    {
-      "id": "label",
-      "impact": null,
-      "tags": [
-        "cat.forms",
-        "wcag2a",
-        "wcag412",
-        "section508",
-        "section508.22.n",
-        "TTv5",
-        "TT5.c",
-        "EN-301-549",
-        "EN-9.4.1.2",
-        "ACT",
-        "RGAAv4",
-        "RGAA-11.1.1"
-      ],
-      "description": "Ensure every form element has a label",
-      "help": "Form elements must have labels",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/label?application=playwright",
       "nodes": []
     },
     {
@@ -943,7 +902,7 @@
             }
           ],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
+          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
           "target": [
             "button[title=\"Unserved demand intensity\"]"
           ]
@@ -976,7 +935,7 @@
             }
           ],
           "impact": null,
-          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
           "target": [
             ".networkFindAreas_lensButton__IyA7o[type=\"button\"]:nth-child(3)"
           ]
@@ -1306,7 +1265,7 @@
             }
           ],
           "impact": null,
-          "html": "<section aria-label=\"Interactive HeatZone map\" class=\"heatZoneMap_mapShell__jq9BO\" data-map-ready=\"true\" data-selected-zone=\"HZ-01\" data-testid=\"heat-zone-map\">",
+          "html": "<section aria-label=\"Interactive HeatZone map\" class=\"heatZoneMap_mapShell__jq9BO\" data-map-ready=\"true\" data-selected-zone=\"HZ-02\" data-testid=\"heat-zone-map\">",
           "target": [
             ".heatZoneMap_mapShell__jq9BO"
           ]
@@ -1339,7 +1298,7 @@
             }
           ],
           "impact": null,
-          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"832\" height=\"424\" style=\"width: 832px; height: 424px;\"></canvas>",
+          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"786\" height=\"424\" style=\"width: 786px; height: 424px;\"></canvas>",
           "target": [
             ".maplibregl-canvas"
           ]
@@ -1375,6 +1334,72 @@
           "html": "<aside class=\"networkFindAreas_trayPanel__NaReR\" aria-label=\"Recommended find area tray\">",
           "target": [
             "aside"
+          ]
+        },
+        {
+          "any": [],
+          "all": [
+            {
+              "id": "aria-allowed-attr",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "ARIA attributes are used correctly for the defined role"
+            },
+            {
+              "id": "aria-allowed-attr-elm",
+              "data": null,
+              "relatedNodes": [],
+              "message": "ARIA attributes are allowed for this element",
+              "impact": "critical"
+            }
+          ],
+          "none": [
+            {
+              "id": "aria-unsupported-attr",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "ARIA attribute is supported"
+            }
+          ],
+          "impact": null,
+          "html": "<section class=\"geocoder_panel__LEIKh\" data-testid=\"geocoder-search-panel\" aria-labelledby=\"_R_4qsr5et5rlb_\">",
+          "target": [
+            ".geocoder_panel__LEIKh"
+          ]
+        },
+        {
+          "any": [],
+          "all": [
+            {
+              "id": "aria-allowed-attr",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "ARIA attributes are used correctly for the defined role"
+            },
+            {
+              "id": "aria-allowed-attr-elm",
+              "data": null,
+              "relatedNodes": [],
+              "message": "ARIA attributes are allowed for this element",
+              "impact": "critical"
+            }
+          ],
+          "none": [
+            {
+              "id": "aria-unsupported-attr",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "ARIA attribute is supported"
+            }
+          ],
+          "impact": null,
+          "html": "<input aria-label=\"地址搜尋\" class=\"geocoder_input__4_tEl\" data-testid=\"geocoder-query-input\" id=\"_R_4qsr5et5rlb_-input\" placeholder=\"例：新北市新莊區興德路 100 號\" value=\"\" style=\"\">",
+          "target": [
+            "#_R_4qsr5et5rlb_-input"
           ]
         },
         {
@@ -1471,9 +1496,9 @@
             }
           ],
           "impact": null,
-          "html": "<strong aria-label=\"需求熱度分數\">86%</strong>",
+          "html": "<strong aria-label=\"品牌適配分數\">71%</strong>",
           "target": [
-            "strong[aria-label=\"需求熱度分數\"]"
+            "strong[aria-label=\"品牌適配分數\"]"
           ]
         },
         {
@@ -1504,7 +1529,7 @@
             }
           ],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" type=\"button\">✓ 本次工作階段已追蹤（點擊移除）</button>",
+          "html": "<button aria-pressed=\"false\" type=\"button\">加入本次工作階段追蹤</button>",
           "target": [
             ".networkFindAreas_findAreasActions__Rfo_6 > button[type=\"button\"]:nth-child(3)"
           ]
@@ -1591,7 +1616,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
+          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
           "target": [
             "button[title=\"Unserved demand intensity\"]"
           ]
@@ -1609,7 +1634,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
           "target": [
             ".networkFindAreas_lensButton__IyA7o[type=\"button\"]:nth-child(3)"
           ]
@@ -1789,7 +1814,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<section aria-label=\"Interactive HeatZone map\" class=\"heatZoneMap_mapShell__jq9BO\" data-map-ready=\"true\" data-selected-zone=\"HZ-01\" data-testid=\"heat-zone-map\">",
+          "html": "<section aria-label=\"Interactive HeatZone map\" class=\"heatZoneMap_mapShell__jq9BO\" data-map-ready=\"true\" data-selected-zone=\"HZ-02\" data-testid=\"heat-zone-map\">",
           "target": [
             ".heatZoneMap_mapShell__jq9BO"
           ]
@@ -1807,7 +1832,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"832\" height=\"424\" style=\"width: 832px; height: 424px;\"></canvas>",
+          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"786\" height=\"424\" style=\"width: 786px; height: 424px;\"></canvas>",
           "target": [
             ".maplibregl-canvas"
           ]
@@ -1828,6 +1853,42 @@
           "html": "<aside class=\"networkFindAreas_trayPanel__NaReR\" aria-label=\"Recommended find area tray\">",
           "target": [
             "aside"
+          ]
+        },
+        {
+          "any": [],
+          "all": [
+            {
+              "id": "aria-conditional-attr",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "ARIA attribute is allowed"
+            }
+          ],
+          "none": [],
+          "impact": null,
+          "html": "<section class=\"geocoder_panel__LEIKh\" data-testid=\"geocoder-search-panel\" aria-labelledby=\"_R_4qsr5et5rlb_\">",
+          "target": [
+            ".geocoder_panel__LEIKh"
+          ]
+        },
+        {
+          "any": [],
+          "all": [
+            {
+              "id": "aria-conditional-attr",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "ARIA attribute is allowed"
+            }
+          ],
+          "none": [],
+          "impact": null,
+          "html": "<input aria-label=\"地址搜尋\" class=\"geocoder_input__4_tEl\" data-testid=\"geocoder-query-input\" id=\"_R_4qsr5et5rlb_-input\" placeholder=\"例：新北市新莊區興德路 100 號\" value=\"\" style=\"\">",
+          "target": [
+            "#_R_4qsr5et5rlb_-input"
           ]
         },
         {
@@ -1879,9 +1940,9 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<strong aria-label=\"需求熱度分數\">86%</strong>",
+          "html": "<strong aria-label=\"品牌適配分數\">71%</strong>",
           "target": [
-            "strong[aria-label=\"需求熱度分數\"]"
+            "strong[aria-label=\"品牌適配分數\"]"
           ]
         },
         {
@@ -1897,7 +1958,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" type=\"button\">✓ 本次工作階段已追蹤（點擊移除）</button>",
+          "html": "<button aria-pressed=\"false\" type=\"button\">加入本次工作階段追蹤</button>",
           "target": [
             ".networkFindAreas_findAreasActions__Rfo_6 > button[type=\"button\"]:nth-child(3)"
           ]
@@ -1969,9 +2030,27 @@
             }
           ],
           "impact": null,
-          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"832\" height=\"424\" style=\"width: 832px; height: 424px;\"></canvas>",
+          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"786\" height=\"424\" style=\"width: 786px; height: 424px;\"></canvas>",
           "target": [
             ".maplibregl-canvas"
+          ]
+        },
+        {
+          "any": [],
+          "all": [],
+          "none": [
+            {
+              "id": "deprecatedrole",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "minor",
+              "message": "ARIA role is not deprecated"
+            }
+          ],
+          "impact": null,
+          "html": "<div class=\"geocoder_warnNote__JcRjj\" data-testid=\"geocoder-unconfigured\" role=\"status\">地址定位服務尚未設定，搜尋不會回傳任何座標。此畫面不顯示模擬或推估位置。</div>",
+          "target": [
+            ".geocoder_warnNote__JcRjj"
           ]
         }
       ]
@@ -2395,7 +2474,7 @@
             }
           ],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
+          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
           "target": [
             "button[title=\"Unserved demand intensity\"]"
           ]
@@ -2413,7 +2492,7 @@
             }
           ],
           "impact": null,
-          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
           "target": [
             ".networkFindAreas_lensButton__IyA7o[type=\"button\"]:nth-child(3)"
           ]
@@ -2575,7 +2654,7 @@
             }
           ],
           "impact": null,
-          "html": "<section aria-label=\"Interactive HeatZone map\" class=\"heatZoneMap_mapShell__jq9BO\" data-map-ready=\"true\" data-selected-zone=\"HZ-01\" data-testid=\"heat-zone-map\">",
+          "html": "<section aria-label=\"Interactive HeatZone map\" class=\"heatZoneMap_mapShell__jq9BO\" data-map-ready=\"true\" data-selected-zone=\"HZ-02\" data-testid=\"heat-zone-map\">",
           "target": [
             ".heatZoneMap_mapShell__jq9BO"
           ]
@@ -2593,7 +2672,7 @@
             }
           ],
           "impact": null,
-          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"832\" height=\"424\" style=\"width: 832px; height: 424px;\"></canvas>",
+          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"786\" height=\"424\" style=\"width: 786px; height: 424px;\"></canvas>",
           "target": [
             ".maplibregl-canvas"
           ]
@@ -2614,6 +2693,42 @@
           "html": "<aside class=\"networkFindAreas_trayPanel__NaReR\" aria-label=\"Recommended find area tray\">",
           "target": [
             "aside"
+          ]
+        },
+        {
+          "any": [],
+          "all": [],
+          "none": [
+            {
+              "id": "aria-prohibited-attr",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "ARIA attribute is allowed"
+            }
+          ],
+          "impact": null,
+          "html": "<section class=\"geocoder_panel__LEIKh\" data-testid=\"geocoder-search-panel\" aria-labelledby=\"_R_4qsr5et5rlb_\">",
+          "target": [
+            ".geocoder_panel__LEIKh"
+          ]
+        },
+        {
+          "any": [],
+          "all": [],
+          "none": [
+            {
+              "id": "aria-prohibited-attr",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "ARIA attribute is allowed"
+            }
+          ],
+          "impact": null,
+          "html": "<input aria-label=\"地址搜尋\" class=\"geocoder_input__4_tEl\" data-testid=\"geocoder-query-input\" id=\"_R_4qsr5et5rlb_-input\" placeholder=\"例：新北市新莊區興德路 100 號\" value=\"\" style=\"\">",
+          "target": [
+            "#_R_4qsr5et5rlb_-input"
           ]
         },
         {
@@ -2665,7 +2780,7 @@
             }
           ],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" type=\"button\">✓ 本次工作階段已追蹤（點擊移除）</button>",
+          "html": "<button aria-pressed=\"false\" type=\"button\">加入本次工作階段追蹤</button>",
           "target": [
             ".networkFindAreas_findAreasActions__Rfo_6 > button[type=\"button\"]:nth-child(3)"
           ]
@@ -2719,9 +2834,27 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"832\" height=\"424\" style=\"width: 832px; height: 424px;\"></canvas>",
+          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"786\" height=\"424\" style=\"width: 786px; height: 424px;\"></canvas>",
           "target": [
             ".maplibregl-canvas"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "aria-required-attr",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "All required ARIA attributes are present"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<div class=\"geocoder_warnNote__JcRjj\" data-testid=\"geocoder-unconfigured\" role=\"status\">地址定位服務尚未設定，搜尋不會回傳任何座標。此畫面不顯示模擬或推估位置。</div>",
+          "target": [
+            ".geocoder_warnNote__JcRjj"
           ]
         }
       ]
@@ -2801,9 +2934,41 @@
             }
           ],
           "impact": null,
-          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"832\" height=\"424\" style=\"width: 832px; height: 424px;\"></canvas>",
+          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"786\" height=\"424\" style=\"width: 786px; height: 424px;\"></canvas>",
           "target": [
             ".maplibregl-canvas"
+          ]
+        },
+        {
+          "any": [],
+          "all": [],
+          "none": [
+            {
+              "id": "invalidrole",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "ARIA role is valid"
+            },
+            {
+              "id": "abstractrole",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "Abstract roles are not used"
+            },
+            {
+              "id": "unsupportedrole",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "ARIA role is supported"
+            }
+          ],
+          "impact": null,
+          "html": "<div class=\"geocoder_warnNote__JcRjj\" data-testid=\"geocoder-unconfigured\" role=\"status\">地址定位服務尚未設定，搜尋不會回傳任何座標。此畫面不顯示模擬或推估位置。</div>",
+          "target": [
+            ".geocoder_warnNote__JcRjj"
           ]
         }
       ]
@@ -2883,7 +3048,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
+          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
           "target": [
             "button[title=\"Unserved demand intensity\"]"
           ]
@@ -2915,7 +3080,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
           "target": [
             ".networkFindAreas_lensButton__IyA7o[type=\"button\"]:nth-child(3)"
           ]
@@ -3235,7 +3400,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<section aria-label=\"Interactive HeatZone map\" class=\"heatZoneMap_mapShell__jq9BO\" data-map-ready=\"true\" data-selected-zone=\"HZ-01\" data-testid=\"heat-zone-map\">",
+          "html": "<section aria-label=\"Interactive HeatZone map\" class=\"heatZoneMap_mapShell__jq9BO\" data-map-ready=\"true\" data-selected-zone=\"HZ-02\" data-testid=\"heat-zone-map\">",
           "target": [
             ".heatZoneMap_mapShell__jq9BO"
           ]
@@ -3267,7 +3432,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"832\" height=\"424\" style=\"width: 832px; height: 424px;\"></canvas>",
+          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"786\" height=\"424\" style=\"width: 786px; height: 424px;\"></canvas>",
           "target": [
             ".maplibregl-canvas"
           ]
@@ -3302,6 +3467,70 @@
           "html": "<aside class=\"networkFindAreas_trayPanel__NaReR\" aria-label=\"Recommended find area tray\">",
           "target": [
             "aside"
+          ]
+        },
+        {
+          "any": [],
+          "all": [
+            {
+              "id": "aria-valid-attr-value",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "ARIA attribute values are valid"
+            },
+            {
+              "id": "aria-errormessage",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "aria-errormessage exists and references elements visible to screen readers that use a supported aria-errormessage technique"
+            },
+            {
+              "id": "aria-level",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "aria-level values are valid"
+            }
+          ],
+          "none": [],
+          "impact": null,
+          "html": "<section class=\"geocoder_panel__LEIKh\" data-testid=\"geocoder-search-panel\" aria-labelledby=\"_R_4qsr5et5rlb_\">",
+          "target": [
+            ".geocoder_panel__LEIKh"
+          ]
+        },
+        {
+          "any": [],
+          "all": [
+            {
+              "id": "aria-valid-attr-value",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "ARIA attribute values are valid"
+            },
+            {
+              "id": "aria-errormessage",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "aria-errormessage exists and references elements visible to screen readers that use a supported aria-errormessage technique"
+            },
+            {
+              "id": "aria-level",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "aria-level values are valid"
+            }
+          ],
+          "none": [],
+          "impact": null,
+          "html": "<input aria-label=\"地址搜尋\" class=\"geocoder_input__4_tEl\" data-testid=\"geocoder-query-input\" id=\"_R_4qsr5et5rlb_-input\" placeholder=\"例：新北市新莊區興德路 100 號\" value=\"\" style=\"\">",
+          "target": [
+            "#_R_4qsr5et5rlb_-input"
           ]
         },
         {
@@ -3395,9 +3624,9 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<strong aria-label=\"需求熱度分數\">86%</strong>",
+          "html": "<strong aria-label=\"品牌適配分數\">71%</strong>",
           "target": [
-            "strong[aria-label=\"需求熱度分數\"]"
+            "strong[aria-label=\"品牌適配分數\"]"
           ]
         },
         {
@@ -3427,7 +3656,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" type=\"button\">✓ 本次工作階段已追蹤（點擊移除）</button>",
+          "html": "<button aria-pressed=\"false\" type=\"button\">加入本次工作階段追蹤</button>",
           "target": [
             ".networkFindAreas_findAreasActions__Rfo_6 > button[type=\"button\"]:nth-child(3)"
           ]
@@ -3513,7 +3742,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
+          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
           "target": [
             "button[title=\"Unserved demand intensity\"]"
           ]
@@ -3531,7 +3760,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
           "target": [
             ".networkFindAreas_lensButton__IyA7o[type=\"button\"]:nth-child(3)"
           ]
@@ -3711,7 +3940,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<section aria-label=\"Interactive HeatZone map\" class=\"heatZoneMap_mapShell__jq9BO\" data-map-ready=\"true\" data-selected-zone=\"HZ-01\" data-testid=\"heat-zone-map\">",
+          "html": "<section aria-label=\"Interactive HeatZone map\" class=\"heatZoneMap_mapShell__jq9BO\" data-map-ready=\"true\" data-selected-zone=\"HZ-02\" data-testid=\"heat-zone-map\">",
           "target": [
             ".heatZoneMap_mapShell__jq9BO"
           ]
@@ -3729,7 +3958,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"832\" height=\"424\" style=\"width: 832px; height: 424px;\"></canvas>",
+          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"786\" height=\"424\" style=\"width: 786px; height: 424px;\"></canvas>",
           "target": [
             ".maplibregl-canvas"
           ]
@@ -3750,6 +3979,42 @@
           "html": "<aside class=\"networkFindAreas_trayPanel__NaReR\" aria-label=\"Recommended find area tray\">",
           "target": [
             "aside"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "aria-valid-attr",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "ARIA attribute name is valid"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<section class=\"geocoder_panel__LEIKh\" data-testid=\"geocoder-search-panel\" aria-labelledby=\"_R_4qsr5et5rlb_\">",
+          "target": [
+            ".geocoder_panel__LEIKh"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "aria-valid-attr",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "ARIA attribute name is valid"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<input aria-label=\"地址搜尋\" class=\"geocoder_input__4_tEl\" data-testid=\"geocoder-query-input\" id=\"_R_4qsr5et5rlb_-input\" placeholder=\"例：新北市新莊區興德路 100 號\" value=\"\" style=\"\">",
+          "target": [
+            "#_R_4qsr5et5rlb_-input"
           ]
         },
         {
@@ -3801,9 +4066,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<strong aria-label=\"需求熱度分數\">86%</strong>",
+          "html": "<strong aria-label=\"品牌適配分數\">71%</strong>",
           "target": [
-            "strong[aria-label=\"需求熱度分數\"]"
+            "strong[aria-label=\"品牌適配分數\"]"
           ]
         },
         {
@@ -3819,7 +4084,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" type=\"button\">✓ 本次工作階段已追蹤（點擊移除）</button>",
+          "html": "<button aria-pressed=\"false\" type=\"button\">加入本次工作階段追蹤</button>",
           "target": [
             ".networkFindAreas_findAreasActions__Rfo_6 > button[type=\"button\"]:nth-child(3)"
           ]
@@ -3950,7 +4215,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<canvas id=\"deckgl-overlay\" width=\"832\" height=\"424\" style=\"left: 0px; top: 0px; width: 100%; position: absolute; height: 100%;\"></canvas>",
+          "html": "<canvas id=\"deckgl-overlay\" width=\"786\" height=\"424\" style=\"left: 0px; top: 0px; width: 100%; position: absolute; height: 100%;\"></canvas>",
           "target": [
             "#deckgl-overlay"
           ]
@@ -3982,7 +4247,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<div id=\"view-default-view\" style=\"position: absolute; left: 0px; top: 0px; width: 832px; height: 424px;\"><div aria-hidden=\"true\" class=\"heatZoneMap_deckOverlay___qPnJ\" data-testid=\"heat-zone-deck-overlay\"></div></div>",
+          "html": "<div id=\"view-default-view\" style=\"position: absolute; left: 0px; top: 0px; width: 786px; height: 424px;\"><div aria-hidden=\"true\" class=\"heatZoneMap_deckOverlay___qPnJ\" data-testid=\"heat-zone-deck-overlay\"></div></div>",
           "target": [
             "#view-default-view"
           ]
@@ -4014,7 +4279,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<div style=\"pointer-events: none; position: absolute; overflow: hidden; display: block; left: 0px; top: 0px; width: 832px; height: 424px;\">",
+          "html": "<div style=\"pointer-events: none; position: absolute; overflow: hidden; display: block; left: 0px; top: 0px; width: 786px; height: 424px;\">",
           "target": [
             ".deck-widgets-root > div"
           ]
@@ -4078,9 +4343,41 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"832\" height=\"424\" style=\"width: 832px; height: 424px;\"></canvas>",
+          "html": "<canvas class=\"maplibregl-canvas\" tabindex=\"0\" aria-label=\"Map\" role=\"region\" width=\"786\" height=\"424\" style=\"width: 786px; height: 424px;\"></canvas>",
           "target": [
             ".maplibregl-canvas"
+          ]
+        },
+        {
+          "any": [],
+          "all": [
+            {
+              "id": "important-letter-spacing",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Letter-spacing in the style attribute is not set to !important, or meets the minimum"
+            },
+            {
+              "id": "important-word-spacing",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "word-spacing in the style attribute is not set to !important, or meets the minimum"
+            },
+            {
+              "id": "important-line-height",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "line-height in the style attribute is not set to !important, or meets the minimum"
+            }
+          ],
+          "none": [],
+          "impact": null,
+          "html": "<input aria-label=\"地址搜尋\" class=\"geocoder_input__4_tEl\" data-testid=\"geocoder-query-input\" id=\"_R_4qsr5et5rlb_-input\" placeholder=\"例：新北市新莊區興德路 100 號\" value=\"\" style=\"\">",
+          "target": [
+            "#_R_4qsr5et5rlb_-input"
           ]
         }
       ]
@@ -4126,7 +4423,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
+          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
           "target": [
             "button[title=\"Unserved demand intensity\"]"
           ]
@@ -4151,7 +4448,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
           "target": [
             ".networkFindAreas_lensButton__IyA7o[type=\"button\"]:nth-child(3)"
           ]
@@ -4344,6 +4641,24 @@
           "all": [],
           "none": [],
           "impact": null,
+          "html": "<button class=\"geocoder_primaryButton__rQOxx\" data-testid=\"geocoder-search-button\" type=\"button\">搜尋地址</button>",
+          "target": [
+            ".geocoder_primaryButton__rQOxx"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "button-has-visible-text",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "Element has inner text that is visible to screen readers"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
           "html": "<button aria-current=\"true\" class=\"networkFindAreas_zoneRow__ZnVpP\" type=\"button\">",
           "target": [
             "button[aria-current=\"true\"]"
@@ -4416,7 +4731,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" type=\"button\">✓ 本次工作階段已追蹤（點擊移除）</button>",
+          "html": "<button aria-pressed=\"false\" type=\"button\">加入本次工作階段追蹤</button>",
           "target": [
             ".networkFindAreas_findAreasActions__Rfo_6 > button[type=\"button\"]:nth-child(3)"
           ]
@@ -4544,16 +4859,16 @@
             {
               "id": "color-contrast",
               "data": {
-                "fgColor": "#ffffff",
-                "bgColor": "#2e3a97",
-                "contrastRatio": 9.68,
+                "fgColor": "#243044",
+                "bgColor": "#ffffff",
+                "contrastRatio": 13.28,
                 "fontSize": "8.6pt (11.5px)",
                 "fontWeight": "normal",
                 "expectedContrastRatio": "4.5:1"
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Element has sufficient color contrast of 9.68"
+              "message": "Element has sufficient color contrast of 13.28"
             }
           ],
           "all": [],
@@ -4569,16 +4884,16 @@
             {
               "id": "color-contrast",
               "data": {
-                "fgColor": "#243044",
-                "bgColor": "#ffffff",
-                "contrastRatio": 13.28,
+                "fgColor": "#ffffff",
+                "bgColor": "#2e3a97",
+                "contrastRatio": 9.68,
                 "fontSize": "8.6pt (11.5px)",
                 "fontWeight": "normal",
                 "expectedContrastRatio": "4.5:1"
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Element has sufficient color contrast of 13.28"
+              "message": "Element has sufficient color contrast of 9.68"
             }
           ],
           "all": [],
@@ -4919,11 +5234,116 @@
             {
               "id": "color-contrast",
               "data": {
-                "messageKey": "hidden"
+                "fgColor": "#1f2733",
+                "bgColor": "#ffffff",
+                "contrastRatio": 15.04,
+                "fontSize": "9.8pt (13px)",
+                "fontWeight": "bold",
+                "expectedContrastRatio": "4.5:1"
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Element is hidden"
+              "message": "Element has sufficient color contrast of 15.04"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<h3 class=\"geocoder_title__Xp2VM\" id=\"_R_4qsr5et5rlb_\">地址定位搜尋 GEOCODER SEARCH</h3>",
+          "target": [
+            "#_R_4qsr5et5rlb_"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#5a6478",
+                "bgColor": "#ffffff",
+                "contrastRatio": 5.95,
+                "fontSize": "8.3pt (11px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 5.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"geocoder_headHint__MXdTr\">低信心或精度不足的候選點必須經人工覆核；採用與覆寫皆寫入 Audit。</span>",
+          "target": [
+            ".geocoder_headHint__MXdTr"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#7a5a12",
+                "bgColor": "#fff8e8",
+                "contrastRatio": 6.01,
+                "fontSize": "8.6pt (11.5px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 6.01"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<div class=\"geocoder_warnNote__JcRjj\" data-testid=\"geocoder-unconfigured\" role=\"status\">地址定位服務尚未設定，搜尋不會回傳任何座標。此畫面不顯示模擬或推估位置。</div>",
+          "target": [
+            ".geocoder_warnNote__JcRjj"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#3d4757",
+                "bgColor": "#ffffff",
+                "contrastRatio": 9.38,
+                "fontSize": "8.6pt (11.5px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 9.38"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<label class=\"geocoder_fieldLabel__oTM0j\" for=\"_R_4qsr5et5rlb_-input\">地址（含縣市、路名與門牌）</label>",
+          "target": [
+            ".geocoder_fieldLabel__oTM0j"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#1f2733",
+                "bgColor": "#ffffff",
+                "contrastRatio": 15.04,
+                "fontSize": "9.8pt (13px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 15.04"
             }
           ],
           "all": [],
@@ -4932,6 +5352,31 @@
           "html": "<input aria-label=\"地址搜尋\" class=\"geocoder_input__4_tEl\" data-testid=\"geocoder-query-input\" id=\"_R_4qsr5et5rlb_-input\" placeholder=\"例：新北市新莊區興德路 100 號\" value=\"\" style=\"\">",
           "target": [
             "#_R_4qsr5et5rlb_-input"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#ffffff",
+                "bgColor": "#2e3a97",
+                "contrastRatio": 9.68,
+                "fontSize": "9.4pt (12.5px)",
+                "fontWeight": "bold",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 9.68"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<button class=\"geocoder_primaryButton__rQOxx\" data-testid=\"geocoder-search-button\" type=\"button\">搜尋地址</button>",
+          "target": [
+            ".geocoder_primaryButton__rQOxx"
           ]
         },
         {
@@ -4979,7 +5424,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<span>依「<!-- -->需求熱度<!-- -->」排序 · <!-- -->2<!-- --> 區</span>",
+          "html": "<span>依「<!-- -->品牌適配<!-- -->」排序 · <!-- -->2<!-- --> 區</span>",
           "target": [
             ".networkFindAreas_panelHeader__q_VCw > span"
           ]
@@ -5029,7 +5474,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<strong>HZ-01<!-- --> · <!-- -->信義松仁生活圈</strong>",
+          "html": "<strong>HZ-02<!-- --> · <!-- -->板橋府中生活圈</strong>",
           "target": [
             "button[aria-current=\"true\"] > .networkFindAreas_zoneRowMain__sIzJ2 > strong"
           ]
@@ -5054,7 +5499,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<small>需求 <!-- -->86%<!-- --> · 適配 <!-- -->67%<!-- --> · 競店 <!-- -->34%</small>",
+          "html": "<small>需求 <!-- -->78%<!-- --> · 適配 <!-- -->71%<!-- --> · 競店 <!-- -->43%</small>",
           "target": [
             "button[aria-current=\"true\"] > .networkFindAreas_zoneRowMain__sIzJ2 > small"
           ]
@@ -5079,7 +5524,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<span class=\"networkFindAreas_zoneRowScore__LTJte\">86%</span>",
+          "html": "<span class=\"networkFindAreas_zoneRowScore__LTJte\">71%</span>",
           "target": [
             "button[aria-current=\"true\"] > .networkFindAreas_zoneRowScore__LTJte"
           ]
@@ -5129,7 +5574,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<strong>HZ-02<!-- --> · <!-- -->板橋府中生活圈</strong>",
+          "html": "<strong>HZ-01<!-- --> · <!-- -->信義松仁生活圈</strong>",
           "target": [
             ".networkFindAreas_zoneRow__ZnVpP[type=\"button\"]:nth-child(2) > .networkFindAreas_zoneRowMain__sIzJ2 > strong"
           ]
@@ -5154,7 +5599,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<small>需求 <!-- -->78%<!-- --> · 適配 <!-- -->71%<!-- --> · 競店 <!-- -->43%</small>",
+          "html": "<small>需求 <!-- -->86%<!-- --> · 適配 <!-- -->67%<!-- --> · 競店 <!-- -->34%</small>",
           "target": [
             ".networkFindAreas_zoneRow__ZnVpP[type=\"button\"]:nth-child(2) > .networkFindAreas_zoneRowMain__sIzJ2 > small"
           ]
@@ -5179,7 +5624,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<span class=\"networkFindAreas_zoneRowScore__LTJte\">78%</span>",
+          "html": "<span class=\"networkFindAreas_zoneRowScore__LTJte\">67%</span>",
           "target": [
             ".networkFindAreas_zoneRow__ZnVpP[type=\"button\"]:nth-child(2) > .networkFindAreas_zoneRowScore__LTJte"
           ]
@@ -5204,7 +5649,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h3>信義松仁生活圈</h3>",
+          "html": "<h3>板橋府中生活圈</h3>",
           "target": [
             ".networkFindAreas_findAreasDetailHeader__nuI_1 > h3"
           ]
@@ -5229,9 +5674,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<strong aria-label=\"需求熱度分數\">86%</strong>",
+          "html": "<strong aria-label=\"品牌適配分數\">71%</strong>",
           "target": [
-            "strong[aria-label=\"需求熱度分數\"]"
+            "strong[aria-label=\"品牌適配分數\"]"
           ]
         },
         {
@@ -5254,7 +5699,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<p>HZ-01<!-- --> · Lens：<!-- -->需求熱度<!-- --> · <!-- -->25.0330, 121.5668</p>",
+          "html": "<p>HZ-02<!-- --> · Lens：<!-- -->品牌適配<!-- --> · <!-- -->25.0100, 121.4575</p>",
           "target": [
             ".networkFindAreas_findAreasDetailHeader__nuI_1 > p"
           ]
@@ -5304,7 +5749,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<dd>86%</dd>",
+          "html": "<dd>78%</dd>",
           "target": [
             ".networkFindAreas_findAreasFacts__pOWst > div:nth-child(1) > dd"
           ]
@@ -5354,7 +5799,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<dd>67%</dd>",
+          "html": "<dd>71%</dd>",
           "target": [
             ".networkFindAreas_findAreasFacts__pOWst > div:nth-child(2) > dd"
           ]
@@ -5404,7 +5849,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<dd>34%</dd>",
+          "html": "<dd>43%</dd>",
           "target": [
             ".networkFindAreas_findAreasFacts__pOWst > div:nth-child(3) > dd"
           ]
@@ -5504,7 +5949,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<dd>NT$52k-88k/month</dd>",
+          "html": "<dd>NT$48k-72k/month</dd>",
           "target": [
             ".networkFindAreas_findAreasFacts__pOWst > div:nth-child(5) > dd"
           ]
@@ -5604,7 +6049,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<dd>93%</dd>",
+          "html": "<dd>88%</dd>",
           "target": [
             ".networkFindAreas_findAreasFacts__pOWst > div:nth-child(7) > dd"
           ]
@@ -5654,7 +6099,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<li>Office-lunch and late-night demand gap remains high.</li>",
+          "html": "<li>Weekend service demand is under-realized.</li>",
           "target": [
             "section:nth-child(1) > ul > li:nth-child(1)"
           ]
@@ -5679,34 +6124,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<li>Transit and residential POI mix supports ODAY_G2 format.</li>",
+          "html": "<li>L-2025 has duplicate-source coverage after merge.</li>",
           "target": [
-            "section:nth-child(1) > ul > li:nth-child(2)"
-          ]
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#1f2937",
-                "bgColor": "#ffffff",
-                "contrastRatio": 14.67,
-                "fontSize": "8.3pt (11px)",
-                "fontWeight": "normal",
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [],
-              "impact": "serious",
-              "message": "Element has sufficient color contrast of 14.67"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": null,
-          "html": "<li>L-2024 has clean geocode, floor, area, and source evidence.</li>",
-          "target": [
-            "li:nth-child(3)"
+            "li:nth-child(2)"
           ]
         },
         {
@@ -5754,34 +6174,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<li>Rent negotiation pressure</li>",
+          "html": "<li>Duplicate broker postings require evidence merge before review</li>",
           "target": [
-            "section:nth-child(2) > ul > li:nth-child(1)"
-          ]
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#1f2937",
-                "bgColor": "#ffffff",
-                "contrastRatio": 14.67,
-                "fontSize": "8.3pt (11px)",
-                "fontWeight": "normal",
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [],
-              "impact": "serious",
-              "message": "Element has sufficient color contrast of 14.67"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": null,
-          "html": "<li>Nearby competitor 220m away</li>",
-          "target": [
-            "section:nth-child(2) > ul > li:nth-child(2)"
+            "section:nth-child(2) > ul > li"
           ]
         },
         {
@@ -5829,7 +6224,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<p>Convert L-2024 into CS-1001 and continue SiteScore evidence review.</p>",
+          "html": "<p>Keep L-2025 active after merging L-2029 duplicate source evidence.</p>",
           "target": [
             ".networkFindAreas_findAreasNextStep__fGGZJ > p"
           ]
@@ -6004,7 +6399,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<dd>CS-1001 GO · 82</dd>",
+          "html": "<dd>CS-1002 WAIT · 76</dd>",
           "target": [
             ".networkFindAreas_pipelineStats__hmliK > div:nth-child(3) > dd"
           ]
@@ -6054,7 +6449,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" type=\"button\">✓ 本次工作階段已追蹤（點擊移除）</button>",
+          "html": "<button aria-pressed=\"false\" type=\"button\">加入本次工作階段追蹤</button>",
           "target": [
             ".networkFindAreas_findAreasActions__Rfo_6 > button[type=\"button\"]:nth-child(3)"
           ]
@@ -6154,7 +6549,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<span><strong>L-2024</strong> new · rent NT$58,000 · 18 ping</span>",
+          "html": "<span><strong>L-2025</strong> watching · rent NT$53,000 · 22 ping</span>",
           "target": [
             ".networkFindAreas_linkedRows__4ul76 > span:nth-child(1)"
           ]
@@ -6179,7 +6574,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<strong>L-2024</strong>",
+          "html": "<strong>L-2025</strong>",
           "target": [
             ".networkFindAreas_linkedRows__4ul76 > span:nth-child(1) > strong"
           ]
@@ -6204,7 +6599,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<span><strong>L-2030</strong> hardfail · rent NT$128,000 · 40 ping</span>",
+          "html": "<span><strong>L-2029</strong> duplicate · rent NT$53,000 · 22 ping</span>",
           "target": [
             ".networkFindAreas_linkedRows__4ul76 > span:nth-child(2)"
           ]
@@ -6229,7 +6624,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<strong>L-2030</strong>",
+          "html": "<strong>L-2029</strong>",
           "target": [
             ".networkFindAreas_linkedRows__4ul76 > span:nth-child(2) > strong"
           ]
@@ -6254,7 +6649,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<span><strong>CS-1001</strong> <!-- -->GO<!-- --> · score <!-- -->82<!-- --> ·<!-- --> <!-- -->go</span>",
+          "html": "<span><strong>CS-1002</strong> WAIT · score 76 · wait</span>",
           "target": [
             ".networkFindAreas_linkedRows__4ul76 > span:nth-child(3)"
           ]
@@ -6279,7 +6674,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<strong>CS-1001</strong>",
+          "html": "<strong>CS-1002</strong>",
           "target": [
             ".networkFindAreas_linkedRows__4ul76 > span:nth-child(3) > strong"
           ]
@@ -6347,7 +6742,7 @@
             }
           ],
           "impact": null,
-          "html": "<dl class=\"networkFindAreas_pipelineStats__hmliK\"><div><dt>物件</dt><dd>2</dd></div><div><dt>候選點</dt><dd>1</dd></div><div><dt>最高分</dt><dd>CS-1001 GO · 82</dd></div></dl>",
+          "html": "<dl class=\"networkFindAreas_pipelineStats__hmliK\"><div><dt>物件</dt><dd>2</dd></div><div><dt>候選點</dt><dd>1</dd></div><div><dt>最高分</dt><dd>CS-1002 WAIT · 76</dd></div></dl>",
           "target": [
             ".networkFindAreas_pipelineStats__hmliK"
           ]
@@ -6401,7 +6796,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<dd>86%</dd>",
+          "html": "<dd>78%</dd>",
           "target": [
             ".networkFindAreas_findAreasFacts__pOWst > div:nth-child(1) > dd"
           ]
@@ -6437,7 +6832,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<dd>67%</dd>",
+          "html": "<dd>71%</dd>",
           "target": [
             ".networkFindAreas_findAreasFacts__pOWst > div:nth-child(2) > dd"
           ]
@@ -6473,7 +6868,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<dd>34%</dd>",
+          "html": "<dd>43%</dd>",
           "target": [
             ".networkFindAreas_findAreasFacts__pOWst > div:nth-child(3) > dd"
           ]
@@ -6545,7 +6940,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<dd>NT$52k-88k/month</dd>",
+          "html": "<dd>NT$48k-72k/month</dd>",
           "target": [
             ".networkFindAreas_findAreasFacts__pOWst > div:nth-child(5) > dd"
           ]
@@ -6617,7 +7012,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<dd>93%</dd>",
+          "html": "<dd>88%</dd>",
           "target": [
             ".networkFindAreas_findAreasFacts__pOWst > div:nth-child(7) > dd"
           ]
@@ -6725,7 +7120,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<dd>CS-1001 GO · 82</dd>",
+          "html": "<dd>CS-1002 WAIT · 76</dd>",
           "target": [
             ".networkFindAreas_pipelineStats__hmliK > div:nth-child(3) > dd"
           ]
@@ -6805,6 +7200,123 @@
       ]
     },
     {
+      "id": "form-field-multiple-labels",
+      "impact": null,
+      "tags": [
+        "cat.forms",
+        "wcag2a",
+        "wcag332",
+        "TTv5",
+        "TT5.c",
+        "EN-301-549",
+        "EN-9.3.3.2",
+        "RGAAv4",
+        "RGAA-11.2.1"
+      ],
+      "description": "Ensure form field does not have multiple label elements",
+      "help": "Form field must not have multiple label elements",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/form-field-multiple-labels?application=playwright",
+      "nodes": [
+        {
+          "any": [],
+          "all": [],
+          "none": [
+            {
+              "id": "multiple-label",
+              "data": null,
+              "relatedNodes": [
+                {
+                  "html": "<label class=\"geocoder_fieldLabel__oTM0j\" for=\"_R_4qsr5et5rlb_-input\">地址（含縣市、路名與門牌）</label>",
+                  "target": [
+                    ".geocoder_fieldLabel__oTM0j"
+                  ]
+                }
+              ],
+              "impact": "moderate",
+              "message": "Form field does not have multiple label elements"
+            }
+          ],
+          "impact": null,
+          "html": "<input aria-label=\"地址搜尋\" class=\"geocoder_input__4_tEl\" data-testid=\"geocoder-query-input\" id=\"_R_4qsr5et5rlb_-input\" placeholder=\"例：新北市新莊區興德路 100 號\" value=\"\" style=\"\">",
+          "target": [
+            "#_R_4qsr5et5rlb_-input"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "label",
+      "impact": null,
+      "tags": [
+        "cat.forms",
+        "wcag2a",
+        "wcag412",
+        "section508",
+        "section508.22.n",
+        "TTv5",
+        "TT5.c",
+        "EN-301-549",
+        "EN-9.4.1.2",
+        "ACT",
+        "RGAAv4",
+        "RGAA-11.1.1"
+      ],
+      "description": "Ensure every form element has a label",
+      "help": "Form elements must have labels",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/label?application=playwright",
+      "nodes": [
+        {
+          "any": [
+            {
+              "id": "explicit-label",
+              "data": {
+                "explicitLabel": "地址（含縣市、路名與門牌）"
+              },
+              "relatedNodes": [
+                {
+                  "html": "<label class=\"geocoder_fieldLabel__oTM0j\" for=\"_R_4qsr5et5rlb_-input\">地址（含縣市、路名與門牌）</label>",
+                  "target": [
+                    ".geocoder_fieldLabel__oTM0j"
+                  ]
+                }
+              ],
+              "impact": "critical",
+              "message": "Element has an explicit <label>"
+            },
+            {
+              "id": "aria-label",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "aria-label attribute exists and is not empty"
+            },
+            {
+              "id": "non-empty-placeholder",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "Element has a placeholder attribute"
+            }
+          ],
+          "all": [],
+          "none": [
+            {
+              "id": "hidden-explicit-label",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "critical",
+              "message": "Form element has a visible explicit <label>"
+            }
+          ],
+          "impact": null,
+          "html": "<input aria-label=\"地址搜尋\" class=\"geocoder_input__4_tEl\" data-testid=\"geocoder-query-input\" id=\"_R_4qsr5et5rlb_-input\" placeholder=\"例：新北市新莊區興德路 100 號\" value=\"\" style=\"\">",
+          "target": [
+            "#_R_4qsr5et5rlb_-input"
+          ]
+        }
+      ]
+    },
+    {
       "id": "list",
       "impact": null,
       "tags": [
@@ -6833,7 +7345,7 @@
             }
           ],
           "impact": null,
-          "html": "<ul><li>Office-lunch and late-night demand gap remains high.</li><li>Transit and residential POI mix supports ODAY_G2 format.</li><li>L-2024 has clean geocode, floor, area, and source evidence.</li></ul>",
+          "html": "<ul><li>Weekend service demand is under-realized.</li><li>L-2025 has duplicate-source coverage after merge.</li></ul>",
           "target": [
             "section:nth-child(1) > ul"
           ]
@@ -6851,7 +7363,7 @@
             }
           ],
           "impact": null,
-          "html": "<ul><li>Rent negotiation pressure</li><li>Nearby competitor 220m away</li></ul>",
+          "html": "<ul><li>Duplicate broker postings require evidence merge before review</li></ul>",
           "target": [
             "section:nth-child(2) > ul"
           ]
@@ -6887,7 +7399,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<li>Office-lunch and late-night demand gap remains high.</li>",
+          "html": "<li>Weekend service demand is under-realized.</li>",
           "target": [
             "section:nth-child(1) > ul > li:nth-child(1)"
           ]
@@ -6905,9 +7417,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<li>Transit and residential POI mix supports ODAY_G2 format.</li>",
+          "html": "<li>L-2025 has duplicate-source coverage after merge.</li>",
           "target": [
-            "section:nth-child(1) > ul > li:nth-child(2)"
+            "li:nth-child(2)"
           ]
         },
         {
@@ -6923,45 +7435,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<li>L-2024 has clean geocode, floor, area, and source evidence.</li>",
+          "html": "<li>Duplicate broker postings require evidence merge before review</li>",
           "target": [
-            "li:nth-child(3)"
-          ]
-        },
-        {
-          "any": [
-            {
-              "id": "listitem",
-              "data": null,
-              "relatedNodes": [],
-              "impact": "serious",
-              "message": "List item has a <ul>, <ol> or role=\"list\" parent element"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": null,
-          "html": "<li>Rent negotiation pressure</li>",
-          "target": [
-            "section:nth-child(2) > ul > li:nth-child(1)"
-          ]
-        },
-        {
-          "any": [
-            {
-              "id": "listitem",
-              "data": null,
-              "relatedNodes": [],
-              "impact": "serious",
-              "message": "List item has a <ul>, <ol> or role=\"list\" parent element"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": null,
-          "html": "<li>Nearby competitor 220m away</li>",
-          "target": [
-            "section:nth-child(2) > ul > li:nth-child(2)"
+            "section:nth-child(2) > ul > li"
           ]
         }
       ]
@@ -6997,7 +7473,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
+          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
           "target": [
             "button[title=\"Unserved demand intensity\"]"
           ]
@@ -7015,7 +7491,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
           "target": [
             ".networkFindAreas_lensButton__IyA7o[type=\"button\"]:nth-child(3)"
           ]
@@ -7177,6 +7653,24 @@
           "all": [],
           "none": [],
           "impact": null,
+          "html": "<button class=\"geocoder_primaryButton__rQOxx\" data-testid=\"geocoder-search-button\" type=\"button\">搜尋地址</button>",
+          "target": [
+            ".geocoder_primaryButton__rQOxx"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "no-focusable-content",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element does not have focusable descendants"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
           "html": "<button aria-current=\"true\" class=\"networkFindAreas_zoneRow__ZnVpP\" type=\"button\">",
           "target": [
             "button[aria-current=\"true\"]"
@@ -7249,7 +7743,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" type=\"button\">✓ 本次工作階段已追蹤（點擊移除）</button>",
+          "html": "<button aria-pressed=\"false\" type=\"button\">加入本次工作階段追蹤</button>",
           "target": [
             ".networkFindAreas_findAreasActions__Rfo_6 > button[type=\"button\"]:nth-child(3)"
           ]
@@ -7384,12 +7878,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 176,
+                "width": 150,
                 "height": 34.1
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (176px by 34.1px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (150px by 34.1px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7405,7 +7899,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
+          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Unserved demand intensity\" type=\"button\"><span>需求熱度</span></button>",
           "target": [
             "button[title=\"Unserved demand intensity\"]"
           ]
@@ -7416,12 +7910,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 176,
+                "width": 150,
                 "height": 34.1
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (176px by 34.1px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (150px by 34.1px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7437,7 +7931,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_lensButton__IyA7o\" title=\"Composite demand and operating fit\" type=\"button\"><span>品牌適配</span></button>",
           "target": [
             ".networkFindAreas_lensButton__IyA7o[type=\"button\"]:nth-child(3)"
           ]
@@ -7448,12 +7942,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 176,
+                "width": 150,
                 "height": 34.1
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (176px by 34.1px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (150px by 34.1px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7480,12 +7974,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 176,
+                "width": 150,
                 "height": 34.1
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (176px by 34.1px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (150px by 34.1px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7512,12 +8006,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 176,
+                "width": 150,
                 "height": 34.1
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (176px by 34.1px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (150px by 34.1px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7544,12 +8038,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 176,
+                "width": 150,
                 "height": 34.1
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (176px by 34.1px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (150px by 34.1px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7576,12 +8070,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 176,
+                "width": 150,
                 "height": 34.1
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (176px by 34.1px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (150px by 34.1px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7608,12 +8102,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 176,
+                "width": 150,
                 "height": 34.1
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (176px by 34.1px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (150px by 34.1px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7640,12 +8134,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 176,
+                "width": 150,
                 "height": 34.1
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (176px by 34.1px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (150px by 34.1px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7672,12 +8166,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 834,
+                "width": 788,
                 "height": 33.8
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (834px by 33.8px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (788px by 33.8px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7704,12 +8198,76 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 160.8,
-                "height": 127
+                "width": 664,
+                "height": 37
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (160.8px by 127px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (664px by 37px, should be at least 24px by 24px)"
+            },
+            {
+              "id": "target-offset",
+              "data": {
+                "closestOffset": 24,
+                "minOffset": 24
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Target has sufficient space from its closest neighbors. Safe clickable space has a diameter of 24px which is at least 24px."
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<input aria-label=\"地址搜尋\" class=\"geocoder_input__4_tEl\" data-testid=\"geocoder-query-input\" id=\"_R_4qsr5et5rlb_-input\" placeholder=\"例：新北市新莊區興德路 100 號\" value=\"\" style=\"\">",
+          "target": [
+            "#_R_4qsr5et5rlb_-input"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "target-size",
+              "data": {
+                "minSize": 24,
+                "width": 86,
+                "height": 37
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Control has sufficient size (86px by 37px, should be at least 24px by 24px)"
+            },
+            {
+              "id": "target-offset",
+              "data": {
+                "closestOffset": 24,
+                "minOffset": 24
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Target has sufficient space from its closest neighbors. Safe clickable space has a diameter of 24px which is at least 24px."
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<button class=\"geocoder_primaryButton__rQOxx\" data-testid=\"geocoder-search-button\" type=\"button\">搜尋地址</button>",
+          "target": [
+            ".geocoder_primaryButton__rQOxx"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "target-size",
+              "data": {
+                "minSize": 24,
+                "width": 258,
+                "height": 89.8
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Control has sufficient size (258px by 89.8px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7736,12 +8294,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 160.8,
-                "height": 127
+                "width": 258,
+                "height": 89.8
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (160.8px by 127px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (258px by 89.8px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7768,12 +8326,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 296,
+                "width": 950,
                 "height": 42.1
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (296px by 42.1px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (950px by 42.1px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7800,12 +8358,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 296,
+                "width": 950,
                 "height": 36.6
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (296px by 36.6px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (950px by 36.6px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7821,7 +8379,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" type=\"button\">✓ 本次工作階段已追蹤（點擊移除）</button>",
+          "html": "<button aria-pressed=\"false\" type=\"button\">加入本次工作階段追蹤</button>",
           "target": [
             ".networkFindAreas_findAreasActions__Rfo_6 > button[type=\"button\"]:nth-child(3)"
           ]
@@ -7832,12 +8390,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 296,
+                "width": 950,
                 "height": 36.6
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (296px by 36.6px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (950px by 36.6px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -7924,9 +8482,9 @@
             }
           ],
           "impact": "serious",
-          "html": "<strong aria-label=\"需求熱度分數\">86%</strong>",
+          "html": "<strong aria-label=\"品牌適配分數\">71%</strong>",
           "target": [
-            "strong[aria-label=\"需求熱度分數\"]"
+            "strong[aria-label=\"品牌適配分數\"]"
           ],
           "failureSummary": "Fix all of the following:\n  aria-label attribute is not well supported on a strong with no valid role attribute."
         },
@@ -7996,7 +8554,7 @@
           "all": [],
           "none": [],
           "impact": "serious",
-          "html": "<div class=\"networkFindAreas_findAreasMapCaption__Z60D8\">HeatZone Lens：<!-- -->需求熱度<!-- --> · <!-- -->本機示範座標</div>",
+          "html": "<div class=\"networkFindAreas_findAreasMapCaption__Z60D8\">HeatZone Lens：<!-- -->品牌適配<!-- --> · <!-- -->本機示範座標</div>",
           "target": [
             ".networkFindAreas_findAreasMapCaption__Z60D8"
           ],
@@ -8021,7 +8579,7 @@
                   ]
                 },
                 {
-                  "html": "<canvas id=\"deckgl-overlay\" width=\"832\" height=\"424\" style=\"left: 0px; top: 0px; width: 100%; position: absolute; height: 100%;\"></canvas>",
+                  "html": "<canvas id=\"deckgl-overlay\" width=\"786\" height=\"424\" style=\"left: 0px; top: 0px; width: 100%; position: absolute; height: 100%;\"></canvas>",
                   "target": [
                     "#deckgl-overlay"
                   ]

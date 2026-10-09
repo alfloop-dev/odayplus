@@ -505,8 +505,10 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     expect(finalMapState?.featureIds).toContain("HZ-01");
     expect(pageErrors.filter((msg) => msg.includes("Worker") || msg.includes("maplibre"))).toEqual([]);
 
-    await page.getByRole("button", { name: /Fit Brand Fit/ }).click();
+    await page.getByLabel("HeatZone lenses").getByRole("button", { name: "品牌適配", exact: true }).click();
+    await expect(page).toHaveURL(/lens=fit/);
     await page.getByRole("button", { name: /HZ-02 ·/ }).click();
+    await expect(page).toHaveURL(/hz=HZ-02/);
     await expect(page.getByTestId("heat-zone-map")).toHaveAttribute(
       "data-selected-zone",
       "HZ-02",
