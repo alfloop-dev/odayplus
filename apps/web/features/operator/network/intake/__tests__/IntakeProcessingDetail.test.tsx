@@ -593,6 +593,8 @@ describe("AssistedIntakeSection production container", () => {
     nav.reset(`selected=${record.id}&dialog=detail`);
     render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
     fireEvent.click(await screen.findByTestId("asg-btn-transfer"));
+    expect(await screen.findByTestId("transfer-record-version")).toHaveTextContent("v14");
+    expect(screen.getByTestId("transfer-record-version")).not.toHaveTextContent("v71");
     fireEvent.change(await screen.findByTestId("transfer-handoff-note"), { target: { value: "authoritative transfer" } });
     fireEvent.click(screen.getByTestId("transfer-risk-ack"));
     fireEvent.click(screen.getByTestId("transfer-submit-btn"));
@@ -611,6 +613,8 @@ describe("AssistedIntakeSection production container", () => {
     nav.reset(`selected=${record.id}&dialog=detail`);
     render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
     fireEvent.click(await screen.findByTestId("asg-btn-pause"));
+    expect(await screen.findByTestId("pause-record-version")).toHaveTextContent("v25");
+    expect(screen.getByTestId("pause-record-version")).not.toHaveTextContent("v72");
     fireEvent.change(await screen.findByTestId("pause-reason-input"), { target: { value: "waiting for evidence" } });
     fireEvent.change(screen.getByTestId("pause-resume-time-input"), { target: { value: "2026-07-27T10:00" } });
     fireEvent.click(screen.getByTestId("pause-risk-ack"));
@@ -618,6 +622,63 @@ describe("AssistedIntakeSection production container", () => {
     const path = `/api/v1/sla-instances/${record.slaInstanceId}/actions/pause`;
     await waitFor(() => expect(requests.some((request) => request.path === path)).toBe(true));
     expect(requests.find((request) => request.path === path)!.headers.get("if-match")).toBe('W/"25"');
+  });
+
+  it("supersedes a cached claim receipt after a real container 409 refresh without losing the transfer draft", async () => {
+    let record = intake({
+      owner: "reviewer-2", assignmentId: "ASG-REFRESH-101", assignmentStatus: "ASSIGNED",
+      version: 71, assignmentVersion: 3,
+    } as Partial<AssistedIntake> & { assignmentVersion: number });
+    const transferHeaders: Headers[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/operator/network-listings/intake") return json({
+        items: [record], total: 1, page: 1, pageSize: 10,
+        counts: { needsReview: 1, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 }, evidenceState: "complete",
+      });
+      if (path === `/api/v1/intakes/${record.id}`) return json(record);
+      if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
+      if (path.endsWith("/actions/claim")) {
+        record = { ...record, owner: "subject-1", assignmentStatus: "CLAIMED", assignmentVersion: 8 } as typeof record;
+        return json({ assignment_id: record.assignmentId, status: "CLAIMED", owner_subject_id: "subject-1", version: 8, audit_event_id: "AUD-CLAIM" });
+      }
+      if (path.endsWith("/actions/transfer")) {
+        transferHeaders.push(new Headers(init?.headers));
+        if (transferHeaders.length === 1) {
+          record = { ...record, owner: "reviewer-3", assignmentVersion: 9 } as typeof record;
+          return json({ code: "OWNER_CONFLICT", detail: "owner changed" }, 409);
+        }
+        return json({ assignment_id: record.assignmentId, status: "TRANSFERRED", owner_subject_id: "actor-mgr", version: 10, audit_event_id: "AUD-TRANSFER" });
+      }
+      return json({ code: "NOT_FOUND" }, 404);
+    }));
+    nav.reset(`selected=${record.id}&dialog=detail`);
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
+    fireEvent.click(await screen.findByTestId("asg-btn-claim"));
+    await waitFor(() => expect(screen.getByTestId("asg-owner-name")).toHaveTextContent("subject-1"));
+    fireEvent.click(screen.getByTestId("asg-btn-transfer"));
+    expect(await screen.findByTestId("transfer-record-version")).toHaveTextContent("v8");
+    fireEvent.change(screen.getByTestId("transfer-handoff-note"), { target: { value: "preserve this handoff" } });
+    fireEvent.click(screen.getByTestId("transfer-risk-ack"));
+    fireEvent.click(screen.getByTestId("transfer-submit-btn"));
+    expect(await screen.findByTestId("transfer-conflict-panel")).toBeInTheDocument();
+    expect(transferHeaders[0]!.get("if-match")).toBe('W/"8"');
+    fireEvent.click(screen.getByTestId("transfer-conflict-refresh-btn"));
+    await waitFor(() => expect(screen.getByTestId("transfer-record-version")).toHaveTextContent("v9"));
+    expect(screen.getByTestId("transfer-record-owner")).toHaveTextContent("reviewer-3");
+    expect(screen.getByTestId("transfer-handoff-note")).toHaveValue("preserve this handoff");
+    expect(screen.getByTestId("transfer-risk-ack")).toBeChecked();
+    fireEvent.click(screen.getByTestId("transfer-submit-btn"));
+    await waitFor(() => expect(transferHeaders).toHaveLength(2));
+    expect(transferHeaders[1]!.get("if-match")).toBe('W/"9"');
+  });
+
+  it("rejects resource receipts for a different ID instead of borrowing their versions", () => {
+    const record = intake({ assignmentId: "ASG-NEW", slaInstanceId: "SLA-NEW", assignmentVersion: 3, slaVersion: 5 } as Partial<AssistedIntake>);
+    expect(authoritativeAssignmentVersion(record, { assignment_id: "ASG-OLD", version: 9 } as any)).toBeNull();
+    expect(authoritativeSlaVersion(record, { sla_instance_id: "SLA-OLD", version: 11 } as any)).toBeNull();
+    expect(authoritativeAssignmentVersion(record, { assignment_id: "ASG-NEW", version: 9 } as any)).toBe(9);
+    expect(authoritativeSlaVersion(record, { sla_instance_id: "SLA-NEW", version: 11 } as any)).toBe(11);
   });
 
   it("resumes with the authoritative SLA resource version", async () => {
@@ -676,7 +737,7 @@ describe("AssistedIntakeSection production container", () => {
   // zero is not a usable concurrency token and must fail closed alongside
   // negatives, fractions, strings, null and undefined.
   it("accepts positive integer resource versions only", () => {
-    for (const rejected of [0, -1, -12, 1.5, 0.5, "1", "0", "", true, null, undefined, NaN, Infinity, {}, [3]]) {
+    for (const rejected of [0, -1, -12, 1.5, 0.5, Number.MAX_SAFE_INTEGER + 1, "1", "0", "", true, null, undefined, NaN, Infinity, {}, [3]]) {
       expect(validResourceVersion(rejected)).toBeNull();
     }
     for (const accepted of [1, 2, 12, 34, Number.MAX_SAFE_INTEGER]) {

@@ -936,12 +936,29 @@ export function AssistedIntakeSection({
   }
 
   async function handleConflictRefresh() {
-    if (!client || !selected) return;
-    setActionError(null);
+    if (!client || !selected || busy) return;
+    setBusy(true);
     const getResult = await intakeApi.get(client, selected.id);
     if (getResult.ok) {
+      // A successful authoritative reread supersedes local action receipts.
+      // Otherwise a previous claim/pause receipt can pin If-Match to an old
+      // version even after the operator explicitly refreshed a 409 conflict.
+      setAssignmentReceipts((previous) => {
+        const next = { ...previous };
+        delete next[selected.id];
+        return next;
+      });
+      setSlaReceipts((previous) => {
+        const next = { ...previous };
+        delete next[selected.id];
+        return next;
+      });
       applyRecord(getResult.value);
+      setActionError(null);
+    } else {
+      setActionError(getResult.error);
     }
+    setBusy(false);
   }
 
   const fixField = selected && fixFieldKey ? selected.parsedFields?.[fixFieldKey] : undefined;
@@ -1175,6 +1192,7 @@ export function AssistedIntakeSection({
           }}
           onSubmit={handleTransferSubmit}
           record={selected}
+          resourceVersion={assignmentResourceVersion}
           onConflictRefresh={handleConflictRefresh}
         />
       ) : null}
@@ -1189,6 +1207,7 @@ export function AssistedIntakeSection({
           }}
           onSubmit={handlePauseSubmit}
           record={selected}
+          resourceVersion={slaResourceVersion}
           onConflictRefresh={handleConflictRefresh}
         />
       ) : null}
@@ -1220,7 +1239,8 @@ export function authoritativeAssignmentVersion(
     assignmentVersion?: unknown;
     assignment_version?: unknown;
   };
-  return validResourceVersion(receipt?.version ?? raw.assignmentVersion ?? raw.assignment_version);
+  if (receipt && receipt.assignment_id !== record.assignmentId) return null;
+  return validResourceVersion(receipt ? receipt.version : raw.assignmentVersion ?? raw.assignment_version);
 }
 
 export function authoritativeSlaVersion(
@@ -1231,7 +1251,8 @@ export function authoritativeSlaVersion(
     slaVersion?: unknown;
     sla_version?: unknown;
   };
-  return validResourceVersion(receipt?.version ?? raw.slaVersion ?? raw.sla_version);
+  if (receipt && receipt.sla_instance_id !== record.slaInstanceId) return null;
+  return validResourceVersion(receipt ? receipt.version : raw.slaVersion ?? raw.sla_version);
 }
 
 type ResourceAuthority =
@@ -1285,7 +1306,7 @@ function unavailableResourceError(code: string, authority: string): IntakeApiErr
  * (ADD-006 §3.3). Fractions, strings, null and undefined are equally unusable.
  */
 export function validResourceVersion(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 ? value : null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : null;
 }
 
 export function buildInboxReturnHref(

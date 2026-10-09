@@ -29,6 +29,8 @@ export interface TransferIntakeDialogProps {
     riskAcknowledged: boolean;
   }) => void;
   record: AssistedIntake;
+  /** Assignment concurrency token, never the unrelated intake version. */
+  resourceVersion?: number | null;
   onConflictRefresh?: () => void;
   targetOptions?: TransferTargetOption[];
 }
@@ -44,6 +46,7 @@ export function TransferIntakeDialog({
   onClose,
   onSubmit,
   record,
+  resourceVersion = null,
   onConflictRefresh,
   targetOptions = DEFAULT_TRANSFER_TARGETS,
 }: TransferIntakeDialogProps) {
@@ -69,8 +72,12 @@ export function TransferIntakeDialog({
     `將收件 ${record.id} 轉交給 ${selectedTarget.name}。` +
     `此操作會變更指派的處理者與責任。前後值與交接說明會寫入 Audit 歷程。`;
 
+  const hasAuthority = Boolean(record.assignmentId) &&
+    Number.isSafeInteger(resourceVersion) && (resourceVersion ?? 0) >= 1;
+  const versionLabel = hasAuthority ? `v${resourceVersion}` : "UNAVAILABLE";
+
   function handleSubmit() {
-    if (busy) return;
+    if (busy || !hasAuthority) return;
     setLocalError(null);
 
     if (!handoffNote.trim()) {
@@ -128,7 +135,7 @@ export function TransferIntakeDialog({
         >
           收件編號：<strong>{record.id}</strong> · 目前負責人：
           <strong data-testid="transfer-record-owner">{record.owner || "未指派"}</strong> · 版本：
-          <span data-testid="transfer-record-version">v{record.version || 1}</span>
+          <span data-testid="transfer-record-version">{versionLabel}</span>
         </div>
 
         <div>
@@ -171,7 +178,7 @@ export function TransferIntakeDialog({
               409 OWNER_CONFLICT — 此收件的 owner 在你開啟後已變更
             </span>
             <span className={styles.errorMeta}>
-              目前 owner：{record.owner || "未指定"} · 版本 v{record.version || 1}
+              目前 owner：{record.owner || "未指定"} · 指派版本 {versionLabel}
             </span>
             <span className={styles.errorNext}>
               重新整理套用最新狀態後再送出 — 你的交接說明與選項已保留。
@@ -227,7 +234,7 @@ export function TransferIntakeDialog({
         <button
           className={styles.primaryButton}
           data-testid="transfer-submit-btn"
-          disabled={busy}
+          disabled={busy || !hasAuthority}
           onClick={handleSubmit}
           type="button"
         >

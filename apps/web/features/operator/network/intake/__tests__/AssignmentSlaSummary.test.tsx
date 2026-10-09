@@ -109,6 +109,24 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
     });
   });
 
+  it.each([
+    ["transfer", TransferIntakeDialog, "transfer-record-version", "transfer-submit-btn"],
+    ["pause", PauseSlaDialog, "pause-record-version", "pause-submit-btn"],
+  ] as const)("%s displays only resource authority and disables missing tokens", (_kind, Dialog, versionTestId, submitTestId) => {
+    const props = { busy: false, error: null, onClose: vi.fn(), onSubmit: vi.fn(), record: { ...sampleIntakeRecord, version: 71 } };
+    const html = renderToString(<Dialog {...props} resourceVersion={14} />);
+    expect(html).toContain(`data-testid="${versionTestId}">v14`);
+    expect(html).not.toContain(">v71");
+    for (const resourceVersion of [undefined, null, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const unavailable = renderToString(<Dialog {...props} resourceVersion={resourceVersion} />);
+      expect(unavailable).toContain(`data-testid="${versionTestId}">UNAVAILABLE`);
+      expect(unavailable).toMatch(new RegExp(`data-testid="${submitTestId}"[^>]*disabled`));
+    }
+    const missingId = renderToString(<Dialog {...props} record={{ ...props.record, assignmentId: null, slaInstanceId: null }} resourceVersion={14} />);
+    expect(missingId).toContain(`data-testid="${versionTestId}">UNAVAILABLE`);
+    expect(missingId).toMatch(new RegExp(`data-testid="${submitTestId}"[^>]*disabled`));
+  });
+
   describe("TransferIntakeDialog (VDC-001 & 409 Conflict Draft Preservation)", () => {
     it("renders target selection and handoff note ONLY per VDC-001", () => {
       const onSubmit = vi.fn();
@@ -520,6 +538,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
         <TransferIntakeDialog
           busy={false}
           error={error}
+          resourceVersion={record.version}
           onClose={() => {}}
           onConflictRefresh={() => {
             setRecord(refreshedRecord);
@@ -551,6 +570,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
         <PauseSlaDialog
           busy={false}
           error={error}
+          resourceVersion={record.version}
           onClose={() => {}}
           onConflictRefresh={() => {
             setRecord(refreshedRecord);

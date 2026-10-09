@@ -15,6 +15,8 @@ export interface PauseSlaDialogProps {
     riskAcknowledged: boolean;
   }) => void;
   record: AssistedIntake;
+  /** SLA concurrency token, never the unrelated intake version. */
+  resourceVersion?: number | null;
   onConflictRefresh?: () => void;
 }
 
@@ -29,6 +31,7 @@ export function PauseSlaDialog({
   onClose,
   onSubmit,
   record,
+  resourceVersion = null,
   onConflictRefresh,
 }: PauseSlaDialogProps) {
   const [reason, setReason] = useState("");
@@ -51,8 +54,12 @@ export function PauseSlaDialog({
     `將收件 ${record.id} 的 SLA 暫停，預計恢復時間：${formattedResumeText}。` +
     `此操作會暫停處理時效計時。前後狀態與暫停原因將寫入 Audit 歷程。`;
 
+  const hasAuthority = Boolean(record.slaInstanceId) &&
+    Number.isSafeInteger(resourceVersion) && (resourceVersion ?? 0) >= 1;
+  const versionLabel = hasAuthority ? `v${resourceVersion}` : "UNAVAILABLE";
+
   function handleSubmit() {
-    if (busy) return;
+    if (busy || !hasAuthority) return;
     setLocalError(null);
 
     if (!reason.trim()) {
@@ -123,7 +130,7 @@ export function PauseSlaDialog({
         >
           收件編號：<strong>{record.id}</strong> · 目前負責人：
           <strong data-testid="pause-record-owner">{record.owner || "未指派"}</strong> · 版本：
-          <span data-testid="pause-record-version">v{record.version || 1}</span>
+          <span data-testid="pause-record-version">{versionLabel}</span>
         </div>
 
         <div>
@@ -161,7 +168,7 @@ export function PauseSlaDialog({
               409 OWNER_CONFLICT — 此收件的 owner 在你開啟後已變更
             </span>
             <span className={styles.errorMeta}>
-              目前 owner：{record.owner || "未指定"} · 版本 v{record.version || 1}
+              目前 owner：{record.owner || "未指定"} · SLA 版本 {versionLabel}
             </span>
             <span className={styles.errorNext}>
               重新整理套用最新狀態後再送出 — 你的暫停原因與預計恢復時間已保留。
@@ -217,7 +224,7 @@ export function PauseSlaDialog({
         <button
           className={styles.primaryButton}
           data-testid="pause-submit-btn"
-          disabled={busy}
+          disabled={busy || !hasAuthority}
           onClick={handleSubmit}
           type="button"
         >
