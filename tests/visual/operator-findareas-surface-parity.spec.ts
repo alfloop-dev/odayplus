@@ -104,30 +104,56 @@ for (const width of [1440, 1024, 390]) {
     await page.keyboard.press("Enter");
     await expect(fit).toHaveAttribute("aria-pressed", "true");
     await expect(page).toHaveURL(/lens=fit/);
-    const navigation = [{ action: "selected-fit", url: page.url() }];
-    await page.goBack();
-    navigation.push({ action: "back", url: page.url() });
-    await save(info, `navigation-${width}.json`, navigation);
-    await expect(page).toHaveURL(/lens=demand/);
-    await expect(panel.getByLabel("HeatZone lenses").getByRole("button", { name: "需求熱度", exact: true })).toHaveAttribute("aria-pressed", "true");
-    await page.goForward();
-    navigation.push({ action: "forward", url: page.url() });
-    await save(info, `navigation-${width}.json`, navigation);
-    await expect(page).toHaveURL(/lens=fit/);
-    await expect(panel.getByLabel("HeatZone lenses").getByRole("button", { name: "品牌適配", exact: true })).toHaveAttribute("aria-pressed", "true");
+    const navigation: Array<Record<string, unknown>> = [{ action: "selected-fit", url: page.url() }];
+    const unexpectedWrites: string[] = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname.startsWith("/api/v1/operator/network-") && !["GET", "HEAD", "OPTIONS"].includes(request.method())) {
+        unexpectedWrites.push(`${request.method()} ${request.url()}`);
+      }
+    });
+    async function verifyRestoration(action: string, zoneId: string, lens: "demand" | "fit") {
+      // Save the raw URL before assertions too, so a failure cannot lose its
+      // navigation receipt. A matching fixture ID alone is NOT hydration proof.
+      navigation.push({ action, url: page.url() });
+      await save(info, `navigation-${width}.json`, navigation);
+      await expect.poll(() => new URL(page.url()).searchParams.get("hz")).toBe(zoneId);
+      await expect.poll(() => new URL(page.url()).searchParams.get("lens")).toBe(lens);
+      const read = await request.get(`${api}/api/v1/operator/network-listings?selectedHeatZoneId=${zoneId}&lens=${lens}`, { headers });
+      expect(read.status()).toBe(200);
+      const snapshot = await read.json();
+      const restoredZone = snapshot.heatZones.find((zone: { id: string }) => zone.id === zoneId);
+      expect(restoredZone).toBeTruthy();
+      await expect(detail).toContainText(zoneId);
+      await expect(detail).toContainText(restoredZone.label, { timeout: 30_000 });
+      await expect(panel.getByLabel("HeatZone lenses").getByRole("button", { name: lens === "fit" ? "品牌適配" : "需求熱度", exact: true })).toHaveAttribute("aria-pressed", "true");
+      await expect(panel.getByTestId("heat-zone-map-loading")).toHaveCount(0, { timeout: 30_000 });
+      await expect(panel.getByTestId("heat-zone-map-canvas")).toBeVisible();
+      await expect(page.getByText("network-listings API unavailable; using local fixtures")).toHaveCount(0);
+      const geometry = { detail: await measure(detail), map: await measure(panel.getByTestId("heat-zone-map-canvas")), document: await page.evaluate(() => ({ width: innerWidth, scrollWidth: window.document.documentElement.scrollWidth })) };
+      expect(geometry.document.scrollWidth).toBeLessThanOrEqual(width);
+      for (const box of [geometry.detail, geometry.map]) {
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(width);
+        expect(box.height).toBeGreaterThan(100);
+      }
+      await shot(page, info, `after-${action}-${width}`);
+      navigation[navigation.length - 1] = { action, url: page.url(), readStatus: read.status(), zoneId, label: restoredZone.label, lens, geometry };
+      await save(info, `navigation-${width}.json`, navigation);
+    }
+    // Reload FIRST, before waiting for the new API snapshot: back/forward must
+    // survive a fresh Next router/component boot, including changing the zone.
     await page.reload();
-    navigation.push({ action: "reload", url: page.url() });
-    await save(info, `navigation-${width}.json`, navigation);
-    await expect(page.getByLabel("Selected HeatZone detail")).toContainText("HZ-02");
-    await expect(page.getByLabel("HeatZone lenses").getByRole("button", { name: "品牌適配", exact: true })).toHaveAttribute("aria-pressed", "true");
-    // A restored component can briefly show a fixture fallback. Wait for the
-    // actual scoped API zone and the real canvas, not merely the matching ID.
-    const restoredZone = original.heatZones.find((zone: { id: string }) => zone.id === "HZ-02");
-    expect(restoredZone).toBeTruthy();
-    await expect(panel.getByLabel("Selected HeatZone detail")).toContainText(restoredZone.label, { timeout: 30_000 });
-    await expect(panel.getByTestId("heat-zone-map-loading")).toHaveCount(0, { timeout: 30_000 });
-    await expect(panel.getByTestId("heat-zone-map-canvas")).toBeVisible();
-    await expect(page.getByText("network-listings API unavailable; using local fixtures")).toHaveCount(0);
+    await verifyRestoration("reload-before-back", "HZ-02", "fit");
+    await page.goBack();
+    await verifyRestoration("back-lens", "HZ-02", "demand");
+    await page.goBack();
+    await verifyRestoration("back-zone", "HZ-01", "demand");
+    await page.goForward();
+    await verifyRestoration("forward-zone", "HZ-02", "demand");
+    await page.goForward();
+    await verifyRestoration("forward-lens", "HZ-02", "fit");
+    await page.reload();
+    await verifyRestoration("reload-after-forward", "HZ-02", "fit");
     // Later-spec search remains reachable without covering the map or detail.
     await panel.locator("summary").click();
     await expect(panel.getByTestId("geocoder-query-input")).toBeVisible();
@@ -143,6 +169,8 @@ for (const width of [1440, 1024, 390]) {
     expect(final.status()).toBe(200);
     const payload = await final.json();
     expect(payload).toEqual(original);
+    expect(unexpectedWrites).toEqual([]);
+    await save(info, `unexpected-writes-${width}.json`, unexpectedWrites);
     await save(info, `unchanged-receipt-${width}.json`, payload);
   });
 }
