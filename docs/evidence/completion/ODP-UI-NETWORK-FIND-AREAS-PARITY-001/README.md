@@ -64,6 +64,14 @@ VDC-002 rather than the design file.
   下一步：查看本區物件並轉為候選點). The amber block notice now appears only when
   the step the operator must do next is blocked; later steps waiting for a
   candidate already carry 缺資料 tags. This removed 43px above the tabs.
+- **查看本區候選點 is zone-scoped** (review reopen on bc3a7d4e1). The action
+  opens Candidates with `zone=<HeatZone id>` in the URL, so reload and
+  back/forward keep the scope. The scope applies to live scoring rows and
+  fixture rows alike: board, pipeline counts, default selection and 執行批次評分
+  (sent with the zone's `candidateIds`, never an empty list, which the API
+  reads as "all"). A 本區：<label>（N） chip and 顯示全部候選點 button clear it;
+  any other tab change drops `zone`. A zone with no candidates shows
+  「<label> 尚無候選點。」 instead of another zone's rows.
 - Store / competitor markers in the design legend are not drawn: the map has
   no store or competitor data. The legend lists what the map shows.
 
@@ -91,3 +99,15 @@ VDC-002 rather than the design file.
   (`/operator` first load 296.1 kB of 300 kB; the map and basemap stay in the
   lazily loaded map chunk).
 - Playwright inventory: 18 specs / 126 tests (`product_e2e_receipt.py`).
+
+### Review repair (zone-scoped candidates)
+
+- `NetworkFindAreasPackage10.test.tsx`: HZ-01 and HZ-02 each show only their
+  own candidate (and preselect it) after 查看本區候選點; an added HZ-03 with no
+  candidates shows the empty scoped board; `tab=candidates&zone=HZ-02` restores
+  the scope, 顯示全部候選點 and a tab-bar change drop it.
+  `Package10NetworkPanels.test.tsx`: scoped counts, selection and batch ids;
+  empty zone disables the batch run. Reverting only the action wiring to
+  `changeActiveTab(2)` fails 3 of the new tests.
+- `npm run test --workspace=apps/web` — 67 files / 690 tests pass; typecheck,
+  lint, build pass; bundle budget `/operator` 296.5 kB of 300 kB.

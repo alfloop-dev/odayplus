@@ -163,6 +163,7 @@ const networkTabs = [
 ] as const;
 
 const EMPTY_CANDIDATES: Candidate[] = [];
+const CANDIDATE_ZONE_PARAM = "zone";
 const EMPTY_HEAT_ZONES: OperatorHeatZone[] = [];
 const EMPTY_LISTINGS: Listing[] = [];
 const EMPTY_LISTING_SOURCES: ListingSource[] = [];
@@ -583,9 +584,22 @@ export function NetworkFindAreasWorkspace({
   // on screen. The selection is therefore committed to workspace state at click
   // time and stays authoritative until the URL reports a different tab, at
   // which point the URL (deep link, back/forward) takes over again.
-  const [tabOverride, setTabOverride] = useState<{ from: number; requested: number } | null>(null);
+  const [tabOverride, setTabOverride] = useState<{
+    from: number;
+    requested: number;
+    candidateZoneId: string | null;
+  } | null>(null);
   const overrideApplies = tabOverride !== null && tabOverride.from === urlTab;
   const activeTab = overrideApplies ? tabOverride.requested : urlTab;
+  // 「查看本區候選點」 scopes the Candidates tab to one HeatZone. The scope is
+  // carried in the URL (`zone=<heatZoneId>`) so a reload or back/forward
+  // restores it, and in the click-time override for the same reason the tab is.
+  const candidateZoneId =
+    activeTab !== 2
+      ? null
+      : overrideApplies
+        ? tabOverride.candidateZoneId
+        : searchParams.get(CANDIDATE_ZONE_PARAM) || null;
 
   useEffect(() => {
     setTabOverride((current) => (current !== null && current.from !== urlTab ? null : current));
@@ -713,8 +727,15 @@ export function NetworkFindAreasWorkspace({
   );
 
   const changeActiveTab = useCallback((tabIndex: number, extraParams?: Record<string, string>) => {
-    setTabOverride({ from: urlTab, requested: tabIndex });
+    setTabOverride({
+      from: urlTab,
+      requested: tabIndex,
+      candidateZoneId: tabIndex === 2 ? extraParams?.[CANDIDATE_ZONE_PARAM] || null : null,
+    });
     const params = new URLSearchParams(searchParams.toString());
+    // The zone scope only lives as long as the navigation that asked for it;
+    // any other tab change (tab bar, stepper, convert) shows every candidate.
+    params.delete(CANDIDATE_ZONE_PARAM);
     for (const [key, value] of Object.entries(extraParams ?? {})) params.set(key, value);
     const href = buildNetworkTabHref(
       pathname,
@@ -1017,8 +1038,16 @@ export function NetworkFindAreasWorkspace({
     );
   }
 
-  async function scoreAllCandidates() {
-    await postScoringAction("score", {}, "batch", "r4-006-score-batch");
+  async function scoreAllCandidates(candidateIds?: string[]) {
+    // An empty candidateIds list means "every candidate" server-side, so a
+    // scoped batch is only sent with at least one id.
+    if (candidateIds && candidateIds.length === 0) return;
+    await postScoringAction(
+      "score",
+      candidateIds ? { candidateIds } : {},
+      "batch",
+      candidateIds ? `r4-006-score-batch-${candidateIds.join(",")}` : "r4-006-score-batch",
+    );
   }
 
   async function toggleCompareCandidate(candidateId: string) {
@@ -1370,6 +1399,12 @@ export function NetworkFindAreasWorkspace({
           viewModel.candidatePipeline.some((row) => row.id === "CS-1001"),
         )
       : []);
+  const candidateZoneScope = candidateZoneId
+    ? {
+        id: candidateZoneId,
+        label: heatZones.find((zone) => zone.id === candidateZoneId)?.label ?? candidateZoneId,
+      }
+    : null;
   const selectedZoneLabel = selectedZone?.label ?? heatZones.find((zone) => zone.id === effectiveSelectedId)?.label;
 
   const bindingLoadStates: OperatorDataAvailability[] = [liveHeatZones, liveCandidates].map(
@@ -1500,8 +1535,10 @@ export function NetworkFindAreasWorkspace({
             candidates={scoringSnapshot?.candidates ?? []}
             fallbackRows={fixturesAllowed ? viewModel.candidatePipeline : []}
             onScore={runSiteScore}
+            onClearZoneScope={() => changeActiveTab(2)}
             onScoreAll={scoreAllCandidates}
             onToggleCompare={toggleCompareCandidate}
+            zoneScope={candidateZoneScope}
           />
         ) : activeTab === 3 ? (
           <SiteScorePanel
@@ -1563,7 +1600,9 @@ export function NetworkFindAreasWorkspace({
             onToggleTracked={toggleTracked}
             onSourceListings={sourceListings}
             onAddListingFromUrl={addListingFromUrl}
-            onViewCandidates={() => changeActiveTab(2)}
+            onViewCandidates={() =>
+              selectedZone && changeActiveTab(2, { [CANDIDATE_ZONE_PARAM]: selectedZone.id })
+            }
             onScoreCandidate={scoreCandidate}
             onSubmitReview={submitReview}
           />

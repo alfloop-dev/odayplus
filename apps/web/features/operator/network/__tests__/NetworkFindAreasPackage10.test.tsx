@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiBinding } from "../../../../src/lib/api/binding";
 import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
 import type { Candidate, OperatorHeatZone } from "../../types";
+import * as fixtures from "../../fixtures";
 import { ExpansionStepper } from "../ExpansionStepper";
 
 // Package 10 Find Areas content parity (ODP-UI-NETWORK-FIND-AREAS-PARITY-001).
@@ -38,14 +39,23 @@ function unavailableBinding<T>(): ApiBinding<T> {
   };
 }
 
-function renderFindAreas(activeRoleId: "expansion-manager" | "ops-lead" = "expansion-manager") {
+function renderFindAreas(
+  activeRoleId: "expansion-manager" | "ops-lead" = "expansion-manager",
+  zones?: { heatZones?: OperatorHeatZone[]; selectedHeatZoneId?: string },
+) {
   return render(
     <NetworkFindAreasWorkspace
       activeRoleId={activeRoleId}
+      heatZones={zones?.heatZones}
       liveCandidates={unavailableBinding<Candidate>()}
       liveHeatZones={unavailableBinding<OperatorHeatZone>()}
+      selectedHeatZoneId={zones?.selectedHeatZoneId}
     />,
   );
+}
+
+function lastPushedParams() {
+  return new URL(String(navigation.push.mock.calls.at(-1)?.[0]), "http://local").searchParams;
 }
 
 const LENS_LABELS = [
@@ -171,6 +181,57 @@ describe("Network Find Areas — Package 10 content", () => {
     renderFindAreas();
     fireEvent.click(screen.getByRole("button", { name }));
     expect(new URL(String(navigation.push.mock.calls.at(-1)?.[0]), "http://local").searchParams.get("tab")).toBe(tab);
+  });
+
+  // Fixtures: CS-1002 sits in HZ-01, CS-1003 in HZ-02.
+  it.each([
+    ["HZ-01", "CS-1002", "CS-1003"],
+    ["HZ-02", "CS-1003", "CS-1002"],
+  ])("scopes 查看本區候選點 for %s to that zone's candidates", (zoneId, inZone, otherZone) => {
+    renderFindAreas("expansion-manager", { selectedHeatZoneId: zoneId });
+    fireEvent.click(screen.getByRole("button", { name: "查看本區候選點（1）" }));
+
+    expect(lastPushedParams().get("tab")).toBe("candidates");
+    expect(lastPushedParams().get("zone")).toBe(zoneId);
+    const board = screen.getByTestId("network-candidate-table");
+    expect(within(board).getByTestId(`candidate-row-${inZone}`)).toHaveAttribute("data-active", "true");
+    expect(within(board).queryByTestId(`candidate-row-${otherZone}`)).toBeNull();
+  });
+
+  it("shows an empty scoped board for a zone without candidates", () => {
+    const { HEAT_ZONE_FIXTURES } = fixtures;
+    const emptyZone: OperatorHeatZone = { ...HEAT_ZONE_FIXTURES[1], id: "HZ-03", label: "中山南京東路", rank: 3 };
+    renderFindAreas("expansion-manager", {
+      heatZones: [...HEAT_ZONE_FIXTURES, emptyZone],
+      selectedHeatZoneId: "HZ-03",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "查看本區候選點（0）" }));
+
+    expect(lastPushedParams().get("zone")).toBe("HZ-03");
+    expect(screen.queryByTestId("network-candidate-table")).toBeNull();
+    expect(screen.queryByTestId(/^candidate-row-/)).toBeNull();
+    expect(screen.getByTestId("candidate-empty")).toHaveTextContent("中山南京東路 尚無候選點。");
+    expect(screen.getByTestId("candidate-score-all")).toBeDisabled();
+  });
+
+  it("restores the zone scope from the URL and clears it on request or tab change", () => {
+    navigation.search = "ws=network&tab=candidates&zone=HZ-02";
+    renderFindAreas();
+    const board = screen.getByTestId("network-candidate-table");
+    expect(within(board).getByTestId("candidate-row-CS-1003")).toBeInTheDocument();
+    expect(within(board).queryByTestId("candidate-row-CS-1002")).toBeNull();
+    expect(screen.getByTestId("candidate-zone-scope")).toHaveTextContent("本區：大安復興南路（1）");
+
+    fireEvent.click(screen.getByTestId("candidate-zone-scope-clear"));
+    expect(lastPushedParams().get("tab")).toBe("candidates");
+    expect(lastPushedParams().has("zone")).toBe(false);
+    expect(screen.queryByTestId("candidate-zone-scope")).toBeNull();
+    expect(screen.getByTestId("candidate-row-CS-1002")).toBeInTheDocument();
+    expect(screen.getByTestId("candidate-row-CS-1003")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("network-tab-3"));
+    expect(lastPushedParams().get("tab")).toBe("score");
+    expect(lastPushedParams().has("zone")).toBe(false);
   });
 });
 

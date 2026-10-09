@@ -15,23 +15,33 @@ import {
 // exposes the SiteScore run action per candidate. Candidates whose gate is
 // blocked (e.g. CS-1003 low geocode) are shown as "缺資料 — 無法評分" and their
 // run action is disabled — scoring is refused server-side as well.
+// With a zoneScope (Find Areas 「查看本區候選點」) every count, the board, the
+// selection and the batch run cover only that HeatZone's candidates.
 
 export function CandidatePanel({
   busyCandidateId,
   candidates,
   fallbackRows,
+  onClearZoneScope,
   onScore,
   onScoreAll,
   onToggleCompare,
+  zoneScope,
 }: {
   busyCandidateId?: string | null;
   candidates: ScoringCandidate[];
   fallbackRows: CandidatePipelineRow[];
+  onClearZoneScope?: () => void;
   onScore?: (candidateId: string) => void;
-  onScoreAll?: () => void;
+  onScoreAll?: (candidateIds?: string[]) => void;
   onToggleCompare?: (candidateId: string) => void;
+  zoneScope?: { id: string; label: string } | null;
 }) {
-  const rows = candidates.length ? candidates : fallbackRows.map(fallbackToCandidate);
+  const zoneId = zoneScope?.id;
+  const rows = useMemo(() => {
+    const allRows = candidates.length ? candidates : fallbackRows.map(fallbackToCandidate);
+    return zoneId ? allRows.filter((row) => row.heatZoneId === zoneId) : allRows;
+  }, [candidates, fallbackRows, zoneId]);
   const [selectedId, setSelectedId] = useState(rows[0]?.id ?? "");
   const [pipelineFilter, setPipelineFilter] = useState<PipelineFilter>("all");
   const filteredRows = useMemo(
@@ -67,11 +77,23 @@ export function CandidatePanel({
           <p>從 Listing 建立候選點，確認資料完整度後送 SiteScore。</p>
         </div>
         <div className={styles.detailActions}>
+          {zoneScope ? (
+            <>
+              <span className={styles.toneBadge} data-testid="candidate-zone-scope" data-tone="watch">
+                本區：{zoneScope.label}（{rows.length}）
+              </span>
+              {onClearZoneScope ? (
+                <button data-testid="candidate-zone-scope-clear" onClick={onClearZoneScope} type="button">
+                  顯示全部候選點
+                </button>
+              ) : null}
+            </>
+          ) : null}
           <span className={styles.muted}>{rows.length} candidates · 資料完整度 Gate 鎖評分</span>
           <button
             data-testid="candidate-score-all"
             disabled={!onScoreAll || scoreable.length === 0}
-            onClick={() => onScoreAll?.()}
+            onClick={() => onScoreAll?.(zoneScope ? scoreable.map((row) => row.id) : undefined)}
             type="button"
           >
             執行批次評分{scoreable.length ? `（${scoreable.length}）` : ""}
@@ -187,7 +209,9 @@ export function CandidatePanel({
           </aside>
         </div>
       ) : (
-        <div className={styles.emptyState}>No candidates yet</div>
+        <div className={styles.emptyState} data-testid="candidate-empty">
+          {zoneScope ? `${zoneScope.label} 尚無候選點。` : "No candidates yet"}
+        </div>
       )}
     </div>
   );
