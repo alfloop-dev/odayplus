@@ -1,0 +1,71 @@
+{
+  "boxes": {
+    "panel": {
+      "x": 20,
+      "y": 360.703125,
+      "width": 1400,
+      "height": 1030.296875,
+      "scrollWidth": 1400,
+      "columns": "206px 836px 330px",
+      "overflowX": "visible"
+    },
+    "lenses": {
+      "x": 20,
+      "y": 360.703125,
+      "width": 206,
+      "height": 635.359375,
+      "scrollWidth": 206,
+      "columns": "206px",
+      "overflowX": "visible"
+    },
+    "firstLens": {
+      "x": 35,
+      "y": 374.703125,
+      "width": 176,
+      "height": 47.796875,
+      "scrollWidth": 174,
+      "columns": "154px",
+      "overflowX": "visible"
+    },
+    "map": {
+      "x": 242,
+      "y": 405.390625,
+      "width": 832,
+      "height": 450.140625,
+      "scrollWidth": 832,
+      "columns": "none",
+      "overflowX": "visible"
+    },
+    "tray": {
+      "x": 240,
+      "y": 950.734375,
+      "width": 836,
+      "height": 361.046875,
+      "scrollWidth": 836,
+      "columns": "none",
+      "overflowX": "visible"
+    },
+    "detail": {
+      "x": 1090,
+      "y": 360.703125,
+      "width": 330,
+      "height": 1030.296875,
+      "scrollWidth": 328,
+      "columns": "300px",
+      "overflowX": "visible"
+    }
+  },
+  "document": {
+    "width": 1440,
+    "scrollWidth": 1440
+  },
+  "design": {
+    "x": 20,
+    "y": 346.84375,
+    "width": 1400,
+    "height": 737.1875,
+    "scrollWidth": 1400,
+    "columns": "206px 836px 330px",
+    "overflowX": "visible"
+  }
+}
