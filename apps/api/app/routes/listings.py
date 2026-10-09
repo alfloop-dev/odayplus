@@ -1288,14 +1288,20 @@ else:
                 val = self.op_repo.get_promotion(promotion_decision_id)
                 if val:
                     val.setdefault("proposer_subject_id", val.get("proposer"))
+                    val["reviewer_subject_id"] = val.get("reviewer") or val.get("reviewer_subject_id")
                     return val
             val = self.active_store.promotions.get(promotion_decision_id)
             if val:
                 val.setdefault("proposer_subject_id", val.get("proposer"))
+                val["reviewer_subject_id"] = val.get("reviewer") or val.get("reviewer_subject_id")
             return val
 
         def save_promotion(self, promo: dict[str, Any]) -> None:
             promo.setdefault("proposer_subject_id", promo.get("proposer"))
+            # The saga stores the committed actor as `reviewer`. Persist the
+            # contract projection too, not just the POST response decoration:
+            # reload/lost-response GET must describe the same second actor.
+            promo["reviewer_subject_id"] = promo.get("reviewer") or promo.get("reviewer_subject_id")
             if self.op_repo:
                 self.op_repo.save_promotion(promo)
             self.active_store.promotions[promo["promotion_decision_id"]] = promo
@@ -1330,6 +1336,7 @@ else:
                 values = list(self.active_store.promotions.values())
             for value in values:
                 value.setdefault("proposer_subject_id", value.get("proposer"))
+                value["reviewer_subject_id"] = value.get("reviewer") or value.get("reviewer_subject_id")
             return values
 
         def get_promotion_for_intake(self, intake_id: str) -> dict[str, Any] | None:
@@ -3350,12 +3357,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> PromotionDecisionReceipt:
-            op_repo = getattr(request.app.state, "operator_intake_repository", None)
-            val = None
-            if op_repo:
-                val = op_repo.get_promotion(promotion_decision_id)
-            if val is None:
-                val = active.promotions.get(promotion_decision_id)
+            val = V1PromotionRepositoryAdapter(active, request.app.state).get_promotion(promotion_decision_id)
             if val is None:
                 raise HTTPException(404, "promotion decision not found")
 
