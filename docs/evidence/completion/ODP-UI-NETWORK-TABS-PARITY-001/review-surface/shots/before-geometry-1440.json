@@ -1,0 +1,62 @@
+{
+  "boxes": {
+    "panel": {
+      "x": 20,
+      "y": 360.703125,
+      "width": 1400,
+      "height": 575.046875,
+      "scrollWidth": 1400,
+      "columns": "1400px",
+      "radius": "0px"
+    },
+    "queue": {
+      "x": 20,
+      "y": 360.703125,
+      "width": 390,
+      "height": 338,
+      "scrollWidth": 390,
+      "columns": "none",
+      "radius": "0px"
+    },
+    "card": {
+      "x": 20,
+      "y": 581.703125,
+      "width": 390,
+      "height": 117,
+      "scrollWidth": 388,
+      "columns": "none",
+      "radius": "11px"
+    },
+    "detail": {
+      "x": 424,
+      "y": 360.703125,
+      "width": 996,
+      "height": 575.046875,
+      "scrollWidth": 994,
+      "columns": "none",
+      "radius": "12px"
+    },
+    "metrics": {
+      "x": 443,
+      "y": 494.046875,
+      "width": 958,
+      "height": 58.53125,
+      "scrollWidth": 956,
+      "columns": "225px 225px 225px 225px",
+      "radius": "10px"
+    }
+  },
+  "document": {
+    "width": 1440,
+    "scrollWidth": 1440
+  },
+  "design": {
+    "x": 20,
+    "y": 346.84375,
+    "width": 1400,
+    "height": 721.15625,
+    "scrollWidth": 1400,
+    "columns": "390px 996px",
+    "radius": "0px"
+  }
+}
