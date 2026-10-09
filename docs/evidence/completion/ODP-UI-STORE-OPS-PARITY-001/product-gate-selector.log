@@ -1,0 +1,14 @@
+[WebServer] 2026/10/09 12:51:45 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-store-ops-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 12:51:52 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 12:51:52 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [1754066]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8107 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T12:51:57.762494+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "180db7c1-2a3a-4f4c-9fb2-79a267608e6d", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium] › tests/e2e/e2e-operator-console.spec.ts:394:5 › ODP-OC-PROD-014 productization gate rejects iframe-only or non-API-backed /operator (8.4s)
+
+  1 passed (56.9s)

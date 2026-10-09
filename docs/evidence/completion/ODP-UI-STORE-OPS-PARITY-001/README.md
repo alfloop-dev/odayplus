@@ -5,7 +5,7 @@
 ## 範圍與收據
 
 - 修正前：`963090d6fc320e973c6c2d993b5342fbebbbe3e3`（當時 `origin/dev`）。
-- UI 程式與截圖測試來源：`3e9ecc94cec6dc66c8bfa33e020495bf4760204b`；`9ea09a8cc5e6` 只封存本目錄。後續 CI 修正僅移動 supplemental suite／config、接上既有 CI job，未改 UI 或截圖內容；見下方 CI 修復紀錄。
+- UI 程式與截圖測試來源：`3e9ecc94cec6dc66c8bfa33e020495bf4760204b`；`9ea09a8cc5e6` 只封存本目錄。後續 CI 修正移動 supplemental suite／config、接上既有 CI job，並修正 productization gate 的中文 CTA selector，未改 UI 或截圖內容；見下方 CI 修復紀錄。
 - 設計：`docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/oday-plus-console-r7-standalone.html`。
 - 設計 SHA-256：`1aefb8068faa39666599ceeafe74ba24f1ddc8abd57ba9a6513a724abaee7d0f`，與 Review 003 相符。
 - Chromium `149.0.7827.55`、Playwright `1.61.1`、Node `v22.23.2`；viewport 為 1440×900、390×900，另驗證 1024×900 的內容幾何。
@@ -113,6 +113,16 @@ PR #1438 原 head `9ea09a8cc5e6` 的 [CI run 37926859706](https://github.com/alf
 - 首次本機 `uv run --frozen pytest ...` 使用預設 Python 3.14，因 `pgserver` 只提供 cp312 wheel 而 **exit 2**，未開始測試、未視為成功；[error log](ci-repair-python-default-error.log)。改用既有 CI 指定的 Python 3.12 後原測試命令完成 exit 0。
 
 原截圖與 verification.json 留存原時間／指令（當時 spec 位於 `tests/e2e/`），不改寫歷史收據。新 CI 修復沒有更動渲染，因此不以新截圖偽裝 UI 增量。完整 product E2E、全產品 Python suite 與遠端 required checks 由重新提交後的 CI 執行；此本機紀錄不宣稱遠端全綠，不先 done。
+
+### Productization gate 中文 CTA selector 修復
+
+提交 `cc963ff5459367ec39c92fee749dcbb2459f900a` 的 [CI run 37929996581](https://github.com/alfloop-dev/odayplus/actions/runs/37929996581/job/113818211136) 已完成：product E2E **121 passed／1 failed**，失敗為 `ODP-OC-PROD-014` 等待舊英文 `Submit Triage` 超時，不是 infra。其他 required CI lanes 成功；不能把 121 passed 當作全綠。
+
+修復 anchor `41fab06000858f6bac3f2d88ce205906f00079a7` 只更動 `tests/e2e/e2e-operator-console.spec.ts`：將 submit selector 限定於 `Dialog Triage`，匹配實際「完成 Triage」按鈕，避免與 action rail 同名 opener 混淆。保留真實 click、API read/write、Idempotency-Key／X-Correlation-Id、禁止 iframe 的原有斷言；沒有 mock 此 productization test、跳過 gate、擴大 timeout、放寬 acceptance inventory 或回退中文 UI。
+
+[product-gate-selector-verification.json](product-gate-selector-verification.json) 綁定修復來源、test SHA-256 及原 terminal exit codes；[原 Playwright log](product-gate-selector.log) 保存結果。使用根 Playwright config 啟動獨立本機 FastAPI durable SQLite 與 fixture web，設定 `ODP_OPERATOR_PRODUCT_GATE=1`，**1 passed／exit 0**，無 retry。這證明原 productization assertions 在修復後執行通過，不宣稱完整 Docker business suite、live writes 或發布核准。
+
+根 `npx playwright test --list` **exit 0，122 tests／18 files**，見 [inventory log](product-gate-inventory.log)；`python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge` **exit 0**；`git diff --check` **exit 0**。未更動 UI，故不重產或改寫既有截圖／幾何收據。完整遠端 required CI 仍由重新提交 PR #1438 觸發，審查與合併前不 done。
 
 ## VDC 邊界與審查
 
