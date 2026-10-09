@@ -1238,10 +1238,7 @@ export function authoritativeAssignmentVersion(
   record: AssistedIntake,
   receipt?: AssignmentReceipt,
 ): number | null {
-  const raw = record as AssistedIntake & {
-    assignmentVersion?: unknown;
-    assignment_version?: unknown;
-  };
+  const raw = record as AssistedIntake & { assignment_version?: unknown };
   if (receipt && receipt.assignment_id !== record.assignmentId) return null;
   return validResourceVersion(receipt ? receipt.version : raw.assignmentVersion ?? raw.assignment_version);
 }
@@ -1250,10 +1247,7 @@ export function authoritativeSlaVersion(
   record: AssistedIntake,
   receipt?: SlaReceipt,
 ): number | null {
-  const raw = record as AssistedIntake & {
-    slaVersion?: unknown;
-    sla_version?: unknown;
-  };
+  const raw = record as AssistedIntake & { sla_version?: unknown };
   if (receipt && receipt.sla_instance_id !== record.slaInstanceId) return null;
   return validResourceVersion(receipt ? receipt.version : raw.slaVersion ?? raw.sla_version);
 }

@@ -1216,6 +1216,203 @@ def test_assignment_actions(client: TestClient) -> None:
 
 
 
+def test_detail_projects_current_assignment_token_after_real_actions(client: TestClient) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": f"https://example.com/listings/resource-version-{uuid4()}",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-token-submit-{uuid4()}"},
+    )
+    assert submitted.status_code == 202
+    path = f"/api/v1/intakes/{submitted.json()['intake_id']}"
+    unassigned = client.get(path, headers=HEADERS_A)
+    assert unassigned.status_code == 200
+    assert unassigned.json()["assignment_id"] is None
+    assert unassigned.json()["assignment_version"] is None
+    assert unassigned.json()["sla_version"] is None
+
+    assigned = client.put(
+        f"{path}/assignment",
+        json={
+            "owner_subject_id": ACTOR_A,
+            "owner_role": "reviewer",
+            "due_at": "2026-07-25T12:00:00Z",
+            "reason": "Assign resource-version triage",
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-token-assign-{uuid4()}",
+            "If-Match": unassigned.headers["ETag"],
+        },
+    )
+    assert assigned.status_code == 200
+    receipt = assigned.json()
+    assignment_path = f"/api/v1/assignments/{receipt['assignment_id']}/actions"
+    claimed = client.post(
+        f"{assignment_path}/claim",
+        json={"reason": "Claim for resource-version triage"},
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-token-claim-{uuid4()}",
+            "If-Match": assigned.headers["ETag"],
+        },
+    )
+    assert claimed.status_code == 200
+    reread = client.get(path, headers=HEADERS_A)
+    assert reread.status_code == 200
+    detail = reread.json()
+    assert detail["assignment_id"] == receipt["assignment_id"]
+    assert detail["assignment_status"] == "CLAIMED"
+    assert detail["assignment_version"] == claimed.json()["version"]
+    assert detail["assignment_version"] != detail["version"]
+    assert reread.headers["ETag"] == f'W/"{detail["version"]}"'
+
+    transfer_body = {
+        "target_owner_subject_id": ACTOR_C,
+        "target_owner_role": "reviewer",
+        "reason": "Transfer resource-version triage",
+        "handoff_note": "Continue the independent triage",
+    }
+    stale = client.post(
+        f"{assignment_path}/transfer",
+        json=transfer_body,
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-token-stale-{uuid4()}",
+            "If-Match": reread.headers["ETag"],
+        },
+    )
+    assert stale.status_code == 409
+    transferred = client.post(
+        f"{assignment_path}/transfer",
+        json=transfer_body,
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-token-transfer-{uuid4()}",
+            "If-Match": f'W/"{detail["assignment_version"]}"',
+        },
+    )
+    assert transferred.status_code == 200
+    final = client.get(path, headers=HEADERS_A)
+    assert final.status_code == 200
+    assert final.json()["assignment_version"] == transferred.json()["version"]
+    assert final.json()["assignment_status"] == "TRANSFERRED"
+    assert final.json()["version"] == detail["version"]
+    denied = client.get(path, headers=HEADERS_B)
+    assert denied.status_code == 403
+
+
+def test_detail_projects_sla_token_after_actions_on_fixture_resource(client: TestClient) -> None:
+    # The contract API has no SLA provisioning endpoint. Seed only the linked
+    # resource fixture; pause/resume and detail reads below are actual HTTP
+    # calls. This is not proof of Operator provisioning or durable storage.
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": f"https://example.com/listings/sla-token-{uuid4()}",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-sla-token-submit-{uuid4()}"},
+    )
+    assert submitted.status_code == 202
+    intake_id = submitted.json()["intake_id"]
+    sla_id = str(uuid4())
+    store = _store_with_intake(intake_id)
+    store.slas[sla_id] = {
+        "sla_instance_id": sla_id,
+        "intake_id": intake_id,
+        "tenant_id": TENANT_A,
+        "state": "ON_TRACK",
+        "due_at": "2026-07-25T12:00:00Z",
+        "paused_duration_seconds": 0,
+        "version": 23,
+        "audit_event_id": str(uuid4()),
+        "correlation_id": str(uuid4()),
+    }
+    path = f"/api/v1/intakes/{intake_id}"
+    before = client.get(path, headers=HEADERS_A)
+    assert before.status_code == 200
+    assert before.json()["sla_instance_id"] == sla_id
+    assert before.json()["sla_version"] == 23
+    pause = client.post(
+        f"/api/v1/sla-instances/{sla_id}/actions/pause",
+        json={
+            "reason": "Awaiting triage feedback",
+            "expected_resume_at": "2026-07-26T12:00:00Z",
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-sla-token-pause-{uuid4()}",
+            "If-Match": f'W/"{before.json()["sla_version"]}"',
+        },
+    )
+    assert pause.status_code == 200
+    paused = client.get(path, headers=HEADERS_A)
+    assert paused.status_code == 200
+    assert paused.json()["sla_state"] == "PAUSED"
+    assert paused.json()["sla_version"] == pause.json()["version"] == 24
+    resume = client.post(
+        f"/api/v1/sla-instances/{sla_id}/actions/resume",
+        json={"reason": "Triage feedback received"},
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-sla-token-resume-{uuid4()}",
+            "If-Match": f'W/"{paused.json()["sla_version"]}"',
+        },
+    )
+    assert resume.status_code == 200
+    final = client.get(path, headers=HEADERS_A)
+    assert final.status_code == 200
+    assert final.json()["sla_state"] == "ON_TRACK"
+    assert final.json()["sla_version"] == resume.json()["version"] == 25
+    assert final.json()["version"] == before.json()["version"]
+
+
+@pytest.mark.parametrize("resource_tenant", [TENANT_B, None, TENANT_A])
+def test_detail_does_not_invent_resource_versions(
+    client: TestClient, resource_tenant: str | None,
+) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": f"https://example.com/listings/unavailable-token-{uuid4()}",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={**HEADERS_A, "Idempotency-Key": f"idem-unavailable-{uuid4()}"},
+    )
+    assert submitted.status_code == 202
+    intake_id = submitted.json()["intake_id"]
+    store = _store_with_intake(intake_id)
+    assignment_id, sla_id = str(uuid4()), str(uuid4())
+    # Foreign/unknown tenant joins must be absent. Same-tenant historical
+    # records without tokens may expose identity/state but not a made-up token.
+    store.assignments[assignment_id] = {
+        "assignment_id": assignment_id,
+        "intake_id": intake_id,
+        "tenant_id": resource_tenant,
+        "status": "ASSIGNED",
+    }
+    store.slas[sla_id] = {
+        "sla_instance_id": sla_id,
+        "intake_id": intake_id,
+        "tenant_id": resource_tenant,
+        "state": "ON_TRACK",
+    }
+    response = client.get(f"/api/v1/intakes/{intake_id}", headers=HEADERS_A)
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["assignment_version"] is None
+    assert detail["sla_version"] is None
+    if resource_tenant == TENANT_A:
+        assert detail["assignment_id"] == assignment_id
+        assert detail["sla_instance_id"] == sla_id
+    else:
+        for field in ("assignment_id", "assignment_status", "sla_instance_id", "sla_state"):
+            assert detail[field] is None
+
+
 def test_sla_actions(client: TestClient) -> None:
     sla_id = str(uuid4())
     latest_store = AssistedIntakeStore._instances[-1]

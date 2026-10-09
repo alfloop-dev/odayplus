@@ -168,8 +168,12 @@ export type IntakeDetail = IntakeSummary & {
   audit: AuditReference[];
   assignment_id?: string | null;
   assignment_status?: string | null;
+  /** Current version of the linked active Assignment, not the Intake ETag. Null when the resource or its version is unavailable. */
+  assignment_version?: number | null;
   sla_instance_id?: string | null;
   sla_state?: string | null;
+  /** Current version of the linked SLA instance, not the Intake ETag. Null when the resource or its version is unavailable. */
+  sla_version?: number | null;
   sla_receipt?: string | null;
 };
 

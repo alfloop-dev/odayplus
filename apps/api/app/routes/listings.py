@@ -447,8 +447,10 @@ else:
         audit: list[AuditReference]
         assignment_id: UuidString | None = None
         assignment_status: str | None = None
+        assignment_version: int | None = Field(default=None, ge=1)
         sla_instance_id: UuidString | None = None
         sla_state: str | None = None
+        sla_version: int | None = Field(default=None, ge=1)
         sla_receipt: str | None = None
 
     class IntakePage(BaseModel):
@@ -2600,16 +2602,25 @@ else:
                 correlation_id=correlation_id,
             )
 
-            # Lookup assignment if assigned_to is set but no assignment exists
+            # Project the resource's own concurrency token, never the Intake
+            # ETag. Keep the join tenant-bound even with a process-local store
+            # or historical rows that lack scope metadata.
             active_assignment = next(
-                (a for a in active.assignments.values() if a.get("intake_id") == intake_id and a.get("status") != "COMPLETED"),
-                None
+                (
+                    a for a in active.assignments.values()
+                    if a.get("intake_id") == intake_id
+                    and a.get("tenant_id") == tenant_id
+                    and a.get("status") != "COMPLETED"
+                ),
+                None,
             )
-
-            # Lookup SLA if exists
             active_sla = next(
-                (s for s in active.slas.values() if s.get("intake_id") == intake_id),
-                None
+                (
+                    s for s in active.slas.values()
+                    if s.get("intake_id") == intake_id
+                    and s.get("tenant_id") == tenant_id
+                ),
+                None,
             )
 
             response.headers["ETag"] = f'W/"{value["version"]}"'
@@ -2640,8 +2651,10 @@ else:
                 audit=masked_val.get("audit") or [],
                 assignment_id=active_assignment.get("assignment_id") if active_assignment else None,
                 assignment_status=active_assignment.get("status") if active_assignment else None,
+                assignment_version=active_assignment.get("version") if active_assignment else None,
                 sla_instance_id=active_sla.get("sla_instance_id") if active_sla else None,
                 sla_state=active_sla.get("state") if active_sla else None,
+                sla_version=active_sla.get("version") if active_sla else None,
                 sla_receipt=active_sla.get("receipt") if active_sla else None,
             )
             return detail
