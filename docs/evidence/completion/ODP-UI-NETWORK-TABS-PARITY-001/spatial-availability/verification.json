@@ -1,0 +1,32 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "owner": "Pi",
+  "reviewer": "Codex2",
+  "base_verified": "2fe3ef933794d0bb293449b74dffe9602d53f767",
+  "before_render": "5e1461098237feefb059444dc6620007c21ea4eb",
+  "baseline_anchor": "a7269cf73a70",
+  "implementation_anchor": "8011d06c6201",
+  "source_binding": "source.sha256",
+  "artifact_binding": "artifacts.sha256",
+  "mode": "controlled_browser_list_reads_not_durable_write_or_live_evidence",
+  "reference": "Package 10 Network; no Spatial screen (browser absence assertions)",
+  "availability_widths": [1440, 390],
+  "regression_widths": [1440, 1024, 390],
+  "final_scoped_axe_reports": 16,
+  "final_scoped_axe_violations": 0,
+  "checks": {
+    "baseline": {"exit": 0, "passed": 2, "log": "before.log"},
+    "focused_units": {"exit": 0, "passed": 24, "log": "focused.log"},
+    "availability_geometry": {"exit": 0, "passed": 2, "log": "after.log"},
+    "render_regression": {"exit": 0, "passed": 3, "log": "render-regression.log"},
+    "web_units": {"exit": 0, "passed": 759, "files": 72, "log": "unit.log"},
+    "lint": {"exit": 0, "log": "lint.log"},
+    "typecheck": {"exit": 0, "log": "typecheck.log"},
+    "boundaries": {"exit": 0, "log": "boundaries.log"},
+    "business_inventory": {"exit": 0, "tests": 125, "files": 18, "log": "inventory.log"},
+    "diff": {"exit": 0, "log": "diff.log"}
+  },
+  "retained_failure": {"exit": 1, "passed": 1, "failed": 1, "log": "after-initial.log", "context": "after-initial-context.md", "reason": "Mobile hydration read orphaned by single-resolver capture harness; release-all repair, not assertion suppression"},
+  "ready_for_review": false,
+  "remaining": ["Spatial genuine backend generation/preview/decision/reload", "split/modal/conflict/permission geometry", "pending decision authority and post-write readback failure acknowledgement", "item-level contract validation", "real Transfer/Pause IDs/versions", "Find Areas reload-before-back/full-density", "other negative pairs and final CI/PR explanation", "independent VDC outcomes"]
+}

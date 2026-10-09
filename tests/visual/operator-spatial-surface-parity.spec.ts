@@ -26,12 +26,19 @@ for (const width of [1440, 390]) {
     });
     const directory = process.env.NETWORK_PARITY_EVIDENCE_DIR ?? info.outputDir;
     await mkdir(directory, { recursive: true });
-    let release!: () => void;
+    let hold = true;
+    const pending: Array<() => void> = [];
+    function release() {
+      hold = false;
+      pending.splice(0).forEach((resolve) => resolve());
+    }
     let response: { status: number; json: unknown } = { status: 500, json: { detail: "controlled read failure" } };
     let received = 0;
     await page.route("**/api/v1/heatzones/merge-split/proposals", async (route) => {
       received += 1;
-      await new Promise<void>((resolve) => { release = resolve; });
+      // Hydration may issue more than one read. Release all observed reads,
+      // and let later reads finish too; do not orphan a resolver on reload.
+      if (hold) await new Promise<void>((resolve) => { pending.push(resolve); });
       await route.fulfill(response);
     });
     await page.goto("/operator?ws=network&tab=composition");
@@ -73,6 +80,7 @@ for (const width of [1440, 390]) {
       await expect(panel.getByTestId("empty-proposals")).toHaveCount(0);
       await expect(panel.getByTestId("proposal-detail")).toHaveCount(0);
       const count = received;
+      hold = true;
       await panel.getByRole("button", { name: "重新載入提案" }).click();
       await expect.poll(() => received).toBeGreaterThan(count);
       await expect(panel.getByTestId("loading-proposals")).toBeVisible();
@@ -88,11 +96,10 @@ for (const width of [1440, 390]) {
     ] as const) {
       response = next;
       const count = received;
+      const done = page.waitForResponse("**/api/v1/heatzones/merge-split/proposals");
       await page.reload();
       await page.getByTestId("network-tab-7").click();
       await expect.poll(() => received).toBeGreaterThan(count);
-      const done = page.waitForResponse("**/api/v1/heatzones/merge-split/proposals");
-      release();
       await done;
       if (phase === "after") await expect(panel.getByTestId("proposal-read-error")).toBeVisible();
       else await expect(panel.getByTestId("empty-proposals")).toBeVisible();

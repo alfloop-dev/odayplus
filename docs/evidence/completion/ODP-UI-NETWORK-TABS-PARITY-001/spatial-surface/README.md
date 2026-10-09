@@ -102,9 +102,10 @@ npx playwright test --list
 
 Spatial populated/split/decision/error/permission states still require genuine
 backend generation/preview/decision/readback and modal accessibility/geometry
-proof. This increment does not certify the inherited decision modals. Proposal
-list read failure versus empty and refreshed authority during pending decisions
-also need investigation; no claim made from this controlled read harness.
+proof. This increment does not certify the inherited decision modals. Follow-up
+`../spatial-availability/README.md` records the bounded list failure/empty/pending
+repair and scoped retry proof. Refreshed authority during pending decisions still
+needs investigation; the list read-generation guard does not certify modals.
 Other task requirements remain: applicable negative/permission/conflict pairs,
 real Transfer/Pause IDs/versions, Find Areas reload-before-back stability/full
 scope density, final verification/required CI integration, PR explanation of
