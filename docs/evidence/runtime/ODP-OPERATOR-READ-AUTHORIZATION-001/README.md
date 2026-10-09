@@ -1,6 +1,6 @@
 # ODP-OPERATOR-READ-AUTHORIZATION-001 — engineering evidence
 
-Owner: Pi · Current reviewer: Codex · 2026-10-09
+Owner: Claude (reassigned from Pi/Antigravity2) · Current reviewer: Codex · 2026-10-09
 
 ## Scope and limits
 
@@ -17,8 +17,10 @@ Implementation anchors: `6ddba98038dc`, `c33a2425d699`, `76d101f40e89`.
 
 ## Implemented contract
 
-- Explicit persisted `operator_viewer` role: finite VIEW on `operator_console`,
-  `listing`, `sitescore`, `heatzone`; no wildcard, export or business mutations.
+- Explicit persisted `operator_viewer` role: finite VIEW on the operator-only
+  resources `operator_console` and `operator_network` (narrowed from the earlier
+  `listing`/`sitescore`/`heatzone` grant; see §Operator-only grant repair below);
+  no wildcard, export or business mutations.
   It does not grant user administration or widen pure `platform_admin` grants.
 - Existing durable identity boundary, session and audited role-management API
   remain authoritative. Existing `pm-audit` persona is selectable by the new
@@ -530,6 +532,106 @@ The following evidence-only commit changes no tested code inputs. Resubmission
 must obtain required CI and independent review on its exact new head. There is
 no gate waiver, live business probe, viewer grant, deployment/source/model
 operation, full-product claim or F11 self-approval. All live holds below remain.
+
+## Operator-only grant repair — 2026-10-09
+
+Owner: Claude (manager reassignment after Antigravity2 quota backoff; full prior
+history retained). Codex reopen on exact head `b968c303e006` found that the
+`operator_viewer` grants `listing`/`sitescore`/`heatzone` VIEW also opened the
+general RBAC-only domain routers: tenant-A viewer could list cross-tenant
+`/api/v1/sitescore/realized`, and a heat-zone-restricted viewer could read the
+whole latest `/api/v1/heatzones/map`. Those routers do not filter by principal
+tenant/object scope, so a Network-only projection could not secure them.
+
+Repair (anchor `b4b8c381ec5c`) narrows the role instead of widening unscoped
+routers:
+
+- `operator_viewer` = VIEW on `operator_console` and the new operator-only
+  `operator_network` resource only. No `listing`/`sitescore`/`heatzone` grant.
+- `require_operator_permission(..., scoped_read_resource=...)` admits a VIEW
+  holder of that resource only for VIEW, and only where explicitly passed. It is
+  passed solely on the Operator Network listings/intake, scoring and review read
+  guards (both live-composition and local wiring), whose handlers apply the
+  existing complete-envelope scope projection. Writes/approve/execute guards are
+  unchanged and still refuse the reader.
+- Operator `network-rebalance` has no scoped projection, so it is **not** opted
+  in and now refuses this reader (403). The Web Rebalance tab then shows its
+  existing truthful `network-rebalance API unavailable` error state (no fixture
+  fallback in production); other Network tabs load independently. A scoped
+  rebalance projection is a follow-up, not claimed here.
+- Live gate canonical RBAC pin for `operator_viewer` updated to the new finite
+  set; any future expansion still fails closed. Design profile §5.5 updated.
+- Existing `auditor` grants (which pre-date this task and already include
+  `listing` VIEW) and admin/scope/status are untouched.
+
+Regressions (`tests/security/test_operator_read_authorization.py`), on the real
+`create_app` routers:
+
+- Two-tenant / restricted-scope probes (tenant-a, tenant-b, heat-zone restricted,
+  brand+region restricted on tenant-b): eleven general SiteScore/HeatZone/Listing
+  reads and Operator rebalance return **403** for the reader, while an
+  `expansion_user` control passes the same RBAC guard (non-vacuous).
+- Differential over **every** GET route in OpenAPI for tenant-a and tenant-b:
+  routes that become 2xx for `platform_admin+operator_viewer` but not for pure
+  `platform_admin` must all be under `/api/v1/operator/` and exclude rebalance.
+- Guard unit: scoped VIEW admitted; same guard without opt-in, UPDATE with
+  opt-in, pure admin, and tenant-less principal all refused.
+- Existing Network scope projection/router tests now build guards exactly as
+  production does (`scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE`).
+
+A/B sensitivity (tmp copy of this worktree with only `shared/auth/rbac.py`
+reverted to `b968c303`): the new tests fail — tenant-b viewer gets 200 from
+`/api/v1/sitescore/realized`, and the differential finds 18 general
+`/api/v1/heatzones|sitescore|listings` routes opened. Exit 1 (expected);
+failure summary `repair-ab-old-rbac.log`. Broad-run log/JUnit:
+`repair-scope.log` / `repair-scope.xml` beside this README.
+
+Commands (clean committed head `b4b8c381ef7a`):
+
+```sh
+PYTHONPATH=. "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q -p no:cacheprovider \
+  tests/security tests/contract/test_operator_api.py \
+  tests/contract/test_operator_assisted_listing_api.py \
+  tests/contract/test_operator_governance_api.py tests/contract/test_operator_growth_api.py \
+  tests/contract/test_operator_network_listings_api.py \
+  tests/contract/test_operator_network_rebalance_api.py \
+  tests/contract/test_operator_network_review_api.py \
+  tests/contract/test_operator_network_scoring_api.py tests/contract/test_operator_shell_api.py \
+  tests/contract/test_assisted_listing_promotion_api.py \
+  tests/e2e/test_live_e2e_gate_dev_admin.py tests/e2e/test_acceptance_coverage.py \
+  tests/identity/test_identity_user_role_management.py \
+  tests/integration/test_operator_live_domain_modules.py \
+  --junitxml=repair-scope.xml
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check <changed .py files>
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check b968c303e HEAD
+```
+
+Results (original terminal exits; counts read from completed JUnit, no rerun):
+
+| Check | Exit | Result |
+| --- | --- | --- |
+| Focused 8 operator/RBAC/identity/gate/integration files (pre-anchor) | 0 | JUnit 230 tests, 0 failures/errors/skips |
+| Broad regression above on clean `b4b8c381ef7a` | 1 | JUnit 816 tests, 810 pass, **6 environmental failures**, 0 errors/skips |
+| Changed Python ruff | 0 | All checks passed (after an initial import-order fix) |
+| `check_code_boundaries.py` | 0 | no new files; inventory unchanged |
+| `git diff --check b968c303e HEAD` | 0 | clean |
+
+The six failures are unrelated host-environment checks, not authorization:
+five (`test_lock_consistency`, `test_notice_check_cli_passes`, three
+`test_supply_chain_security_gate` cases) fail identically on an untouched
+`git archive b968c303e` copy with `FileNotFoundError: 'uv'` (no `uv` on worker
+PATH). `test_oss_notice::test_notice_matches_the_installed_trees` compares NOTICE
+with the shared canonical venv, whose installed `multidict` 6.9.1 differs from
+the lock's 6.7.1 (it skips on the archive copy, which has no `node_modules`).
+This repair touches no lock, NOTICE or supply-chain input; required CI runs them
+in its locked environment. They are recorded as failures, not claimed as passes.
+
+No Web/E2E source changed, so the 122/18 Playwright inventory, Today CSS
+regression and Governance/Network DTO receipts above are unaffected. CI
+37903210687 binds only old head `b968c303`; new exact-head CI and independent
+review are required. No live grant, deployment, source/model/StoreOps action,
+gate waiver or F11 claim.
 
 ## Outstanding live acceptance (not completed here)
 
