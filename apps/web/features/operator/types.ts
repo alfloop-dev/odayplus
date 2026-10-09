@@ -201,6 +201,8 @@ export type Issue = {
   evidenceIds: string[];
   relatedApprovalId?: string;
   relatedGrowthId?: string;
+  /** Optional source-provided before/after comparison; absence is not success. */
+  outcomeMetrics?: Array<{ label: string; before: string; after: string }>;
   summary: string;
 };
 
@@ -215,6 +217,13 @@ export type EvidenceItem = {
   confidence: number;
   occurredAt: string;
   lockedReason?: string;
+  /** Optional source-provided payment metric; never derived from confidence. */
+  paymentTrend?: {
+    failureRate: number;
+    baselineDeltaPp: number;
+    baselineRelativeValue?: number;
+    relativeValues: number[];
+  };
 };
 
 export type Segment = {

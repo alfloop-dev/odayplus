@@ -133,6 +133,25 @@ def test_ci_workflow_uses_unified_bootstrap_target() -> None:
     assert install_step.get("run") == "make product-e2e-bootstrap"
 
 
+def test_store_visual_checks_are_required_after_bootstrap_before_business_runner() -> None:
+    jobs = yaml.safe_load(CI_WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
+    steps = jobs["product-e2e-gate"]["steps"]
+    names = [step.get("name") for step in steps]
+    bootstrap = names.index("Install product E2E dependencies")
+    visual = names.index("Verify Store Ops Package 10 geometry and accessibility")
+    business = names.index("Run product E2E dev merge gate")
+    assert bootstrap < visual < business
+    assert steps[business]["run"] == "make product-e2e-gate"
+
+    config = "tests/visual/operator-store-ops-parity.config.ts"
+    assert steps[visual]["run"] == f"npx playwright test --config {config}"
+    assert "if" not in steps[visual]
+    assert not steps[visual].get("continue-on-error", False)
+    assert (REPO_ROOT / config).is_file()
+    assert (REPO_ROOT / "tests/visual/operator-store-ops-parity.spec.ts").is_file()
+    assert not (REPO_ROOT / "tests/e2e/operator-store-ops-parity.spec.ts").exists()
+
+
 def test_main_succeeds_when_prerequisites_met() -> None:
     with patch("sys.argv", ["check_chromium_prerequisites.py", "--quiet"]):
         with patch(
