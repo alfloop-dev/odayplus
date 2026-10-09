@@ -7,6 +7,16 @@ review or merge.** This directory name is the repository evidence convention,
 not a completion claim. Intake dialogs and the other Network screens still need
 paired visual/geometry acceptance; see the remaining-work checklist below.
 
+## Owner repair after Codex2 changes requested
+
+[review-repair/README.md](review-repair/README.md) records the bounded repair at
+`cd951649f2b3`: authoritative Candidate Gate/KV values, unavailable missing facts,
+disabled unsupported actions, active-persona Compare/selected batch API wiring,
+zero-preserving revenues, 713 passing web tests, durable UI action proof, and new
+three-panel design/before/after images plus geometry. Earlier screenshots and
+receipts below are retained history, not the repaired render's final evidence.
+Full Intake/all-tab/VDC acceptance remains open; **do not resubmit or merge yet**.
+
 ## History-preserving base advance
 
 - Resumed clean task branch at `8e5183f47e3a`.
@@ -150,12 +160,11 @@ release acceptance or independent reviewer approval.
 2. Capture/inspect other Network tabs, batch score view and states. Reconcile the
    English `Blocked until candidate exists` stepper banner with actual selected
    flow and Package 10 density **without deleting its underlying gate**.
-3. Fix inherited Candidate facts/audit presented as hardcoded truths (e.g. the
-   current gate says 18坪 while the new detail says 28坪). Gate completeness must
-   not imply hard-rule success for a missing-data candidate. Connect or explicitly
-   disable inherited no-op edit/archive controls and do not report mock notices
-   as successful writes. SiteScore risk tones and fallback/empty data semantics
-   also need review before full acceptance.
+3. Candidate hardcoded facts/audit, no-op success notices, missing Compare wiring,
+   unreachable batch scoring and zero-revenue defaults are repaired in the linked
+   owner increment. Complete SiteScore risk-tone/accessibility review, inspect
+   fallback/empty-data states, and explain disabled unsupported actions before
+   full acceptance. Gate completeness must never imply invented hard-rule success.
 4. Document the supported schematic mini-map versus actual map integration and
    any later-spec features absent from Package 10 in the final PR explanation.
 5. Preserve VDC-002 responsive reachability, VDC-003 accessibility and VDC-004
