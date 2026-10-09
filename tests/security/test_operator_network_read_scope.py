@@ -333,11 +333,16 @@ def test_selected_zone_read_admits_combined_scope_and_keeps_record_projection(he
     assert listings.export_state() == before
 
 
-def test_selected_zone_read_admits_restricted_nonviewer_without_new_projection():
+def test_selected_zone_read_keeps_complete_envelope_denial_for_unprojected_nonviewer():
+    # A restricted non-viewer's rows are not projected per record, so a
+    # partial (zone-only) filter must not admit same-zone foreign-brand rows.
     listings, _, _, client = services_and_client("brandId", "brand-a")
+    before = listings.export_state()
     headers = {**HEADERS, "X-Roles": "site_reviewer", "X-Operator-Role": "expansion-manager",
                "X-Brand-Ids": "brand-a", "X-Heat-Zone-Ids": "HZ-01"}
-    selected = client.get("/network-listings?selectedHeatZoneId=HZ-01", headers=headers)
-    assert selected.status_code == 200, selected.text
-    assert selected.json()["counts"] == listings.snapshot()["counts"]
-    assert client.get("/network-listings?selectedHeatZoneId=HZ-02", headers=headers).status_code == 403
+    for path in ("/network-listings", "/network-listings/intake"):
+        for zone in ("HZ-01", "HZ-02"):
+            refused = client.get(f"{path}?selectedHeatZoneId={zone}", headers=headers)
+            assert refused.status_code == 403, (path, zone, refused.text)
+            assert refused.json()["detail"] == "SCOPE_DENIED"
+    assert listings.export_state() == before
