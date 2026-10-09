@@ -5,7 +5,7 @@
 ## 範圍與收據
 
 - 修正前：`963090d6fc320e973c6c2d993b5342fbebbbe3e3`（當時 `origin/dev`）。
-- 最終程式／測試：`3e9ecc94cec6dc66c8bfa33e020495bf4760204b`；後續 evidence commit 只封存本目錄，不改程式。
+- UI 程式與截圖測試來源：`3e9ecc94cec6dc66c8bfa33e020495bf4760204b`；`9ea09a8cc5e6` 只封存本目錄。後續 CI 修正僅移動 supplemental suite／config、接上既有 CI job，未改 UI 或截圖內容；見下方 CI 修復紀錄。
 - 設計：`docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/oday-plus-console-r7-standalone.html`。
 - 設計 SHA-256：`1aefb8068faa39666599ceeafe74ba24f1ddc8abd57ba9a6513a724abaee7d0f`，與 Review 003 相符。
 - Chromium `149.0.7827.55`、Playwright `1.61.1`、Node `v22.23.2`；viewport 為 1440×900、390×900，另驗證 1024×900 的內容幾何。
@@ -82,11 +82,11 @@ npm run test --workspace=@oday-plus/web -- \
   features/operator/__tests__/StoreOpsWorkflowDialogs.production.test.tsx
 OPSBOARD_PORT=3186 STORE_OPS_PARITY_DESIGN=1 \
 STORE_OPS_PARITY_EVIDENCE_DIR="$PWD/docs/evidence/completion/ODP-UI-STORE-OPS-PARITY-001/shots" \
-npx playwright test --config tests/e2e/operator-store-ops-parity.config.ts
+npx playwright test --config tests/visual/operator-store-ops-parity.config.ts
 python3 delivery_toolchain/governance/check_code_boundaries.py
 ```
 
-Focused config 只啟動既有 fixture web server；兩份 spec 都攔截 Store Ops API，不需 Python backend。一般 CI 使用根 config 亦會發現新 spec，沒有另開 workflow。
+Focused config 只啟動既有 fixture web server；兩份 spec 都攔截 Store Ops API，不需 Python backend。Supplemental 幾何／axe spec 位於 `tests/visual/`，由既有 CI `product-e2e-gate` job 顯式執行此 config（9 tests），不新增 workflow、不改正式 acceptance registry。根 config 仍只執行 `tests/e2e/` 的 18 specs／122 tests。
 
 - typecheck **exit 0**；兩個 unit files，**15 passed / exit 0**。
 - Playwright **9 passed / exit 0**：缺付款序列與 CTA 無寫入、三個內容 viewport、兩個含七對話框的 viewport、既有四燈／完整 lifecycle／Camera 解鎖。

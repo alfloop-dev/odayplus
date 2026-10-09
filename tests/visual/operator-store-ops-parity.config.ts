@@ -1,10 +1,11 @@
 import { defineConfig } from "@playwright/test";
 import base from "../../playwright.config";
 
-// Both Store Ops suites intercept API calls; no backend process is required.
+// Supplemental geometry/axe checks stay outside the exact business-acceptance
+// inventory in tests/e2e. Both Store suites mock API calls; only web is needed.
 export default defineConfig({
   ...base,
-  testDir: ".",
+  testDir: "..",
   testMatch: /operator-store-ops(?:-parity)?\.spec\.ts/,
   workers: 1,
   retries: 0,
