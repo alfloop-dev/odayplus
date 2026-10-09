@@ -1,7 +1,9 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { OperatorConsole } from "../OperatorConsole";
+import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
+
+const productionRetryDelays = [...operatorBootstrapRetryPolicy.delaysMs];
 
 const seedEnvelope = {
   meta: {
@@ -101,9 +103,12 @@ const liveEnvelope = {
 describe("OperatorConsole production data gate", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
+    // Cold-start retries pause for seconds in production; keep tests fast.
+    operatorBootstrapRetryPolicy.delaysMs = productionRetryDelays.map(() => 0);
   });
 
   afterEach(() => {
+    operatorBootstrapRetryPolicy.delaysMs = [...productionRetryDelays];
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();

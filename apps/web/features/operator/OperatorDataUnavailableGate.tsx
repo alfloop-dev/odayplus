@@ -19,12 +19,15 @@ function reloginHref(): string {
 export function OperatorDataUnavailableGate({
   detail,
   failure,
+  loadingDetail,
   onRetry,
   status,
 }: {
   /** Technical detail (exception text, blocked source); never the headline. */
   detail?: string | null;
   failure?: OperatorLoadFailure | null;
+  /** Replaces the generic loading explanation, e.g. while the API cold-starts. */
+  loadingDetail?: string;
   onRetry?: () => void;
   status: Exclude<OperatorDataAvailability, "ready" | "fixture">;
 }) {
@@ -45,7 +48,9 @@ export function OperatorDataUnavailableGate({
       <div className={styles.dataUnavailableBody}>
         <StatusBadge tone={isLoading ? "info" : "warning"}>{message.badge}</StatusBadge>
         <h1>{message.title}</h1>
-        <p>{message.detail}</p>
+        <p data-testid="operator-data-unavailable-detail">
+          {isLoading && loadingDetail ? loadingDetail : message.detail}
+        </p>
         {isLoading ? null : <p className={styles.dataUnavailableNext}>{message.next}</p>}
         {isLoading ? null : (
           <details className={styles.dataUnavailableTechnical} data-testid="operator-data-unavailable-technical">
