@@ -247,7 +247,7 @@ export function RebalancePanel({
               {selected.sourceIssueId ? <span className={styles.rebalanceSourceIssue}>↳ 來自 Issue {selected.sourceIssueId}</span> : null}
               <span className={styles.kicker}>{selected.id}</span>
             </div>
-            <p>{selected.healthNote ?? selected.summary}</p>
+            <p>{selected.summary}</p>
           </header>
 
           <div className={styles.rebalanceStepper} role="group" aria-label="Rebalance workflow">

@@ -70,13 +70,16 @@ for (const width of [1440, 1024, 390]) {
       await referenceCta.dispatchEvent("click");
       await reference.getByRole("button", { name: /AVM 完成/ }).dispatchEvent("click");
       await expect(reference).toContainText("P50 公允價值");
+      await expect(design.getByText("AVM 完成 — 下一步：建立 NetPlan Review", { exact: true })).toBeHidden({ timeout: 15_000 });
       await shot(design, info, `design-avm-${width}`);
       await reference.getByRole("button", { name: /建立 NetPlan Review/ }).dispatchEvent("click");
       await expect(reference).toContainText("NETPLAN 三案");
+      await expect(design.getByText("NetPlan 三案已建立 — 請選擇方案並送審", { exact: true })).toBeHidden({ timeout: 15_000 });
       await shot(design, info, `design-netplan-${width}`);
       await design.close();
     }
     async function capture(state: string) {
+      await page.evaluate(() => scrollTo(0, 0));
       const boxes = { panel: await measure(panel), layout: await measure(panel.locator("section").first()), list: await measure(panel.getByLabel("Rebalance candidates")), card: await measure(panel.getByTestId("rebalance-card-RB-801")), detail: await measure(detail), stepper: await measure(detail.getByLabel("Rebalance workflow")), primary: await measure(primary) };
       const document = await page.evaluate(() => ({ width: innerWidth, scrollWidth: window.document.documentElement.scrollWidth }));
       await shot(page, info, `${phase}-${state}-${width}`);
@@ -98,6 +101,18 @@ for (const width of [1440, 1024, 390]) {
         expect(boxes.list.width).toBe(280);
         expect(boxes.detail.x).toBe(boxes.list.x + 294);
       } else expect(boxes.detail.y).toBeGreaterThanOrEqual(boxes.list.y + boxes.list.height);
+      const analysis = await measure(panel.getByTestId("rebalance-analysis"));
+      const signals = await measure(panel.getByLabel("營運訊號"));
+      const avm = panel.getByTestId("rebalance-avm-RB-801");
+      if (await avm.count()) {
+        const valuation = await measure(avm.locator(".."));
+        if (width === 390) expect(valuation.y).toBeGreaterThanOrEqual(signals.y + signals.height);
+        else {
+          expect(signals.width).toBeCloseTo((analysis.width - 14) / 2, 0);
+          expect(valuation.x).toBe(signals.x + signals.width + 14);
+        }
+        await save(info, `${phase}-${state}-analysis-${width}.json`, { analysis, signals, valuation });
+      }
       expect(axe.violations).toEqual([]);
     }
     await capture("rebalance");
@@ -117,6 +132,19 @@ for (const width of [1440, 1024, 390]) {
     await expect(primary).toBeDisabled();
     await expect(panel.getByTestId("rebalance-acknowledgement-section")).toHaveCount(0);
     await capture("netplan");
+    if (phase === "after") {
+      const disclosure = panel.getByTestId("rebalance-plan-disclosure");
+      await expect(disclosure).not.toHaveAttribute("open");
+      await disclosure.locator("summary").focus();
+      await page.keyboard.press("Enter");
+      await expect(disclosure).toHaveAttribute("open", "");
+      await expect(panel.getByTestId("gantt-constraint-disclosure")).toBeVisible();
+      await capture("netplan-expanded");
+      await disclosure.locator("summary").focus();
+      await page.keyboard.press("Enter");
+      await expect(disclosure).not.toHaveAttribute("open");
+      await expect(primary).toBeDisabled();
+    }
     const snapshot = await request.get(`${api}/api/v1/operator/network-rebalance`, { headers });
     expect(snapshot.status()).toBe(200);
     const payload = await snapshot.json();
