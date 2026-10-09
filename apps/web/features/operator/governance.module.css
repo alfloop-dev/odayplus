@@ -2,8 +2,6 @@
   display: grid;
   gap: 14px;
   width: 100%;
-  max-width: 1560px;
-  margin: 0 auto;
   color: #1c2333;
 }
 
@@ -15,7 +13,7 @@
   padding: 0;
 }
 
-.header h2,
+.header h1,
 .header p,
 .queueHeader h3,
 .viewHeader h3,
@@ -27,7 +25,14 @@
   margin: 0;
 }
 
-.header h2 {
+.headerTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+
+.header h1 {
   font-size: 18px;
   line-height: 1.3;
   letter-spacing: 0;
@@ -215,7 +220,7 @@
 
 .sla {
   color: #96610b;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -226,7 +231,7 @@
 
 .approvalId {
   color: #6e7891;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -417,7 +422,7 @@
   margin: 2px 0 0;
   overflow-wrap: anywhere;
   color: #334155;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -449,7 +454,7 @@
 
 .referenceRow span:last-child {
   margin-left: auto;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
 }
 
 .decisionBox {
@@ -742,7 +747,7 @@
 .decisionCard time {
   margin-left: auto;
   color: #6b7590;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -810,7 +815,7 @@
 .decisionCard code,
 .auditEvent code {
   color: #3a4362;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: inherit;
 }
 
@@ -837,7 +842,7 @@
 
 .auditRow > time {
   color: #6b7590;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -877,7 +882,7 @@
 
 .auditEntity {
   color: #2e3a97;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 11px;
   white-space: nowrap;
 }

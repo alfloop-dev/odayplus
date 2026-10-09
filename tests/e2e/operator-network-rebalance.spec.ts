@@ -41,9 +41,11 @@ test.describe("ODP-OC-R4-008 Network Rebalance", () => {
       "建立 AVM 估值請求",
       { timeout: 15_000 },
     );
-    await expect(page.getByTestId("rebalance-boundary-RB-801")).toContainText(
-      "relocationExecuted=false",
+    await expect(page.getByTestId("rebalance-boundary-RB-801")).toHaveAttribute(
+      "data-relocation-executed",
+      "false",
     );
+    await expect(page.getByTestId("rebalance-boundary-RB-801")).toContainText("尚未執行搬遷");
 
     await page.getByTestId("rebalance-primary-action").click();
     await expect(page.getByTestId("rebalance-primary-action")).toContainText(
@@ -110,9 +112,11 @@ test.describe("ODP-OC-R4-008 Network Rebalance", () => {
       "送審（無法送審）",
     );
     await expect(page.getByTestId("rebalance-primary-action")).toBeDisabled();
-    await expect(page.getByTestId("rebalance-boundary-RB-801")).toContainText(
-      "relocationExecuted=false",
+    await expect(page.getByTestId("rebalance-boundary-RB-801")).toHaveAttribute(
+      "data-relocation-executed",
+      "false",
     );
+    await expect(page.getByTestId("rebalance-boundary-RB-801")).toContainText("尚未執行搬遷");
 
     await page.reload();
     await expect(

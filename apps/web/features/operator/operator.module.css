@@ -10,8 +10,11 @@
   --operator-border-strong: #c7d1dd;
   --operator-shadow: 0 16px 42px rgba(21, 32, 51, 0.12);
   --operator-focus: #4f8df7;
-  --operator-font-family: "Noto Sans TC", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    "PingFang TC", "Microsoft JhengHei", sans-serif;
+  /* --font-noto-sans-tc / --font-ibm-plex-mono are self-hosted by next/font in the root layout. */
+  --operator-font-family: var(--font-noto-sans-tc, "Noto Sans TC"), -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --operator-font-mono: var(--font-ibm-plex-mono, "IBM Plex Mono"), ui-monospace, SFMono-Regular, Menlo,
+    Consolas, monospace;
   --tone-info: #2563eb;
   --tone-success: #0f8f68;
   --tone-warning: #c77700;
@@ -820,6 +823,12 @@
   padding: 16px 20px 44px;
 }
 
+/* Govern content contract: max-width 1560, padding 16 / 22 / 44 (design S02). */
+.shell_govern {
+  max-width: 1560px;
+  padding: 16px 22px 44px;
+}
+
 /* Today content contract: max-width 1560, padding 20 / 22 / 44 (design S02:108). */
 .shell_today {
   max-width: 1560px;
@@ -914,7 +923,7 @@
 .todayQueueState time,
 .todayPanelHeader > strong,
 .todayAuditList time {
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
 }
 
 .todaySourceMetadata {
@@ -2796,7 +2805,7 @@
 
 .dataUnavailableTechnical dd {
   margin: 0;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   overflow-wrap: anywhere;
 }
 
@@ -2857,7 +2866,8 @@
   }
 
   .shell,
-  .shell_today {
+  .shell_today,
+  .shell_govern {
     padding: 16px 12px 32px;
   }
 

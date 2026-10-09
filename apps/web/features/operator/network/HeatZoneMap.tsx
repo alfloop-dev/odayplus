@@ -450,8 +450,13 @@ export function HeatZoneMap({
             data-testid="heat-zone-deck-overlay"
           />
         </DeckGL>
-        <p className={styles.mapStatus} data-testid="heat-zone-map-status">
-          {boundaryConfig.tileUrl && !boundaryConfig.tileFault ? "live tile endpoint configured" : "local MapLibre style"} · layers {encodeLayerState(layers)} · {freshness.status} · {freshness.sourceSnapshotId} · {freshness.modelVersion}
+        <p
+          className={styles.mapStatus}
+          data-layers={encodeLayerState(layers)}
+          data-testid="heat-zone-map-status"
+          data-tile-source={boundaryConfig.tileUrl && !boundaryConfig.tileFault ? "live" : "local-style"}
+        >
+          資料 {freshness.status} · 快照 {freshness.sourceSnapshotId} · 模型 {freshness.modelVersion}
         </p>
       </div>
       <div className={styles.legend} aria-label="Map legend">

@@ -894,8 +894,8 @@ export function GovernanceWorkspace({
   return (
     <section className={styles.workspace} data-testid="governance-workspace" data-screen-label="Govern 治理稽核">
       <header className={styles.header}>
-        <div>
-          <h2>治理稽核</h2>
+        <div className={styles.headerTitle}>
+          <h1>治理稽核</h1>
           <p>核准、決策、稽核與證據 — 所有處置的可追溯層</p>
         </div>
         <div className={styles.headerStats} aria-label="Governance state">

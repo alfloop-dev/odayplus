@@ -1132,7 +1132,7 @@ export function DesignStoreOpsWorkspace({
           </div>
         </aside>
 
-        <main className={styles.storeDetail} aria-label={`${issue.id} detail`}>
+        <section className={styles.storeDetail} aria-label={`${issue.id} detail`}>
           <section className={styles.issueHero}>
             <div className={styles.issueHeroTopline}>
               <span>
@@ -1444,7 +1444,7 @@ export function DesignStoreOpsWorkspace({
               {getAiRecommendation(issue)}
             </div>
           </section>
-        </main>
+        </section>
 
         <aside className={styles.actionRail} aria-label="Action rail">
           <section>

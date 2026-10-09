@@ -55,7 +55,7 @@
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 11px;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-weight: 600;
   background: #f1f5f9;
   border: 1px solid #cbd5e1;
@@ -252,7 +252,7 @@
   font-weight: 700;
   font-size: 13px;
   color: #0f172a;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
 }
 
 .entitySubText {
@@ -403,7 +403,7 @@
 }
 
 .monoText {
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
 }
 
 .dependencyText {
@@ -531,7 +531,7 @@
 
 .modelledBadge {
   font-size: 10.5px;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-weight: 600;
   color: #15803d;
   background: #dcfce7;
@@ -542,7 +542,7 @@
 
 .unmodelledBadge {
   font-size: 10.5px;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-weight: 600;
   color: #b45309;
   background: #fef3c7;

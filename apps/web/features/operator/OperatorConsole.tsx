@@ -498,6 +498,7 @@ export function OperatorConsole({
   const canRenderDirectIntake =
     intakeDetailOpen && activeWorkspaceId === "network";
   const isTodayContent = canRenderWorkspace && activeWorkspaceId === "today";
+  const isGovernContent = canRenderWorkspace && activeWorkspaceId === "govern";
   const dataModeBanner = dataModeBannerCopy(shellDataStatus, fixturesAllowed);
 
   useEffect(() => {
@@ -1467,7 +1468,13 @@ export function OperatorConsole({
         </button>
       </div>
 
-      <main className={[styles.shell, isTodayContent ? styles.shell_today : ""].filter(Boolean).join(" ")}>
+      <main
+        className={[
+          styles.shell,
+          isTodayContent ? styles.shell_today : "",
+          isGovernContent ? styles.shell_govern : "",
+        ].filter(Boolean).join(" ")}
+      >
         {!canRenderWorkspace && !canRenderDirectIntake ? (
           <OperatorDataUnavailableGate
             failure={shellLoadFailure}
@@ -1503,19 +1510,18 @@ export function OperatorConsole({
             }}
           />
         ) : activeWorkspaceId === "govern" ? (
-          <WorkspaceChrome activeRoleLabel={activeRole.label} workspace={activeWorkspace}>
-            <GovernanceWorkspace
-              approvals={liveApprovals.length ? liveApprovals : undefined}
-              auditRows={liveGovernanceAuditRows.length ? liveGovernanceAuditRows : undefined}
-              callbacks={{
-                onSelectApproval: (approval) => showToast(`${approval.id} selected`),
-              }}
-              decisions={liveGovernanceDecisions.length ? liveGovernanceDecisions : undefined}
-              canComment={activeRoleId !== "pm-audit"}
-              role={activeRole.label}
-              roleId={activeRoleId}
-            />
-          </WorkspaceChrome>
+          // GovernanceWorkspace renders its own Package 10 page header.
+          <GovernanceWorkspace
+            approvals={liveApprovals.length ? liveApprovals : undefined}
+            auditRows={liveGovernanceAuditRows.length ? liveGovernanceAuditRows : undefined}
+            callbacks={{
+              onSelectApproval: (approval) => showToast(`${approval.id} selected`),
+            }}
+            decisions={liveGovernanceDecisions.length ? liveGovernanceDecisions : undefined}
+            canComment={activeRoleId !== "pm-audit"}
+            role={activeRole.label}
+            roleId={activeRoleId}
+          />
         ) : activeWorkspaceId === "growth" ? (
           <GrowthWorkspace searchParams={searchParams} basePath="/operator" />
         ) : (

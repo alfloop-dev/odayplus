@@ -155,12 +155,12 @@ def test_no_deleted_specs_referenced_and_inventory_consistent() -> None:
 @pytest.mark.parametrize(
     "output,exit_code,expected_error",
     [
-        ("Total: 122 tests in 18 files", 0, None),
-        ("Total: 119 tests in 18 files", 0, "must be exactly 122 tests in 18 files"),
-        ("Total: 123 tests in 18 files", 0, "must be exactly 122 tests in 18 files"),
-        ("Total: 122 tests in 17 files", 0, "must be exactly 122 tests in 18 files"),
+        ("Total: 125 tests in 18 files", 0, None),
+        ("Total: 122 tests in 18 files", 0, "must be exactly 125 tests in 18 files"),
+        ("Total: 126 tests in 18 files", 0, "must be exactly 125 tests in 18 files"),
+        ("Total: 125 tests in 17 files", 0, "must be exactly 125 tests in 18 files"),
         ("", 0, "no parseable total"),
-        ("Total: 122 tests in 18 files", 1, "exited 1"),
+        ("Total: 125 tests in 18 files", 1, "exited 1"),
     ],
 )
 def test_playwright_inventory_remains_exact_and_fail_closed(

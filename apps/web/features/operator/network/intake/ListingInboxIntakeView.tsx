@@ -161,9 +161,9 @@ export function ListingInboxIntakeView({
       </div>
 
       {/* Filter Bar */}
-      <div className={styles.grid2} style={{ margin: "0.5rem 0", gap: "0.5rem" }}>
+      <div className={styles.inboxFilterBar}>
         <input
-          className={styles.input}
+          className={[styles.input, styles.inboxFilterSearch].join(" ")}
           data-testid="intake-search-input"
           onChange={(e) => updateFilters({ search: e.target.value })}
           placeholder="搜尋 URL / ID / 來源 / 送件人…"
@@ -171,7 +171,7 @@ export function ListingInboxIntakeView({
           value={filters.search}
         />
 
-        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+        <div className={styles.inboxFilterControls}>
           <select
             aria-label="依收件方式篩選"
             className={styles.select}
