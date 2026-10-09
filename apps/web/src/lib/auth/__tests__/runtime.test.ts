@@ -218,13 +218,33 @@ describe("Cloud Run hostname aliases", () => {
     ).toBe(false);
   });
 
-  it("rejects an Origin that is a different alias than the Host the browser addressed", () => {
-    expect(
-      verifyCsrfOrigin(
-        formFrom("oday-web-767864276141.asia-east1.run.app", "https://oday-web-2l6wuyl67q-de.a.run.app"),
-        cloudRunEnv,
-      ),
-    ).toBe(false);
+  const publicHost = "oday-web-767864276141.asia-east1.run.app";
+  const legacyHost = "oday-web-2l6wuyl67q-de.a.run.app";
+  const tagHost = "candidate-aa3705ec5a2f7909---oday-web-2l6wuyl67q-de.a.run.app";
+
+  it.each([
+    [publicHost, legacyHost],
+    [legacyHost, publicHost],
+    [publicHost, tagHost],
+    [tagHost, publicHost],
+    [legacyHost, tagHost],
+    [tagHost, legacyHost],
+  ])("rejects Host %s receiving a form whose Origin is the sibling %s", (host, originHost) => {
+    expect(verifyCsrfOrigin(formFrom(host, `https://${originHost}`), cloudRunEnv)).toBe(false);
+  });
+
+  it("applies the same exact-host rule to a Referer-only request", () => {
+    const refererFrom = (host: string, referer: string) => ({
+      headers: new Headers({ host, referer }),
+      nextUrl: internal,
+    });
+    expect(verifyCsrfOrigin(refererFrom(legacyHost, `https://${legacyHost}/login`), cloudRunEnv)).toBe(true);
+    expect(verifyCsrfOrigin(refererFrom(legacyHost, `https://${publicHost}/login`), cloudRunEnv)).toBe(false);
+    expect(verifyCsrfOrigin(refererFrom(publicHost, `https://${legacyHost}/login`), cloudRunEnv)).toBe(false);
+  });
+
+  it("rejects the container's internal origin once a trusted Host is known", () => {
+    expect(verifyCsrfOrigin(formFrom(legacyHost, internal.origin), cloudRunEnv)).toBe(false);
   });
 
   it.each([

@@ -230,6 +230,13 @@ export function verifyCsrfOrigin(
     return false;
   }
 
+  // When the Host is one of this service's Cloud Run hostnames, the browser
+  // addressed exactly that origin, so a same-origin form must carry it. Any
+  // other origin — including the configured public URL or a sibling alias —
+  // is a different site for the host-only session cookie and is refused.
+  const selfOrigin = trustedRequestOrigin(request, environment);
+  if (selfOrigin) return targetOrigin === selfOrigin;
+
   const allowedOrigins = new Set<string>();
 
   if (request.nextUrl?.origin) {
@@ -255,12 +262,6 @@ export function verifyCsrfOrigin(
   } catch {
     // If canonical URL does not resolve in test mode
   }
-
-  // A form posted from a page on the very Cloud Run hostname it targets is
-  // same-origin; a cross-site page still fails because its Origin differs
-  // from the Host the browser addressed.
-  const selfOrigin = trustedRequestOrigin(request, environment);
-  if (selfOrigin) allowedOrigins.add(selfOrigin);
 
   return allowedOrigins.has(targetOrigin);
 }

@@ -398,6 +398,31 @@ describe("Cloud Run alias hostnames keep the form login on their own host", () =
     expect(response.headers.get("set-cookie")).toBeNull();
   });
 
+  it.each([
+    ["oday-web-2l6wuyl67q-de.a.run.app", publicOrigin],
+    ["oday-web-767864276141.asia-east1.run.app", "https://oday-web-2l6wuyl67q-de.a.run.app"],
+    [
+      "candidate-aa3705ec5a2f7909---oday-web-2l6wuyl67q-de.a.run.app",
+      publicOrigin,
+    ],
+    [
+      "oday-web-767864276141.asia-east1.run.app",
+      "https://candidate-aa3705ec5a2f7909---oday-web-2l6wuyl67q-de.a.run.app",
+    ],
+  ])("refuses a form on %s whose Origin is the sibling %s", async (host, origin) => {
+    const response = await POST(aliasFormRequest(host, origin));
+    expect(response.status).toBe(403);
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("still signs in on the public host with its own Origin", async () => {
+    const host = "oday-web-767864276141.asia-east1.run.app";
+    const response = await POST(aliasFormRequest(host, publicOrigin));
+    expect(response.status).toBe(303);
+    expect(new URL(response.headers.get("location")!).origin).toBe(publicOrigin);
+    expect(response.headers.get("set-cookie")).toContain(webSessionCookieName);
+  });
+
   it("still refuses a cross-site form aimed at an alias host", async () => {
     const response = await POST(
       aliasFormRequest("oday-web-2l6wuyl67q-de.a.run.app", "https://attacker.example"),
