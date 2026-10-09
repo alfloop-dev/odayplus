@@ -1,0 +1,106 @@
+{
+  "boxes": {
+    "dialog": {
+      "x": 460,
+      "y": 224.546875,
+      "width": 520,
+      "height": 450.890625,
+      "scrollWidth": 518,
+      "radius": "14px",
+      "padding": "0px",
+      "gap": "normal",
+      "background": "rgb(255, 255, 255)",
+      "overflowY": "auto"
+    },
+    "head": {
+      "x": 461,
+      "y": 225.546875,
+      "width": 518,
+      "height": 39.25,
+      "scrollWidth": 518,
+      "radius": "0px",
+      "padding": "16px 18px 0px",
+      "gap": "8px",
+      "background": "rgba(0, 0, 0, 0)",
+      "overflowY": "visible"
+    },
+    "body": {
+      "x": 461,
+      "y": 264.796875,
+      "width": 518,
+      "height": 342.640625,
+      "scrollWidth": 518,
+      "radius": "0px",
+      "padding": "12px 18px 4px",
+      "gap": "11px",
+      "background": "rgba(0, 0, 0, 0)",
+      "overflowY": "visible"
+    },
+    "footer": {
+      "x": 461,
+      "y": 607.4375,
+      "width": 518,
+      "height": 67,
+      "scrollWidth": 518,
+      "radius": "0px",
+      "padding": "14px 18px 16px",
+      "gap": "8px",
+      "background": "rgba(0, 0, 0, 0)",
+      "overflowY": "visible"
+    },
+    "field": {
+      "x": 479,
+      "y": 398.75,
+      "width": 482,
+      "height": 75,
+      "scrollWidth": 480,
+      "radius": "8px",
+      "padding": "8px 10px",
+      "gap": "normal",
+      "background": "rgb(251, 252, 254)",
+      "overflowY": "auto"
+    },
+    "submit": {
+      "x": 854,
+      "y": 621.4375,
+      "width": 107,
+      "height": 37,
+      "scrollWidth": 107,
+      "radius": "8px",
+      "padding": "8px 16px",
+      "gap": "normal",
+      "background": "rgb(46, 58, 151)",
+      "overflowY": "visible"
+    }
+  },
+  "document": {
+    "width": 1440,
+    "scrollWidth": 1440
+  },
+  "design": {
+    "dialog": {
+      "x": 460,
+      "y": 236.4375,
+      "width": 520,
+      "height": 427.109375,
+      "scrollWidth": 520,
+      "radius": "14px",
+      "padding": "0px",
+      "gap": "normal",
+      "background": "rgb(255, 255, 255)",
+      "overflowY": "auto"
+    },
+    "submit": {
+      "x": 856,
+      "y": 610.546875,
+      "width": 106,
+      "height": 37,
+      "scrollWidth": 106,
+      "radius": "8px",
+      "padding": "8px 16px",
+      "gap": "normal",
+      "background": "rgb(46, 58, 151)",
+      "overflowY": "visible"
+    }
+  }
+}

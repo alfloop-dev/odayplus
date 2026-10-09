@@ -1,0 +1,55 @@
+[WebServer] 2026/10/09 17:11:42 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 17:11:44 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 17:11:44 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [2004511]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T17:11:48.156655+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "9b3f64df-cd08-4d6f-a6e1-9ff64d7afca1", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 8 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T17:12:09.515820+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "f9fef6b2-df68-402b-95cb-90a1a3b38d83", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-reviews/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T17:12:12.292782+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "0c4c23af-5631-4281-a857-d062a456e282", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T17:12:14.978153+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T17:12:15.122427+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T17:12:15.123802+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T17:12:15.125186+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T17:12:17.771459+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T17:12:17.771975+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T17:12:17.772366+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T17:12:19.148780+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T17:12:19.306432+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-5cd3f745-c1d2-4abb-9c8e-9825b9e47a02", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+  ✘  1 [chromium] › tests/visual/operator-review-decision-parity.spec.ts:42:9 › GO Review Decision geometry and durable state at 1440 (33.0s)
+  -  2 [chromium] › tests/visual/operator-review-decision-parity.spec.ts:42:9 › WAIT Review Decision geometry and durable state at 1440
+  -  3 [chromium] › tests/visual/operator-review-decision-parity.spec.ts:42:9 › RETURN Review Decision geometry and durable state at 1440
+  -  4 [chromium] › tests/visual/operator-review-decision-parity.spec.ts:42:9 › REJECT Review Decision geometry and durable state at 1440
+  -  5 [chromium] › tests/visual/operator-review-decision-parity.spec.ts:42:9 › GO Review Decision geometry and durable state at 390
+  -  6 [chromium] › tests/visual/operator-review-decision-parity.spec.ts:42:9 › WAIT Review Decision geometry and durable state at 390
+  -  7 [chromium] › tests/visual/operator-review-decision-parity.spec.ts:42:9 › RETURN Review Decision geometry and durable state at 390
+  -  8 [chromium] › tests/visual/operator-review-decision-parity.spec.ts:42:9 › REJECT Review Decision geometry and durable state at 390
+
+
+  1) [chromium] › tests/visual/operator-review-decision-parity.spec.ts:42:9 › GO Review Decision geometry and durable state at 1440 
+
+    TimeoutError: locator.dispatchEvent: Timeout 15000ms exceeded.
+    Call log:
+      - waiting for getByRole('button', { name: /^選址審核\s+Review/ })
+
+
+      76 |         await design.goto(pathToFileURL(path.resolve("docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/oday-plus-console-r7-standalone.html")).href, { waitUntil: "domcontentloaded" });
+      77 |         await design.getByRole("button", { name: /展店與店網.*Network/ }).click();
+    > 78 |         await design.getByRole("button", { name: /^選址審核\s+Review/ }).dispatchEvent("click");
+         |                                                                      ^
+      79 |         const panel = design.locator('[data-screen-label="Network 選址審核"]');
+      80 |         await panel.getByRole("button").filter({ hasText: action.id }).dispatchEvent("click");
+      81 |         await panel.getByRole("button", { name: action.button, exact: true }).dispatchEvent("click");
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-review-decision-parity.spec.ts:78:70
+
+    Error Context: test-results/operator-review-decision-p-0020e-y-and-durable-state-at-1440-chromium/error-context.md
+
+    Error Context: test-results/operator-review-decision-p-0020e-y-and-durable-state-at-1440-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/visual/operator-review-decision-parity.spec.ts:42:9 › GO Review Decision geometry and durable state at 1440 
+  7 did not run
