@@ -3756,6 +3756,12 @@
   align-items: start;
 }
 
+.scoreLabPickerChoices {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
 .scoreLabPicker {
   display: grid;
   gap: 8px;
@@ -3921,7 +3927,7 @@
 
 .compareWorkspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 348px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: 14px;
   align-items: start;
 }
@@ -4263,7 +4269,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .scoreLabPicker {
+  .scoreLabPickerChoices {
     display: flex;
     overflow-x: auto;
     padding-bottom: 3px;
@@ -4469,6 +4475,193 @@
 }
 
 /* Package 10 Design Parity — SiteScore Lab, Compare, Candidates, Mini Maps */
+.secondaryButton {
+  min-width: 0;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #3a4362;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1.5;
+  padding: 7px 13px;
+  cursor: pointer;
+}
+
+.secondaryButton:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+.secondaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.candidateDetailContent {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.candidateDetailHead h3 {
+  margin: 6px 0 4px;
+  font-size: 13px;
+  color: #1c2333;
+}
+
+.candidateSource,
+.candidateId,
+.monoId {
+  color: #6e7891;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.candidateSource {
+  margin: 0;
+}
+
+.candidateId,
+.monoId {
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+}
+
+.candidateScoreBox {
+  border: 1px solid #b9c4ee;
+  border-radius: 8px;
+  background: #eef1fb;
+  color: #2e3a97;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 9px 12px;
+}
+
+.candidateGateCard {
+  min-width: 0;
+}
+
+.candidateGateHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  color: #5a6478;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.candidateGateCount {
+  color: #2e3a97;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+}
+
+.gateWarningBox {
+  border: 1px solid #edddb5;
+  border-radius: 8px;
+  background: #fbf1dd;
+  color: #96610b;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+}
+
+.candidateKeyValueTable {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.kvRow {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.kvKey {
+  color: #6e7891;
+}
+
+.kvVal {
+  color: #3a4362;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.candidatePhotoPlaceholder {
+  display: grid;
+  place-items: center;
+  min-height: 56px;
+  border: 1px dashed #c8d2e8;
+  border-radius: 8px;
+  background: repeating-linear-gradient(45deg, #f1f3f8, #f1f3f8 8px, #e9edf4 8px, #e9edf4 16px);
+  color: #5a6478;
+  font-size: 10px;
+  padding: 10px;
+}
+
+.candidateActionSection,
+.candidateSecondaryButtons {
+  display: grid;
+  gap: 6px;
+}
+
+.candidateAuditSection {
+  border-top: 1px solid #eef1f6;
+  padding-top: 8px;
+}
+
+.auditTitle {
+  color: #6e7891;
+  font-size: 9px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.auditList {
+  display: grid;
+  gap: 6px;
+}
+
+.auditItem {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 6px;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.auditTime {
+  color: #6e7891;
+}
+
+.auditBody {
+  color: #3a4362;
+  overflow-wrap: anywhere;
+}
+
+.candidateMapPlaceholder {
+  position: relative;
+  min-height: 300px;
+  overflow: hidden;
+  border: 1px solid #dce4ec;
+  border-radius: 12px;
+}
+
+.scoreReport .scoreNumber small {
+  display: inline;
+}
+
+.scoreReport .revenueBar i b {
+  background: linear-gradient(180deg, #3d4cc4, #2e3a97);
+}
+
 .compareSummaryChips {
   display: flex;
   align-items: center;

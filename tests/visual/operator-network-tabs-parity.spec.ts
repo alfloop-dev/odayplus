@@ -14,7 +14,7 @@ async function measure(locator: Locator) {
   return locator.evaluate((element) => {
     const r = element.getBoundingClientRect();
     const s = getComputedStyle(element);
-    return { x: r.x, y: r.y, width: r.width, height: r.height, scrollWidth: element.scrollWidth, columns: s.gridTemplateColumns, overflowX: s.overflowX };
+    return { x: r.x, y: r.y, width: r.width, height: r.height, scrollWidth: element.scrollWidth, columns: s.gridTemplateColumns, overflowX: s.overflowX, radius: s.borderRadius };
   });
 }
 
@@ -28,7 +28,10 @@ async function file(info: TestInfo, name: string) {
 async function screenshot(page: Page, info: TestInfo, name: string) {
   await page.evaluate(() => scrollTo(0, 0));
   const target = await file(info, `${name}.png`);
-  await page.screenshot({ path: target, fullPage: true, animations: "disabled" });
+  // The reference has known horizontal overflow. Preserve it, but capture
+  // exactly the requested viewport width instead of a wider fullPage PNG.
+  const clip = await page.evaluate(() => ({ x: 0, y: 0, width: innerWidth, height: document.documentElement.scrollHeight }));
+  await page.screenshot({ path: target, fullPage: true, clip, animations: "disabled" });
   await info.attach(name, { path: target, contentType: "image/png" });
 }
 
@@ -40,7 +43,9 @@ function contained(box: { x: number; width: number }, width: number) {
 for (const width of [1440, 1024, 390]) {
   for (const screen of screens) {
     test(`${screen.id} content geometry at ${width}`, async ({ page, request }, info) => {
+      page.setDefaultTimeout(10_000);
       await page.setViewportSize({ width, height: 900 });
+      await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-manager"));
       // Reset only the isolated local test backend. No writes are made by UI capture.
       const api = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
       const headers = { "x-subject-id": "operator-expansion-manager", "x-roles": "expansion_user", "x-operator-role": "expansion-staff", "x-tenant-id": "tenant-a" };
@@ -63,6 +68,9 @@ for (const width of [1440, 1024, 390]) {
         await design.setViewportSize({ width, height: 900 });
         await design.route(/^https?:\/\//, (route) => route.abort());
         await design.goto(pathToFileURL(path.resolve("docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/oday-plus-console-r7-standalone.html")).href, { waitUntil: "domcontentloaded" });
+        design.setDefaultTimeout(10_000);
+        await design.getByRole("button", { name: /林.*營運主管/ }).click();
+        await design.getByRole("button", { name: /展店經理.*林曉青/ }).click();
         await design.getByRole("button", { name: /展店與店網.*Network/ }).click();
         // Reference prototype clips mobile tabs (known VDC-002 defect). Only
         // reference navigation uses DOM events; implementation uses real clicks.
@@ -70,6 +78,7 @@ for (const width of [1440, 1024, 390]) {
         await design.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; }" });
         const referencePanel = design.locator(`[data-screen-label="${screen.label}"]`);
         await expect(referencePanel).toBeVisible();
+        await design.evaluate(() => scrollTo(0, 0));
         reference = await measure(referencePanel);
         await screenshot(design, info, `design-${screen.id}-${width}`);
         await design.close();
@@ -84,6 +93,10 @@ for (const width of [1440, 1024, 390]) {
         boxes.photo = await measure(panel.getByTestId("candidate-photo-placeholder"));
         boxes.facts = await measure(panel.getByLabel("候選點鍵值資訊"));
         await expect(panel.getByTestId("candidate-blocked-CS-1003")).toBeDisabled();
+        expect(boxes.photo.height).toBeGreaterThanOrEqual(56);
+        const factRow = await measure(panel.getByLabel("候選點鍵值資訊").locator(":scope > div").first());
+        expect(factRow.columns.split(" ")).toHaveLength(2);
+        expect((await measure(detail.getByRole("button", { name: "編輯候選點" }))).radius).toBe("8px");
         if (width === 1440) {
           expect(boxes.pipeline.width).toBe(180);
           expect(boxes.detail.width).toBe(348);
@@ -101,6 +114,9 @@ for (const width of [1440, 1024, 390]) {
         boxes.map = await measure(panel.getByTestId("sitescore-mini-map"));
         boxes.revenue = await measure(report.getByLabel("月營收路徑（P50）"));
         boxes.risks = await measure(report.getByLabel("Risk breakdown"));
+        expect(boxes.map.width).toBeGreaterThanOrEqual(200);
+        expect(boxes.map.height).toBe(210);
+        expect((await measure(report.getByRole("button", { name: "要求補資料" }))).radius).toBe("8px");
         await expect(report.getByLabel("月營收路徑（P50）").locator("i")).toHaveCount(4);
         await expect(report.getByLabel("Risk breakdown").locator(":scope > div")).toHaveCount(6);
         if (width === 1440) {
@@ -120,10 +136,7 @@ for (const width of [1440, 1024, 390]) {
         expect(boxes.map.y).toBeGreaterThanOrEqual(boxes.tableScroll.y + boxes.tableScroll.height);
         await expect(panel.getByRole("button", { name: /送審首選/ })).toBeVisible();
         await expect(panel.getByRole("button", { name: /產生比較報告/ })).toBeVisible();
-        if (width === 1440) {
-          expect(boxes.recommendation.width).toBe(300);
-          expect(boxes.recommendation.x).toBe(boxes.map.x + boxes.map.width + 14);
-        } else if (width === 390) {
+        if (width === 390) {
           expect(boxes.tableScroll.overflowX).toBe("auto");
           expect(boxes.tableScroll.scrollWidth).toBeGreaterThan(boxes.tableScroll.width);
           expect(boxes.recommendation.y).toBeGreaterThanOrEqual(boxes.map.y + boxes.map.height);
@@ -143,6 +156,10 @@ for (const width of [1440, 1024, 390]) {
         }
       }
       if (width === 1440) {
+        if (screen.id === "compare") {
+          expect(boxes.recommendation.width).toBe(300);
+          expect(boxes.recommendation.x).toBe(boxes.map.x + boxes.map.width + 14);
+        }
         expect(boxes.panel.x).toBe(20);
         expect(boxes.panel.width).toBe(1400);
         if (reference) expect(boxes.panel.width).toBe(reference.width);

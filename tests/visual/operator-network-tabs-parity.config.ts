@@ -9,4 +9,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
+  webServer: Array.isArray(base.webServer)
+    ? base.webServer.map((server) => ({ ...server, cwd: process.cwd() }))
+    : base.webServer,
 });

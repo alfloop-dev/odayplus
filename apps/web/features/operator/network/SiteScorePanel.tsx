@@ -119,6 +119,7 @@ export function SiteScorePanel({
       {mode === "single" ? (
         <div className={styles.scoreLabWorkspace}>
           <aside className={styles.scoreLabPicker} aria-label="選擇候選點">
+            <div className={styles.scoreLabPickerChoices}>
             {cards.map((card) => {
               const cand = candidates.find((c) => c.id === card.id);
               const isSelected = (selectedCard?.id ?? selectedCandidate?.id) === card.id;
@@ -159,6 +160,7 @@ export function SiteScorePanel({
               );
             })}
 
+            </div>
             <div className={styles.scoreLabMiniMap} data-testid="sitescore-mini-map">
               <div className={styles.miniMapCanvas}>
                 <div className={styles.miniMapGrid} />
