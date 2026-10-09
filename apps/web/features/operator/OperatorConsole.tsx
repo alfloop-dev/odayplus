@@ -597,8 +597,10 @@ export function OperatorConsole({
             if (cancelled) return;
           }
         }
+        // A superseded load must not clear the warming notice of the load
+        // that replaced it (e.g. after a role switch) while that one retries.
+        if (cancelled || attempt === undefined) return;
         setShellWarmingUp(false);
-        if (attempt === undefined) return;
         const bootstrapRes = attempt.response;
         if (!bootstrapRes.ok) {
           const responseCorrelationId = bootstrapRes.headers?.get?.("x-correlation-id") ?? null;

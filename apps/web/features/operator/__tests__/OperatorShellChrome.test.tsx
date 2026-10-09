@@ -1,7 +1,8 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
+import { DEFAULT_OPERATOR_ROLE_ID, OPERATOR_ROLES, getOperatorRole } from "../navigation";
 
 const productionRetryDelays = [...operatorBootstrapRetryPolicy.delaysMs];
 
@@ -323,6 +324,51 @@ describe("Operator shared header chrome", () => {
       fetchMock.mock.calls.map((call) => (call[1] as { headers: Record<string, string> }).headers["X-Correlation-Id"]),
     );
     expect(ids.size).toBe(1);
+  });
+
+  it("keeps the starting message when a superseded bootstrap resolves during the next one's retries", async () => {
+    const deferred = () => {
+      let resolve: (value: Response) => void = () => undefined;
+      const promise = new Promise<Response>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    };
+    const superseded = deferred();
+    const retry = deferred();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(superseded.promise)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: "WEB_API_UPSTREAM_TIMEOUT", retryable: true } }), {
+          status: 504,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockReturnValueOnce(retry.promise);
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // Switching role cancels the pending load and starts another, which hits
+    // a cold start and begins retrying.
+    const currentRole = getOperatorRole(DEFAULT_OPERATOR_ROLE_ID);
+    const otherRole = OPERATOR_ROLES.find((role) => role.id !== currentRole.id)!;
+    fireEvent.click(screen.getByTitle(currentRole.label));
+    const menu = document.querySelector<HTMLElement>('[data-screen-label="Role Switch Menu"]')!;
+    fireEvent.click(within(menu).getByText(otherRole.label));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    const detail = () => screen.getByTestId("operator-data-unavailable-detail");
+    await waitFor(() => expect(detail()).toHaveTextContent("正在啟動"));
+
+    // The superseded load finishing must not erase the notice.
+    superseded.resolve(jsonResponse(liveEnvelope));
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(detail()).toHaveTextContent("正在啟動");
+
+    retry.resolve(jsonResponse(liveEnvelope));
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
   });
 
   it("does not retry a malformed JSON body", async () => {
