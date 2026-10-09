@@ -201,8 +201,11 @@ describe("Network Find Areas in the production Operator Console composition", ()
     }
 
     const state = screen.getByLabelText("Network Find Areas state");
-    expect(state).toHaveTextContent("2 HeatZones");
-    expect(state).toHaveTextContent("1 listings");
+    expect(state).toHaveTextContent("1 今日新物件");
+    const panel = screen.getByTestId("network-panel-find-areas");
+    expect(panel).toHaveTextContent("Scoped Zone One");
+    expect(panel).toHaveTextContent("Scoped Zone Two");
+    expect(screen.getByLabelText("Selected HeatZone detail")).toHaveTextContent("HZ-SCOPED-02");
     expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();
     expect(screen.queryByText("fixture data")).toBeNull();
   });
@@ -213,8 +216,10 @@ describe("Network Find Areas in the production Operator Console composition", ()
     const { unmount } = render(<OperatorConsole searchParams={{ ws: "network" }} />);
 
     const state = await screen.findByLabelText("Network Find Areas state");
-    await waitFor(() => expect(state).toHaveTextContent("1 listings"), { timeout: 5000 });
-    expect(state).toHaveTextContent("0 HeatZones");
+    await waitFor(() => expect(state).toHaveTextContent("1 今日新物件"), { timeout: 5000 });
+    expect(screen.queryByTestId("network-panel-find-areas")).toBeNull();
+    expect(screen.queryByText("Scoped Zone One")).toBeNull();
+    expect(screen.queryByText("Scoped Zone Two")).toBeNull();
     // Find Areas owns the HeatZones, so it alone reports the withheld aggregate as empty.
     await waitFor(() =>
       expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty"),

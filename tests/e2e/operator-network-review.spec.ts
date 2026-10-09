@@ -70,9 +70,14 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
     await page.getByTestId("network-tab-5").click();
     await expect(page.getByTestId("network-panel-review")).toBeVisible();
 
-    await page.getByTestId("review-card-RV-701").click({ timeout: 15_000 });
+    // Do not open a fallback card while the active-persona snapshot is still
+    // hydrating: its replacement can remount the dialog and erase local errors.
+    await expect(page.getByTestId("review-card-RV-701")).toContainText("王若寧（拓展）", { timeout: 15_000 });
+    await page.getByTestId("review-card-RV-701").click();
     await page.getByTestId("review-btn-wait-RV-701").click();
     await page.getByTestId("review-decision-reason").fill("人流佳惟站前施工需以條件管理。");
+    await expect(page.getByTestId("review-decision-conditions")).toHaveValue("");
+    await expect(page.getByTestId("review-decision-submit")).toBeEnabled();
     await page.getByTestId("review-decision-submit").click();
     await expect(page.getByTestId("review-decision-error")).toContainText("通過條件");
   });
