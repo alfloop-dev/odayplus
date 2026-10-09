@@ -310,9 +310,17 @@ Required additional proof, not replacements for existing checks:
 - Successful scoped self-account detail and business bootstrap reads are required;
   business bootstrap must carry truthful live provenance and no surrogate markers.
   Missing data/binding 503 is a blocker, not converted to a successful empty read.
-- Invalid-body, non-existent-object business write/approval/execution/publication
-  probes must return authorization 403 (not 404/422/503); wrong persona, admin
-  page, durable logout/revocation and both password journeys remain required.
+- Business write/approval/execution/publication probes deliberately violate typed
+  DTO fields (`url={}`, `decision={}`, `candidateIds={}`, and
+  `approvalId={}/action={}`, respectively). Empty batch-scoring `{}` is valid
+  and **must not** be used; a non-existent object id alone is not a safety guard.
+  A regressed permission guard must stop at DTO validation before any handler,
+  scoring, provider or persistence call. Only authorization 403 passes the live
+  deny proof; validation 422 (or 404/503) blocks, never counts as permission denial.
+  The offline real-router regression forwards the gate's actual bodies and checks
+  both intact-guard 403 and bypassed-guard 422 with zero downstream calls. Wrong
+  persona, admin page, durable logout/revocation and both password journeys
+  remain required.
 
 The receipt labels `account_mode=read-enabled-admin`, never `pure-admin` proof.
 Pure-admin baseline still requires business403 and rejects business200. Full

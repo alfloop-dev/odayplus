@@ -2274,16 +2274,19 @@ def _check_dev_admin_session(
         _check(checks, not detail.failed and detail.status == 200
                and _identity_snapshot(detail.payload) == own_snapshot,
                "admin:scoped_account_read", f"status={detail.status}", "tenant-isolation")
-        # Invalid bodies and a non-existent id cannot create business state even
-        # if a broken guard reaches validation. Only an authorization 403 passes.
-        for label, path in (
-            ("write", "network-listings/intake/submit"),
-            ("approve", "network-reviews/live-gate-no-such-review/decide"),
-            ("execute", "network-scoring/score"),
-            ("publish", "governance/decisions"),
+        # Each probe deliberately violates a typed DTO field, so validation
+        # stops before the handler even if its authorization guard regresses.
+        # In particular, {} is VALID for batch scoring and can score all sites.
+        # A non-existent id alone is not a safety boundary. Only 403 passes;
+        # validation 422 must block the gate, never count as authorization proof.
+        for label, path, invalid_body in (
+            ("write", "network-listings/intake/submit", {"url": {}}),
+            ("approve", "network-reviews/live-gate-no-such-review/decide", {"decision": {}}),
+            ("execute", "network-scoring/score", {"candidateIds": {}}),
+            ("publish", "governance/decisions", {"approvalId": {}, "action": {}}),
         ):
             refused = web.request(
-                "POST", f"/api/v1/operator/{path}", body={}, authenticated=False,
+                "POST", f"/api/v1/operator/{path}", body=invalid_body, authenticated=False,
                 headers=session_headers(cookies, origin=origin), follow_redirects=False,
             )
             _check(checks, not refused.failed and refused.status == 403,
