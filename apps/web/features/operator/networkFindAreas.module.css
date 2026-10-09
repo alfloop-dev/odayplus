@@ -2904,7 +2904,7 @@
 .reviewQueueId {
   font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
-  color: #8a93a8;
+  color: #626d83;
 }
 
 .reviewQueueName {
@@ -2917,10 +2917,11 @@
 .reviewQueueMeta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   margin-top: 3px;
   font-size: 10px;
-  color: #8a93a8;
+  color: #626d83;
 }
 
 .reviewQueueDue {
@@ -2945,7 +2946,7 @@
 
 .reviewMetaGrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin-top: 12px;
 }
@@ -2977,7 +2978,7 @@
 
 .reviewMetricGrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin-top: 12px;
   border: 1px solid #eef1f6;
@@ -2988,11 +2989,12 @@
 
 .reviewMetaLabel {
   font-size: 9.5px;
-  color: #98a1b3;
+  color: #626d83;
   font-weight: 700;
 }
 
 .reviewMetaValue {
+  overflow-wrap: anywhere;
   font-size: 11.5px;
   color: #3a4362;
   margin-top: 2px;
@@ -3002,19 +3004,23 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  margin-top: 12px;
+  margin: 12px 0 0;
   font-size: 11px;
 }
 
 .reviewFactRow {
-  display: flex;
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
   gap: 8px;
 }
 
+.reviewFactRow dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .reviewFactKey {
-  width: 82px;
-  flex: none;
-  color: #8a93a8;
+  color: #626d83;
 }
 
 .reviewChips {
@@ -3025,9 +3031,11 @@
 }
 
 .reviewChip {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   font-size: 10.5px;
   font-weight: 600;
-  color: #0e7c8c;
+  color: #087384;
   background: #e2f4f6;
   border-radius: 6px;
   padding: 3px 9px;
@@ -3044,13 +3052,14 @@
 .reviewHistoryRow {
   display: flex;
   gap: 8px;
+  overflow-wrap: anywhere;
   font-size: 10.5px;
 }
 
 .reviewHistoryTime {
   width: 118px;
   flex: none;
-  color: #98a1b3;
+  color: #626d83;
   font-weight: 600;
 }
 
@@ -3108,6 +3117,53 @@
   font-size: 12.5px;
   font-weight: 700;
   cursor: pointer;
+}
+
+/* Review secondary decisions stay outlined like Package 10. Do not change
+ * the shared approval-center buttons or the business decision handlers. */
+.reviewDecisionBar .btnReturn {
+  border: 1px solid #cdd4eb;
+  background: #ffffff;
+  color: #2e3a97;
+}
+
+.reviewDecisionBar .btnReturn:hover {
+  background: #f1f4fd;
+}
+
+.reviewDecisionBar .btnReject {
+  border: 1px solid #f0b7b7;
+  background: #ffffff;
+  color: #b4232d;
+}
+
+.reviewDecisionBar .btnReject:hover {
+  background: #fff2f2;
+}
+
+.reviewQueueCard:focus-visible,
+.reviewDecisionBar button:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+.reviewSecondaryActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: #626d83;
+  font-size: 11px;
+}
+
+.reviewSecondaryActions button {
+  border: 1px solid #cdd4eb;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #ffffff;
+  color: #626d83;
+  cursor: not-allowed;
 }
 
 .btnGo {

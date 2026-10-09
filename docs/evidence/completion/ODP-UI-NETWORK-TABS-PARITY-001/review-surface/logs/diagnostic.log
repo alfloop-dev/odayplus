@@ -1,0 +1,2444 @@
+[WebServer] 2026/10/09 18:45:52 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 18:45:54 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 18:45:54 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [2074315]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8312 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T18:45:57.988468+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "453fc667-b844-47d5-92ed-d1ad92239cee", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 2 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T18:46:36.516265+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "59faa03b-1742-4abe-bb47-14456f70869a", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-reviews/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:36.546169+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "59004650-8055-469d-8343-fdb27e5c70f2", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-listings/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:38.863825+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ee133a3b-f978-438c-b090-bc0491ae7b28", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:38.954203+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "381e20c4-cae7-468c-a3a1-d254602b4e35", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:41.556669+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:41.676115+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:41.678907+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:41.679789+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:44.120202+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:44.122656+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:44.127149+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:45.630291+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-8c4e13c4-1d3c-49fb-a05e-1ff488f22a54", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:45.689539+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+  ✘  1 [chromium] › tests/visual/operator-review-surface-parity.spec.ts:37:7 › Review queue and detail at 1440 (13.8s)
+[WebServer] {"timestamp": "2026-10-09T18:46:49.746198+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "80e3be80-3786-4d5a-8ed9-bdc21badc580", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-reviews/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:49.766270+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1657e533-1d49-467a-94f8-411df16d15cc", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-listings/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:49.864316+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "0fcdf971-b3ab-444b-ab45-5cfe63894607", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:49.909674+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "bccccca8-9e2d-4e2c-bb7a-d7d6a363148a", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:52.300620+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:52.385873+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:52.387232+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:52.389433+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:52.691648+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:52.752432+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:52.754965+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:52.837183+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T18:46:52.890812+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-89d81803-4da2-4bb5-a741-d4472db417d2", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+  ✘  2 [chromium] › tests/visual/operator-review-surface-parity.spec.ts:37:7 › Review queue and detail at 390 (6.4s)
+
+
+  1) [chromium] › tests/visual/operator-review-surface-parity.spec.ts:37:7 › Review queue and detail at 1440 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -    1
+    + Received  + 1178
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-698\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-698\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewQueueId__gahFC\">RV-698</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-698\"] > .networkFindAreas_reviewQueueTop__IWz5e > .networkFindAreas_reviewQueueId__gahFC",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-698\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-698\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span>王若寧（拓展）</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-698\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(1)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-698\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-698\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span>送審 2026-06-30 14:20</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-698\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(2)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-702\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-702\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewQueueId__gahFC\">RV-702</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-702\"] > .networkFindAreas_reviewQueueTop__IWz5e > .networkFindAreas_reviewQueueId__gahFC",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-702\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-702\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span>王若寧（拓展）</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-702\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(1)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-702\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-702\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span>送審 2026-07-13 09:20</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-702\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(2)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#f1f4fd",
+    +               "contrastRatio": 2.8,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.8 (foreground color: #8a93a8, background color: #f1f4fd, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-active=\"true\" data-testid=\"review-card-RV-701\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-active=\"true\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.8 (foreground color: #8a93a8, background color: #f1f4fd, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewQueueId__gahFC\">RV-701</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-active=\"true\"] > .networkFindAreas_reviewQueueTop__IWz5e > .networkFindAreas_reviewQueueId__gahFC",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#f1f4fd",
+    +               "contrastRatio": 2.8,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.8 (foreground color: #8a93a8, background color: #f1f4fd, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-active=\"true\" data-testid=\"review-card-RV-701\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-active=\"true\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.8 (foreground color: #8a93a8, background color: #f1f4fd, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span>王若寧（拓展）</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-active=\"true\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(1)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#f1f4fd",
+    +               "contrastRatio": 2.8,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.8 (foreground color: #8a93a8, background color: #f1f4fd, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-active=\"true\" data-testid=\"review-card-RV-701\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-active=\"true\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.8 (foreground color: #8a93a8, background color: #f1f4fd, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span>送審 2026-07-13 16:42</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-active=\"true\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(2)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewQueueId__gahFC\">RV-701</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewDetailHead__69Fhl > .networkFindAreas_reviewQueueId__gahFC",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 2.59,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">申請人</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetaGrid__cgpuA > div:nth-child(1) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 2.59,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">審核角色</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetaGrid__cgpuA > div:nth-child(2) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 2.59,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">送審時間</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetaGrid__cgpuA > div:nth-child(3) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 2.59,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">期限</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetaGrid__cgpuA > div:nth-child(4) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 2.53,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewMetricGrid__N5mmg\" data-testid=\"review-metrics-RV-701\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewMetricGrid__N5mmg",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">回本期</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetricGrid__N5mmg > div:nth-child(1) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 2.53,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewMetricGrid__N5mmg\" data-testid=\"review-metrics-RV-701\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewMetricGrid__N5mmg",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">M12 P50</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetricGrid__N5mmg > div:nth-child(2) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 2.53,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewMetricGrid__N5mmg\" data-testid=\"review-metrics-RV-701\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewMetricGrid__N5mmg",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">租金合理性</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetricGrid__N5mmg > div:nth-child(3) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 2.53,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewMetricGrid__N5mmg\" data-testid=\"review-metrics-RV-701\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewMetricGrid__N5mmg",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">自家稀釋</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetricGrid__N5mmg > div:nth-child(4) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">來源物件</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(1) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">現勘</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(2) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">仲介聯絡</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(3) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">候選備註</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(4) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">模型／快照</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(5) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">比較結果</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(6) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">Candidate 狀態</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(7) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#e2f4f6",
+    +               "contrastRatio": 4.32,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#0e7c8c",
+    +               "fontSize": "7.9pt (10.5px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">SiteScore v2.3</span>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewChip__ETdnn:nth-child(1)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">SiteScore v2.3</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewChip__ETdnn:nth-child(1)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#e2f4f6",
+    +               "contrastRatio": 4.32,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#0e7c8c",
+    +               "fontSize": "7.9pt (10.5px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">Dataset FS-20260703-0600</span>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewChip__ETdnn:nth-child(2)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">Dataset FS-20260703-0600</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewChip__ETdnn:nth-child(2)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#e2f4f6",
+    +               "contrastRatio": 4.32,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#0e7c8c",
+    +               "fontSize": "7.9pt (10.5px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">現勘完成</span>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewChip__ETdnn:nth-child(3)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">現勘完成</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewChip__ETdnn:nth-child(3)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#e2f4f6",
+    +               "contrastRatio": 4.32,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#0e7c8c",
+    +               "fontSize": "7.9pt (10.5px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">比較 P2</span>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewChip__ETdnn:nth-child(4)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">比較 P2</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewChip__ETdnn:nth-child(4)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 2.53,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewHistory__I_qtr\"><div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">CANDIDATE 歷程</div><div class=\"networkFindAreas_reviewHistoryRow__sPopn\"><span class=\"networkFindAreas_reviewHistoryTime__fxWqW\">2026-07-13 16:42</span><span>王若寧送審（拓展）</span></div></div>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewHistory__I_qtr",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">CANDIDATE 歷程</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewHistory__I_qtr > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 2.53,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.9pt (10.5px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewHistory__I_qtr\"><div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">CANDIDATE 歷程</div><div class=\"networkFindAreas_reviewHistoryRow__sPopn\"><span class=\"networkFindAreas_reviewHistoryTime__fxWqW\">2026-07-13 16:42</span><span>王若寧送審（拓展）</span></div></div>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewHistory__I_qtr",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewHistoryTime__fxWqW\">2026-07-13 16:42</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewHistoryTime__fxWqW",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#f59e0b",
+    +               "contrastRatio": 2.14,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#ffffff",
+    +               "fontSize": "9.4pt (12.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.14 (foreground color: #ffffff, background color: #f59e0b, font size: 9.4pt (12.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_btnReturn__RDzL_\" data-testid=\"review-btn-return-RV-701\" type=\"button\">退回修改</button>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_btnReturn__RDzL_",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.14 (foreground color: #ffffff, background color: #f59e0b, font size: 9.4pt (12.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<button class=\"networkFindAreas_btnReturn__RDzL_\" data-testid=\"review-btn-return-RV-701\" type=\"button\">退回修改</button>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_btnReturn__RDzL_",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ef4444",
+    +               "contrastRatio": 3.76,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#ffffff",
+    +               "fontSize": "9.4pt (12.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.76 (foreground color: #ffffff, background color: #ef4444, font size: 9.4pt (12.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_btnReject__Re_HG\" data-testid=\"review-btn-reject-RV-701\" type=\"button\">駁回</button>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_btnReject__Re_HG",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.76 (foreground color: #ffffff, background color: #ef4444, font size: 9.4pt (12.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<button class=\"networkFindAreas_btnReject__Re_HG\" data-testid=\"review-btn-reject-RV-701\" type=\"button\">駁回</button>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_btnReject__Re_HG",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      102 |     const axe = await new AxeBuilder({ page }).include('[data-testid="network-panel-review"]').withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+      103 |     await save(info, `axe-review-${width}.json`, axe);
+    > 104 |     expect(axe.violations).toEqual([]);
+          |                            ^
+      105 |     // Selection is a keyboard-operable control, not a click-only reference div.
+      106 |     await card.focus();
+      107 |     await expect(card).toBeFocused();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-review-surface-parity.spec.ts:104:28
+
+    Error Context: test-results/operator-review-surface-pa-22f27-ew-queue-and-detail-at-1440-chromium/error-context.md
+
+    Error Context: test-results/operator-review-surface-pa-22f27-ew-queue-and-detail-at-1440-chromium/error-context.md
+
+  2) [chromium] › tests/visual/operator-review-surface-parity.spec.ts:37:7 › Review queue and detail at 390 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -    1
+    + Received  + 1178
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-698\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-698\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewQueueId__gahFC\">RV-698</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-698\"] > .networkFindAreas_reviewQueueTop__IWz5e > .networkFindAreas_reviewQueueId__gahFC",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-698\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-698\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span>王若寧（拓展）</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-698\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(1)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-698\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-698\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span>送審 2026-06-30 14:20</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-698\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(2)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-702\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-702\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewQueueId__gahFC\">RV-702</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-702\"] > .networkFindAreas_reviewQueueTop__IWz5e > .networkFindAreas_reviewQueueId__gahFC",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-702\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-702\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span>王若寧（拓展）</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-702\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(1)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-702\" type=\"button\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-702\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span>送審 2026-07-13 09:20</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-702\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(2)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#f1f4fd",
+    +               "contrastRatio": 2.8,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.8 (foreground color: #8a93a8, background color: #f1f4fd, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-701\" type=\"button\" data-active=\"true\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-701\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.8 (foreground color: #8a93a8, background color: #f1f4fd, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewQueueId__gahFC\">RV-701</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-701\"] > .networkFindAreas_reviewQueueTop__IWz5e > .networkFindAreas_reviewQueueId__gahFC",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#f1f4fd",
+    +               "contrastRatio": 2.8,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.8 (foreground color: #8a93a8, background color: #f1f4fd, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-701\" type=\"button\" data-active=\"true\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-701\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.8 (foreground color: #8a93a8, background color: #f1f4fd, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span>王若寧（拓展）</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-701\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(1)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#f1f4fd",
+    +               "contrastRatio": 2.8,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.8 (foreground color: #8a93a8, background color: #f1f4fd, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-701\" type=\"button\" data-active=\"true\">",
+    +                 "target": Array [
+    +                   "button[data-testid=\"review-card-RV-701\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.8 (foreground color: #8a93a8, background color: #f1f4fd, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span>送審 2026-07-13 16:42</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "button[data-testid=\"review-card-RV-701\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(2)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewQueueId__gahFC\">RV-701</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewDetailHead__69Fhl > .networkFindAreas_reviewQueueId__gahFC",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 2.59,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">申請人</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetaGrid__cgpuA > div:nth-child(1) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 2.59,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">審核角色</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetaGrid__cgpuA > div:nth-child(2) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 2.59,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">送審時間</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetaGrid__cgpuA > div:nth-child(3) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 2.59,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.59 (foreground color: #98a1b3, background color: #ffffff, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">期限</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetaGrid__cgpuA > div:nth-child(4) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 2.53,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewMetricGrid__N5mmg\" data-testid=\"review-metrics-RV-701\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewMetricGrid__N5mmg",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">回本期</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetricGrid__N5mmg > div:nth-child(1) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 2.53,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewMetricGrid__N5mmg\" data-testid=\"review-metrics-RV-701\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewMetricGrid__N5mmg",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">M12 P50</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetricGrid__N5mmg > div:nth-child(2) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 2.53,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewMetricGrid__N5mmg\" data-testid=\"review-metrics-RV-701\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewMetricGrid__N5mmg",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">租金合理性</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetricGrid__N5mmg > div:nth-child(3) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 2.53,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewMetricGrid__N5mmg\" data-testid=\"review-metrics-RV-701\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewMetricGrid__N5mmg",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">自家稀釋</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewMetricGrid__N5mmg > div:nth-child(4) > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">來源物件</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(1) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">現勘</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(2) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">仲介聯絡</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(3) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">候選備註</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(4) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">模型／快照</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(5) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">比較結果</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(6) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ffffff",
+    +               "contrastRatio": 3.07,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#8a93a8",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewDetail__EuIMd\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewDetail__EuIMd",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.07 (foreground color: #8a93a8, background color: #ffffff, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewFactKey__6rkcq\">Candidate 狀態</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewFactRow__JOgN1:nth-child(7) > .networkFindAreas_reviewFactKey__6rkcq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#e2f4f6",
+    +               "contrastRatio": 4.32,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#0e7c8c",
+    +               "fontSize": "7.9pt (10.5px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">SiteScore v2.3</span>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewChip__ETdnn:nth-child(1)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">SiteScore v2.3</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewChip__ETdnn:nth-child(1)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#e2f4f6",
+    +               "contrastRatio": 4.32,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#0e7c8c",
+    +               "fontSize": "7.9pt (10.5px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">Dataset FS-20260703-0600</span>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewChip__ETdnn:nth-child(2)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">Dataset FS-20260703-0600</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewChip__ETdnn:nth-child(2)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#e2f4f6",
+    +               "contrastRatio": 4.32,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#0e7c8c",
+    +               "fontSize": "7.9pt (10.5px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">現勘完成</span>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewChip__ETdnn:nth-child(3)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">現勘完成</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewChip__ETdnn:nth-child(3)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#e2f4f6",
+    +               "contrastRatio": 4.32,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#0e7c8c",
+    +               "fontSize": "7.9pt (10.5px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">比較 P2</span>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewChip__ETdnn:nth-child(4)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.32 (foreground color: #0e7c8c, background color: #e2f4f6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewChip__ETdnn\">比較 P2</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewChip__ETdnn:nth-child(4)",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 2.53,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.1pt (9.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewHistory__I_qtr\"><div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">CANDIDATE 歷程</div><div class=\"networkFindAreas_reviewHistoryRow__sPopn\"><span class=\"networkFindAreas_reviewHistoryTime__fxWqW\">2026-07-13 16:42</span><span>王若寧送審（拓展）</span></div></div>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewHistory__I_qtr",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.1pt (9.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">CANDIDATE 歷程</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewHistory__I_qtr > .networkFindAreas_reviewMetaLabel__TsiIv",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 2.53,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#98a1b3",
+    +               "fontSize": "7.9pt (10.5px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_reviewHistory__I_qtr\"><div class=\"networkFindAreas_reviewMetaLabel__TsiIv\">CANDIDATE 歷程</div><div class=\"networkFindAreas_reviewHistoryRow__sPopn\"><span class=\"networkFindAreas_reviewHistoryTime__fxWqW\">2026-07-13 16:42</span><span>王若寧送審（拓展）</span></div></div>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_reviewHistory__I_qtr",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.53 (foreground color: #98a1b3, background color: #fbfcfe, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_reviewHistoryTime__fxWqW\">2026-07-13 16:42</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_reviewHistoryTime__fxWqW",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#f59e0b",
+    +               "contrastRatio": 2.14,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#ffffff",
+    +               "fontSize": "9.4pt (12.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 2.14 (foreground color: #ffffff, background color: #f59e0b, font size: 9.4pt (12.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_btnReturn__RDzL_\" data-testid=\"review-btn-return-RV-701\" type=\"button\">退回修改</button>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_btnReturn__RDzL_",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 2.14 (foreground color: #ffffff, background color: #f59e0b, font size: 9.4pt (12.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<button class=\"networkFindAreas_btnReturn__RDzL_\" data-testid=\"review-btn-return-RV-701\" type=\"button\">退回修改</button>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_btnReturn__RDzL_",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#ef4444",
+    +               "contrastRatio": 3.76,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#ffffff",
+    +               "fontSize": "9.4pt (12.5px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.76 (foreground color: #ffffff, background color: #ef4444, font size: 9.4pt (12.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_btnReject__Re_HG\" data-testid=\"review-btn-reject-RV-701\" type=\"button\">駁回</button>",
+    +                 "target": Array [
+    +                   ".networkFindAreas_btnReject__Re_HG",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.76 (foreground color: #ffffff, background color: #ef4444, font size: 9.4pt (12.5px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<button class=\"networkFindAreas_btnReject__Re_HG\" data-testid=\"review-btn-reject-RV-701\" type=\"button\">駁回</button>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_btnReject__Re_HG",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      102 |     const axe = await new AxeBuilder({ page }).include('[data-testid="network-panel-review"]').withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+      103 |     await save(info, `axe-review-${width}.json`, axe);
+    > 104 |     expect(axe.violations).toEqual([]);
+          |                            ^
+      105 |     // Selection is a keyboard-operable control, not a click-only reference div.
+      106 |     await card.focus();
+      107 |     await expect(card).toBeFocused();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-review-surface-parity.spec.ts:104:28
+
+    Error Context: test-results/operator-review-surface-pa-3d895-iew-queue-and-detail-at-390-chromium/error-context.md
+
+    Error Context: test-results/operator-review-surface-pa-3d895-iew-queue-and-detail-at-390-chromium/error-context.md
+
+  2 failed
+    [chromium] › tests/visual/operator-review-surface-parity.spec.ts:37:7 › Review queue and detail at 1440 
+    [chromium] › tests/visual/operator-review-surface-parity.spec.ts:37:7 › Review queue and detail at 390 

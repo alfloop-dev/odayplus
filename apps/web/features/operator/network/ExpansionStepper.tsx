@@ -46,7 +46,7 @@ export function ExpansionStepper({
     >
       <div className={styles.flowHeader}>
         <span>EXPANSION FLOW · 找點流程</span>
-        <strong title={activeStep?.summary}>
+        <strong title={activeStep ? flowSummary(activeStep.summary) : undefined}>
           目前步驟：{activeStep ? stepLabels[activeStep.id]?.zh ?? activeStep.label : "店網管理"}
         </strong>
         <em role={activeStep?.state === "blocked" ? "status" : undefined}>
@@ -114,6 +114,7 @@ function flowSummary(summary: string) {
     "Requires a production model binding.": "須綁定正式模型",
     "Requires live scored candidates.": "須有正式候選點評分",
     "No live review packet is available.": "此流程尚無正式審核資料",
+    "No candidate review packet yet.": "此流程尚無候選點審核資料",
   };
   return labels[summary] ?? summary;
 }

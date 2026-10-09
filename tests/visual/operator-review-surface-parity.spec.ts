@@ -7,7 +7,7 @@ import { acquireOperatorBackendLock, releaseOperatorBackendLock } from "../e2e/_
 
 // Supplemental full-tab evidence, separate from Review Decision dialog coverage.
 // Capture authoritative local fixture reads; do not invent reviews or decisions.
-test.describe.configure({ mode: "serial", timeout: 120_000 });
+test.describe.configure({ timeout: 120_000 });
 test.beforeAll(acquireOperatorBackendLock);
 test.afterAll(releaseOperatorBackendLock);
 test.use({ extraHTTPHeaders: {} });
@@ -86,6 +86,11 @@ for (const width of [1440, 390]) {
     await save(info, `${phase}-geometry-${width}.json`, { boxes, document, design: designGeometry });
     if (phase !== "after") return;
     expect(document.scrollWidth).toBeLessThanOrEqual(width);
+    await expect(card).toHaveAttribute("aria-pressed", "true");
+    await expect(panel.getByRole("button", { name: "要求現勘（審核前補件）" })).toBeDisabled();
+    await expect(panel.getByTestId("review-recommendation-note-RV-701")).toContainText("系統建議為 WAIT");
+    await expect(page.getByTestId("network-expansion-stepper").getByRole("status")).toContainText("此流程尚無候選點審核資料");
+    await expect(panel.getByLabel("審核候選點資料").locator("dd")).toHaveCount(7);
     for (const [name, box] of Object.entries(boxes)) {
       expect(box.x, name).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width, name).toBeLessThanOrEqual(width);
