@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
-import { Button, Chip, StatusBadge, type Tone } from "./components";
+import { Button } from "./components";
+import { useModalDialogBehavior } from "./network/useModalDialogBehavior";
 import { operatorFixturesAllowed } from "./operatorDataMode";
 import { OPERATOR_ROLE_IDS, type OperatorRoleId, type Severity } from "./types";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
@@ -82,15 +83,15 @@ const fallbackIssue: StoreOpsWorkflowIssue = {
 };
 
 const dialogMeta: Record<StoreOpsWorkflowDialogType, { eyebrow: string; title: string }> = {
-  triage: { eyebrow: "Triage", title: "Triage Issue" },
-  assign: { eyebrow: "Ownership", title: "Assign Owner" },
-  action: { eyebrow: "Execution", title: "Create Action" },
-  fieldReport: { eyebrow: "Field Report", title: "Submit Field Report" },
-  outcome: { eyebrow: "Outcome", title: "Outcome Review" },
-  escalate: { eyebrow: "Escalation", title: "Escalate Issue" },
-  cameraPurpose: { eyebrow: "Evidence", title: "Camera Purpose" },
-  replyReview: { eyebrow: "Customer Reply", title: "Reply Review" },
-  transfer: { eyebrow: "Handoff", title: "Transfer Issue" },
+  triage: { eyebrow: "Triage", title: "完成 Triage" },
+  assign: { eyebrow: "Ownership", title: "指派負責人" },
+  action: { eyebrow: "Execution", title: "建立處置" },
+  fieldReport: { eyebrow: "Field Report", title: "提交現場回報" },
+  outcome: { eyebrow: "Outcome", title: "成效判斷" },
+  escalate: { eyebrow: "Escalation", title: "升級事件" },
+  cameraPurpose: { eyebrow: "Evidence", title: "調閱 Camera 片段" },
+  replyReview: { eyebrow: "Customer Reply", title: "回覆審查" },
+  transfer: { eyebrow: "Handoff", title: "轉交事件" },
 };
 
 const dialogScreenLabels: Record<StoreOpsWorkflowDialogType, string> = {
@@ -106,12 +107,12 @@ const dialogScreenLabels: Record<StoreOpsWorkflowDialogType, string> = {
 };
 
 const roleLabels: Record<OperatorRoleId, string> = {
-  opsLead: "Store Ops Lead",
-  supportLead: "Support Lead",
-  facilitiesLead: "Facilities Lead",
-  marketingManager: "Marketing Manager",
-  expansionManager: "Expansion Manager",
-  auditPm: "PM / Audit",
+  opsLead: "營運主管",
+  supportLead: "客服主管",
+  facilitiesLead: "工務主任",
+  marketingManager: "行銷主管",
+  expansionManager: "展店主管",
+  auditPm: "專案／稽核",
 };
 
 const roleOptions = OPERATOR_ROLE_IDS.map((roleId) => ({ label: roleLabels[roleId], value: roleId }));
@@ -231,34 +232,33 @@ export function StoreOpsWorkflowDialogs({
   }
 
   const effectiveIssue = issue ?? fallbackIssue;
+  return <WorkflowPanel activeDialog={activeDialog} callbacks={callbacks} issue={effectiveIssue} onClose={onClose} />;
+}
+
+function WorkflowPanel({ activeDialog, callbacks, issue, onClose }: WorkflowFormProps & { activeDialog: StoreOpsWorkflowDialogType }) {
+  const panelRef = useModalDialogBehavior({ onClose });
   const meta = dialogMeta[activeDialog];
   const frameClass = activeDialog === "fieldReport" ? styles.drawer : styles.dialog;
 
   return (
-    <div className={styles.overlay} data-screen-label={dialogScreenLabels[activeDialog]}>
+    <div ref={panelRef} className={styles.overlay} data-screen-label={dialogScreenLabels[activeDialog]}>
       <section
         aria-labelledby={`store-ops-workflow-${activeDialog}-title`}
         className={frameClass}
+        data-workflow={activeDialog}
         role="dialog"
         aria-modal="true"
       >
         <header className={styles.header}>
           <div className={styles.headerTitle}>
-            <p className={styles.eyebrow}>{meta.eyebrow}</p>
             <h2 id={`store-ops-workflow-${activeDialog}-title`}>{meta.title}</h2>
+            <span className={styles.issueId}>{issue.id}</span>
           </div>
-          <div className={styles.headerActions}>
-            <StatusBadge tone={severityTone(effectiveIssue.severity)}>{effectiveIssue.severity}</StatusBadge>
-            <Button onClick={onClose} size="sm" variant="ghost">
-              Close
-            </Button>
-          </div>
+          <button aria-label="關閉對話框" className={styles.closeButton} onClick={onClose} type="button">×</button>
         </header>
 
-        <IssueContext issue={effectiveIssue} />
-
         <div className={styles.body}>
-          <DialogContent activeDialog={activeDialog} callbacks={callbacks} issue={effectiveIssue} onClose={onClose} />
+          <DialogContent activeDialog={activeDialog} callbacks={callbacks} issue={issue} onClose={onClose} />
         </div>
       </section>
     </div>
@@ -305,24 +305,6 @@ function DialogContent({
   return <TransferForm callbacks={callbacks} issue={issue} key={key} onClose={onClose} />;
 }
 
-function IssueContext({ issue }: { issue: StoreOpsWorkflowIssue }) {
-  return (
-    <div className={styles.issueContext}>
-      <div className={styles.issueText}>
-        <span>
-          {issue.id} / {issue.storeName}
-        </span>
-        <strong>{issue.title}</strong>
-        <p>{issue.summary}</p>
-      </div>
-      <div className={styles.issueBadges}>
-        <Chip tone="info">{issue.status}</Chip>
-        <Chip>{issue.source}</Chip>
-      </div>
-    </div>
-  );
-}
-
 type WorkflowFormProps = {
   callbacks?: StoreOpsWorkflowCallbacks;
   issue: StoreOpsWorkflowIssue;
@@ -362,7 +344,6 @@ function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   return (
     <form className={styles.form} onSubmit={submit}>
       <div className={styles.grid}>
-        <SelectField<Severity> label="Severity" onChange={setSeverity} options={severityOptions} value={severity} />
         <SelectField<StoreOpsTriageCategory>
           label="Category"
           onChange={setCategory}
@@ -386,6 +367,13 @@ function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           ]}
           value={evidenceStrength}
         />
+        <TextAreaField className={styles.fullWidth} label="研判備註（選填）" onChange={setNotes} value={notes} />
+      </div>
+      <div className={styles.notice}>完成後狀態變更為「已分類」，下一步：指派負責人。此操作將寫入稽核紀錄。</div>
+      <details className={styles.advanced}>
+        <summary>進階研判與補證據</summary>
+        <div className={styles.grid}>
+        <SelectField<Severity> label="Severity" onChange={setSeverity} options={severityOptions} value={severity} />
         <SelectField<StoreOpsTriageDecision>
           label="Decision"
           onChange={setDecision}
@@ -399,7 +387,6 @@ function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           value={decision}
         />
         <TextField label="Observation window" onChange={setObservationWindow} value={observationWindow} />
-        <TextAreaField className={styles.fullWidth} label="Triage notes" onChange={setNotes} value={notes} />
       </div>
       <div className={styles.checkGrid}>
         <CheckboxField
@@ -417,7 +404,8 @@ function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           />
         ) : null}
       </div>
-      <DialogActions onCancel={onClose} primaryLabel="Submit Triage" />
+      </details>
+      <DialogActions onCancel={onClose} primaryLabel="完成 Triage" />
     </form>
   );
 }
@@ -426,7 +414,7 @@ function AssignForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   const [ownerRoleId, setOwnerRoleId] = useState<OperatorRoleId>(issue.ownerRoleId);
   const [ownerName, setOwnerName] = useState(issue.ownerName);
   const [slaDueAt, setSlaDueAt] = useState(issue.slaDueAt);
-  const [handoffNote, setHandoffNote] = useState(`Take ownership of ${issue.id} and confirm next action.`);
+  const [handoffNote, setHandoffNote] = useState(`接手 ${issue.id} 並確認下一步處置。`);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -458,9 +446,9 @@ function AssignForm({ callbacks, issue, onClose }: WorkflowFormProps) {
 
 function ActionForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   const [actionType, setActionType] = useState<StoreOpsActionType>("cleaningCheck");
-  const [title, setTitle] = useState(`Resolve ${issue.title}`);
-  const [instructions, setInstructions] = useState("Complete the field action and attach evidence if available.");
-  const [checklistItems, setChecklistItems] = useState("Confirm owner\nComplete action\nAttach evidence");
+  const [title, setTitle] = useState(`處理 ${issue.title}`);
+  const [instructions, setInstructions] = useState("完成現場處置並附上可用證據。");
+  const [checklistItems, setChecklistItems] = useState("確認負責人\n完成處置\n附上證據");
   const [needEvidence, setNeedEvidence] = useState(true);
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [observationWindow, setObservationWindow] = useState("4 hours");
@@ -471,7 +459,7 @@ function ActionForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     event.preventDefault();
     const auditNote = remoteRestartAuditNote.trim();
     if (actionType === "remoteRestart" && !auditNote) {
-      setError("Remote restart requires an audit note.");
+      setError("遠端重啟必須填寫稽核備註。");
       return;
     }
 
@@ -521,7 +509,7 @@ function ActionForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           onChange={setChecklistItems}
           value={checklistItems}
         />
-        <TextAreaField
+        {actionType === "remoteRestart" ? <TextAreaField
           className={styles.fullWidth}
           hint="Required when action type is Remote restart."
           label="Remote restart audit note"
@@ -530,7 +518,7 @@ function ActionForm({ callbacks, issue, onClose }: WorkflowFormProps) {
             setError("");
           }}
           value={remoteRestartAuditNote}
-        />
+        /> : null}
       </div>
       <div className={styles.checkGrid}>
         <CheckboxField
@@ -546,7 +534,7 @@ function ActionForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           onChange={setRequiresApproval}
         />
       </div>
-      {error ? <div className={styles.error}>{error}</div> : null}
+      {error ? <div role="alert" className={styles.error}>{error}</div> : null}
       <DialogActions onCancel={onClose} primaryLabel="Create Action" />
     </form>
   );
@@ -565,7 +553,7 @@ function FieldReportForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     event.preventDefault();
     const trimmedBlocker = blocker.trim();
     if (checklistStatus === "blocked" && !trimmedBlocker) {
-      setError("Blocked field reports require a blocker note.");
+      setError("受阻回報必須填寫阻礙說明。");
       return;
     }
 
@@ -641,7 +629,7 @@ function OutcomeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     event.preventDefault();
     const trimmedFollowUp = followUpAction.trim();
     if (needsFollowUp && !trimmedFollowUp) {
-      setError("Ineffective or inconclusive outcomes require a follow-up action.");
+      setError("無效或無法判定時必須填寫後續行動。");
       return;
     }
 
@@ -676,7 +664,7 @@ function OutcomeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           ]}
           value={outcome}
         />
-        <SelectField<StoreOpsFollowUpTarget>
+        {needsFollowUp ? <SelectField<StoreOpsFollowUpTarget>
           label="Follow-up target"
           onChange={setFollowUpTarget}
           options={[
@@ -686,10 +674,10 @@ function OutcomeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
             { label: "Govern", value: "govern" },
           ]}
           value={followUpTarget}
-        />
+        /> : null}
         <TextAreaField className={styles.fullWidth} label="Impact summary" onChange={setImpactSummary} required value={impactSummary} />
         <TextAreaField className={styles.fullWidth} label="Evidence summary" onChange={setEvidenceSummary} value={evidenceSummary} />
-        <TextAreaField
+        {needsFollowUp ? <TextAreaField
           className={styles.fullWidth}
           hint="Required for ineffective or inconclusive outcomes."
           label="Follow-up action"
@@ -698,15 +686,15 @@ function OutcomeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
             setError("");
           }}
           value={followUpAction}
-        />
+        /> : null}
       </div>
-      <CheckboxField
+      {!needsFollowUp ? <CheckboxField
         checked={closeIssue}
         description={needsFollowUp ? "Disabled in payload until follow-up is resolved." : "Allow callback owner to close the issue."}
         label="Close issue after review"
         onChange={setCloseIssue}
-      />
-      {error ? <div className={styles.error}>{error}</div> : null}
+      /> : <div className={styles.notice}>無效或無法判定不可直接結案 — 請選擇後續行動。</div>}
+      {error ? <div role="alert" className={styles.error}>{error}</div> : null}
       <DialogActions onCancel={onClose} primaryLabel="Submit Outcome" />
     </form>
   );
@@ -716,7 +704,7 @@ function EscalateForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   const [target, setTarget] = useState<StoreOpsEscalationTarget>("growth");
   const [urgency, setUrgency] = useState<StoreOpsUrgency>("high");
   const [reason, setReason] = useState("");
-  const [requestedOutcome, setRequestedOutcome] = useState("Create downstream review object and return recommendation.");
+  const [requestedOutcome, setRequestedOutcome] = useState("建立後續審查並回覆建議。");
   const [notifyOwner, setNotifyOwner] = useState(true);
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -780,22 +768,22 @@ function EscalateForm({ callbacks, issue, onClose }: WorkflowFormProps) {
 
 function CameraPurposeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   const [purpose, setPurpose] = useState("");
-  const [cameraLocation, setCameraLocation] = useState(`${issue.storeName} counter camera`);
-  const [timeWindow, setTimeWindow] = useState("Last 30 minutes");
+  const [cameraLocation, setCameraLocation] = useState(`${issue.storeName} 櫃檯攝影機`);
+  const [timeWindow, setTimeWindow] = useState("最近 30 分鐘");
   const [retentionHours, setRetentionHours] = useState(24);
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
-  const [auditNote, setAuditNote] = useState(`Purpose review for ${issue.id}`);
+  const [auditNote, setAuditNote] = useState(`${issue.id} 調閱目的審查`);
   const [error, setError] = useState("");
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedPurpose = purpose.trim();
     if (!trimmedPurpose) {
-      setError("Camera purpose is required.");
+      setError("必須填寫影像調閱目的。");
       return;
     }
     if (!privacyAcknowledged) {
-      setError("Privacy and audit warning must be acknowledged.");
+      setError("必須確認隱私與稽核告知。");
       return;
     }
 
@@ -817,8 +805,7 @@ function CameraPurposeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   return (
     <form className={styles.form} onSubmit={submit}>
       <div className={styles.warning}>
-        Camera evidence is privacy-scoped. Opening footage requires a declared purpose and will be written to the
-        audit trail with actor, issue, time window, and retention metadata.
+        此調閱僅限場域事件確認，不含人臉辨識與身份追蹤。調閱者、目的、時段與保留時數將寫入稽核紀錄。
       </div>
       <div className={styles.grid}>
         <TextAreaField
@@ -846,7 +833,7 @@ function CameraPurposeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
           setError("");
         }}
       />
-      {error ? <div className={styles.error}>{error}</div> : null}
+      {error ? <div role="alert" className={styles.error}>{error}</div> : null}
       <DialogActions onCancel={onClose} primaryLabel="Record Purpose" />
     </form>
   );
@@ -855,7 +842,7 @@ function CameraPurposeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
 function ReplyReviewForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   const [channel, setChannel] = useState<StoreOpsReplyChannel>("google");
   const [decision, setDecision] = useState<StoreOpsReplyDecision>("approve");
-  const [draftReply, setDraftReply] = useState("Thank you for flagging this. The store team has reviewed the issue and taken action.");
+  const [draftReply, setDraftReply] = useState("感謝您的反映，門市團隊已確認問題並採取處置。");
   const [reviewerNote, setReviewerNote] = useState("");
   const [publishAfterApproval, setPublishAfterApproval] = useState(false);
   const [error, setError] = useState("");
@@ -865,7 +852,7 @@ function ReplyReviewForm({ callbacks, issue, onClose }: WorkflowFormProps) {
     event.preventDefault();
     const trimmedNote = reviewerNote.trim();
     if (needsReason && !trimmedNote) {
-      setError("Return or reject requires a reviewer note.");
+      setError("退回或拒絕必須填寫審查備註。");
       return;
     }
 
@@ -974,6 +961,36 @@ function TransferForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   );
 }
 
+// Translate display text only; API enum values and payload contracts stay unchanged.
+const workflowCopy: Record<string, string> = {
+  "Severity": "嚴重度", "Category": "根因分類", "Evidence strength": "信心度", "Decision": "審查決策",
+  "Low": "低", "Medium": "中", "High": "高", "Critical": "嚴重",
+  "Service": "客服流程", "Cleanliness": "清潔品質", "Staffing": "人力配置", "Device": "設備故障", "Payment": "支付金流", "Multi-signal": "多來源訊號",
+  "Weak": "低 — 證據不足", "Usable": "中 — 需現場確認", "Strong": "高 — 多來源證據一致",
+  "Accept triage": "接受研判", "Need evidence": "需補證據", "Demo fast-forward": "示範快轉", "Observation window": "觀察窗",
+  "Return the issue to waiting evidence before assignment.": "指派前先將事件退回待補證據。",
+  "Allow the demo shell to move past observation timers.": "僅示範模式可略過觀察計時。",
+  "Owner role": "負責角色", "Owner name": "負責人", "SLA due": "處理期限", "Handoff note": "交辦備註（選填）", "Assign Owner": "確認指派",
+  "Action type": "處置類型", "Action title": "處置標題", "Instructions": "執行說明", "Checklist": "檢查清單", "One item per line.": "每行一項。",
+  "Staff briefing": "人員交辦", "Cleaning check": "清潔加強", "Customer callback": "客服回訪", "IoT restart": "設備重啟", "Approval request": "需核准", "Remote restart": "遠端重啟",
+  "Remote restart audit note": "遠端重啟稽核備註", "Required when action type is Remote restart.": "遠端重啟時必填。",
+  "Keep the action open until proof is attached.": "附上證據後才可完成處置。", "Route completion to Govern before closure.": "結案前先送治理核准。", "Create Action": "建立處置",
+  "Reported by": "回報人", "Observed at": "觀察時間", "Checklist status": "清單狀態", "Complete": "已完成", "Partial": "部分完成", "Blocked": "受阻",
+  "Attachments": "附件", "Placeholder filenames are OK for this slice.": "填寫附件檔名。", "Report summary": "回報摘要", "Blocker": "阻礙說明", "Required when checklist status is blocked.": "受阻時必填。", "Submit Report": "送出回報",
+  "Outcome": "成效判斷", "Effective": "有效", "Ineffective": "無效", "Inconclusive": "無法判定", "Follow-up target": "後續工作台", "Follow-up action": "後續行動",
+  "Store Ops": "門市營運", "Growth": "營收成長", "Network": "展店與店網", "Govern": "治理稽核", "Impact summary": "判斷理由", "Evidence summary": "證據核對摘要",
+  "Required for ineffective or inconclusive outcomes.": "無效或無法判定時必填。", "Close issue after review": "審查後結案",
+  "Disabled in payload until follow-up is resolved.": "後續行動未解決前不得結案。", "Allow callback owner to close the issue.": "允許負責人於審查後結案。", "Submit Outcome": "送出成效判斷",
+  "Target workspace": "升級目標", "Urgency": "緊急程度", "Normal": "一般", "Escalation reason": "升級理由", "Requested outcome": "期望結果",
+  "Notify current owner": "通知目前負責人", "Include current owner in the callback payload.": "一併通知目前負責人。", "Escalate": "確認升級",
+  "Purpose": "調閱目的（必填）", "Required before any camera evidence can be opened.": "調閱影像前必須填寫。", "Camera location": "攝影機位置", "Time window": "調閱時段", "Retention hours": "保留時數", "Audit note": "稽核備註",
+  "Acknowledge privacy and audit warning": "確認隱私與稽核告知", "I understand this access is logged and purpose-limited.": "我了解此次調閱限於所填目的並留下紀錄。", "Record Purpose": "記錄目的並檢視",
+  "Reply channel": "回覆管道", "Google review": "Google 評價", "Customer service": "客服案件", "Approve": "核准", "Return": "退回", "Reject": "拒絕", "Draft reply": "回覆內容（可編輯）", "Reviewer note": "審查備註",
+  "Required for return or reject.": "退回或拒絕時必填。", "Publish after approval": "核准後發布", "Callback payload marks this as ready for Google reply publish.": "僅在核准後標記為可發布。", "Submit Review": "送出回覆審查",
+  "Target role": "接手角色", "Target owner": "接手負責人", "Transfer reason": "轉交理由", "Keep watching": "持續追蹤", "Keep the source team subscribed to updates.": "原團隊繼續接收更新。", "Transfer": "確認轉交",
+};
+function workflowText(value: string) { return workflowCopy[value] ?? value; }
+
 function DialogActions({ onCancel, primaryLabel }: { onCancel: () => void; primaryLabel: string }) {
   return (
     <div className={styles.actions}>
@@ -981,7 +998,7 @@ function DialogActions({ onCancel, primaryLabel }: { onCancel: () => void; prima
         取消
       </Button>
       <Button type="submit" variant="primary">
-        {primaryLabel}
+        {workflowText(primaryLabel)}
       </Button>
     </div>
   );
@@ -1004,9 +1021,9 @@ function TextField({
 }) {
   return (
     <label className={className ? `${styles.field} ${className}` : styles.field}>
-      <span>{label}</span>
+      <span>{workflowText(label)}</span>
       <input onChange={(event) => onChange(event.target.value)} required={required} value={value} />
-      {hint ? <small>{hint}</small> : null}
+      {hint ? <small>{workflowText(hint)}</small> : null}
     </label>
   );
 }
@@ -1026,7 +1043,7 @@ function NumberField({
 }) {
   return (
     <label className={styles.field}>
-      <span>{label}</span>
+      <span>{workflowText(label)}</span>
       <input
         max={max}
         min={min}
@@ -1056,9 +1073,9 @@ function TextAreaField({
 }) {
   return (
     <label className={className ? `${styles.field} ${className}` : styles.field}>
-      <span>{label}</span>
+      <span>{workflowText(label)}</span>
       <textarea onChange={(event) => onChange(event.target.value)} required={required} value={value} />
-      {hint ? <small>{hint}</small> : null}
+      {hint ? <small>{workflowText(hint)}</small> : null}
     </label>
   );
 }
@@ -1076,11 +1093,11 @@ function SelectField<TValue extends string>({
 }) {
   return (
     <label className={styles.field}>
-      <span>{label}</span>
+      <span>{workflowText(label)}</span>
       <select onChange={(event) => onChange(event.target.value as TValue)} value={value}>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
-            {option.label}
+            {workflowText(option.label)}
           </option>
         ))}
       </select>
@@ -1103,8 +1120,8 @@ function CheckboxField({
     <label className={styles.checkbox}>
       <input checked={checked} onChange={(event) => onChange(event.target.checked)} type="checkbox" />
       <span>
-        {label}
-        {description ? <small>{description}</small> : null}
+        {workflowText(label)}
+        {description ? <small>{workflowText(description)}</small> : null}
       </span>
     </label>
   );
@@ -1126,15 +1143,4 @@ function splitList(value: string) {
     .filter(Boolean);
 }
 
-function severityTone(severity: Severity): Tone {
-  if (severity === "critical") {
-    return "danger";
-  }
-  if (severity === "high") {
-    return "warning";
-  }
-  if (severity === "medium") {
-    return "info";
-  }
-  return "neutral";
-}
+
