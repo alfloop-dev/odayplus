@@ -249,7 +249,7 @@ function WorkflowPanel({ activeDialog, callbacks, issue, onClose }: WorkflowForm
         role="dialog"
         aria-modal="true"
       >
-        <header className={styles.header}>
+        <header className={styles.header} role="presentation">
           <div className={styles.headerTitle}>
             <h2 id={`store-ops-workflow-${activeDialog}-title`}>{meta.title}</h2>
             <span className={styles.issueId}>{issue.id}</span>

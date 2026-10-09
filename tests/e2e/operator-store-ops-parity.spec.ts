@@ -100,7 +100,7 @@ for (const width of [1440, 1024, 390]) {
     await expect(source.getByText(/28 天門市營運營收預測/)).toBeVisible();
     await source.getByRole("tab", { name: "Google 評價", exact: true }).click();
     const accessibility = await new AxeBuilder({ page }).include('[aria-label="付款失敗率趨勢"]').include('[aria-label="事件與處置時間軸"]').include('[aria-label="證據來源明細卡片"]').analyze();
-    expect(accessibility.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    expect(accessibility.violations).toEqual([]);
     await record(info, `geometry-store-${width}`, { ...data, accessibilityViolations: accessibility.violations });
     if (width !== 1024) {
       await page.evaluate(() => scrollTo(0, 0));
@@ -156,7 +156,7 @@ for (const width of [1440, 390]) {
         await panel.locator("summary").click();
       }
       const accessibility = await new AxeBuilder({ page }).include(`[data-workflow="${dialog.id}"]`).analyze();
-      expect(accessibility.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+      expect(accessibility.violations).toEqual([]);
       await save(page, info, `after-${dialog.id}-${width}`);
       measurements[dialog.id] = { actual, accessibilityViolations: accessibility.violations };
       const cancel = panel.getByRole("button", { name: "取消", exact: true });
