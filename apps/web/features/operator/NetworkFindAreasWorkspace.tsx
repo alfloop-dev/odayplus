@@ -1,6 +1,5 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -39,6 +38,8 @@ import { SiteScorePanel } from "./network/SiteScorePanel";
 import { ComparePanel } from "./network/ComparePanel";
 import { ReviewPanel } from "./network/ReviewPanel";
 import { NetworkShell } from "./network/NetworkShell";
+import { FindAreasPanel } from "./network/FindAreasPanel";
+import { canPerform as canPerformIntake } from "./network/intake/intakePermissions";
 import type { RebalancePanelProps } from "./network/RebalancePanel";
 import type {
   HeatZoneMergeSplitPanelProps,
@@ -58,55 +59,9 @@ import type {
 } from "./network/networkReviewTypes";
 import {
   buildNetworkFindAreasViewModel,
-  type ListingRadarRow,
   type NetworkFindAreasLens,
-  type NetworkFindAreasMapPoint,
-  type NetworkFindAreasViewModel,
   type NetworkFindAreasZoneViewModel,
 } from "./networkFindAreasViewModel";
-import type { HeatZoneMapProps } from "./network/HeatZoneMap";
-import {
-  OPERATOR_MAP_FRESHNESS,
-  operatorCandidateToMapSite,
-  operatorHeatZoneToMapZone,
-  operatorListingToMapListing,
-} from "./network/heatZoneMapAdapters";
-import { GeocoderSearchPanel } from "./network/geocoder";
-import type { GeocodeAuditEvent } from "./network/geocoder";
-import {
-  canSearchAddress,
-  canSelectGeocodeCandidate,
-} from "./network/geocoder/geocoderPermissions";
-import type {
-  CandidateSite as MapCandidateSite,
-  HeatZone as MapHeatZone,
-  Listing as MapListing,
-} from "./network/mapTypes";
-
-// The map stack (deck.gl + maplibre-gl + h3-js) is by far the heaviest thing on
-// the operator surface. It is only ever rendered inside the Find Areas tab, so
-// it is loaded as its own chunk instead of being charged to the first load of
-// every /operator and /intake request. `ssr: false` is correct here as well:
-// HeatZoneMap builds the maplibre instance in an effect against a real DOM node,
-// so the server render only ever produced an empty container.
-const HeatZoneMap = dynamic<HeatZoneMapProps>(
-  () => import("./network/HeatZoneMap").then((mod) => mod.HeatZoneMap),
-  {
-    ssr: false,
-    loading: function HeatZoneMapLoading() {
-      return (
-        <div
-          aria-live="polite"
-          className={styles.mapLoading}
-          data-testid="heat-zone-map-loading"
-          role="status"
-        >
-          HeatZone 地圖載入中…
-        </div>
-      );
-    },
-  },
-);
 
 // Rebalance is the tab-6 panel: it carries the AVM valuation card, the NetPlan
 // scenario table and the review submission flow, and none of it is on screen
@@ -757,12 +712,14 @@ export function NetworkFindAreasWorkspace({
     [getCompositionClient],
   );
 
-  const changeActiveTab = useCallback((tabIndex: number) => {
+  const changeActiveTab = useCallback((tabIndex: number, extraParams?: Record<string, string>) => {
     setTabOverride({ from: urlTab, requested: tabIndex });
+    const params = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(extraParams ?? {})) params.set(key, value);
     const href = buildNetworkTabHref(
       pathname,
       tabIndex,
-      searchParams,
+      params,
       typeof window === "undefined" ? "" : window.location.hash,
     );
     router.push(href, { scroll: false });
@@ -1212,6 +1169,21 @@ export function NetworkFindAreasWorkspace({
 
   const selectedZone = viewModel.selectedZone;
   const isSelectedTracked = selectedZone ? trackedSet.has(selectedZone.id) : false;
+  // The Review tab renders the reviews snapshot when it has one, so its badge
+  // and the header chip count the same queue.
+  const pendingReviewCount = reviewsSnapshot?.reviews.length
+    ? reviewsSnapshot.reviews.filter((review) => review.status === "pending").length
+    : viewModel.totals.pendingReviews;
+  const tabCounts = [
+    null,
+    viewModel.totals.newListings,
+    viewModel.totals.activeCandidates,
+    null,
+    scoringSnapshot?.compareSet?.length ?? null,
+    pendingReviewCount,
+    viewModel.totals.openRebalances,
+    null,
+  ];
 
   function selectHeatZone(zone: NetworkFindAreasZoneViewModel) {
     setLocalSelectedId(zone.id);
@@ -1246,6 +1218,17 @@ export function NetworkFindAreasWorkspace({
     if (selectedZone) {
       callbacks?.onSourceListings?.(selectedZone.zone);
       changeActiveTab(1);
+    }
+  }
+
+  /**
+   * Opens the canonical add-from-URL dialog on Listing Radar (dialog=add), so
+   * the intake keeps its single dialog and permission checks. The radar is
+   * already scoped to the selected HeatZone, which the dialog pre-fills.
+   */
+  function addListingFromUrl() {
+    if (selectedZone) {
+      changeActiveTab(1, { dialog: "add" });
     }
   }
 
@@ -1474,29 +1457,35 @@ export function NetworkFindAreasWorkspace({
 
   return (
     <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
-      <header className={styles.header}>
-        <div>
-          <p className={styles.kicker}>Network</p>
-          <h2>展店與店網</h2>
-          <p className={styles.headerSummary}>找區域 → 掃物件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配</p>
-        </div>
-        <div className={styles.headerStats} aria-label="Network Find Areas state">
-          <span><strong>{viewModel.totals.heatZones}</strong> HeatZones</span>
-          <span><strong>{viewModel.totals.listings}</strong> listings</span>
-          <span><strong>{viewModel.totals.candidates}</strong> candidates</span>
-          <span><strong>{viewModel.totals.reviews}</strong> reviews</span>
-          <span><strong>{viewModel.totals.rebalances}</strong> rebalances</span>
-          <span><strong>{viewModel.totals.averageConfidence}</strong> avg confidence</span>
-          {isFixtureFallback && (
-            <span className={styles.muted} aria-label="Data source: fixtures" title="API unavailable — showing bundled fixture data">
-              fixture data
-            </span>
-          )}
-          {networkApiError ? <span className={styles.muted}>{networkApiError}</span> : null}
-        </div>
+      {/* Package 10 S05: one row — title, flow summary, four KPI chips. */}
+      <header className={styles.header} data-testid="network-header">
+        <h2>展店與店網</h2>
+        <p className={styles.headerSummary}>找區域 → 物件收件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配</p>
+        {isFixtureFallback ? (
+          <span className={styles.fixtureChip} title="API unavailable — showing bundled fixture data">
+            示範資料
+          </span>
+        ) : null}
+        <ul className={styles.headerStats} aria-label="展店與店網摘要" data-testid="network-header-stats">
+          <li><strong>{viewModel.totals.newListings}</strong> 今日新物件</li>
+          <li><strong>{viewModel.totals.activeCandidates}</strong> 進行中候選</li>
+          <li><strong>{pendingReviewCount}</strong> 待審 Review</li>
+          <li><strong>{viewModel.totals.openRebalances}</strong> 重配候選</li>
+        </ul>
+        {networkApiError ? (
+          <p className={styles.headerNotice} role="status">
+            {networkApiError}
+          </p>
+        ) : null}
       </header>
 
-      <NetworkShell activeTab={activeTab} onTabChange={changeActiveTab} steps={expansionSteps} tabs={networkTabs}>
+      <NetworkShell
+        activeTab={activeTab}
+        onTabChange={changeActiveTab}
+        steps={expansionSteps}
+        tabCounts={tabCounts}
+        tabs={networkTabs}
+      >
         {activeTabGateState ? (
           <OperatorDataUnavailableGate
             detail={activeTabGateDetail}
@@ -1560,6 +1549,7 @@ export function NetworkFindAreasWorkspace({
         ) : (
           <FindAreasPanel
             activeRoleId={activeRoleId}
+            canAddListing={canPerformIntake("submit", activeRoleId)}
             fixturesAllowed={fixturesAllowed}
             viewModel={viewModel}
             selectedZone={selectedZone}
@@ -1572,6 +1562,8 @@ export function NetworkFindAreasWorkspace({
             onChangeLens={changeLens}
             onToggleTracked={toggleTracked}
             onSourceListings={sourceListings}
+            onAddListingFromUrl={addListingFromUrl}
+            onViewCandidates={() => changeActiveTab(2)}
             onScoreCandidate={scoreCandidate}
             onSubmitReview={submitReview}
           />
@@ -1581,330 +1573,4 @@ export function NetworkFindAreasWorkspace({
       {listingMergeDialog}
     </section>
   );
-}
-
-type FindAreasPanelProps = {
-  activeRoleId: OperatorRoleId;
-  fixturesAllowed: boolean;
-  viewModel: NetworkFindAreasViewModel;
-  selectedZone: NetworkFindAreasZoneViewModel | null;
-  effectiveLens: NetworkFindAreasLens;
-  isSelectedTracked: boolean;
-  heatZones: OperatorHeatZone[];
-  listings: Listing[];
-  candidates: Candidate[];
-  onSelectZone: (zone: NetworkFindAreasZoneViewModel) => void;
-  onChangeLens: (lens: NetworkFindAreasLens) => void;
-  onToggleTracked: () => void;
-  onSourceListings: () => void;
-  onScoreCandidate: () => void;
-  onSubmitReview: () => void;
-};
-
-function FindAreasPanel({
-  activeRoleId,
-  candidates,
-  effectiveLens,
-  fixturesAllowed,
-  heatZones,
-  isSelectedTracked,
-  listings,
-  onChangeLens,
-  onScoreCandidate,
-  onSelectZone,
-  onSourceListings,
-  onSubmitReview,
-  onToggleTracked,
-  selectedZone,
-  viewModel,
-}: FindAreasPanelProps) {
-  const mapZones = useMemo<MapHeatZone[]>(
-    () => heatZones.map(operatorHeatZoneToMapZone),
-    [heatZones],
-  );
-  const mapListings = useMemo<MapListing[]>(
-    () => listings.map((l, i) => operatorListingToMapListing(l, heatZones, i)),
-    [listings, heatZones],
-  );
-  const mapCandidates = useMemo<MapCandidateSite[]>(
-    () => candidates.map((c, i) => operatorCandidateToMapSite(c, heatZones, i)),
-    [candidates, heatZones],
-  );
-  const selectedMapZoneId = selectedZone?.id ?? (heatZones[0]?.id ?? "");
-  // The accepted geocode is held here as a receipt rather than written through:
-  // the production geocoder endpoint is not yet wired (see
-  // docs/design/ODAY_PLUS_UNOWNED_CAPABILITY_SCOPE_DECISION_2026-08-03.md
-  // §5, UX-SCR-EXP-001), so this surface shows what WOULD be persisted, with
-  // its audit fields, instead of silently dropping the operator's decision.
-  const [geocodeReceipt, setGeocodeReceipt] = useState<GeocodeAuditEvent | null>(null);
-  return (
-    <div className={styles.tabPanel} data-screen-label="Network 找區域" data-testid="network-panel-find-areas" role="tabpanel">
-      <section className={styles.lensBar} aria-label="HeatZone lenses">
-        <div className={styles.lensSelector}>
-          {viewModel.lenses.map((lens) => (
-            <button
-              aria-pressed={effectiveLens === lens.id}
-              className={styles.lensButton}
-              key={lens.id}
-              onClick={() => onChangeLens(lens.id)}
-              title={lens.description}
-              type="button"
-            >
-              <span>{lens.shortLabel}</span>
-              <small>{lens.label}</small>
-            </button>
-          ))}
-        </div>
-        <div className={styles.legend} aria-label="Map legend">
-          <span className={styles.legendItem}>
-            <i className={styles.legendGood} aria-hidden="true" /> High lens fit
-          </span>
-          <span className={styles.legendItem}>
-            <i className={styles.legendWatch} aria-hidden="true" /> Watch tradeoff
-          </span>
-          <span className={styles.legendItem}>
-            <i className={styles.legendRisk} aria-hidden="true" /> Risk pressure
-          </span>
-          <span className={styles.legendItem}>
-            <i className={styles.legendCandidate} aria-hidden="true" /> Candidate
-          </span>
-        </div>
-      </section>
-
-      <section className={styles.mainGrid} aria-label="Find Areas workbench">
-        <div className={styles.mapPanel}>
-          <div className={styles.panelHeader}>
-            <h3>HeatZone Lens Map</h3>
-            <span>{viewModel.activeLens}</span>
-          </div>
-          <HeatZoneMap
-            dataSource={fixturesAllowed ? "fixture" : "api"}
-            zones={mapZones}
-            listings={mapListings}
-            candidates={mapCandidates}
-            productionMode={!fixturesAllowed}
-            selectedZoneId={selectedMapZoneId}
-            freshness={OPERATOR_MAP_FRESHNESS}
-          />
-        </div>
-
-        <aside className={styles.trayPanel} aria-label="Recommended find area tray">
-          {/*
-            Address search sits in the tray rather than in .mapPanel: that panel
-            is a fixed-height grid area with overflow:hidden on this screen, so
-            anything stacked above the canvas is clipped.
-          */}
-          <GeocoderSearchPanel
-            actorRoleId={activeRoleId}
-            canSearch={canSearchAddress(activeRoleId)}
-            canSelect={canSelectGeocodeCandidate(activeRoleId)}
-            onAudit={setGeocodeReceipt}
-            onSelect={() => undefined}
-          />
-          {geocodeReceipt ? (
-            <div className={styles.geocodeReceipt} data-testid="find-areas-geocode-receipt" role="status">
-              <strong>
-                {geocodeReceipt.action === "low_confidence_override"
-                  ? "已採用（人工覆核）"
-                  : geocodeReceipt.action === "candidate_selected"
-                    ? "已採用"
-                    : "已記錄為無法定位"}
-              </strong>
-              <span>{geocodeReceipt.addressRaw}</span>
-              {geocodeReceipt.selected ? (
-                <span>
-                  {geocodeReceipt.selected.latitude.toFixed(6)}, {geocodeReceipt.selected.longitude.toFixed(6)} ·
-                  精度 {geocodeReceipt.selected.precision || "未提供"} · 來源 {geocodeReceipt.selected.provider || "未提供"}
-                </span>
-              ) : (
-                <span>未取得座標；後續流程不會有推估位置。</span>
-              )}
-              {geocodeReceipt.flags.length > 0 ? <span>品質旗標 {geocodeReceipt.flags.join("、")}</span> : null}
-              {geocodeReceipt.reviewReason ? <span>覆核理由 {geocodeReceipt.reviewReason}</span> : null}
-              <span>
-                操作者 {geocodeReceipt.actorRoleId} · {geocodeReceipt.occurredAt}
-                {geocodeReceipt.correlationId ? ` · correlation_id ${geocodeReceipt.correlationId}` : ""}
-              </span>
-            </div>
-          ) : null}
-          <div className={styles.panelHeader}>
-            <h3>Recommended Areas</h3>
-            <span>{viewModel.rankedZones.length} ranked</span>
-          </div>
-          <div className={styles.zoneList}>
-            {viewModel.rankedZones.map((zone, index) => (
-              <button
-                aria-current={selectedZone?.id === zone.id ? "true" : undefined}
-                className={styles.zoneRow}
-                key={zone.id}
-                onClick={() => onSelectZone(zone)}
-                type="button"
-              >
-                <span className={styles.rank}>#{index + 1}</span>
-                <span className={styles.zoneRowMain}>
-                  <strong>
-                    {zone.id} · {zone.label}
-                  </strong>
-                  <small>
-                    demand {zone.demandLabel} · fit {zone.fitLabel} · comp {zone.competitionLabel}
-                  </small>
-                </span>
-                <span className={styles.zoneRowScore}>{zone.lensLabel}</span>
-              </button>
-            ))}
-          </div>
-        </aside>
-
-        <article className={styles.detailPanel} aria-label="Selected HeatZone detail">
-          {selectedZone ? (
-            <>
-              <div className={styles.detailTopline}>
-                <div>
-                  <span className={styles.kicker}>{selectedZone.id}</span>
-                  <h3>{selectedZone.label}</h3>
-                  <p>{selectedZone.centroidLabel}</p>
-                </div>
-                <div className={styles.detailActions}>
-                  <button aria-pressed={isSelectedTracked} onClick={onToggleTracked} type="button">
-                    {isSelectedTracked ? "Tracked" : "Track"}
-                  </button>
-                  <button onClick={onSourceListings} type="button">
-                    Source Listings
-                  </button>
-                  <button disabled={!selectedZone.bestCandidate} onClick={onScoreCandidate} type="button">
-                    Score Candidate
-                  </button>
-                  <button onClick={onSubmitReview} type="button">
-                    Submit Review
-                  </button>
-                </div>
-              </div>
-
-              <div className={styles.metricGrid}>
-                <Metric label="Demand" value={selectedZone.demandLabel} meter={selectedZone.demandGap} />
-                <Metric label="Fit" value={selectedZone.fitLabel} meter={selectedZone.fitScore} />
-                <Metric label="Competition" value={selectedZone.competitionLabel} meter={selectedZone.competitionIndex} />
-                <Metric
-                  label="Cannibalization"
-                  value={selectedZone.cannibalizationLabel}
-                  meter={1 - selectedZone.cannibalizationScore}
-                />
-                <Metric label="Rent" value={selectedZone.rentBand} meter={selectedZone.rentScore} />
-                <Metric label="Confidence" value={selectedZone.confidenceLabel} meter={selectedZone.confidence} />
-              </div>
-
-              <div className={styles.detailGrid}>
-                <section>
-                  <h4>Reasons</h4>
-                  <ul>
-                    {selectedZone.reasons.map((reason) => (
-                      <li key={reason}>{reason}</li>
-                    ))}
-                  </ul>
-                </section>
-                <section>
-                  <h4>Risks</h4>
-                  <ul>
-                    {selectedZone.risks.map((risk) => (
-                      <li key={risk}>{risk}</li>
-                    ))}
-                  </ul>
-                </section>
-                <section>
-                  <h4>Next Step</h4>
-                  <p>{selectedZone.nextStep}</p>
-                </section>
-                <section>
-                  <h4>Pipeline</h4>
-                  <dl className={styles.pipelineStats}>
-                    <div>
-                      <dt>Listings</dt>
-                      <dd>{selectedZone.listingCount}</dd>
-                    </div>
-                    <div>
-                      <dt>Candidates</dt>
-                      <dd>{selectedZone.candidateCount}</dd>
-                    </div>
-                    <div>
-                      <dt>Best</dt>
-                      <dd>{selectedZone.candidateSummary}</dd>
-                    </div>
-                  </dl>
-                </section>
-              </div>
-
-              <div className={styles.linkedRows} aria-label="Linked listings and candidates">
-                {selectedZone.listings.map((listing) => (
-                  <span key={listing.id}>
-                    <strong>{listing.id}</strong> {listing.status} · rent {formatCurrency(listing.rentPerMonth)} ·{" "}
-                    {listing.areaPing} ping
-                  </span>
-                ))}
-                {selectedZone.candidates.map((candidate) => (
-                  <span key={candidate.id}>
-                    <strong>{candidate.id}</strong> {candidate.recommendation} · score {candidate.score} ·{" "}
-                    {candidate.status}
-                  </span>
-                ))}
-              </div>
-            </>
-          ) : (
-            <div className={styles.emptyState}>No HeatZones</div>
-          )}
-        </article>
-      </section>
-    </div>
-  );
-}
-
-function Metric({ label, meter, value }: { label: string; meter?: number | null; value: string }) {
-  return (
-    <div className={styles.metric}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <i aria-hidden="true">
-        <b
-          style={{
-            width:
-              meter == null
-                ? "0%"
-                : `${Math.max(4, Math.min(100, Math.round(meter * 100)))}%`,
-          }}
-        />
-      </i>
-    </div>
-  );
-}
-
-function MapPoint({ point }: { point: NetworkFindAreasMapPoint }) {
-  return (
-    <span
-      aria-label={`${point.id} ${point.status}`}
-      className={classNames(styles.mapPoint, point.type === "candidate" && styles.mapPointCandidate)}
-      style={{ "--x": `${point.x}%`, "--y": `${point.y}%` } as CSSProperties}
-      title={point.label}
-    >
-      {point.type === "candidate" ? "C" : "L"}
-    </span>
-  );
-}
-
-function ToneBadge({ children, tone }: { children: ReactNode; tone: "good" | "watch" | "risk" }) {
-  return (
-    <span className={styles.toneBadge} data-tone={tone}>
-      {children}
-    </span>
-  );
-}
-
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 0,
-    style: "currency",
-    currency: "TWD",
-  }).format(value);
-}
-
-function classNames(...values: Array<string | false | null | undefined>) {
-  return values.filter(Boolean).join(" ");
 }

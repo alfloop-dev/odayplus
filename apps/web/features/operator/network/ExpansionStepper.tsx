@@ -13,6 +13,17 @@ export type ExpansionStep = {
   summary: string;
 };
 
+// Package 10 S05 flowVals: what the operator does at each step, shown as
+// 「下一步：…」. The API step summaries stay available as button titles.
+const stepActions: Record<string, string> = {
+  find: "選擇目標區域",
+  radar: "查看本區物件並轉為候選點",
+  candidate: "補齊候選點資料",
+  sitescore: "執行 SiteScore",
+  compare: "加入比較",
+  review: "送審並完成審核決策",
+};
+
 const stepLabels: Record<string, { zh: string; en: string }> = {
   candidate: { zh: "候選點", en: "Candidate" },
   compare: { zh: "比較", en: "Compare" },
@@ -35,6 +46,10 @@ export function ExpansionStepper({
     return null;
   }
 
+  const activeStep = steps.find((step) => activeTab === step.tabIndex);
+  const activeLabel = activeStep ? stepLabels[activeStep.id] ?? { zh: activeStep.label, en: activeStep.label } : null;
+  const blockedNext = nextActionableStep(steps)?.state === "blocked" ? nextActionableStep(steps) : undefined;
+
   return (
     <section
       className={styles.expansionStepper}
@@ -44,7 +59,9 @@ export function ExpansionStepper({
     >
       <div className={styles.flowHeader}>
         <span>EXPANSION FLOW · 找點流程</span>
-        <strong>{steps.find((step) => activeTab === step.tabIndex)?.summary ?? steps[0]?.summary}</strong>
+        <strong title={activeStep?.summary}>
+          {activeLabel ? `目前步驟：${activeLabel.zh} ${activeLabel.en}` : "低效重配 — 不在找點流程內"}
+        </strong>
         <em>{nextActionLabel(steps)}</em>
       </div>
       <div className={styles.expansionStepGrid}>
@@ -93,26 +110,36 @@ export function ExpansionStepper({
           </button>
         ))}
       </div>
-      {steps.some((step) => step.state === "blocked") ? (
+      {/*
+        Later steps are routinely "blocked" until a candidate exists; that is
+        already shown by their 缺資料 tags. The notice is for a blocked step
+        the operator has to act on now, as in Package 10 (flowBlockShow).
+      */}
+      {blockedNext ? (
         <div className={styles.flowBlockNotice} role="status">
           <span aria-hidden="true">!</span>
-          {steps.find((step) => step.state === "blocked")?.summary}
+          {blockedNext.summary}
         </div>
       ) : null}
     </section>
   );
 }
 
-function nextActionLabel(steps: ExpansionStep[]) {
+/** The step after the current one (or the first "next" step). */
+function nextActionableStep(steps: ExpansionStep[]) {
   const currentIndex = steps.findIndex((step) => step.state === "current");
-  const next = currentIndex >= 0 ? steps[currentIndex + 1] : steps.find((step) => step.state === "next");
-  if (next && next.state !== "blocked") {
-    return `下一步：${next.summary}`;
+  return currentIndex >= 0 ? steps[currentIndex + 1] : steps.find((step) => step.state === "next");
+}
+
+function nextActionLabel(steps: ExpansionStep[]) {
+  // Package 10 names the first unfinished step: while the radar is current the
+  // operator's job is still 「查看本區物件並轉為候選點」.
+  const todo = steps.find((step) => step.state === "current") ?? nextActionableStep(steps);
+  if (!todo) {
+    return steps.length && steps.every((step) => step.state === "completed") ? "流程完成" : "流程資料同步中";
   }
-  if (next?.state === "blocked") {
-    return `下一步受阻：${next.summary}`;
-  }
-  return "流程資料同步中";
+  const action = stepActions[todo.id] ?? todo.summary;
+  return todo.state === "blocked" ? `下一步受阻：${action}` : `下一步：${action}`;
 }
 
 function stateLabel(state: ExpansionStepState) {

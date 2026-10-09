@@ -8,6 +8,7 @@ import { cellToBoundary, isValidCell } from "h3-js";
 import * as maplibregl from "maplibre-gl";
 import type { CandidateSite, HeatZone, Listing } from "./mapTypes.ts";
 import { isOperatorProductionMode } from "../operatorDataMode.ts";
+import { SCHEMATIC_BASEMAP } from "./schematicBasemap.ts";
 import styles from "./heatZoneMap.module.css";
 
 const MAPLIBRE_WORKER_URL =
@@ -38,6 +39,13 @@ type MapBoundaryConfig = {
 
 type MapStateFixture = "normal" | "loading" | "empty" | "error" | "partial" | "no-geometry";
 
+/** A zone's score under the lens the operator picked (Package 10 Find Areas). */
+export type HeatZoneLensScore = {
+  id: string;
+  label: string;
+  points: number;
+};
+
 export type HeatZoneMapProps = {
   zones: HeatZone[];
   listings: Listing[];
@@ -47,6 +55,13 @@ export type HeatZoneMapProps = {
   layerQuery?: string;
   productionMode?: boolean;
   dataSource?: "api" | "fixture";
+  /**
+   * When set, zones are tinted by the Package 10 lens bands and labelled with
+   * their name and lens score instead of the absorption state.
+   */
+  lensScores?: readonly HeatZoneLensScore[];
+  /** One-line caption shown on the map in place of the data-status line. */
+  caption?: string;
 };
 
 type ZoneFeature = GeoJSON.Feature<GeoJSON.Polygon, HeatZone>;
@@ -92,6 +107,8 @@ export function HeatZoneMap({
   layerQuery,
   productionMode: productionModeProp,
   dataSource = "fixture",
+  lensScores,
+  caption,
 }: HeatZoneMapProps) {
   const productionMode =
     productionModeProp === true || isOperatorProductionMode();
@@ -119,8 +136,21 @@ export function HeatZoneMap({
     !boundaryConfig.tileFault &&
     !boundaryConfig.geocoderFault;
   const productionMapReady = liveProviderConfigured && dataSource === "api" && !runtimeError;
+  const liveTiles = Boolean(boundaryConfig.tileUrl) && !boundaryConfig.tileUrl.startsWith("mock://") && !boundaryConfig.tileFault;
 
-  const zoneFeatures = useMemo(() => zones.map(zoneToFeature), [zones]);
+  const lensScoreById = useMemo(
+    () => (lensScores ? new Map(lensScores.map((entry) => [entry.id, entry] as const)) : null),
+    [lensScores],
+  );
+  const zoneFeatures = useMemo(
+    () =>
+      zones.map((zone) => {
+        const feature = zoneToFeature(zone);
+        const lens = lensScoreById?.get(zone.id);
+        return lens ? { ...feature, properties: { ...feature.properties, lensTint: lensTierHex(lens.points) } } : feature;
+      }),
+    [lensScoreById, zones],
+  );
   const geometryHidden = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry";
   const visibleZones = useMemo(() => geometryHidden ? [] : zones, [geometryHidden, zones]);
   const visibleZoneFeatures = useMemo(() => geometryHidden ? [] : zoneFeatures, [geometryHidden, zoneFeatures]);
@@ -146,8 +176,9 @@ export function HeatZoneMap({
       candidates,
       selectedZoneId,
       visible: layers,
+      lensScoreById,
     }),
-    [candidates, layers, selectedZoneId, visibleListings, visibleZoneFeatures, visibleZones],
+    [candidates, layers, lensScoreById, selectedZoneId, visibleListings, visibleZoneFeatures, visibleZones],
   );
   mapDataRef.current = {
     selectedZoneId,
@@ -213,15 +244,19 @@ export function HeatZoneMap({
         source: "odp-local-heatzones",
         paint: {
           "fill-color": [
-            "match",
-            ["get", "state"],
-            "UNDER_REALIZED",
-            "#b7791f",
-            "STILL_EXPANDABLE",
-            "#2f855a",
-            "SUPPRESSED_LOW_CONFIDENCE",
-            "#c05621",
-            "#3182ce",
+            "coalesce",
+            ["get", "lensTint"],
+            [
+              "match",
+              ["get", "state"],
+              "UNDER_REALIZED",
+              "#b7791f",
+              "STILL_EXPANDABLE",
+              "#2f855a",
+              "SUPPRESSED_LOW_CONFIDENCE",
+              "#c05621",
+              "#3182ce",
+            ],
           ],
           "fill-opacity": 0.34,
         },
@@ -451,12 +486,17 @@ export function HeatZoneMap({
           />
         </DeckGL>
         <p
-          className={styles.mapStatus}
+          className={caption ? styles.mapCaption : styles.mapStatus}
+          data-freshness={freshness.status}
           data-layers={encodeLayerState(layers)}
+          data-model-version={freshness.modelVersion}
+          data-snapshot-id={freshness.sourceSnapshotId}
           data-testid="heat-zone-map-status"
-          data-tile-source={boundaryConfig.tileUrl && !boundaryConfig.tileFault ? "live" : "local-style"}
+          data-tile-source={liveTiles ? "live" : "local-style"}
         >
-          資料 {freshness.status} · 快照 {freshness.sourceSnapshotId} · 模型 {freshness.modelVersion}
+          {caption
+            ? `${caption} · ${liveTiles ? `底圖 ${boundaryConfig.attribution || "已設定圖磚"}` : "示意底圖（離線）· 座標為 POC 示意"}`
+            : `資料 ${freshness.status} · 快照 ${freshness.sourceSnapshotId} · 模型 ${freshness.modelVersion}`}
         </p>
       </div>
       <div className={styles.legend} aria-label="Map legend">
@@ -661,6 +701,7 @@ function buildDeckLayers({
   candidates,
   selectedZoneId,
   visible,
+  lensScoreById,
 }: {
   zones: HeatZone[];
   zoneFeatures: ZoneFeature[];
@@ -668,6 +709,7 @@ function buildDeckLayers({
   candidates: CandidateSite[];
   selectedZoneId: string;
   visible: LayerState;
+  lensScoreById: Map<string, HeatZoneLensScore> | null;
 }) {
   return [
     new GeoJsonLayer<ZoneFeature["properties"]>({
@@ -676,7 +718,11 @@ function buildDeckLayers({
       visible: visible.h3,
       stroked: true,
       filled: true,
-      getFillColor: (feature) => stateFill[feature.properties.state],
+      getFillColor: (feature) => {
+        const lens = lensScoreById?.get(feature.properties.id);
+        return lens ? lensTierFill(lens.points) : stateFill[feature.properties.state];
+      },
+      updateTriggers: { getFillColor: [lensScoreById] },
       getLineColor: (feature) => feature.properties.id === selectedZoneId ? [23, 37, 84, 255] : [255, 255, 255, 220],
       getLineWidth: (feature) => feature.properties.id === selectedZoneId ? 5 : 2,
       lineWidthMinPixels: 1,
@@ -732,21 +778,45 @@ function buildDeckLayers({
       filled: true,
       pickable: true,
     }),
-    new TextLayer<HeatZone>({
-      id: "odp-heatzone-labels",
-      data: zones,
-      visible: visible.freshness,
-      getPosition: (zone) => zone.centroid,
-      getText: (zone) => `${zone.id}\n${zone.score} / ${zone.confidence != null ? zone.confidence.toFixed(2) : "N/A"}`,
-      getColor: [23, 37, 84, 255],
-      getSize: 13,
-      getTextAnchor: "middle",
-      getAlignmentBaseline: "center",
-      background: true,
-      getBackgroundColor: [255, 255, 255, 210],
-      backgroundPadding: [6, 4],
-      pickable: false,
-    }),
+    lensScoreById
+      ? new TextLayer<HeatZone>({
+          id: "odp-heatzone-lens-labels",
+          data: zones,
+          visible: visible.freshness,
+          // Zone names are Chinese; "auto" builds the glyph atlas from the text.
+          characterSet: "auto",
+          fontFamily: "\"Noto Sans TC\", \"PingFang TC\", \"Microsoft JhengHei\", sans-serif",
+          fontWeight: 700,
+          getPosition: (zone) => zone.centroid,
+          getText: (zone) => {
+            const lens = lensScoreById.get(zone.id);
+            return lens ? `${lens.label} ${lens.points}` : zone.id;
+          },
+          getColor: [255, 255, 255, 255],
+          getSize: 12,
+          getTextAnchor: "middle",
+          getAlignmentBaseline: "center",
+          background: true,
+          getBackgroundColor: (zone) => lensTierSolid(lensScoreById.get(zone.id)?.points ?? 0),
+          backgroundPadding: [8, 4],
+          pickable: false,
+          updateTriggers: { getText: [lensScoreById], getBackgroundColor: [lensScoreById] },
+        })
+      : new TextLayer<HeatZone>({
+          id: "odp-heatzone-labels",
+          data: zones,
+          visible: visible.freshness,
+          getPosition: (zone) => zone.centroid,
+          getText: (zone) => `${zone.id}\n${zone.score} / ${zone.confidence != null ? zone.confidence.toFixed(2) : "N/A"}`,
+          getColor: [23, 37, 84, 255],
+          getSize: 13,
+          getTextAnchor: "middle",
+          getAlignmentBaseline: "center",
+          background: true,
+          getBackgroundColor: [255, 255, 255, 210],
+          backgroundPadding: [6, 4],
+          pickable: false,
+        }),
   ];
 }
 
@@ -958,15 +1028,80 @@ function mapStyleForBoundary(config: MapBoundaryConfig): maplibregl.StyleSpecifi
   };
 }
 
+// Package 10 HeatZone bands. Solid colours carry white label text, so the
+// 60–69 band uses the darker amber that keeps 4.5:1 contrast.
+const LENS_TIER_SOLID: Array<[number, [number, number, number]]> = [
+  [80, [14, 124, 140]],
+  [70, [46, 58, 151]],
+  [60, [150, 97, 11]],
+  [0, [180, 35, 24]],
+];
+
+function lensTierRgb(points: number): [number, number, number] {
+  return (LENS_TIER_SOLID.find(([floor]) => points >= floor) ?? LENS_TIER_SOLID[LENS_TIER_SOLID.length - 1])[1];
+}
+
+function lensTierHex(points: number): string {
+  return `#${lensTierRgb(points).map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function lensTierFill(points: number): [number, number, number, number] {
+  return [...lensTierRgb(points), 92];
+}
+
+function lensTierSolid(points: number): [number, number, number, number] {
+  return [...lensTierRgb(points), 240];
+}
+
+// Used whenever no live tile URL is configured: a flat land colour plus the
+// bundled schematic rivers and trunk roads (see ./schematicBasemap.ts). Every
+// source is inline, so this style makes no network request.
 const localMapStyle: maplibregl.StyleSpecification = {
   version: 8,
   name: "ODay Plus local fallback",
-  sources: {},
+  sources: {
+    "odp-schematic-basemap": { type: "geojson", data: SCHEMATIC_BASEMAP },
+  },
   layers: [
     {
       id: "odp-local-background",
       type: "background",
-      paint: { "background-color": "#eef4f7" },
+      paint: { "background-color": "#e9eff3" },
+    },
+    {
+      id: "odp-schematic-river",
+      type: "line",
+      source: "odp-schematic-basemap",
+      filter: ["==", ["get", "kind"], "river"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#b9d2e6", "line-width": ["interpolate", ["linear"], ["zoom"], 9, 3, 13, 10] },
+    },
+    {
+      id: "odp-schematic-highway-casing",
+      type: "line",
+      source: "odp-schematic-basemap",
+      filter: ["==", ["get", "kind"], "highway"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#d3dae5", "line-width": ["interpolate", ["linear"], ["zoom"], 9, 3.5, 13, 9] },
+    },
+    {
+      id: "odp-schematic-road",
+      type: "line",
+      source: "odp-schematic-basemap",
+      filter: ["!=", ["get", "kind"], "river"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#ffffff",
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          9,
+          ["case", ["==", ["get", "kind"], "highway"], 2, 1.2],
+          13,
+          ["case", ["==", ["get", "kind"], "highway"], 6, 3.5],
+        ],
+      },
     },
   ],
 };

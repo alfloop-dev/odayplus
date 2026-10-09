@@ -32,6 +32,8 @@ export function ListingInboxIntakeView({
   onRetryIntake,
   pageData,
   onQueryChange,
+  addDialogRequested = false,
+  onAddDialogClosed,
 }: {
   activeRoleId: OperatorRoleId;
   records: AssistedIntake[];
@@ -46,6 +48,9 @@ export function ListingInboxIntakeView({
   onRetryIntake?: (intakeId: string) => void;
   pageData?: IntakeInboxPage;
   onQueryChange?: (query: IntakeInboxQuery) => void;
+  /** URL asked for the add dialog (`dialog=add`, e.g. from Find Areas). */
+  addDialogRequested?: boolean;
+  onAddDialogClosed?: () => void;
 }) {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
 
@@ -55,6 +60,15 @@ export function ListingInboxIntakeView({
   const permitted = canView(activeRoleId);
   const canSubmit = canPerform("submit", activeRoleId);
   const canRetry = canPerform("retry", activeRoleId);
+
+  useEffect(() => {
+    if (addDialogRequested && canSubmit) setIsAddDialogOpen(true);
+  }, [addDialogRequested, canSubmit]);
+
+  const closeAddDialog = () => {
+    setIsAddDialogOpen(false);
+    onAddDialogClosed?.();
+  };
 
   const {
     filters,
@@ -450,12 +464,14 @@ export function ListingInboxIntakeView({
           busy={busy}
           defaultHeatZoneId={selectedHeatZoneId}
           error={actionError ?? null}
-          onClose={() => setIsAddDialogOpen(false)}
+          onClose={closeAddDialog}
           onOpenExisting={(intakeId) => {
             setIsAddDialogOpen(false);
             onOpenDetail(intakeId);
           }}
           onSubmit={async (input) => {
+            // The submit handler moves the URL on (dialog=detail on success),
+            // so only the local open state is cleared here.
             await onAddSubmit(input);
             setIsAddDialogOpen(false);
           }}
