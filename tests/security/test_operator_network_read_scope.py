@@ -298,3 +298,46 @@ def test_listing_fields_outside_the_contract_and_foreign_evidence_are_withheld()
     assert target["mergedSourceListingIds"] == [] and target["mergeReason"] is None
     assert target["duplicateOfId"] is None and target["candidateId"] is None
     assert "L-2025" not in response.text and "IN-9" not in response.text and "L-2024-X" not in response.text
+
+
+# The Console always sends selectedHeatZoneId once a zone is chosen. A filter
+# names one axis; the other restricted axes are enforced on every returned
+# record, not demanded from the query.
+COMBINED_AXES = [axis for axis in AXES if axis[1] != "heatZoneId"]
+
+
+@pytest.mark.parametrize(("header", "axis", "allowed"), COMBINED_AXES)
+def test_selected_zone_read_admits_combined_scope_and_keeps_record_projection(header, axis, allowed):
+    listings, _, _, client = services_and_client(axis, allowed)
+    before = deepcopy(listings.export_state())
+    headers = {**HEADERS, header: allowed, "X-Heat-Zone-Ids": "HZ-01"}
+    queryless = client.get("/network-listings", headers=headers)
+    selected = client.get("/network-listings?selectedHeatZoneId=HZ-01", headers=headers)
+    assert queryless.status_code == 200, queryless.text
+    assert selected.status_code == 200, selected.text
+    for snap in (queryless.json(), selected.json()):
+        # L-2030 shares HZ-01 but not the other axis; it is projected out.
+        assert {r["id"] for r in snap["listings"]} == {"L-2024"}
+        assert [r["id"] for r in snap["candidates"]] == ["CS-1001"]
+        assert [r["id"] for r in snap["siteReviews"]] == ["RV-702"]
+        # Zone aggregates lack evidence for the other axis and stay withheld.
+        assert snap["heatZones"] == [] and snap["selectedHeatZoneId"] is None
+        assert snap["counts"] == {key: len(snap[key]) for key in snap["counts"]}
+        assert "L-2025" not in str(snap) and "L-2030" not in str(snap) and "CS-1002" not in str(snap)
+    intake = client.get("/network-listings/intake?selectedHeatZoneId=HZ-01", headers=headers)
+    assert intake.status_code == 200, intake.text
+    # Excluded-zone control: a supplied filter outside the grant is still denied.
+    for path in ("/network-listings", "/network-listings/intake"):
+        denied = client.get(f"{path}?selectedHeatZoneId=HZ-02", headers=headers)
+        assert denied.status_code == 403 and denied.json()["detail"] == "SCOPE_DENIED"
+    assert listings.export_state() == before
+
+
+def test_selected_zone_read_admits_restricted_nonviewer_without_new_projection():
+    listings, _, _, client = services_and_client("brandId", "brand-a")
+    headers = {**HEADERS, "X-Roles": "site_reviewer", "X-Operator-Role": "expansion-manager",
+               "X-Brand-Ids": "brand-a", "X-Heat-Zone-Ids": "HZ-01"}
+    selected = client.get("/network-listings?selectedHeatZoneId=HZ-01", headers=headers)
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["counts"] == listings.snapshot()["counts"]
+    assert client.get("/network-listings?selectedHeatZoneId=HZ-02", headers=headers).status_code == 403

@@ -268,7 +268,6 @@ export function resolveNetworkDataUnavailableState(
 
 export function resolveNetworkTabGateState({
   activeTab,
-  bindingLoadStates,
   fixturesAllowed,
   networkLoadState,
   proposalsLoadState,
@@ -277,7 +276,6 @@ export function resolveNetworkTabGateState({
   scoringLoadState,
 }: {
   activeTab: number;
-  bindingLoadStates: readonly OperatorDataAvailability[];
   fixturesAllowed: boolean;
   networkLoadState: OperatorDataAvailability;
   proposalsLoadState?: OperatorDataAvailability;
@@ -286,11 +284,11 @@ export function resolveNetworkTabGateState({
   scoringLoadState: OperatorDataAvailability;
 }): Exclude<OperatorDataAvailability, "ready" | "fixture"> | null {
   if (fixturesAllowed || activeTab === 1) return null;
+  // Find Areas renders the scoped operator snapshot, which supersedes the
+  // legacy heatzone/candidate domain bindings. Those domain reads stay denied
+  // for operator-only grants, so they must not gate a ready scoped snapshot.
   if (activeTab === 0) {
-    return resolveNetworkDataUnavailableState([
-      ...bindingLoadStates,
-      networkLoadState,
-    ]);
+    return resolveNetworkDataUnavailableState([networkLoadState]);
   }
   if (activeTab >= 2 && activeTab <= 4) {
     return resolveNetworkDataUnavailableState([scoringLoadState]);
@@ -419,21 +417,23 @@ async function fetchNetworkReviewsSnapshot(
   }
 }
 
+// The scoped operator snapshot is the authoritative Network read. Without a
+// selection it is requested unfiltered, and the API projects it to the verified
+// scope and names the first visible zone; legacy /heatzones grants are never
+// needed to choose one.
 async function fetchNetworkSnapshot(
-  selectedHeatZoneId: string,
+  selectedHeatZoneId: string | null,
   lens: NetworkFindAreasLens,
   roleId: OperatorRoleId,
 ): Promise<NetworkListingsSnapshot | null> {
   try {
-    const params = new URLSearchParams({
-      lens,
-      selectedHeatZoneId,
-    });
+    const params = new URLSearchParams({ lens });
+    if (selectedHeatZoneId) params.set("selectedHeatZoneId", selectedHeatZoneId);
     const response = await fetch(`/api/v1/operator/network-listings?${params.toString()}`, {
       cache: "no-store",
       headers: {
         ...operatorSecurityHeaders(roleId),
-        "X-Correlation-Id": `corr-r4-005-read-${selectedHeatZoneId}-${lens}`,
+        "X-Correlation-Id": `corr-r4-005-read-${selectedHeatZoneId ?? "initial"}-${lens}`,
       },
     });
     if (!response.ok) {
@@ -811,13 +811,18 @@ export function NetworkFindAreasWorkspace({
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      if (!effectiveSelectedId) {
-        if (!fixturesAllowed) setNetworkLoadState("loading");
-        return;
-      }
-      const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId);
+      const snapshot = await fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId);
       if (!cancelled && snapshot) {
         const inspection = inspectNetworkListingsSnapshot(snapshot);
+        const serverSelectedId = snapshot.selectedHeatZoneId;
+        if (
+          inspection === "ready" &&
+          !effectiveSelectedId &&
+          serverSelectedId &&
+          snapshot.heatZones?.some((zone) => zone.id === serverSelectedId)
+        ) {
+          setLocalSelectedId(serverSelectedId);
+        }
         setNetworkSnapshot(
           inspection === "ready" || fixturesAllowed
             ? snapshot
@@ -1365,18 +1370,8 @@ export function NetworkFindAreasWorkspace({
       : []);
   const selectedZoneLabel = selectedZone?.label ?? heatZones.find((zone) => zone.id === effectiveSelectedId)?.label;
 
-  const bindingLoadStates: OperatorDataAvailability[] = [liveHeatZones, liveCandidates].map(
-    (binding) => {
-      if (!binding) return "loading";
-      if (binding.state === "ready" && binding.source === "api") return "ready";
-      if (binding.state === "empty") return "empty";
-      if (binding.state === "error" || binding.state === "unconfigured") return "error";
-      return "seed";
-    },
-  );
   const activeTabGateState = resolveNetworkTabGateState({
     activeTab,
-    bindingLoadStates,
     fixturesAllowed,
     networkLoadState,
     proposalsLoadState,

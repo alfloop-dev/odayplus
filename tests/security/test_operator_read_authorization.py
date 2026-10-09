@@ -99,6 +99,42 @@ def test_intake_view_composes_with_admin_but_not_writes_or_foreign_objects() -> 
         authorize_intake_action(Principal("admin", frozenset({Role.PLATFORM_ADMIN}), Scope(tenant_id="tenant-a")), "view", tenant_id="tenant-a")
 
 
+def test_collection_reads_check_supplied_filters_but_creates_need_complete_scope() -> None:
+    combined = viewer(
+        Role.PLATFORM_ADMIN,
+        brand_ids=frozenset({"brand-a"}),
+        heat_zone_ids=frozenset({"HZ-01"}),
+    )
+    authorize_intake_action(
+        combined, "view", collection_scope={"heatZoneId": "HZ-01"}, tenant_id="tenant-a"
+    )
+    authorize_intake_action(
+        combined, "view", collection_scope={"brandId": "brand-a", "heatZoneId": "HZ-01"},
+        tenant_id="tenant-a",
+    )
+    for filters in ({"heatZoneId": "HZ-02"}, {"brandId": "brand-b", "heatZoneId": "HZ-01"}):
+        with pytest.raises(HTTPException) as denied:
+            authorize_intake_action(combined, "view", collection_scope=filters, tenant_id="tenant-a")
+        assert denied.value.detail == "SCOPE_DENIED"
+    # Target objects still need evidence on every restricted axis.
+    with pytest.raises(HTTPException) as denied:
+        authorize_intake_action(
+            combined, "view", {"id": "L-1", "tenantId": "tenant-a", "heatZoneId": "HZ-01"}
+        )
+    assert denied.value.detail == "SCOPE_DENIED"
+    # A create lands an object, so its envelope must be complete too.
+    creator = Principal(
+        subject_id="staff", roles=frozenset({Role.SITE_REVIEWER}),
+        scope=Scope(tenant_id="tenant-a", brand_ids=frozenset({"brand-a"}),
+                    heat_zone_ids=frozenset({"HZ-01"})),
+    )
+    with pytest.raises(HTTPException) as denied:
+        authorize_intake_action(
+            creator, "submit_url", collection_scope={"heatZoneId": "HZ-01"}, tenant_id="tenant-a"
+        )
+    assert denied.value.detail == "SCOPE_DENIED"
+
+
 def test_intake_collections_filter_scope_before_counts_and_keep_field_masks() -> None:
     own = {"id": "own", "tenantId": "tenant-a", "regionId": "north", "storeId": "store-a", "stage": "READY", "parsedFields": {"contactPhone": {"sourceValue": "private"}}}
     other = {**own, "id": "other", "regionId": "south"}

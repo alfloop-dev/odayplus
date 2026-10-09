@@ -261,6 +261,14 @@ cannot authorize a brand/region/store-wide aggregate. Missing restricted-axis
 metadata fails closed. Unscoped pipeline steps/comparison prose and free-form
 cross-object audit metadata are withheld from this reader rather than presented
 as scoped progress. The existing non-viewer flows and model refusal remain intact.
+A read collection query (for example `?selectedHeatZoneId=`) is checked only on
+the filter axes it supplies; an axis it does not name is not missing evidence,
+because every returned record is still projected against the full scope. Target
+objects and creates keep the complete-envelope check on every restricted axis.
+The Console initialises Network from this scoped snapshot: it first requests it
+without a selection, adopts the zone the API names, and never needs, or is
+gated by, the denied general `/heatzones` / candidate domain reads. An
+authorized empty scoped snapshot is shown as empty, not as an error or fixtures.
 
 Identity role editing remains the existing tenant-scoped `/operator/users` API
 and atomic `identity.account.roles_updated` audit transaction. There is **no

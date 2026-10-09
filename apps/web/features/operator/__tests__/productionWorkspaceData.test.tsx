@@ -126,7 +126,6 @@ describe("production workspace data contracts", () => {
   it("does not let unrelated Network snapshots gate Listing Radar intake", () => {
     expect(resolveNetworkTabGateState({
       activeTab: 1,
-      bindingLoadStates: ["error", "loading"],
       fixturesAllowed: false,
       networkLoadState: "error",
       scoringLoadState: "loading",
@@ -137,7 +136,6 @@ describe("production workspace data contracts", () => {
 
   it("keeps unavailable data scoped to the tab that owns it", () => {
     const states = {
-      bindingLoadStates: ["ready", "ready"] as const,
       fixturesAllowed: false,
       networkLoadState: "ready" as const,
       scoringLoadState: "error" as const,
@@ -149,5 +147,18 @@ describe("production workspace data contracts", () => {
     expect(resolveNetworkTabGateState({ activeTab: 2, ...states })).toBe("error");
     expect(resolveNetworkTabGateState({ activeTab: 5, ...states })).toBe("loading");
     expect(resolveNetworkTabGateState({ activeTab: 6, ...states })).toBe("empty");
+  });
+
+  it("gates Find Areas only on the scoped operator snapshot it renders", () => {
+    const states = {
+      fixturesAllowed: false,
+      scoringLoadState: "error" as const,
+      reviewsLoadState: "error" as const,
+      rebalanceLoadState: "error" as const,
+    };
+    expect(resolveNetworkTabGateState({ activeTab: 0, networkLoadState: "ready", ...states })).toBeNull();
+    expect(resolveNetworkTabGateState({ activeTab: 0, networkLoadState: "empty", ...states })).toBe("empty");
+    expect(resolveNetworkTabGateState({ activeTab: 0, networkLoadState: "error", ...states })).toBe("error");
+    expect(resolveNetworkTabGateState({ activeTab: 0, networkLoadState: "seed", ...states })).toBe("seed");
   });
 });

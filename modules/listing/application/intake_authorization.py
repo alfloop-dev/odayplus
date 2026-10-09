@@ -44,6 +44,30 @@ def _resource_scope_value(resource: dict[str, Any], keys: tuple[str, ...]) -> An
     return None
 
 
+def collection_filters_in_scope(principal: Principal, filters: dict[str, Any]) -> bool:
+    """Return whether every filter a read collection request supplies is in scope.
+
+    A read query is not an object envelope: an axis the caller did not filter on
+    is not missing evidence, because every returned record is still projected
+    against the complete principal scope.  Each supplied axis must be allowed.
+    Object targets and creates keep the complete-envelope check of
+    :func:`intake_resource_in_scope`.
+    """
+
+    checks = {
+        "brand": principal.scope.permits_brand,
+        "region": principal.scope.permits_region,
+        "store": principal.scope.permits_store,
+        "assigned_area": principal.scope.permits_assigned_area,
+        "heat_zone": principal.scope.permits_heat_zone,
+    }
+    for axis, keys in _SCOPE_AXIS_KEYS:
+        value = _resource_scope_value(filters, keys)
+        if value is not None and not checks[axis](value):
+            return False
+    return True
+
+
 # A collection request addresses a query scope, not an object.  It is audited
 # and waiver-matched under its own resource type so that a waiver written for a
 # single listing can never silently authorize an entire cross-tenant collection.
@@ -217,11 +241,18 @@ def authorize_intake_action(
 
     # 3. Brand/Region/Area/HeatZone scope
     #
-    # Collection requests are checked against their declared filters; target
-    # requests against the object envelope.  Either way the principal's own
+    # Read collection requests are checked against the filters they declare;
+    # every returned record is then projected against the full scope.  Target
+    # objects and creates (which must land inside every restricted axis) are
+    # checked as complete envelopes.  Either way the principal's own
     # restrictions must contain the subject.
     if scope_subject is not None:
-        if not intake_resource_in_scope(principal, scope_subject):
+        in_scope = (
+            collection_filters_in_scope(principal, scope_subject)
+            if is_collection_request and action == "view"
+            else intake_resource_in_scope(principal, scope_subject)
+        )
+        if not in_scope:
             _raise_and_audit(status_code=403, detail="SCOPE_DENIED")
 
     # 4. Role mapping and matrix rules
