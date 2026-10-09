@@ -13,7 +13,7 @@
     "orientationAngle": 0,
     "orientationType": "landscape-primary"
   },
-  "timestamp": "2026-10-09T18:49:03.398Z",
+  "timestamp": "2026-10-09T18:56:07.326Z",
   "url": "http://localhost:3312/operator?ws=network&tab=review",
   "toolOptions": {
     "runOnly": {
@@ -21,7 +21,8 @@
       "values": [
         "wcag2a",
         "wcag2aa",
-        "wcag21aa"
+        "wcag21aa",
+        "wcag22aa"
       ]
     },
     "reporter": "v1"
@@ -4362,6 +4363,244 @@
           "html": "<button disabled=\"\" title=\"尚未提供現勘補件寫入服務；請使用已授權的退回修改流程。\" type=\"button\">要求現勘（審核前補件）</button>",
           "target": [
             "button[title=\"尚未提供現勘補件寫入服務；請使用已授權的退回修改流程。\"]"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "target-size",
+      "impact": null,
+      "tags": [
+        "cat.sensory-and-visual-cues",
+        "wcag22aa",
+        "wcag258"
+      ],
+      "description": "Ensure touch targets have sufficient size and space",
+      "help": "All touch targets must be 24px large, or leave sufficient space",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/target-size?application=playwright",
+      "nodes": [
+        {
+          "any": [
+            {
+              "id": "target-size",
+              "data": {
+                "minSize": 24,
+                "width": 390,
+                "height": 117
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Control has sufficient size (390px by 117px, should be at least 24px by 24px)"
+            },
+            {
+              "id": "target-offset",
+              "data": {
+                "closestOffset": 24,
+                "minOffset": 24
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Target has sufficient space from its closest neighbors. Safe clickable space has a diameter of 24px which is at least 24px."
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-698\" type=\"button\">",
+          "target": [
+            "button[data-testid=\"review-card-RV-698\"]"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "target-size",
+              "data": {
+                "minSize": 24,
+                "width": 390,
+                "height": 88
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Control has sufficient size (390px by 88px, should be at least 24px by 24px)"
+            },
+            {
+              "id": "target-offset",
+              "data": {
+                "closestOffset": 24,
+                "minOffset": 24
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Target has sufficient space from its closest neighbors. Safe clickable space has a diameter of 24px which is at least 24px."
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<button aria-pressed=\"false\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-702\" type=\"button\">",
+          "target": [
+            "button[data-testid=\"review-card-RV-702\"]"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "target-size",
+              "data": {
+                "minSize": 24,
+                "width": 390,
+                "height": 117
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Control has sufficient size (390px by 117px, should be at least 24px by 24px)"
+            },
+            {
+              "id": "target-offset",
+              "data": {
+                "closestOffset": 24,
+                "minOffset": 24
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Target has sufficient space from its closest neighbors. Safe clickable space has a diameter of 24px which is at least 24px."
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-active=\"true\" data-testid=\"review-card-RV-701\" type=\"button\">",
+          "target": [
+            "button[data-active=\"true\"]"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "target-size",
+              "data": {
+                "minSize": 24,
+                "width": 232,
+                "height": 39
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Control has sufficient size (232px by 39px, should be at least 24px by 24px)"
+            },
+            {
+              "id": "target-offset",
+              "data": {
+                "closestOffset": 24,
+                "minOffset": 24
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Target has sufficient space from its closest neighbors. Safe clickable space has a diameter of 24px which is at least 24px."
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<button class=\"networkFindAreas_btnGo__4IYqV\" data-testid=\"review-btn-go-RV-701\" type=\"button\">核准 GO</button>",
+          "target": [
+            ".networkFindAreas_btnGo__4IYqV"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "target-size",
+              "data": {
+                "minSize": 24,
+                "width": 234,
+                "height": 39
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Control has sufficient size (234px by 39px, should be at least 24px by 24px)"
+            },
+            {
+              "id": "target-offset",
+              "data": {
+                "closestOffset": 24,
+                "minOffset": 24
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Target has sufficient space from its closest neighbors. Safe clickable space has a diameter of 24px which is at least 24px."
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<button class=\"networkFindAreas_btnWait__67ZAs\" data-testid=\"review-btn-wait-RV-701\" type=\"button\">核准 WAIT</button>",
+          "target": [
+            ".networkFindAreas_btnWait__67ZAs"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "target-size",
+              "data": {
+                "minSize": 24,
+                "width": 234,
+                "height": 39
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Control has sufficient size (234px by 39px, should be at least 24px by 24px)"
+            },
+            {
+              "id": "target-offset",
+              "data": {
+                "closestOffset": 24,
+                "minOffset": 24
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Target has sufficient space from its closest neighbors. Safe clickable space has a diameter of 24px which is at least 24px."
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<button class=\"networkFindAreas_btnReturn__RDzL_\" data-testid=\"review-btn-return-RV-701\" type=\"button\">退回修改</button>",
+          "target": [
+            ".networkFindAreas_btnReturn__RDzL_"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "target-size",
+              "data": {
+                "minSize": 24,
+                "width": 234,
+                "height": 39
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Control has sufficient size (234px by 39px, should be at least 24px by 24px)"
+            },
+            {
+              "id": "target-offset",
+              "data": {
+                "closestOffset": 24,
+                "minOffset": 24
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Target has sufficient space from its closest neighbors. Safe clickable space has a diameter of 24px which is at least 24px."
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<button class=\"networkFindAreas_btnReject__Re_HG\" data-testid=\"review-btn-reject-RV-701\" type=\"button\">駁回</button>",
+          "target": [
+            ".networkFindAreas_btnReject__Re_HG"
           ]
         }
       ]

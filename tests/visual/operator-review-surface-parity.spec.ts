@@ -33,7 +33,7 @@ async function shot(page: Page, info: TestInfo, name: string) {
   const clip = await page.evaluate(() => ({ x: 0, y: 0, width: innerWidth, height: document.documentElement.scrollHeight }));
   await page.screenshot({ path: await artifact(info, `${name}.png`), fullPage: true, clip, animations: "disabled" });
 }
-for (const width of [1440, 390]) {
+for (const width of [1440, 1024, 390]) {
   test(`Review queue and detail at ${width}`, async ({ page, request }, info) => {
     await page.setViewportSize({ width, height: 900 });
     page.setDefaultTimeout(30_000);
@@ -63,7 +63,7 @@ for (const width of [1440, 390]) {
     const boxes = { panel: await measure(panel), queue: await measure(queue), card: await measure(card), detail: await measure(detail), metrics: await measure(metrics) };
     await shot(page, info, `${phase}-review-${width}`);
     let designGeometry;
-    if (process.env.NETWORK_PARITY_DESIGN === "1") {
+    if (process.env.NETWORK_PARITY_DESIGN === "1" && width !== 1024) {
       const design = await page.context().newPage();
       await design.setViewportSize({ width, height: 900 });
       await design.route(/^https?:\/\//, (route) => route.abort());
@@ -86,6 +86,7 @@ for (const width of [1440, 390]) {
     await save(info, `${phase}-geometry-${width}.json`, { boxes, document, design: designGeometry });
     if (phase !== "after") return;
     expect(document.scrollWidth).toBeLessThanOrEqual(width);
+    await expect(page.getByRole("main")).toHaveCount(1);
     await expect(card).toHaveAttribute("aria-pressed", "true");
     await expect(panel.getByRole("button", { name: "要求現勘（審核前補件）" })).toBeDisabled();
     await expect(panel.getByTestId("review-recommendation-note-RV-701")).toContainText("系統建議為 WAIT");
@@ -100,11 +101,15 @@ for (const width of [1440, 390]) {
       expect(boxes.queue.width).toBe(390);
       expect(boxes.detail.x).toBe(boxes.queue.x + boxes.queue.width + 14);
       if (designGeometry) expect(boxes.panel.width).toBe(designGeometry.width);
-    } else {
+    } else if (width === 390) {
       expect(boxes.detail.y).toBeGreaterThanOrEqual(boxes.queue.y + boxes.queue.height);
       expect(boxes.metrics.columns.split(" ")).toHaveLength(2);
+    } else {
+      expect(boxes.queue.width).toBe(300);
+      expect(boxes.detail.x).toBe(boxes.queue.x + boxes.queue.width + 14);
+      expect(boxes.metrics.columns.split(" ")).toHaveLength(4);
     }
-    const axe = await new AxeBuilder({ page }).include('[data-testid="network-panel-review"]').withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+    const axe = await new AxeBuilder({ page }).include('[data-testid="network-panel-review"]').withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
     await save(info, `axe-review-${width}.json`, axe);
     expect(axe.violations).toEqual([]);
     // Selection is a keyboard-operable control, not a click-only reference div.

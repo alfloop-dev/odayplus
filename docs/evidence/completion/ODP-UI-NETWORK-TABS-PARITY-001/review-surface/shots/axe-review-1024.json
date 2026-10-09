@@ -8,12 +8,12 @@
   },
   "testEnvironment": {
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.7827.55 Safari/537.36",
-    "windowWidth": 390,
+    "windowWidth": 1024,
     "windowHeight": 900,
     "orientationAngle": 0,
     "orientationType": "landscape-primary"
   },
-  "timestamp": "2026-10-09T18:56:32.978Z",
+  "timestamp": "2026-10-09T18:56:14.343Z",
   "url": "http://localhost:3312/operator?ws=network&tab=review",
   "toolOptions": {
     "runOnly": {
@@ -1065,9 +1065,9 @@
             }
           ],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-701\" type=\"button\" data-active=\"true\">",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-active=\"true\" data-testid=\"review-card-RV-701\" type=\"button\">",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"]"
+            "button[data-active=\"true\"]"
           ]
         },
         {
@@ -1170,9 +1170,9 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-701\" type=\"button\" data-active=\"true\">",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-active=\"true\" data-testid=\"review-card-RV-701\" type=\"button\">",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"]"
+            "button[data-active=\"true\"]"
           ]
         },
         {
@@ -1296,9 +1296,9 @@
             }
           ],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-701\" type=\"button\" data-active=\"true\">",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-active=\"true\" data-testid=\"review-card-RV-701\" type=\"button\">",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"]"
+            "button[data-active=\"true\"]"
           ]
         },
         {
@@ -1514,9 +1514,9 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-701\" type=\"button\" data-active=\"true\">",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-active=\"true\" data-testid=\"review-card-RV-701\" type=\"button\">",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"]"
+            "button[data-active=\"true\"]"
           ]
         },
         {
@@ -1618,9 +1618,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-701\" type=\"button\" data-active=\"true\">",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-active=\"true\" data-testid=\"review-card-RV-701\" type=\"button\">",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"]"
+            "button[data-active=\"true\"]"
           ]
         },
         {
@@ -1751,7 +1751,7 @@
           "impact": null,
           "html": "<span style=\"margin-left: auto;\"><span class=\"networkFindAreas_toneBadge__FiL91\" data-tone=\"watch\">待審核</span></span>",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"] > .networkFindAreas_reviewQueueTop__IWz5e > span:nth-child(4)"
+            "button[data-active=\"true\"] > .networkFindAreas_reviewQueueTop__IWz5e > span:nth-child(4)"
           ]
         },
         {
@@ -1890,9 +1890,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-701\" type=\"button\" data-active=\"true\">",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-active=\"true\" data-testid=\"review-card-RV-701\" type=\"button\">",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"]"
+            "button[data-active=\"true\"]"
           ]
         },
         {
@@ -2435,7 +2435,7 @@
           "impact": null,
           "html": "<span class=\"networkFindAreas_reviewQueueId__gahFC\">RV-701</span>",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"] > .networkFindAreas_reviewQueueTop__IWz5e > .networkFindAreas_reviewQueueId__gahFC"
+            "button[data-active=\"true\"] > .networkFindAreas_reviewQueueTop__IWz5e > .networkFindAreas_reviewQueueId__gahFC"
           ]
         },
         {
@@ -2485,7 +2485,7 @@
           "impact": null,
           "html": "<span class=\"networkFindAreas_flagRisk__3Q20E\">站前施工至 12 月 · 與府中店重疊 11%</span>",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"] > .networkFindAreas_reviewQueueTop__IWz5e > .networkFindAreas_flagRisk__3Q20E"
+            "button[data-active=\"true\"] > .networkFindAreas_reviewQueueTop__IWz5e > .networkFindAreas_flagRisk__3Q20E"
           ]
         },
         {
@@ -2510,7 +2510,7 @@
           "impact": null,
           "html": "<span class=\"networkFindAreas_toneBadge__FiL91\" data-tone=\"watch\">待審核</span>",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"] > .networkFindAreas_reviewQueueTop__IWz5e > span:nth-child(4) > .networkFindAreas_toneBadge__FiL91[data-tone=\"watch\"]"
+            "button[data-active=\"true\"] > .networkFindAreas_reviewQueueTop__IWz5e > span:nth-child(4) > .networkFindAreas_toneBadge__FiL91[data-tone=\"watch\"]"
           ]
         },
         {
@@ -2535,7 +2535,7 @@
           "impact": null,
           "html": "<div class=\"networkFindAreas_reviewQueueName__5LAFW\">板橋府中候選點</div>",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"] > .networkFindAreas_reviewQueueName__5LAFW"
+            "button[data-active=\"true\"] > .networkFindAreas_reviewQueueName__5LAFW"
           ]
         },
         {
@@ -2560,7 +2560,7 @@
           "impact": null,
           "html": "<span>王若寧（拓展）</span>",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(1)"
+            "button[data-active=\"true\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(1)"
           ]
         },
         {
@@ -2585,7 +2585,7 @@
           "impact": null,
           "html": "<span>送審 2026-07-13 16:42</span>",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(2)"
+            "button[data-active=\"true\"] > .networkFindAreas_reviewQueueMeta__Y6niW > span:nth-child(2)"
           ]
         },
         {
@@ -2610,7 +2610,7 @@
           "impact": null,
           "html": "<span class=\"networkFindAreas_reviewQueueDue__A_z60\">期限 2026-07-17 18:00</span>",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"] > .networkFindAreas_reviewQueueMeta__Y6niW > .networkFindAreas_reviewQueueDue__A_z60"
+            "button[data-active=\"true\"] > .networkFindAreas_reviewQueueMeta__Y6niW > .networkFindAreas_reviewQueueDue__A_z60"
           ]
         },
         {
@@ -4270,9 +4270,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-701\" type=\"button\" data-active=\"true\">",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-active=\"true\" data-testid=\"review-card-RV-701\" type=\"button\">",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"]"
+            "button[data-active=\"true\"]"
           ]
         },
         {
@@ -4385,12 +4385,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 366,
-                "height": 117
+                "width": 300,
+                "height": 135
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (366px by 117px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (300px by 135px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -4417,12 +4417,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 366,
-                "height": 88
+                "width": 300,
+                "height": 135
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (366px by 88px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (300px by 135px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -4449,12 +4449,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 366,
-                "height": 117
+                "width": 300,
+                "height": 135
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (366px by 117px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (300px by 135px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -4470,9 +4470,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-testid=\"review-card-RV-701\" type=\"button\" data-active=\"true\">",
+          "html": "<button aria-pressed=\"true\" class=\"networkFindAreas_reviewQueueCard__NocD2\" data-active=\"true\" data-testid=\"review-card-RV-701\" type=\"button\">",
           "target": [
-            "button[data-testid=\"review-card-RV-701\"]"
+            "button[data-active=\"true\"]"
           ]
         },
         {
@@ -4481,12 +4481,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 165,
+                "width": 150.5,
                 "height": 39
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (165px by 39px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (150.5px by 39px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -4513,12 +4513,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 165,
+                "width": 152.5,
                 "height": 39
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (165px by 39px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (152.5px by 39px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -4545,12 +4545,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 165,
+                "width": 152.5,
                 "height": 39
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (165px by 39px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (152.5px by 39px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",
@@ -4577,12 +4577,12 @@
               "id": "target-size",
               "data": {
                 "minSize": 24,
-                "width": 165,
+                "width": 152.5,
                 "height": 39
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Control has sufficient size (165px by 39px, should be at least 24px by 24px)"
+              "message": "Control has sufficient size (152.5px by 39px, should be at least 24px by 24px)"
             },
             {
               "id": "target-offset",

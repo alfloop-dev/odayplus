@@ -212,6 +212,18 @@ boundaries and unchanged 125/18 inventory passed; failed diagnostics are retaine
 Other tabs/dialog state pairs, independent VDC outcomes and full verification/CI
 integration remain open. **Not ready for formal review resubmission.**
 
+## Review full-tab increment
+
+[review-surface/README.md](review-surface/README.md) records baseline
+`62005332c0ba` and rendering `2e252b634588`: 1440/390 design-before-after Review
+queue/detail pairs, 1024 supplemental geometry, semantic source-backed facts,
+outlined secondary decisions, recommendation warning, explicitly disabled
+unavailable field-visit action, 33 baseline low-contrast nodes repaired and zero
+scoped AA axe violations. Three geometry/keyboard/focus/unchanged-state checks,
+19 focused units, full web 726, durable Review E2E 8, lint/typecheck/boundaries and
+unchanged 125/18 inventory passed. Other tabs/state pairs/authority/VDC outcomes
+remain open; **this is not a full-scope review resubmission**.
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
@@ -224,7 +236,9 @@ integration remain open. **Not ready for formal review resubmission.**
    are in `review-decision/`; complete further applicable permission/conflict visual
    states and full-scope detail density review.
    Preserve VDC-001 conditional controls, conflict input preservation and receipts.
-2. Capture/inspect other Network tabs and remaining batch write/error states.
+2. Capture/inspect Find Areas, Radar, Rebalance and Spatial, plus remaining
+   batch write/error/empty states. Review full-tab pairs, tablet/mobile geometry,
+   scoped AA/keyboard and unavailable-action integration are in `review-surface/`.
    Batch baseline/no-selection geometry, keyboard and scoped axe plus compact
    flow hint are recorded in `sitescore-states/`. Backend flow gates are preserved;
    do not infer listings conversion from the separate scoring candidate count.
