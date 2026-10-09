@@ -8,6 +8,8 @@ import path from "node:path";
 // SQLite decisions/audit -> browser reload and a separate-process repository.
 // NOT live maturity, PostgreSQL, deployed auth or independent visual approval.
 const endpoint = "/api/v1/heatzones/merge-split";
+const phase = process.env.NETWORK_PARITY_CAPTURE_PHASE ?? "after";
+test.describe.configure({ mode: "serial" });
 for (const width of [1440, 390]) {
   for (const kind of ["approve", "reject"] as const) {
     test(`Spatial SQLite ${kind} preview decision reload at ${width}`, async ({ page }, info) => {
@@ -71,7 +73,8 @@ for (const width of [1440, 390]) {
           expect(geometry.box.y).toBeGreaterThanOrEqual(0);
           expect(geometry.box.y + geometry.box.height).toBeLessThanOrEqual(900);
         }
-        expect(axe.violations).toEqual([]);
+        // Baseline records violations; after repair must enforce all scoped AA rules.
+        if (phase === "after") expect(axe.violations).toEqual([]);
       }
       await capture("preview");
       await panel.getByTestId(`btn-open-${kind}`).click();
@@ -82,12 +85,16 @@ for (const width of [1440, 390]) {
       await modal.getByTestId(`btn-confirm-${kind}`).click();
       const decisionHTTP = await decisionResponse;
       expect(decisionHTTP.status()).toBe(200);
-      const decision = await decisionHTTP.json();
-      await save("decision", { status: decisionHTTP.status(), request: decisionHTTP.request().postDataJSON(), response: decision });
-      expect(decision.proposal.status).toBe(kind === "approve" ? "APPROVED" : "REJECTED");
-      expect(decision.proposal.approved_by).toBe(subject);
+      // The browser client checks response.ok without consuming the POST body.
+      // Read persisted state independently; do not wait on a discarded CDP body.
       await expect(modal).toBeHidden();
       await expect(panel.getByTestId("feedback-message")).toContainText("最新提案狀態已讀回確認");
+      const readback = await page.request.get(`${endpoint}/proposals/${id}`, { headers });
+      expect(readback.status()).toBe(200);
+      const decidedProposal = await readback.json();
+      await save("decision", { status: decisionHTTP.status(), request: decisionHTTP.request().postDataJSON(), readback: decidedProposal });
+      expect(decidedProposal.status).toBe(kind === "approve" ? "APPROVED" : "REJECTED");
+      expect(decidedProposal.approved_by).toBe(subject);
       await page.reload();
       await page.getByTestId("network-tab-7").click();
       await panel.getByTestId(`proposal-item-${id}`).click();
@@ -97,21 +104,27 @@ for (const width of [1440, 390]) {
       await capture("reloaded-terminal");
       const detail = await page.request.get(`${endpoint}/proposals/${id}`, { headers });
       expect(detail.status()).toBe(200);
-      expect(await detail.json()).toEqual(decision.proposal);
+      expect(await detail.json()).toEqual(decidedProposal);
       const repeated = await page.request.post(`${endpoint}/proposals/${id}/${kind}`, { headers, data: kind === "approve" ? { notes: note } : { reason: note } });
       expect(repeated.status()).toBe(422);
       await save("repeat-refused", { status: repeated.status(), response: await repeated.json() });
       // Child process opens a new SQLite connection without seeding or loader seam.
       const persisted = JSON.parse(execFileSync(path.resolve(".venv/bin/python"), ["-m", "tests.visual.spatial_durable_backend", "--inspect", id], { encoding: "utf8", maxBuffer: 2_000_000 }));
       await save("fresh-process", persisted);
-      expect(persisted.proposal).toEqual(decision.proposal);
+      expect(persisted.proposal).toEqual(decidedProposal);
       expect(persisted.audit_chain).toEqual({ ok: true, issues: [] });
       expect(persisted.events).toHaveLength(1);
       expect(persisted.events[0].actor).toBe(subject);
       expect(persisted.events[0].metadata[kind === "approve" ? "notes" : "reason"]).toBe(note);
       if (kind === "approve") {
-        expect(decision.created_compositions).toHaveLength(2);
-        for (const record of decision.created_compositions) expect(persisted.compositions).toContainEqual(record);
+        const created = persisted.compositions.filter((record: { decided_by: string }) => record.decided_by === subject);
+        expect(created).toHaveLength(2);
+        expect(created.map((record: { member_cell_id: string }) => record.member_cell_id).sort()).toEqual([...proposal.member_cell_ids].sort());
+        for (const record of created) {
+          expect(record.reverted_at).toBeNull();
+          expect(record.decision_policy_version_id).toBe(proposal.policy_version_id);
+          expect(record.model_version).toBe(proposal.model_version);
+        }
         const lineage = await page.request.get(`/api/v1/heatzones/zones/${proposal.zone_id}/lineage`, { headers });
         expect(lineage.status()).toBe(200);
         const body = await lineage.json();

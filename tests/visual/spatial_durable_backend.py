@@ -17,8 +17,8 @@ from apps.api.oday_api.main import create_app
 from modules.heatzone.application import merge_split_evidence
 from shared.infrastructure.persistence import build_persistence
 from tests.integration._heatzone_evidence import (
+    build_evidence_repository,
     matured_receipt,
-    populate_evidence_repository,
 )
 
 
@@ -29,6 +29,41 @@ def scratch_root() -> Path:
     return root
 
 
+def seed_generated_history(bundle) -> None:
+    """Same isolated SQL fixture path as the existing durable integration test.
+
+    The production evidence reader is intentionally read-only. Do not add a
+    writer to it or submit caller-supplied maturity to the evaluate endpoint.
+    """
+    reference = build_evidence_repository(tenant_id="tenant-a")
+    for cell in reference.list_cells("tenant-a"):
+        bundle.engine.execute(
+            "INSERT INTO h3_cells (geo_cell_id, h3_index, centroid_latitude, "
+            "centroid_longitude, admin_city, admin_district) VALUES (?, ?, 25.03, 121.56, ?, ?)",
+            (cell.cell_id, cell.h3_index, cell.admin_city, cell.admin_district),
+        )
+    for index, outcome in enumerate(reference.list_absorption_outcomes("tenant-a")):
+        bundle.engine.execute(
+            "INSERT INTO heatzone_absorption_outcomes (outcome_id, tenant_id, geo_cell_id, "
+            "period_start, period_end, original_demand, absorbed_demand, remaining_demand, "
+            "absorption_ratio, absorbing_store_count, under_realized, barrier_side, "
+            "barrier_description, basis_source_ids, basis_at, absorption_policy_version_id, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (f"fixture-{index}", "tenant-a", outcome.cell_id,
+             outcome.period_start.isoformat(), outcome.period_end.isoformat(),
+             outcome.original_demand, outcome.absorbed_demand, outcome.remaining_demand,
+             outcome.absorption_ratio, outcome.absorbing_store_count, int(outcome.under_realized),
+             outcome.barrier_side, outcome.barrier_description,
+             json.dumps(list(outcome.basis_source_ids)), outcome.basis_at.isoformat(),
+             outcome.absorption_policy_version_id, outcome.basis_at.isoformat()),
+        )
+    for index, (left, right) in enumerate(reference.list_adjacency("tenant-a")):
+        bundle.engine.execute(
+            "INSERT INTO h3_cell_adjacency (adjacency_id, cell_id, neighbor_cell_id, k_ring) "
+            "VALUES (?, ?, ?, 1)", (f"fixture-edge-{index}", left, right),
+        )
+
+
 def create_test_app():
     root = scratch_root()
     database = root / "spatial.sqlite3"
@@ -36,7 +71,7 @@ def create_test_app():
     if database.exists():
         raise RuntimeError("Spatial test backend requires a fresh scratch directory")
     bundle = build_persistence(mode="durable", db_path=database)
-    populate_evidence_repository(bundle.heatzone_evidence_repository, tenant_id="tenant-a")
+    seed_generated_history(bundle)
     receipt = matured_receipt(root / "fixture-matured-inventory.json")
     real_loader = merge_split_evidence.load_model_ready_receipt
     seam = patch.object(

@@ -8,6 +8,9 @@ if (!process.env.NETWORK_SPATIAL_DURABLE_DIR) {
 export default defineConfig({
   ...base,
   testMatch: /operator-spatial-durable-parity\.spec\.ts/,
+  // Let actual browser persona headers reach the server; the broad E2E context
+  // headers would otherwise overwrite its subject and permissions.
+  use: { ...base.use, extraHTTPHeaders: {} },
   webServer: Array.isArray(base.webServer) ? base.webServer.map((server, index) => ({
     ...server,
     reuseExistingServer: false,
