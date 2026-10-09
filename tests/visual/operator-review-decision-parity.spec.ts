@@ -143,12 +143,18 @@ for (const width of [1440, 390]) {
       await page.getByTestId("review-decision-submit").click();
       const response = await receiptPromise;
       expect(response.status()).toBe(200);
-      const receipt = await response.json();
-      expect(receipt.decision.finalDecision).toBe(action.result);
-      expect(receipt.auditEvent.action).toBe("review.decision");
-      await writeFile(await artifact(info, `receipt-${action.code}-${width}.json`), JSON.stringify({ status: response.status(), receipt }, null, 2));
       await ready(overlay).toBeHidden();
       await ready(page.getByTestId(`review-decided-${action.id}`)).toContainText(action.result);
+      // Persisted projection is independent of the browser's response-body
+      // lifetime (the workspace refresh can abort the completed fetch).
+      const persisted = await request.get(`${api}/api/v1/operator/network-reviews`, { headers });
+      expect(persisted.status()).toBe(200);
+      const snapshot = await persisted.json();
+      expect(snapshot.decisions).toHaveLength(1);
+      expect(snapshot.decisions[0].finalDecision).toBe(action.result);
+      expect(snapshot.auditEvents).toHaveLength(1);
+      expect(snapshot.auditEvents[0].action).toBe("review.decision");
+      await writeFile(await artifact(info, `receipt-${action.code}-${width}.json`), JSON.stringify({ browserPostStatus: response.status(), durableReadStatus: persisted.status(), snapshot }, null, 2));
       await shot(page, info, `after-committed-${action.code}-${width}`);
       await page.reload();
       await page.getByTestId("network-tab-5").click();
