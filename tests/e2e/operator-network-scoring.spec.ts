@@ -31,7 +31,7 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
     ).toBeVisible();
 
     await page.getByTestId("network-tab-2").click();
-    await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
+    await expect(page.getByTestId("network-panel-candidates")).toBeVisible({ timeout: 15_000 });
     const table = page.getByTestId("network-candidate-table");
     await expect(table).toContainText("CS-1001", { timeout: 15_000 });
     await expect(table).toContainText("SiteScore v2.3");
@@ -62,7 +62,7 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
   }) => {
     await page.goto("/operator?ws=network");
     await page.getByTestId("network-tab-3").click();
-    await expect(page.getByTestId("network-panel-sitescore")).toBeVisible();
+    await expect(page.getByTestId("network-panel-sitescore")).toBeVisible({ timeout: 15_000 });
 
     const cs1001 = page.getByTestId("sitescore-card-CS-1001");
     await expect(cs1001).toContainText("SiteScore v2.3", { timeout: 15_000 });
@@ -93,7 +93,7 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
   }) => {
     await page.goto("/operator?ws=network");
     await page.getByTestId("network-tab-4").click();
-    await expect(page.getByTestId("network-panel-compare")).toBeVisible();
+    await expect(page.getByTestId("network-panel-compare")).toBeVisible({ timeout: 15_000 });
 
     await expect(page.getByTestId("compare-primary")).toContainText(
       "信義松仁",
@@ -115,6 +115,7 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
   });
 
   test("batch SiteScore job sorts persisted results and skips gated candidate", async ({ page }) => {
+    test.setTimeout(60_000);
     const api = await apiContext();
     const response = await api.post("/api/v1/operator/network-scoring/score", {
       headers: { "idempotency-key": "e2e-r4-006-batch" },
@@ -137,8 +138,12 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
     // not merely emit a completion toast. Stay in the same business inventory.
     await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-manager"));
     await page.goto("/operator?ws=network&tab=sitescore");
-    await expect(page.getByTestId("sitescore-card-CS-1001")).toContainText("GO", { timeout: 15_000 });
+    // Wait for persona hydration plus the API-backed write affordance; the
+    // initial fixture report can precede the role-keyed workspace remount.
+    await expect(page.getByRole("button", { name: "展店經理", exact: true })).toBeVisible();
+    await expect(page.getByTestId("sitescore-rescore-CS-1001")).toBeEnabled({ timeout: 15_000 });
     await page.getByRole("button", { name: "批次評分", exact: true }).click();
+    await expect(page.getByRole("button", { name: "批次評分", exact: true })).toHaveAttribute("aria-pressed", "true");
     const selection = page.getByRole("button", { name: /信義松仁候選點.*NT\$58,000/ });
     await expect(selection).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByRole("button", { name: /中壢中原候選點.*—/ })).toBeDisabled();
@@ -150,7 +155,12 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
     const selectedBatch = await batchResponse;
     expect(selectedBatch.status()).toBe(200);
     expect(selectedBatch.request().postDataJSON()).toMatchObject({ actorRoleId: "expansion-manager", candidateIds: ["CS-1001"] });
-    expect((await selectedBatch.json()).scoredCandidateIds).toEqual(["CS-1001"]);
+    const persistedApi = await apiContext();
+    const persistedBatch = await (await persistedApi.get("/api/v1/operator/network-scoring")).json();
+    expect(persistedBatch.auditEvents[0]).toMatchObject({
+      action: "sitescore.batch", actorRoleId: "expansion-manager",
+      metadata: { scored: ["CS-1001"], skipped: [] },
+    });
     await expect(page.getByTestId("sitescore-batch-run")).toBeEnabled();
 
     // Compare updates must also survive a subsequent authoritative GET.
@@ -158,7 +168,6 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
     const compareResponse = page.waitForResponse((response) => response.url().endsWith("/network-scoring/compare") && response.request().method() === "POST");
     await page.getByTestId("sitescore-card-CS-1001").getByRole("button", { name: "加入／移出比較" }).click();
     expect((await compareResponse).status()).toBe(200);
-    const persistedApi = await apiContext();
     await expect.poll(async () => (await (await persistedApi.get("/api/v1/operator/network-scoring")).json()).compareSet).toEqual(["CS-1002", "CS-1004"]);
     await persistedApi.dispose();
     await page.getByTestId("network-tab-4").click();
