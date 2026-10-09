@@ -59,7 +59,7 @@ export function PauseSlaDialog({
   const versionLabel = hasAuthority ? `v${resourceVersion}` : "UNAVAILABLE";
 
   function handleSubmit() {
-    if (busy || !hasAuthority) return;
+    if (busy || !hasAuthority || error?.status === 409 || error?.code === "ODP-INTAKE-CONFLICT") return;
     setLocalError(null);
 
     if (!reason.trim()) {
@@ -165,7 +165,7 @@ export function PauseSlaDialog({
         {isConflict && onConflictRefresh ? (
           <div className={styles.errorPanel} data-testid="pause-conflict-panel" role="alert">
             <span className={styles.errorSummary}>
-              409 OWNER_CONFLICT — 此收件的 owner 在你開啟後已變更
+              {error?.summary || "409 OWNER_CONFLICT — 此收件的 owner 在你開啟後已變更"}
             </span>
             <span className={styles.errorMeta}>
               目前 owner：{record.owner || "未指定"} · SLA 版本 {versionLabel}
@@ -224,7 +224,7 @@ export function PauseSlaDialog({
         <button
           className={styles.primaryButton}
           data-testid="pause-submit-btn"
-          disabled={busy || !hasAuthority}
+          disabled={busy || !hasAuthority || isConflict}
           onClick={handleSubmit}
           type="button"
         >

@@ -956,7 +956,10 @@ export function AssistedIntakeSection({
       applyRecord(getResult.value);
       setActionError(null);
     } else {
-      setActionError(getResult.error);
+      // A failed read must not erase the unresolved 409 or its refresh path.
+      setActionError((previous) => previous?.status === 409
+        ? { ...previous, summary: `版本衝突未解除 · 重新整理失敗：${getResult.error.summary}`, nextAction: getResult.error.nextAction }
+        : getResult.error);
     }
     setBusy(false);
   }

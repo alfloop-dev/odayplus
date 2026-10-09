@@ -630,13 +630,20 @@ describe("AssistedIntakeSection production container", () => {
       version: 71, assignmentVersion: 3,
     } as Partial<AssistedIntake> & { assignmentVersion: number });
     const transferHeaders: Headers[] = [];
+    let failNextRefresh = false;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), "http://localhost").pathname;
       if (path === "/api/v1/operator/network-listings/intake") return json({
         items: [record], total: 1, page: 1, pageSize: 10,
         counts: { needsReview: 1, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 }, evidenceState: "complete",
       });
-      if (path === `/api/v1/intakes/${record.id}`) return json(record);
+      if (path === `/api/v1/operator/network-listings/intake/${record.id}`) {
+        if (failNextRefresh) {
+          failNextRefresh = false;
+          return json({ code: "READ_UNAVAILABLE", detail: "read unavailable" }, 503);
+        }
+        return json(record);
+      }
       if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
       if (path.endsWith("/actions/claim")) {
         record = { ...record, owner: "subject-1", assignmentStatus: "CLAIMED", assignmentVersion: 8 } as typeof record;
@@ -646,6 +653,7 @@ describe("AssistedIntakeSection production container", () => {
         transferHeaders.push(new Headers(init?.headers));
         if (transferHeaders.length === 1) {
           record = { ...record, owner: "reviewer-3", assignmentVersion: 9 } as typeof record;
+          failNextRefresh = true;
           return json({ code: "OWNER_CONFLICT", detail: "owner changed" }, 409);
         }
         return json({ assignment_id: record.assignmentId, status: "TRANSFERRED", owner_subject_id: "actor-mgr", version: 10, audit_event_id: "AUD-TRANSFER" });
@@ -655,7 +663,7 @@ describe("AssistedIntakeSection production container", () => {
     nav.reset(`selected=${record.id}&dialog=detail`);
     render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
     fireEvent.click(await screen.findByTestId("asg-btn-claim"));
-    await waitFor(() => expect(screen.getByTestId("asg-owner-name")).toHaveTextContent("subject-1"));
+    await waitFor(() => expect(screen.getByTestId("asg-owner")).toHaveTextContent("subject-1"));
     fireEvent.click(screen.getByTestId("asg-btn-transfer"));
     expect(await screen.findByTestId("transfer-record-version")).toHaveTextContent("v8");
     fireEvent.change(screen.getByTestId("transfer-handoff-note"), { target: { value: "preserve this handoff" } });
@@ -663,6 +671,12 @@ describe("AssistedIntakeSection production container", () => {
     fireEvent.click(screen.getByTestId("transfer-submit-btn"));
     expect(await screen.findByTestId("transfer-conflict-panel")).toBeInTheDocument();
     expect(transferHeaders[0]!.get("if-match")).toBe('W/"8"');
+    expect(screen.getByTestId("transfer-submit-btn")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("transfer-conflict-refresh-btn"));
+    await waitFor(() => expect(screen.getByTestId("transfer-conflict-panel")).toHaveTextContent("重新整理失敗"));
+    expect(screen.getByTestId("transfer-record-version")).toHaveTextContent("v8");
+    expect(screen.getByTestId("transfer-submit-btn")).toBeDisabled();
+    expect(transferHeaders).toHaveLength(1);
     fireEvent.click(screen.getByTestId("transfer-conflict-refresh-btn"));
     await waitFor(() => expect(screen.getByTestId("transfer-record-version")).toHaveTextContent("v9"));
     expect(screen.getByTestId("transfer-record-owner")).toHaveTextContent("reviewer-3");
@@ -671,6 +685,56 @@ describe("AssistedIntakeSection production container", () => {
     fireEvent.click(screen.getByTestId("transfer-submit-btn"));
     await waitFor(() => expect(transferHeaders).toHaveLength(2));
     expect(transferHeaders[1]!.get("if-match")).toBe('W/"9"');
+  });
+
+  it("supersedes a cached resume receipt after an SLA 409 refresh and preserves editable pause inputs", async () => {
+    let record = intake({
+      owner: "reviewer-2", slaInstanceId: "SLA-REFRESH-101", slaState: "PAUSED",
+      version: 72, slaVersion: 4,
+    } as Partial<AssistedIntake> & { slaVersion: number });
+    const pauseHeaders: Headers[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/operator/network-listings/intake") return json({
+        items: [record], total: 1, page: 1, pageSize: 10,
+        counts: { needsReview: 1, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 }, evidenceState: "complete",
+      });
+      if (path === `/api/v1/operator/network-listings/intake/${record.id}`) return json(record);
+      if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
+      if (path.endsWith("/actions/resume")) {
+        record = { ...record, slaState: "ON_TRACK", slaVersion: 8 } as typeof record;
+        return json({ sla_instance_id: record.slaInstanceId, state: "ON_TRACK", version: 8, paused_duration_seconds: 0, audit_event_id: "AUD-RESUME", correlation_id: "corr-resume" });
+      }
+      if (path.endsWith("/actions/pause")) {
+        pauseHeaders.push(new Headers(init?.headers));
+        if (pauseHeaders.length === 1) {
+          record = { ...record, slaVersion: 9 } as typeof record;
+          return json({ code: "VERSION_CONFLICT", detail: "SLA changed" }, 409);
+        }
+        return json({ sla_instance_id: record.slaInstanceId, state: "PAUSED", version: 10, paused_duration_seconds: 0, audit_event_id: "AUD-PAUSE", correlation_id: "corr-pause" });
+      }
+      return json({ code: "NOT_FOUND" }, 404);
+    }));
+    nav.reset(`selected=${record.id}&dialog=detail`);
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
+    fireEvent.click(await screen.findByTestId("asg-btn-resume"));
+    fireEvent.click(await screen.findByTestId("asg-btn-pause"));
+    expect(await screen.findByTestId("pause-record-version")).toHaveTextContent("v8");
+    fireEvent.change(screen.getByTestId("pause-reason-input"), { target: { value: "waiting for evidence" } });
+    fireEvent.change(screen.getByTestId("pause-resume-time-input"), { target: { value: "2026-07-27T10:00" } });
+    fireEvent.click(screen.getByTestId("pause-risk-ack"));
+    fireEvent.click(screen.getByTestId("pause-submit-btn"));
+    expect(await screen.findByTestId("pause-conflict-panel")).toBeInTheDocument();
+    expect(pauseHeaders[0]!.get("if-match")).toBe('W/"8"');
+    expect(screen.getByTestId("pause-submit-btn")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("pause-conflict-refresh-btn"));
+    await waitFor(() => expect(screen.getByTestId("pause-record-version")).toHaveTextContent("v9"));
+    expect(screen.getByTestId("pause-reason-input")).toHaveValue("waiting for evidence");
+    expect(screen.getByTestId("pause-resume-time-input")).toHaveValue("2026-07-27T10:00");
+    expect(screen.getByTestId("pause-risk-ack")).toBeChecked();
+    fireEvent.click(screen.getByTestId("pause-submit-btn"));
+    await waitFor(() => expect(pauseHeaders).toHaveLength(2));
+    expect(pauseHeaders[1]!.get("if-match")).toBe('W/"9"');
   });
 
   it("rejects resource receipts for a different ID instead of borrowing their versions", () => {
@@ -820,7 +884,7 @@ function stubActionFetch(
       counts: { needsReview: 1, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 },
       evidenceState: "complete",
     });
-    if (path === `/api/v1/intakes/${record.id}`) return json(record);
+    if (path === `/api/v1/operator/network-listings/intake/${record.id}`) return json(record);
     if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
     if (path.includes("/assignments/")) return json({
       assignment_id: record.assignmentId, status: "CLAIMED", owner_subject_id: "subject-1",
