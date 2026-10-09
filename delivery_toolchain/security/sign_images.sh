@@ -6,10 +6,11 @@ set -euo pipefail
 
 # Print help/usage
 usage() {
-  echo "Usage: $0 [sign|verify|rotate-keys|revoke-key] [image-reference]"
+  echo "Usage: $0 [sign|attest|verify|rotate-keys|revoke-key] [image-reference] [SBOM-path]"
   echo ""
   echo "Commands:"
   echo "  sign <image>         Sign container image using Cosign keyless/OIDC or local key"
+  echo "  attest <image> <SBOM-path>  Attach a CycloneDX SBOM using Cosign keyless/OIDC"
   echo "  verify <image>       Verify container image signature and provenance"
   echo "  rotate-keys          Show key rotation policy and CLI steps"
   echo "  revoke-key           Show key revocation and remediation policy"
@@ -29,6 +30,39 @@ require_cosign() {
   fi
 }
 
+# Retry only credential acquisition failures known to precede publication.
+# Fixed three attempts, with 2s/4s backoff; no dispatcher-controlled policy.
+# Never print Cosign diagnostics: OIDC responses may contain bearer credentials.
+# Verification and registry publication are deliberately NOT retried here.
+cosign_with_oidc_retry() (
+  umask 077
+  diagnostic="$(mktemp)" || return 1
+  trap 'rm -f "${diagnostic}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' HUP TERM
+  local attempt rc
+  for attempt in 1 2 3; do
+    if cosign "$@" >"${diagnostic}" 2>&1; then
+      return 0
+    else
+      rc=$?
+    fi
+    # A permanent authorization/trust failure wins even if another line looks
+    # transient. Unknown errors fail closed, preserving the actual exit code.
+    if grep -Eiq 'unauthorized|forbidden|permission denied|access denied|invalid (token|audience|issuer)|expired token|certificate|x509|signature verification|(^|[^0-9])(401|403)([^0-9]|$)' "${diagnostic}" ||
+       ! grep -Eq "fetching ambient OIDC credentials: (invalid character 'u' looking for beginning of value|unexpected EOF|.*(429 Too Many Requests|500 Internal Server Error|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout))" "${diagnostic}"; then
+      echo "Error: cosign $1 failed (attempt ${attempt}/3, exit ${rc}); non-retryable diagnostics withheld." >&2
+      return "${rc}"
+    fi
+    if [ "${attempt}" -eq 3 ]; then
+      echo "Error: cosign $1 transient OIDC failure exhausted 3 attempts (exit ${rc}); diagnostics withheld." >&2
+      return "${rc}"
+    fi
+    echo "Cosign $1 transient OIDC failure; retrying after $((attempt * 2))s (attempt ${attempt}/3)." >&2
+    sleep "$((attempt * 2))" || return $?
+  done
+)
+
 case "$COMMAND" in
   sign)
     if [ $# -lt 2 ]; then
@@ -42,8 +76,18 @@ case "$COMMAND" in
     # cosign mode). Missing cosign must fail before any success text is
     # emitted; a local simulation is not release evidence.
     echo "Running: cosign sign --yes ${IMAGE}"
-    cosign sign --yes "${IMAGE}"
+    cosign_with_oidc_retry sign --yes "${IMAGE}"
     echo "Signature generated and attached successfully."
+    ;;
+
+  attest)
+    if [ $# -ne 3 ] || [ ! -f "$3" ]; then
+      echo "Error: attest requires an image and an existing SBOM file." >&2
+      usage
+    fi
+    require_cosign
+    cosign_with_oidc_retry attest --yes --type cyclonedx --predicate "$3" "$2"
+    echo "SBOM attestation generated and attached successfully."
     ;;
 
   verify)
