@@ -68,6 +68,18 @@ def collection_filters_in_scope(principal: Principal, filters: dict[str, Any]) -
     return True
 
 
+def collection_rows_are_scope_projected(principal: Principal) -> bool:
+    """Return whether collection routes project every returned row for ``principal``.
+
+    Only the verified operator read grant is paired with a per-row projection
+    against its complete scope (before counts and pagination).  Any other caller
+    receives the service rows for the declared filters unprojected, so its
+    collection filters must still form a complete scope envelope.
+    """
+
+    return principal.has_role(Role.OPERATOR_VIEWER)
+
+
 # A collection request addresses a query scope, not an object.  It is audited
 # and waiver-matched under its own resource type so that a waiver written for a
 # single listing can never silently authorize an entire cross-tenant collection.
@@ -241,15 +253,18 @@ def authorize_intake_action(
 
     # 3. Brand/Region/Area/HeatZone scope
     #
-    # Read collection requests are checked against the filters they declare;
-    # every returned record is then projected against the full scope.  Target
-    # objects and creates (which must land inside every restricted axis) are
-    # checked as complete envelopes.  Either way the principal's own
+    # Read collection requests from a caller whose returned records are each
+    # projected against the full scope are checked against the filters they
+    # declare.  Every other subject -- unprojected collection reads, target
+    # objects and creates (which must land inside every restricted axis) -- is
+    # checked as a complete envelope.  Either way the principal's own
     # restrictions must contain the subject.
     if scope_subject is not None:
         in_scope = (
             collection_filters_in_scope(principal, scope_subject)
-            if is_collection_request and action == "view"
+            if is_collection_request
+            and action == "view"
+            and collection_rows_are_scope_projected(principal)
             else intake_resource_in_scope(principal, scope_subject)
         )
         if not in_scope:

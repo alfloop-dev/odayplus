@@ -23,6 +23,7 @@ from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.external_data.security import contains_sensitive_submission_material
 from modules.listing.application.intake_authorization import (
     authorize_intake_action,
+    collection_rows_are_scope_projected,
     intake_resource_in_scope,
     mask_intake,
     mask_listing,
@@ -195,7 +196,7 @@ def create_network_listings_sub_router(
                     if is_record_owner(principal, intake)
                 ]
 
-        if principal.has_role(Role.OPERATOR_VIEWER):
+        if collection_rows_are_scope_projected(principal):
             snap = project_listing_snapshot(principal, snap)
 
         if "listings" in snap:
@@ -525,9 +526,8 @@ def create_network_listings_sub_router(
 
         if is_staff:
             intakes = [intake for intake in intakes if is_record_owner(principal, intake)]
-        if principal.has_role(Role.OPERATOR_VIEWER):
+        if collection_rows_are_scope_projected(principal):
             intakes = [i for i in intakes if intake_resource_in_scope(principal, i)]
-        if principal.has_role(Role.OPERATOR_VIEWER):
             intakes = [project_intake_record(intake) for intake in intakes]
         visible = [mask_intake(principal, intake) for intake in intakes]
         processing_stages = {

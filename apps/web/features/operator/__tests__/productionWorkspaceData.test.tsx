@@ -11,6 +11,7 @@ import {
   inspectNetworkRebalanceSnapshot,
   inspectNetworkReviewsSnapshot,
   inspectNetworkScoringSnapshot,
+  resolveNetworkFindAreasLoadState,
   resolveNetworkTabGateState,
 } from "../NetworkFindAreasWorkspace";
 
@@ -117,7 +118,14 @@ describe("production workspace data contracts", () => {
     expect(inspectNetworkReviewsSnapshot(reviewsSnapshot)).toBe("ready");
 
     expect(inspectNetworkListingsSnapshot({ ...listingSnapshot, source: "fixture" })).toBe("seed");
-    expect(inspectNetworkListingsSnapshot({ ...listingSnapshot, listings: [] })).toBe("empty");
+    expect(
+      inspectNetworkListingsSnapshot({ ...listingSnapshot, heatZones: [], listings: [], candidates: [] }),
+    ).toBe("empty");
+    // Withheld zone aggregates do not void authorized listing rows.
+    expect(inspectNetworkListingsSnapshot({ ...listingSnapshot, heatZones: [] })).toBe("ready");
+    // Malformed collections and seed payloads remain refused.
+    expect(inspectNetworkListingsSnapshot({ ...listingSnapshot, heatZones: undefined })).toBe("empty");
+    expect(inspectNetworkListingsSnapshot({ ...listingSnapshot, source: undefined })).toBe("empty");
     expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, scorecards: [] })).toBe("empty");
     expect(inspectNetworkRebalanceSnapshot({ ...rebalanceSnapshot, stores: [] })).toBe("empty");
     expect(inspectNetworkReviewsSnapshot({ ...reviewsSnapshot, reviews: [] })).toBe("empty");
@@ -127,7 +135,7 @@ describe("production workspace data contracts", () => {
     expect(resolveNetworkTabGateState({
       activeTab: 1,
       fixturesAllowed: false,
-      networkLoadState: "error",
+      findAreasLoadState: "error",
       scoringLoadState: "loading",
       reviewsLoadState: "empty",
       rebalanceLoadState: "error",
@@ -137,7 +145,7 @@ describe("production workspace data contracts", () => {
   it("keeps unavailable data scoped to the tab that owns it", () => {
     const states = {
       fixturesAllowed: false,
-      networkLoadState: "ready" as const,
+      findAreasLoadState: "ready" as const,
       scoringLoadState: "error" as const,
       reviewsLoadState: "loading" as const,
       rebalanceLoadState: "empty" as const,
@@ -156,9 +164,17 @@ describe("production workspace data contracts", () => {
       reviewsLoadState: "error" as const,
       rebalanceLoadState: "error" as const,
     };
-    expect(resolveNetworkTabGateState({ activeTab: 0, networkLoadState: "ready", ...states })).toBeNull();
-    expect(resolveNetworkTabGateState({ activeTab: 0, networkLoadState: "empty", ...states })).toBe("empty");
-    expect(resolveNetworkTabGateState({ activeTab: 0, networkLoadState: "error", ...states })).toBe("error");
-    expect(resolveNetworkTabGateState({ activeTab: 0, networkLoadState: "seed", ...states })).toBe("seed");
+    expect(resolveNetworkTabGateState({ activeTab: 0, findAreasLoadState: "ready", ...states })).toBeNull();
+    expect(resolveNetworkTabGateState({ activeTab: 0, findAreasLoadState: "empty", ...states })).toBe("empty");
+    expect(resolveNetworkTabGateState({ activeTab: 0, findAreasLoadState: "error", ...states })).toBe("error");
+    expect(resolveNetworkTabGateState({ activeTab: 0, findAreasLoadState: "seed", ...states })).toBe("seed");
+  });
+
+  it("reports Find Areas empty when a ready scoped snapshot withholds HeatZones", () => {
+    expect(resolveNetworkFindAreasLoadState("ready", 0)).toBe("empty");
+    expect(resolveNetworkFindAreasLoadState("ready", 2)).toBe("ready");
+    for (const state of ["error", "seed", "empty", "loading"] as const) {
+      expect(resolveNetworkFindAreasLoadState(state, 0)).toBe(state);
+    }
   });
 });

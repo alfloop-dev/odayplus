@@ -172,6 +172,66 @@ def test_intake_collections_filter_scope_before_counts_and_keep_field_masks() ->
     assert client.get("/network-listings/intake/other", headers=headers).status_code == 403
 
 
+def test_partial_collection_filters_stay_denied_for_unprojected_callers() -> None:
+    # Only the operator read grant has its returned rows projected against the
+    # complete scope, so only it may declare a partial filter. A manager-style
+    # caller restricted to brand-a + HZ-01 keeps the complete-envelope denial.
+    reviewer = Principal(
+        subject_id="reviewer", roles=frozenset({Role.SITE_REVIEWER}),
+        scope=Scope(tenant_id="tenant-a", brand_ids=frozenset({"brand-a"}),
+                    heat_zone_ids=frozenset({"HZ-01"})),
+    )
+    with pytest.raises(HTTPException) as denied:
+        authorize_intake_action(
+            reviewer, "view", collection_scope={"heatZoneId": "HZ-01"}, tenant_id="tenant-a"
+        )
+    assert denied.value.detail == "SCOPE_DENIED"
+    authorize_intake_action(
+        reviewer, "view", collection_scope={"brandId": "brand-a", "heatZoneId": "HZ-01"},
+        tenant_id="tenant-a",
+    )
+
+    own = {"id": "own", "tenantId": "tenant-a", "brandId": "brand-a", "heatZoneId": "HZ-01", "stage": "READY"}
+    foreign = {**own, "id": "foreign", "brandId": "brand-b", "stage": "NEEDS_REVIEW"}
+
+    class Service:
+        def list_intakes(self, **kwargs):
+            assert kwargs["tenant_id"] == "tenant-a"
+            return [own, foreign]
+
+        def snapshot(self, **kwargs):
+            assert kwargs["tenant_id"] == "tenant-a"
+            return {"listings": [own, foreign], "assistedIntakes": [own, foreign]}
+
+    app = FastAPI()
+    app.include_router(create_network_listings_sub_router(
+        Service(),
+        require_view_permission_fn=require_operator_permission("listing", Action.VIEW, scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE),
+        require_write_permission_fn=require_operator_permission("listing", Action.UPDATE),
+    ))
+    client = TestClient(app)
+    scope_headers = {"X-Tenant-Id": "tenant-a", "X-Brand-Ids": "brand-a", "X-Heat-Zone-Ids": "HZ-01"}
+    reviewer_headers = {**scope_headers, "X-Subject-Id": "reviewer", "X-Roles": "site_reviewer", "X-Operator-Role": "site-reviewer"}
+    for path in ("/network-listings/intake", "/network-listings"):
+        refused = client.get(path, params={"selectedHeatZoneId": "HZ-01"}, headers=reviewer_headers)
+        assert refused.status_code == 403, (path, refused.text)
+        assert refused.json()["detail"] == "SCOPE_DENIED"
+
+    viewer_headers = {**scope_headers, "X-Subject-Id": "read-admin", "X-Roles": "platform_admin,operator_viewer", "X-Operator-Role": "pm-audit"}
+    allowed = client.get("/network-listings/intake", params={"selectedHeatZoneId": "HZ-01"}, headers=viewer_headers)
+    assert allowed.status_code == 200, allowed.text
+    body = allowed.json()
+    assert [row["id"] for row in body["items"]] == ["own"]
+    assert body["total"] == body["counts"]["ready"] == 1
+    assert body["counts"]["needsReview"] == 0
+    snap = client.get("/network-listings", params={"selectedHeatZoneId": "HZ-01"}, headers=viewer_headers)
+    assert snap.status_code == 200, snap.text
+    assert [row["id"] for row in snap.json()["listings"]] == ["own"]
+    assert [row["id"] for row in snap.json()["assistedIntakes"]] == ["own"]
+    foreign_filter = client.get("/network-listings/intake", params={"selectedHeatZoneId": "HZ-02"}, headers=viewer_headers)
+    assert foreign_filter.status_code == 403
+
+
 def test_operator_routes_select_verified_read_persona_and_refuse_business_writes() -> None:
     log = InMemoryAuditLog()
     client = TestClient(create_app(audit_log=log, external_provider_validation=lambda: None))

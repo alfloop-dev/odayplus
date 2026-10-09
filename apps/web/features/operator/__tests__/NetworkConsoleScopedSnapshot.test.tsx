@@ -15,10 +15,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole } from "../OperatorConsole";
 
 const nav = vi.hoisted(() => ({ search: "ws=network" }));
+const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/operator",
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => router,
   useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
@@ -118,6 +119,14 @@ const scopedSnapshot = {
   assistedIntakes: [],
 };
 
+// Combined brand/region/store/assigned-area scope: the producer withholds the
+// whole-zone HeatZone aggregates but keeps the individually authorized rows.
+const zonesWithheldSnapshot = {
+  ...scopedSnapshot,
+  selectedHeatZoneId: null,
+  heatZones: [],
+};
+
 const emptyScopedSnapshot = {
   ...scopedSnapshot,
   selectedHeatZoneId: null,
@@ -194,6 +203,33 @@ describe("Network Find Areas in the production Operator Console composition", ()
     const state = screen.getByLabelText("Network Find Areas state");
     expect(state).toHaveTextContent("2 HeatZones");
     expect(state).toHaveTextContent("1 listings");
+    expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();
+    expect(screen.queryByText("fixture data")).toBeNull();
+  });
+
+  it("keeps authorized listing rows in Listing Radar when HeatZone aggregates are withheld", async () => {
+    const { networkListingUrls } = stubProductionFetch(zonesWithheldSnapshot);
+
+    const { unmount } = render(<OperatorConsole searchParams={{ ws: "network" }} />);
+
+    const state = await screen.findByLabelText("Network Find Areas state");
+    await waitFor(() => expect(state).toHaveTextContent("1 listings"), { timeout: 5000 });
+    expect(state).toHaveTextContent("0 HeatZones");
+    // Find Areas owns the HeatZones, so it alone reports the withheld aggregate as empty.
+    await waitFor(() =>
+      expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty"),
+    );
+    expect(screen.getByTestId("operator-data-unavailable")).toHaveTextContent(
+      "HeatZone aggregates are not authorized for this read scope",
+    );
+    expect(networkListingUrls.every((url) => !url.searchParams.has("selectedHeatZoneId"))).toBe(true);
+    unmount();
+
+    // The same production snapshot renders its authorized rows on Listing Radar.
+    nav.search = "ws=network&tab=radar";
+    render(<OperatorConsole searchParams={{ ws: "network", tab: "radar" }} />);
+    const radar = await screen.findByTestId("network-panel-listings", {}, { timeout: 5000 });
+    await waitFor(() => expect(radar).toHaveTextContent("Scoped Road 1"), { timeout: 5000 });
     expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();
     expect(screen.queryByText("fixture data")).toBeNull();
   });

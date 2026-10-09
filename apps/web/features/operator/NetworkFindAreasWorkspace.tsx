@@ -268,16 +268,17 @@ export function resolveNetworkDataUnavailableState(
 
 export function resolveNetworkTabGateState({
   activeTab,
+  findAreasLoadState,
   fixturesAllowed,
-  networkLoadState,
   proposalsLoadState,
   rebalanceLoadState,
   reviewsLoadState,
   scoringLoadState,
 }: {
   activeTab: number;
+  /** The scoped snapshot state as seen by Find Areas (HeatZones required). */
+  findAreasLoadState: OperatorDataAvailability;
   fixturesAllowed: boolean;
-  networkLoadState: OperatorDataAvailability;
   proposalsLoadState?: OperatorDataAvailability;
   rebalanceLoadState: OperatorDataAvailability;
   reviewsLoadState: OperatorDataAvailability;
@@ -288,7 +289,7 @@ export function resolveNetworkTabGateState({
   // legacy heatzone/candidate domain bindings. Those domain reads stay denied
   // for operator-only grants, so they must not gate a ready scoped snapshot.
   if (activeTab === 0) {
-    return resolveNetworkDataUnavailableState([networkLoadState]);
+    return resolveNetworkDataUnavailableState([findAreasLoadState]);
   }
   if (activeTab >= 2 && activeTab <= 4) {
     return resolveNetworkDataUnavailableState([scoringLoadState]);
@@ -320,11 +321,23 @@ export function inspectNetworkListingsSnapshot(
   const hasRequiredShape =
     snapshot.source === "api" &&
     requiredCollections.every(Array.isArray);
+  // A scoped read may legitimately withhold whole-zone HeatZone aggregates
+  // while still authorizing individual listings/candidates. The snapshot is
+  // usable when it carries any authorized record; each tab then decides
+  // whether the records it renders are present (see resolveNetworkTabGateState).
   const hasUsableRows =
-    (snapshot.heatZones?.length ?? 0) > 0 &&
-    (snapshot.listingSources?.length ?? 0) > 0 &&
-    ((snapshot.listings?.length ?? 0) > 0 || (snapshot.candidates?.length ?? 0) > 0);
+    (snapshot.heatZones?.length ?? 0) > 0 ||
+    (snapshot.listings?.length ?? 0) > 0 ||
+    (snapshot.candidates?.length ?? 0) > 0;
   return hasRequiredShape && hasUsableRows ? "ready" : "empty";
+}
+
+/** Find Areas renders HeatZones; a ready snapshot without any is empty for that tab. */
+export function resolveNetworkFindAreasLoadState(
+  networkLoadState: OperatorDataAvailability,
+  heatZoneCount: number,
+): OperatorDataAvailability {
+  return networkLoadState === "ready" && heatZoneCount === 0 ? "empty" : networkLoadState;
 }
 
 export function inspectNetworkScoringSnapshot(
@@ -1370,10 +1383,11 @@ export function NetworkFindAreasWorkspace({
       : []);
   const selectedZoneLabel = selectedZone?.label ?? heatZones.find((zone) => zone.id === effectiveSelectedId)?.label;
 
+  const findAreasLoadState = resolveNetworkFindAreasLoadState(networkLoadState, heatZones.length);
   const activeTabGateState = resolveNetworkTabGateState({
     activeTab,
+    findAreasLoadState,
     fixturesAllowed,
-    networkLoadState,
     proposalsLoadState,
     rebalanceLoadState,
     reviewsLoadState,
@@ -1381,7 +1395,10 @@ export function NetworkFindAreasWorkspace({
   });
   const activeTabGateDetail =
     activeTab === 0
-      ? networkApiError
+      ? networkApiError ??
+        (findAreasLoadState !== networkLoadState
+          ? "HeatZone aggregates are not authorized for this read scope; scoped listings remain in Listing Radar."
+          : null)
       : activeTab === 6
         ? rebalanceApiError
         : activeTab === 7
