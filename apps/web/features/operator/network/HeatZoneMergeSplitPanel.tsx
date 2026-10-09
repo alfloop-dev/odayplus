@@ -228,11 +228,11 @@ export function HeatZoneMergeSplitPanel({
       )}
 
       {isLoading ? (
-        <div style={{ padding: "32px", textAlign: "center", color: "#64748b" }}>
+        <div style={{ padding: "32px", textAlign: "center", color: "#475569" }}>
           正在載入熱區合併／拆分提案數據…
         </div>
       ) : filteredProposals.length === 0 ? (
-        <div style={{ padding: "32px", textAlign: "center", color: "#64748b" }} data-testid="empty-proposals">
+        <div style={{ padding: "32px", textAlign: "center", color: "#475569" }} data-testid="empty-proposals">
           目前無符合條件的合併／拆分提案。
         </div>
       ) : (
@@ -299,7 +299,7 @@ export function HeatZoneMergeSplitPanel({
                   <div style={{ marginTop: "6px", fontWeight: 700, fontSize: "13px", color: "#1e293b" }}>
                     {prop.zone_id}
                   </div>
-                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
+                  <div style={{ fontSize: "11px", color: "#475569", marginTop: "4px" }}>
                     NDCG 增益: +{(prop.ndcg_gain * 100).toFixed(1)}% | 關聯度: {prop.correlation_rho.toFixed(2)}
                   </div>
                 </button>
