@@ -67,7 +67,7 @@ export function SiteScorePanel({
     }
   }, [cards, candidates, selectedId]);
 
-  const selectedCard = cards.find((card) => card.id === selectedId) ?? cards[0];
+  const selectedCard = cards.find((card) => card.id === selectedId);
   const selectedCandidate = candidates.find((candidate) => candidate.id === selectedId);
 
   function toggleBatchItem(id: string) {

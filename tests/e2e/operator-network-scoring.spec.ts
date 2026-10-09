@@ -78,10 +78,14 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
       page.getByTestId("sitescore-conditions-CS-1004"),
     ).toContainText("回本期 41 個月");
 
-    // CS-1003 has no scorecard — it is surfaced in the gate banner instead.
-    await expect(page.getByTestId("sitescore-blocked-CS-1003")).toContainText(
-      "缺資料 — 無法評分",
-    );
+    // CS-1003 has no scorecard: selecting it shows the data gate, not an
+    // unrelated scored candidate's report.
+    await page.getByTestId("sitescore-pick-CS-1003").click();
+    const blocked = page.getByTestId("sitescore-blocked-CS-1003");
+    await expect(blocked).toBeVisible();
+    await expect(blocked).toContainText("缺資料");
+    await expect(blocked.getByRole("button")).toBeDisabled();
+    await expect(cs1001).toBeHidden();
   });
 
   test("Compare recommends primary / alternate / avoid consistently", async ({

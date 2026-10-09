@@ -223,6 +223,10 @@ describe("Package 10 Network non-intake panels", () => {
 
     expect(screen.getByTestId("sitescore-card-CS-1001")).toHaveTextContent("FS-20260704-0600");
     expect(screen.getByTestId("sitescore-conditions-CS-1002")).toHaveTextContent("站前施工");
+    fireEvent.click(screen.getByTestId("sitescore-pick-CS-1003"));
+    expect(screen.getByTestId("sitescore-blocked-CS-1003")).toBeVisible();
+    expect(screen.getByTestId("sitescore-card-CS-1001")).not.toBeVisible();
+    expect(within(screen.getByTestId("sitescore-blocked-CS-1003")).getByRole("button")).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "批次評分" }));
     expect(screen.getByTestId("sitescore-batch-table")).toHaveTextContent("82");
     expect(screen.getByTestId("sitescore-batch-table")).toHaveTextContent("76");
