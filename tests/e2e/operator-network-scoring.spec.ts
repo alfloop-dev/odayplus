@@ -114,7 +114,7 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
     await expect(compareTable).toContainText("82 GO");
   });
 
-  test("batch SiteScore job sorts persisted results and skips gated candidate", async () => {
+  test("batch SiteScore job sorts persisted results and skips gated candidate", async ({ page }) => {
     const api = await apiContext();
     const response = await api.post("/api/v1/operator/network-scoring/score", {
       headers: { "idempotency-key": "e2e-r4-006-batch" },
@@ -132,6 +132,43 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
       "CS-1004",
     ]);
     await api.dispose();
+
+    // The restored UI must submit the selection to the existing durable API,
+    // not merely emit a completion toast. Stay in the same business inventory.
+    await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-manager"));
+    await page.goto("/operator?ws=network&tab=sitescore");
+    await expect(page.getByTestId("sitescore-card-CS-1001")).toContainText("GO", { timeout: 15_000 });
+    await page.getByRole("button", { name: "批次評分", exact: true }).click();
+    const selection = page.getByRole("button", { name: /信義松仁候選點.*NT\$58,000/ });
+    await expect(selection).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: /中壢中原候選點.*—/ })).toBeDisabled();
+    // Leave only CS-1001 selected.
+    await page.getByRole("button", { name: /板橋府中候選點.*NT\$52,000/ }).click();
+    await page.getByRole("button", { name: /大安和平候選點.*NT\$64,000/ }).click();
+    const batchResponse = page.waitForResponse((response) => response.url().endsWith("/network-scoring/score") && response.request().method() === "POST");
+    await page.getByTestId("sitescore-batch-run").click();
+    const selectedBatch = await batchResponse;
+    expect(selectedBatch.status()).toBe(200);
+    expect(selectedBatch.request().postDataJSON()).toMatchObject({ actorRoleId: "expansion-manager", candidateIds: ["CS-1001"] });
+    expect((await selectedBatch.json()).scoredCandidateIds).toEqual(["CS-1001"]);
+    await expect(page.getByTestId("sitescore-batch-run")).toBeEnabled();
+
+    // Compare updates must also survive a subsequent authoritative GET.
+    await page.getByRole("button", { name: "單點評分", exact: true }).click();
+    const compareResponse = page.waitForResponse((response) => response.url().endsWith("/network-scoring/compare") && response.request().method() === "POST");
+    await page.getByTestId("sitescore-card-CS-1001").getByRole("button", { name: "加入／移出比較" }).click();
+    expect((await compareResponse).status()).toBe(200);
+    const persistedApi = await apiContext();
+    await expect.poll(async () => (await (await persistedApi.get("/api/v1/operator/network-scoring")).json()).compareSet).toEqual(["CS-1002", "CS-1004"]);
+    await persistedApi.dispose();
+    await page.getByTestId("network-tab-4").click();
+    await expect(page.getByRole("button", { name: "移除 信義松仁候選點" })).toHaveCount(0);
+    const removeResponse = page.waitForResponse((response) => response.url().endsWith("/network-scoring/compare") && response.request().method() === "POST");
+    await page.getByRole("button", { name: "移除 板橋府中候選點" }).click();
+    expect((await removeResponse).status()).toBe(200);
+    await expect(page.getByRole("button", { name: "移除 板橋府中候選點" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /送審首選/ })).toBeDisabled();
+    await expect(page.getByRole("button", { name: /產生比較報告/ })).toBeDisabled();
   });
 });
 
