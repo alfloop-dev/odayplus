@@ -37,8 +37,10 @@ Implementation anchors: `6ddba98038dc`, `c33a2425d699`, `76d101f40e89`.
   Existing complete grouped boards remain supported; incomplete/malformed boards
   fail closed before row-length access. Missing required arrays are not defaulted
   into apparently valid envelopes; refreshed empty evidence history clears old rows.
-- The pure-admin release journey/bootstrap/gate is unchanged. A read-enabled
-  account must not be substituted for its pure-admin subject.
+- The pure-admin release journey/bootstrap/grants remain unchanged. The original
+  separate-subject handoff was rejected by PR1435 R1: no such subject is bound.
+  The actual existing subject now has a strictly bound read-enabled gate branch
+  (below); it does not claim pure-admin proof.
 
 ## Verification receipts
 
@@ -185,6 +187,81 @@ claim is introduced. The final combined browser run used clean committed head
 `f0e2daf408a4`; subsequent documentation/receipt copies do not change test inputs.
 Required remote CI on the resubmitted head and independent exact-head review
 remain outstanding; these local checks are not the full product E2E gate.
+
+## R1 actual delivery integration repair — 2026-10-09
+
+Finding: PR1435 comment6075181569. The actual deployed verifier binding is the
+existing `ajoe734` account, not a separately configured pure administrator. The
+foreground canonical grant receipt binds account
+`17e9cb99-db46-4a07-8e61-6bf9b22cf5d2`, tenant
+`e34f2117-de4b-478c-82fd-13c4ef428d42`, active `auditor+platform_admin`, unchanged
+full scope and a fresh audited API grant. It is located in canonical status root
+`docs/audits/operator-console-layout-regression-20261008/authorization-readback-20261009/grant-receipt.json`.
+This worker read that sanitized receipt; no credential, live account, cloud-IAM,
+source/model or configuration mutation was performed.
+
+Original green CI receipt is **retained**, not reused as new-head approval:
+[CI37888864575](https://github.com/alfloop-dev/odayplus/actions/runs/37888864575),
+`completed/success`, exact old head `8f0a451de056b5ac6b76cbe7a3aee713c528f3c5`.
+New exact-head required CI and independent Codex2 review must pass again.
+
+Anchor `7f9ea12d9c70`; final implementation `c36e3dfe9e9b` (the tested working
+code/test tree was committed without further code changes). This repair:
+
+- Keeps the same configured account/credentials and pure-admin business403
+  branch. No second account, automatic grant or bypass is introduced.
+- Accepts only active identity-backed admin plus explicit auditor/viewer roles;
+  pins each exact finite grant set against canonical RBAC. Unknown, duplicate,
+  unrelated read roles, business-mutating roles, wildcard/future grant expansion
+  fail closed. Auditor's pre-existing audit export is retained, not expanded.
+- Binds Web username and unique authoritative account UUID/tenant/roles to the
+  actual server `/api/v1/auth/principal`, then requires bootstrap audit and an
+  explicit grant event matching account/tenant/full scope/roles/active status.
+- Preserves the policy-specific foreign-tenant422 plus unchanged full readback.
+  Requires successful scoped account detail and truthful live business bootstrap;
+  checks business write/approval/execution/publication403 with invalid bodies /
+  non-existent object (no legitimate business write is sent). Persona denial,
+  both login journeys, admin page and durable logout remain required.
+- Reports `read-enabled-admin` and the verified account/tenant/role binding, never
+  claims the pure-admin branch passed or promotes release/F11/model acceptance.
+
+Original terminal receipts (not inferred from log summary):
+
+```sh
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check \
+  delivery_toolchain/e2e/check_live_e2e_gate.py \
+  tests/e2e/test_live_e2e_gate_dev_admin.py \
+  tests/identity/test_identity_user_role_management.py
+timeout 360 "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q \
+  tests/identity/test_identity_user_role_management.py \
+  tests/e2e/test_live_e2e_gate_dev_admin.py tests/e2e/test_live_e2e_gate.py \
+  tests/release/test_release_profile.py --junitxml="$ORCH_SCRATCH_DIR/r1-final.xml"
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check
+```
+
+All four exits **0**. Existing JUnit records **334 tests**, no errors/failures/skips.
+`r1-final.log` / `r1-final.xml` preserve final pytest receipts. The suites retain
+full-profile, missing-model, admission/dev-only and pure-admin negative coverage.
+New negatives cover wrong principal/account/tenant/exact roles, mismatched grant
+scope/status, unknown/extra/mutating roles, canonical RBAC expansion, unsuccessful
+reads and mutation probes returning422 instead of403.
+
+Real PostgreSQL + production AuthenticationBoundary + actual identity/product
+routers exercise pure admin and admin+auditor/viewer/both, plus mutating executive
+role rejection. Read-role principal, audited grant, exact flat user detail DTO,
+tenant policy/readback, business403 and pure-admin403 pass. The local product
+router's **fixture** bootstrap200 is intentionally rejected as non-live, not
+rewritten into a passing remote receipt. No live data or full-gate success is
+claimed from this offline integration.
+
+Earlier R1 attempts are not passing receipts: the first integration run used
+local product-router fixture tenant/user wiring rather than the existing identity
+router and failed5 tests; after correct wiring, three detail assertions failed
+because the verifier expected a `user` wrapper rather than the actual flat GET
+DTO. Correcting the verifier and fixture to that real DTO preceded the final
+334-test pass. Initial ruff import-order failure was repaired. No failed run was
+misreported or rerun merely to collect test counts.
 
 ## Outstanding live acceptance (not completed here)
 
