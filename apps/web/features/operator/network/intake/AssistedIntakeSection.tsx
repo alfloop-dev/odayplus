@@ -26,7 +26,7 @@ import type {
   PromotionReviewInput,
 } from "./PromotionReviewPanel";
 import type { ScoreReplayInput } from "./SiteScoreJobStatus";
-import { TransferIntakeDialog } from "./TransferIntakeDialog";
+import { TransferIntakeDialog, usableTransferTargets, type TransferTargetOption } from "./TransferIntakeDialog";
 import { PauseSlaDialog } from "./PauseSlaDialog";
 import {
   buildIntakeClient,
@@ -63,6 +63,7 @@ export function AssistedIntakeSection({
   initialSelectedId,
   selectedHeatZoneId,
   targetListings = [],
+  transferTargets = [],
 }: {
   activeRoleId: OperatorRoleId;
   activeSubjectId?: string;
@@ -70,6 +71,8 @@ export function AssistedIntakeSection({
   initialSelectedId?: string;
   selectedHeatZoneId?: string;
   targetListings?: TargetListingData[];
+  /** Resource-scoped directory results only; no static/local fallback. */
+  transferTargets?: TransferTargetOption[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -642,7 +645,14 @@ export function AssistedIntakeSection({
     target_owner_role: string;
     handoff_note: string;
   }) {
-    if (!client || !selected || busy) return;
+    if (!client || !selected || busy || !canManageAssignment) return;
+    const target = usableTransferTargets(transferTargets).find((option) =>
+      option.id === payload.target_owner_subject_id && option.role === payload.target_owner_role,
+    );
+    if (!target) {
+      setActionError(unavailableResourceError("TRANSFER_TARGETS_UNAVAILABLE", "transfer target identity/scope"));
+      return;
+    }
     setBusy(true);
     setActionError(null);
 
@@ -1196,6 +1206,7 @@ export function AssistedIntakeSection({
           onSubmit={handleTransferSubmit}
           record={selected}
           resourceVersion={assignmentResourceVersion}
+          targetOptions={transferTargets}
           onConflictRefresh={handleConflictRefresh}
         />
       ) : null}

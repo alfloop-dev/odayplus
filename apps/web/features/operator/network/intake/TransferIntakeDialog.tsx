@@ -10,12 +10,15 @@ export interface TransferTargetOption {
   role: string;
 }
 
-export const DEFAULT_TRANSFER_TARGETS: TransferTargetOption[] = [
-  { id: "actor-mgr", name: "吳孟哲（展店主管）", role: "expansion-manager" },
-  { id: "actor-steward", name: "周育安（資料管理員）", role: "data-steward" },
-  { id: "actor-staff", name: "許庭瑜（展店）", role: "expansion-staff" },
-  { id: "gov-queue", name: "治理覆核佇列", role: "site-reviewer" },
-];
+// Shape guards are not identity/scope authorization. The caller must supply
+// fresh, resource-scoped directory results; the server must revalidate on write.
+export function usableTransferTargets(options: TransferTargetOption[]): TransferTargetOption[] {
+  return options.filter((option) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(option.id) &&
+    Boolean(option.name.trim()) && Boolean(option.role.trim()) &&
+    options.filter((other) => other.id.toLowerCase() === option.id.toLowerCase()).length === 1,
+  );
+}
 
 export interface TransferIntakeDialogProps {
   busy: boolean;
@@ -32,6 +35,7 @@ export interface TransferIntakeDialogProps {
   /** Assignment concurrency token, never the unrelated intake version. */
   resourceVersion?: number | null;
   onConflictRefresh?: () => void;
+  /** No fixture fallback: unavailable directory authority closes submission. */
   targetOptions?: TransferTargetOption[];
 }
 
@@ -48,11 +52,12 @@ export function TransferIntakeDialog({
   record,
   resourceVersion = null,
   onConflictRefresh,
-  targetOptions = DEFAULT_TRANSFER_TARGETS,
+  targetOptions = [],
 }: TransferIntakeDialogProps) {
-  const [targetId, setTargetId] = useState(targetOptions[0]?.id || "");
+  const targets = usableTransferTargets(targetOptions);
+  const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
   const [handoffNote, setHandoffNote] = useState("");
-  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
+  const [acknowledgedTarget, setAcknowledgedTarget] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -64,20 +69,29 @@ export function TransferIntakeDialog({
     };
   }, []);
 
-  const selectedTarget =
-    targetOptions.find((o) => o.id === targetId) || targetOptions[0] || { id: "", name: "未指定", role: "" };
+  // Never silently substitute another person after a directory refresh.
+  const selectedTarget = targets.find((option) => option.id === targetId);
+  const targetConsentKey = selectedTarget
+    ? JSON.stringify([record.id, selectedTarget.id, selectedTarget.name, selectedTarget.role])
+    : null;
+  const riskAcknowledged = targetConsentKey !== null && acknowledgedTarget === targetConsentKey;
+  useEffect(() => {
+    setAcknowledgedTarget(null);
+    setLocalError(null);
+  }, [targetConsentKey]);
 
   const title = "轉交收件（Transfer）";
-  const riskSummary =
-    `將收件 ${record.id} 轉交給 ${selectedTarget.name}。` +
-    `此操作會變更指派的處理者與責任。前後值與交接說明會寫入 Audit 歷程。`;
+  const riskSummary = selectedTarget
+    ? `將收件 ${record.id} 轉交給 ${selectedTarget.name}。` +
+      `此操作會變更指派的處理者與責任。前後值與交接說明會寫入 Audit 歷程。`
+    : "TRANSFER_TARGETS_UNAVAILABLE — 尚無可確認的轉交對象；不會變更負責人。";
 
   const hasAuthority = Boolean(record.assignmentId) &&
     Number.isSafeInteger(resourceVersion) && (resourceVersion ?? 0) >= 1;
   const versionLabel = hasAuthority ? `v${resourceVersion}` : "UNAVAILABLE";
 
   function handleSubmit() {
-    if (busy || !hasAuthority || error?.status === 409 || error?.code === "ODP-INTAKE-CONFLICT") return;
+    if (busy || !hasAuthority || !selectedTarget || error?.status === 409 || error?.code === "ODP-INTAKE-CONFLICT") return;
     setLocalError(null);
 
     if (!handoffNote.trim()) {
@@ -146,15 +160,25 @@ export function TransferIntakeDialog({
             className={styles.select}
             data-testid="transfer-target-select"
             id="transfer-target-select"
+            disabled={busy || targets.length === 0}
             onChange={(e) => setTargetId(e.target.value)}
-            value={targetId}
+            value={selectedTarget?.id ?? ""}
+            aria-describedby={!selectedTarget ? "transfer-targets-unavailable" : undefined}
           >
-            {targetOptions.map((opt) => (
+            <option value="" disabled>請選擇可用對象</option>
+            {targets.map((opt) => (
               <option key={opt.id} value={opt.id}>
                 {opt.name}
               </option>
             ))}
           </select>
+          {!selectedTarget ? (
+            <div className={styles.noteBox} data-testid="transfer-targets-unavailable"
+              id="transfer-targets-unavailable" role="status">
+              TRANSFER_TARGETS_UNAVAILABLE — 後端尚未提供此收件可轉交的對象，或原選擇已不可用。
+              請重新整理權威指派與身分範圍；不使用示範人物或治理佇列代替。
+            </div>
+          ) : null}
         </div>
 
         <div>
@@ -219,7 +243,8 @@ export function TransferIntakeDialog({
               checked={riskAcknowledged}
               data-testid="transfer-risk-ack"
               id="transfer-risk-ack"
-              onChange={(e) => setRiskAcknowledged(e.target.checked)}
+              disabled={busy || !selectedTarget}
+              onChange={(e) => setAcknowledgedTarget(e.target.checked ? targetConsentKey : null)}
               type="checkbox"
             />
             <span>我已閱讀並了解上述風險，確認執行轉交操作（寫入 Audit 歷程）</span>
@@ -234,7 +259,7 @@ export function TransferIntakeDialog({
         <button
           className={styles.primaryButton}
           data-testid="transfer-submit-btn"
-          disabled={busy || !hasAuthority || isConflict}
+          disabled={busy || !hasAuthority || !selectedTarget || isConflict}
           onClick={handleSubmit}
           type="button"
         >

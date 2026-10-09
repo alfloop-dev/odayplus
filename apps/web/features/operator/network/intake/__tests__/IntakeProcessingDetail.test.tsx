@@ -17,6 +17,11 @@ import { IntakeProcessingDetail, buildPreservedInput } from "../IntakeProcessing
 import { jobStatusBadgeColors } from "../IntakeStageTimeline";
 import { isSnapshotStale } from "../intakeFreshness";
 
+// Injected component fixtures, not directory/provisioning evidence.
+const transferTargets = [
+  { id: "00000000-0000-0000-0000-000000000102", name: "Fixture reviewer", role: "site-reviewer" },
+];
+
 const nav = vi.hoisted(() => {
   const state = { search: "", pathname: "/operator", pushCalls: [] as string[], replaceCalls: [] as string[], listeners: new Set<() => void>() };
   const navigate = (url: string) => {
@@ -591,7 +596,7 @@ describe("AssistedIntakeSection production container", () => {
     const requests: Array<{ path: string; headers: Headers }> = [];
     stubActionFetch(record, requests);
     nav.reset(`selected=${record.id}&dialog=detail`);
-    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} transferTargets={transferTargets} />);
     fireEvent.click(await screen.findByTestId("asg-btn-transfer"));
     expect(await screen.findByTestId("transfer-record-version")).toHaveTextContent("v14");
     expect(screen.getByTestId("transfer-record-version")).not.toHaveTextContent("v71");
@@ -601,6 +606,21 @@ describe("AssistedIntakeSection production container", () => {
     const path = `/api/v1/assignments/${record.assignmentId}/actions/transfer`;
     await waitFor(() => expect(requests.some((request) => request.path === path)).toBe(true));
     expect(requests.find((request) => request.path === path)!.headers.get("if-match")).toBe('W/"14"');
+  });
+
+  it("does not transfer to static actors when resource authority exists but no scoped target directory is provided", async () => {
+    const record = intake({ owner: "reviewer-2", assignmentId: "ASG-TARGETS-MISSING", assignmentStatus: "CLAIMED", assignmentVersion: 14 });
+    const requests: Array<{ path: string; headers: Headers }> = [];
+    stubActionFetch(record, requests);
+    nav.reset(`selected=${record.id}&dialog=detail`);
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
+    fireEvent.click(await screen.findByTestId("asg-btn-transfer"));
+    expect(await screen.findByTestId("transfer-record-version")).toHaveTextContent("v14");
+    expect(screen.getByTestId("transfer-targets-unavailable")).toBeInTheDocument();
+    expect(screen.getByTestId("transfer-submit-btn")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("transfer-handoff-note"), { target: { value: "must not fabricate identity" } });
+    fireEvent.click(screen.getByTestId("transfer-submit-btn"));
+    expect(requests.some((request) => request.path.endsWith("/actions/transfer"))).toBe(false);
   });
 
   it("pauses with the authoritative SLA resource version", async () => {
@@ -656,12 +676,12 @@ describe("AssistedIntakeSection production container", () => {
           failNextRefresh = true;
           return json({ code: "OWNER_CONFLICT", detail: "owner changed" }, 409);
         }
-        return json({ assignment_id: record.assignmentId, status: "TRANSFERRED", owner_subject_id: "actor-mgr", version: 10, audit_event_id: "AUD-TRANSFER" });
+        return json({ assignment_id: record.assignmentId, status: "TRANSFERRED", owner_subject_id: transferTargets[0].id, version: 10, audit_event_id: "AUD-TRANSFER" });
       }
       return json({ code: "NOT_FOUND" }, 404);
     }));
     nav.reset(`selected=${record.id}&dialog=detail`);
-    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} transferTargets={transferTargets} />);
     fireEvent.click(await screen.findByTestId("asg-btn-claim"));
     await waitFor(() => expect(screen.getByTestId("asg-owner")).toHaveTextContent("subject-1"));
     fireEvent.click(screen.getByTestId("asg-btn-transfer"));

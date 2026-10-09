@@ -4,7 +4,7 @@ import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AssistedIntake, AssignmentReceipt, SlaReceipt } from "@oday-plus/openapi-client";
 import { AssignmentSlaSummary, computeSlaState, SLA_STATE_MAP } from "../AssignmentSlaSummary";
-import { TransferIntakeDialog, DEFAULT_TRANSFER_TARGETS } from "../TransferIntakeDialog";
+import { TransferIntakeDialog } from "../TransferIntakeDialog";
 import { PauseSlaDialog } from "../PauseSlaDialog";
 import { IntakeProcessingDetail } from "../IntakeProcessingDetail";
 import type { IntakeApiError } from "../intakeClient";
@@ -46,6 +46,12 @@ const sampleIntakeRecord: AssistedIntake = {
   matchResult: null,
   parsedFields: {},
 };
+
+// Explicit component-test fixtures, never a runtime directory fallback.
+const transferTargets = [
+  { id: "00000000-0000-0000-0000-000000000102", name: "Fixture manager", role: "expansion-manager" },
+  { id: "00000000-0000-0000-0000-000000000105", name: "Fixture steward", role: "data-steward" },
+];
 
 const conflictError: IntakeApiError = {
   status: 409,
@@ -152,8 +158,10 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(html).not.toContain('data-testid="pause-reason-input"');
       expect(html).not.toContain('data-testid="pause-resume-time-input"');
 
-      expect(DEFAULT_TRANSFER_TARGETS.length).toBeGreaterThan(0);
-      expect(DEFAULT_TRANSFER_TARGETS[0].id).toBe("actor-mgr");
+      expect(html).toContain("TRANSFER_TARGETS_UNAVAILABLE");
+      expect(html).not.toContain("actor-mgr");
+      expect(html).not.toContain("gov-queue");
+      expect(html).toMatch(/data-testid="transfer-submit-btn"[^>]*disabled/);
     });
 
     it("preserves transfer draft inputs across a 409 OWNER_CONFLICT refresh and exposes current owner/version upon completion", () => {
@@ -539,6 +547,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
           busy={false}
           error={error}
           resourceVersion={record.version}
+          targetOptions={transferTargets}
           onClose={() => {}}
           onConflictRefresh={() => {
             setRecord(refreshedRecord);
@@ -611,11 +620,11 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       const handoffTextarea = container.querySelector('[data-testid="transfer-handoff-note"]') as HTMLTextAreaElement;
       const riskCheckbox = container.querySelector('[data-testid="transfer-risk-ack"]') as HTMLInputElement;
 
-      setInputValue(targetSelect, "actor-steward");
+      setInputValue(targetSelect, transferTargets[1].id);
       setInputValue(handoffTextarea, "Preserved draft handoff note across 409 refresh");
       setInputValue(riskCheckbox, true);
 
-      expect(targetSelect.value).toBe("actor-steward");
+      expect(targetSelect.value).toBe(transferTargets[1].id);
       expect(handoffTextarea.value).toBe("Preserved draft handoff note across 409 refresh");
       expect(riskCheckbox.checked).toBe(true);
 
@@ -628,7 +637,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(container.querySelector('[data-testid="transfer-record-version"]')?.textContent).toBe("v4");
       expect(container.querySelector('[data-testid="transfer-record-owner"]')?.textContent).toBe("周育安（資料管理員）");
 
-      expect((container.querySelector('[data-testid="transfer-target-select"]') as HTMLSelectElement).value).toBe("actor-steward");
+      expect((container.querySelector('[data-testid="transfer-target-select"]') as HTMLSelectElement).value).toBe(transferTargets[1].id);
       expect((container.querySelector('[data-testid="transfer-handoff-note"]') as HTMLTextAreaElement).value).toBe("Preserved draft handoff note across 409 refresh");
       expect((container.querySelector('[data-testid="transfer-risk-ack"]') as HTMLInputElement).checked).toBe(true);
 
@@ -640,7 +649,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(onSubmitSpy).toHaveBeenCalledTimes(1);
       expect(onSubmitSpy).toHaveBeenCalledWith(
         {
-          target_owner_subject_id: "actor-steward",
+          target_owner_subject_id: transferTargets[1].id,
           target_owner_role: "data-steward",
           handoff_note: "Preserved draft handoff note across 409 refresh",
           riskSummary: expect.any(String),
