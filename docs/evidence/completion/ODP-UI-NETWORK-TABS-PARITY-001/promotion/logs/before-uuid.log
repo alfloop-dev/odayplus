@@ -1,0 +1,78 @@
+[WebServer] 2026/10/09 17:49:56 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 17:49:58 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 17:49:58 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [2032470]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T17:50:02.327743+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b0b06dae-097f-43a1-821d-3d52e7d5f0c9", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 2 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T17:50:21.144776+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "20fbdf4b-16ae-4d17-abc1-d53515b00e09", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-listings/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:24.522814+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "6c32e9ee-1848-4639-9918-3c07ae85b2e1", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:27.233207+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:27.508143+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:27.512353+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:27.512987+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:30.117078+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:30.117623+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:30.117960+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:31.263493+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:31.400860+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-a3a0d622-8682-4c4c-8888-d8f103433c04", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:31.634255+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "90716914-19ee-487c-939c-c3e8ac4594c0", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:31.692861+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "18065c39-645e-493e-9739-e0e15958d207", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:31.873159+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "db683926-83aa-4ce7-9ec6-789f4bbb889c", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:32.789489+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-21d4eae3-5765-4f7e-bfb3-f0853ad7fe11", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-listings/intake/submit ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:32.982120+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "e0c18419-ea90-4871-8c63-60adb7e3c6c9", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:33.332674+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "3ea7ae3e-bdad-4776-be81-381537b724e9", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:33.370924+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "589c2f7d-1a7a-4a97-b953-6ef531784e2a", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:33.373029+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b933bfea-5be7-45d2-8872-126ed18a77ad", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake/{intake_id} ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:33.375133+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4c371bb0-0ca4-4576-83c3-724b055d2652", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake/{intake_id} ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:33.601961+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "497463bc-0e72-46c9-85b6-05fd98b36281", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/{intake_id}/promotion-decision ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:34.117286+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "8412d9de-ad4d-4769-a9d3-078088f40c69", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:34.386231+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-80b697ac-59fa-404a-9921-41161b99dc49", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-listings/intake/{intake_id}/decide ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:34.465645+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "23499e53-5db6-4979-ada6-7acadf7c4004", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:34.875931+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "59c2c5aa-6bc7-4a65-961e-742e06307798", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:35.793158+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-c0177816-6e57-43f9-92c0-32d365ec0bdc", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/{intake_id}/promotion-requests ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:35.843700+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "07d6f28b-5ee5-46cb-91e9-a751642f996b", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake/{intake_id} ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:38.325619+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "40b682ed-92bf-440c-81c9-c8407066f96f", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake/{intake_id} ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:38.396665+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:38.400565+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:38.402214+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:38.403282+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:38.676860+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "40dcf170-bcaf-4200-a6ca-5003a1d931df", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:38.966228+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:38.970478+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:38.972594+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "fea1bd31-c3a4-42df-8a17-ec1923e764c4", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake/{intake_id} ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:38.973220+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:38.982122+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:39.015891+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-20a4854c-ceb3-412e-8e4b-937163e6c13c", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T17:50:39.441180+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "58594046-c958-4f21-bf03-e8c3fedf9e98", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/intakes/{intake_id}/promotion-decision ok"}
+  ✘  1 [chromium] › tests/visual/operator-promotion-parity.spec.ts:31:7 › Promotion paired geometry and second actor at 1440 (46.1s)
+  -  2 [chromium] › tests/visual/operator-promotion-parity.spec.ts:31:7 › Promotion paired geometry and second actor at 390
+
+
+  1) [chromium] › tests/visual/operator-promotion-parity.spec.ts:31:7 › Promotion paired geometry and second actor at 1440 
+
+    TimeoutError: locator.dispatchEvent: Timeout 15000ms exceeded.
+    Call log:
+      - waiting for locator('[data-screen-label="Intake 收件處理詳情頁"]').getByRole('button', { name: /提出.*promotion|提出.*晉升/ })
+
+
+      89 |       await design.getByRole("listitem").filter({ hasText: "IN-3001" }).dispatchEvent("click");
+      90 |       const detail = design.locator('[data-screen-label="Intake 收件處理詳情頁"]');
+    > 91 |       await detail.getByRole("button", { name: /提出.*promotion|提出.*晉升/ }).dispatchEvent("click");
+         |                                                                          ^
+      92 |       await ready(detail).toContainText("PENDING_APPROVAL");
+      93 |       await design.getByRole("button", { name: /林.*展店經理/ }).click();
+      94 |       await design.getByRole("button", { name: /展店主管/ }).click();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-promotion-parity.spec.ts:91:74
+
+    Error Context: test-results/operator-promotion-parity--5d20b-ry-and-second-actor-at-1440-chromium/error-context.md
+
+    Error Context: test-results/operator-promotion-parity--5d20b-ry-and-second-actor-at-1440-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/visual/operator-promotion-parity.spec.ts:31:7 › Promotion paired geometry and second actor at 1440 
+  1 did not run
