@@ -73,7 +73,33 @@ import {
 
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
-const operatorBootstrapTimeoutMs = 10_000;
+// The browser budget must exceed the Web BFF's own 10s upstream timeout plus
+// its session lookup and service-identity work, so a slow API surfaces as the
+// BFF's structured 504 (with correlation id) instead of a bare client abort.
+const operatorBootstrapTimeoutMs = 20_000;
+// One automatic retry absorbs a scale-to-zero cold start; the retry reuses
+// the correlation id so both attempts trace as one operator request.
+const operatorBootstrapRetryableStatuses = new Set([502, 503, 504]);
+const operatorBootstrapRetryDelayMs = 300;
+
+class RetryableBootstrapStatus extends Error {
+  constructor(readonly status: number) {
+    super(`Operator bootstrap returned ${status}`);
+    this.name = "RetryableBootstrapStatus";
+  }
+}
+
+/**
+ * Transport failures worth one more attempt: a timeout or network error while
+ * fetching *or* while streaming the body (the BFF streams the upstream body,
+ * so headers can arrive before the body fails), or a retryable gateway status.
+ * Malformed JSON, permission denials and other statuses are not retried.
+ */
+function isRetryableBootstrapFailure(error: unknown): boolean {
+  if (error instanceof RetryableBootstrapStatus) return true;
+  if (error instanceof TypeError) return true;
+  return error instanceof Error && error.name === "TimeoutError";
+}
 
 const notifications = [
   {
@@ -524,12 +550,41 @@ export function OperatorConsole({
           technicalDetail: error instanceof Error ? error.message : String(error ?? "Operator bootstrap failed"),
         });
       };
+      const headers = { ...getSecurityHeaders(activeRoleId), "X-Correlation-Id": correlationId };
+      // One attempt covers the request and, for a successful status, reading
+      // the body, each under a fresh timeout budget.
+      const attemptBootstrap = async (finalAttempt: boolean) => {
+        const signal = AbortSignal.timeout(operatorBootstrapTimeoutMs);
+        try {
+          const response = await fetch("/api/v1/operator/bootstrap", { headers, signal });
+          if (!finalAttempt && operatorBootstrapRetryableStatuses.has(response.status)) {
+            throw new RetryableBootstrapStatus(response.status);
+          }
+          if (!response.ok) return { response, payload: undefined as unknown };
+          return { response, payload: (await response.json()) as unknown };
+        } catch (error) {
+          // Chromium before 154 rejects a body read cut off by this timeout
+          // with AbortError instead of TimeoutError; report the signal's own
+          // timeout reason so the failure is classified (and retried) as one.
+          if (error instanceof Error && error.name === "AbortError" && signal.aborted) {
+            throw signal.reason instanceof Error ? signal.reason : error;
+          }
+          throw error;
+        }
+      };
       try {
-        const headers = { ...getSecurityHeaders(activeRoleId), "X-Correlation-Id": correlationId };
-        const bootstrapRes = await fetch("/api/v1/operator/bootstrap", {
-          headers,
-          signal: AbortSignal.timeout(operatorBootstrapTimeoutMs),
-        });
+        let attempt: Awaited<ReturnType<typeof attemptBootstrap>>;
+        try {
+          attempt = await attemptBootstrap(false);
+        } catch (firstError) {
+          if (!isRetryableBootstrapFailure(firstError)) throw firstError;
+          if (cancelled) return;
+          console.warn("Retrying operator bootstrap once:", firstError);
+          await new Promise((resolve) => window.setTimeout(resolve, operatorBootstrapRetryDelayMs));
+          if (cancelled) return;
+          attempt = await attemptBootstrap(true);
+        }
+        const bootstrapRes = attempt.response;
         if (!bootstrapRes.ok) {
           const responseCorrelationId = bootstrapRes.headers?.get?.("x-correlation-id") ?? null;
           const denial = await classifyAccessDenial(bootstrapRes);
@@ -551,7 +606,7 @@ export function OperatorConsole({
           );
           return;
         }
-        const payload = await bootstrapRes.json();
+        const payload = attempt.payload;
         if (cancelled) return;
         const inspection = inspectOperatorShellPayload(payload);
 
