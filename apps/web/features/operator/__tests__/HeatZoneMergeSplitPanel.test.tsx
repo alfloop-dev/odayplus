@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HeatZoneMergeSplitPanel, type HeatZoneProposal } from "../network/HeatZoneMergeSplitPanel";
 
@@ -165,8 +165,9 @@ describe("HeatZoneMergeSplitPanel", () => {
     expect(screen.getByTestId("reject-modal")).toBeInTheDocument();
 
     const confirmRejectBtn = screen.getByTestId("btn-confirm-reject");
+    expect(confirmRejectBtn).toBeDisabled();
     fireEvent.click(confirmRejectBtn);
-    expect(screen.getByText("請輸入拒絕理由")).toBeInTheDocument();
+    expect(onReject).not.toHaveBeenCalled();
 
     const textarea = screen.getByPlaceholderText(/行政區邊界不連續/);
     fireEvent.change(textarea, { target: { value: "商圈邊界待確認" } });
@@ -244,6 +245,86 @@ describe("HeatZoneMergeSplitPanel", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("409 conflict");
     expect(screen.getByPlaceholderText(/行政區邊界不連續/)).toHaveValue("保留理由");
     expect(screen.getByTestId("reject-modal")).toBeVisible();
+  });
+
+  it("pins the decision to the opened proposal and does not submit a replacement", () => {
+    const approve = vi.fn();
+    const view = render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal]} onApproveProposal={approve} />);
+    fireEvent.click(screen.getByTestId("btn-open-approve"));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "原提案備註" } });
+    view.rerender(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[splitProposal]} onApproveProposal={approve} />);
+    expect(screen.getByRole("dialog")).toHaveTextContent(sampleProposal.proposal_id);
+    expect(screen.getByRole("textbox")).toHaveValue("原提案備註");
+    expect(screen.getByTestId("btn-confirm-approve")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("btn-confirm-approve"));
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  it.each(["APPROVED", "REJECTED"] as const)("blocks confirmation when the target becomes %s", (status) => {
+    const reject = vi.fn();
+    const view = render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal]} onRejectProposal={reject} />);
+    fireEvent.click(screen.getByTestId("btn-open-reject"));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "原拒絕理由" } });
+    view.rerender(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[{ ...sampleProposal, status }]} onRejectProposal={reject} />);
+    expect(screen.getByTestId("btn-confirm-reject")).toBeDisabled();
+    expect(screen.getByRole("textbox")).toHaveValue("原拒絕理由");
+    fireEvent.click(screen.getByTestId("btn-confirm-reject"));
+    expect(reject).not.toHaveBeenCalled();
+  });
+
+  it("closes an old persona's modal and does not acknowledge its late write", async () => {
+    let resolve!: (value: { readbackConfirmed: boolean }) => void;
+    const approve = vi.fn(() => new Promise<{ readbackConfirmed: boolean }>((done) => { resolve = done; }));
+    const view = render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal]} onApproveProposal={approve} />);
+    fireEvent.click(screen.getByTestId("btn-open-approve"));
+    fireEvent.click(screen.getByTestId("btn-confirm-approve"));
+    view.rerender(<HeatZoneMergeSplitPanel activeRoleId="pm-audit" proposals={[sampleProposal]} onApproveProposal={approve} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await act(async () => { resolve({ readbackConfirmed: true }); });
+    expect(screen.queryByTestId("feedback-message")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("btn-open-approve")).not.toBeInTheDocument();
+  });
+
+  it("freezes inputs, cancel and duplicate confirmation throughout a pending decision", async () => {
+    let resolve!: (value: { readbackConfirmed: boolean }) => void;
+    const approve = vi.fn(() => new Promise<{ readbackConfirmed: boolean }>((done) => { resolve = done; }));
+    render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal]} onApproveProposal={approve} />);
+    fireEvent.click(screen.getByTestId("btn-open-approve"));
+    fireEvent.click(screen.getByTestId("btn-confirm-approve"));
+    fireEvent.click(screen.getByTestId("btn-confirm-approve"));
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+    await act(async () => { resolve({ readbackConfirmed: true }); });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("feedback-message")).toHaveTextContent("最新提案狀態已讀回確認");
+  });
+
+  it("separates an acknowledged POST from unknown readback and prevents repeat decisions", async () => {
+    const approve = vi.fn().mockResolvedValue({ readbackConfirmed: false });
+    const reload = vi.fn().mockResolvedValue(undefined);
+    render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal]} onApproveProposal={approve} onReloadProposals={reload} />);
+    fireEvent.click(screen.getByTestId("btn-open-approve"));
+    fireEvent.click(screen.getByTestId("btn-confirm-approve"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByTestId("feedback-message")).toHaveTextContent("請重新載入提案，勿重複提交");
+    expect(screen.getByTestId("btn-open-approve")).toBeDisabled();
+    expect(screen.getByTestId("btn-open-reject")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "重新載入提案" }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(approve).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks an open confirmation while the list authority is unavailable", () => {
+    const approve = vi.fn();
+    const view = render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal]} onApproveProposal={approve} />);
+    fireEvent.click(screen.getByTestId("btn-open-approve"));
+    view.rerender(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[sampleProposal]} isLoading onApproveProposal={approve} />);
+    expect(screen.getByTestId("btn-confirm-approve")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("btn-confirm-approve"));
+    expect(approve).not.toHaveBeenCalled();
   });
 
   it("does not offer a child breakdown for a merge", () => {

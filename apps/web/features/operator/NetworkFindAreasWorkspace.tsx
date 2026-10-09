@@ -737,16 +737,18 @@ export function NetworkFindAreasWorkspace({
     try {
       const client = await getCompositionClient();
       const items = await client.fetchProposals();
-      if (generation !== proposalsReadGeneration.current) return;
+      if (generation !== proposalsReadGeneration.current) return null;
       setProposals(items);
       setProposalsLoadState(items.length > 0 ? "ready" : "empty");
+      return items;
     } catch (error) {
-      if (generation !== proposalsReadGeneration.current) return;
+      if (generation !== proposalsReadGeneration.current) return null;
       // Never present stale decision controls, or a fixture/empty success,
       // when this read scope cannot confirm the current proposal list.
       setProposals([]);
       setProposalsLoadState("error");
       setProposalsApiError(error instanceof Error ? error.message : "提案清單讀取失敗");
+      return null;
     }
   }, [getCompositionClient]);
 
@@ -761,24 +763,34 @@ export function NetworkFindAreasWorkspace({
 
   const handleApproveProposal = useCallback(
     async (proposalId: string, notes?: string) => {
+      const generation = proposalsReadGeneration.current;
       const client = await getCompositionClient();
+      if (generation !== proposalsReadGeneration.current) throw new Error("提案讀取範圍已變更");
       const ok = await client.approveProposal(proposalId, notes);
       if (!ok) {
-        throw new Error("Failed to approve proposal");
+        throw new Error("核准請求未成功");
       }
-      await reloadProposals();
+      if (generation !== proposalsReadGeneration.current) return { readbackConfirmed: false };
+      // POST acknowledgement and readback are separate facts. Never report a
+      // failed GET as a failed write, inviting a duplicate high-impact decision.
+      const items = await reloadProposals();
+      return { readbackConfirmed: !!items?.some((item) => item.proposal_id === proposalId && (item.status === "APPROVED" || item.status === "APPLIED")) };
     },
     [getCompositionClient, reloadProposals],
   );
 
   const handleRejectProposal = useCallback(
     async (proposalId: string, reason: string) => {
+      const generation = proposalsReadGeneration.current;
       const client = await getCompositionClient();
+      if (generation !== proposalsReadGeneration.current) throw new Error("提案讀取範圍已變更");
       const ok = await client.rejectProposal(proposalId, reason);
       if (!ok) {
-        throw new Error("Failed to reject proposal");
+        throw new Error("拒絕請求未成功");
       }
-      await reloadProposals();
+      if (generation !== proposalsReadGeneration.current) return { readbackConfirmed: false };
+      const items = await reloadProposals();
+      return { readbackConfirmed: !!items?.some((item) => item.proposal_id === proposalId && item.status === "REJECTED") };
     },
     [getCompositionClient, reloadProposals],
   );

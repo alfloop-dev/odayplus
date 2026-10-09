@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { OperatorRoleId } from "../navigation";
 import styles from "../networkFindAreas.module.css";
 import spatial from "./spatialGovernance.module.css";
+import { useModalDialogBehavior } from "./useModalDialogBehavior";
 import {
   COMPOSITION_DECISION_DENIED_NOTE,
   canDecideHeatZoneComposition,
@@ -58,20 +59,59 @@ export type ProposalPreviewData = {
   confidence: number;
 };
 
+export type ProposalDecisionReceipt = { readbackConfirmed: boolean };
+
 export type HeatZoneMergeSplitPanelProps = {
   activeRoleId: OperatorRoleId;
   proposals?: HeatZoneProposal[];
   // The deciding operator is taken server-side from the authenticated
   // principal, so the console never names who is approving.
-  onApproveProposal?: (proposalId: string, notes?: string) => Promise<void>;
-  onRejectProposal?: (proposalId: string, reason: string) => Promise<void>;
+  onApproveProposal?: (proposalId: string, notes?: string) => Promise<ProposalDecisionReceipt | void>;
+  onRejectProposal?: (proposalId: string, reason: string) => Promise<ProposalDecisionReceipt | void>;
   onPreviewProposal?: (proposalId: string) => Promise<ProposalPreviewData | null>;
   selectedProposalId?: string | null;
   onSelectProposal?: (proposalId: string) => void;
   isLoading?: boolean;
   apiError?: string | null;
-  onReloadProposals?: () => Promise<void>;
+  onReloadProposals?: () => Promise<unknown>;
 };
+
+function CompositionDecisionDialog({ kind, proposalId, value, onChange, onClose, onConfirm, pending, available, feedback }: {
+  kind: "approve" | "reject";
+  proposalId: string;
+  value: string;
+  onChange: (value: string) => void;
+  onClose: () => void;
+  onConfirm: () => void;
+  pending: boolean;
+  available: boolean;
+  feedback: string | null;
+}) {
+  const ref = useModalDialogBehavior({ dismissible: !pending, onClose });
+  const approve = kind === "approve";
+  return <div className={spatial.overlay} data-testid={`${kind}-modal`}>
+    <div ref={ref} className={spatial.dialog} role="dialog" aria-modal="true" aria-labelledby="composition-decision-title" aria-describedby="composition-decision-description" aria-busy={pending}>
+      <h4 id="composition-decision-title">{approve ? "確認核准熱區拓撲提案" : "拒絕熱區拓撲提案"}</h4>
+      <p className={spatial.target}>提案 ID：{proposalId}</p>
+      <p id="composition-decision-description">{approve
+        ? <>核准將寫入 <code>expansion.heatzone_composition</code> Append-Only 歷史，並將現有衝突活躍關聯自動軟性回滾 (Soft-Rollback)。</>
+        : "請輸入拒絕理由。拒絕記錄將寫入審計軌跡以供合規與覆盤。"}</p>
+      <label htmlFor="composition-decision-notes">{approve ? "決策附註 / Override 說明 (選填)" : "拒絕理由 (必填) *"}</label>
+      <textarea id="composition-decision-notes" data-autofocus rows={3} required={!approve} disabled={pending}
+        value={value} onChange={(event) => onChange(event.target.value)}
+        placeholder={approve ? "例如：依 Q3 實績吸收率確認合併..." : "例如：行政區邊界不連續或待商圈重評估..."} />
+      {!available && !pending && <p role="alert">提案或目前權限已變更，請取消並重新載入；不可提交舊決策。</p>}
+      {feedback && <p role="alert" className={spatial.decisionError} data-testid="feedback-message">{feedback}</p>}
+      <div className={spatial.dialogActions}>
+        <button type="button" onClick={onClose} disabled={pending}>取消</button>
+        <button type="button" className={approve ? spatial.approve : spatial.reject} onClick={onConfirm}
+          disabled={pending || !available || (!approve && !value.trim())} data-testid={`btn-confirm-${kind}`}>
+          {pending ? "處理中…" : approve ? "確認核准並寫入" : "確認拒絕"}
+        </button>
+      </div>
+    </div>
+  </div>;
+}
 
 export function HeatZoneMergeSplitPanel({
   activeRoleId,
@@ -94,6 +134,10 @@ export function HeatZoneMergeSplitPanel({
   const [rejectionReason, setRejectionReason] = useState<string>("");
   const [showApproveModal, setShowApproveModal] = useState<boolean>(false);
   const [showRejectModal, setShowRejectModal] = useState<boolean>(false);
+  const [decisionTarget, setDecisionTarget] = useState<{ id: string; role: OperatorRoleId } | null>(null);
+  const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(() => new Set());
+  const decisionPending = useRef(false);
+  const decisionScope = useRef(0);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Offering a button the server will refuse is worse than not offering it.
@@ -115,8 +159,27 @@ export function HeatZoneMergeSplitPanel({
     previewGeneration.current += 1;
     setPreviewData(null);
     setPreviewLoading(false);
+  }, [activeProposal?.proposal_id, activeProposal?.status, activeRoleId]);
+  useEffect(() => {
+    // A response from the previous persona must not acknowledge in this scope.
+    decisionScope.current += 1;
+    setShowApproveModal(false);
+    setShowRejectModal(false);
+    setDecisionTarget(null);
+    setOperatorNotes("");
+    setRejectionReason("");
     setFeedbackMessage(null);
-  }, [activeProposal?.proposal_id, activeProposal?.status]);
+  }, [activeRoleId]);
+
+  const targetAvailable = !!activeProposal && activeProposal.status === "PROPOSED" &&
+    canDecide && !acknowledgedIds.has(activeProposal.proposal_id) && decisionTarget?.id === activeProposal.proposal_id && decisionTarget.role === activeRoleId;
+  const openDecision = (kind: "approve" | "reject") => {
+    if (!activeProposal || activeProposal.status !== "PROPOSED" || !canDecide || actionInProgress || acknowledgedIds.has(activeProposal.proposal_id)) return;
+    setDecisionTarget({ id: activeProposal.proposal_id, role: activeRoleId });
+    setFeedbackMessage(null);
+    setShowApproveModal(kind === "approve");
+    setShowRejectModal(kind === "reject");
+  };
 
   const handleSelect = (propId: string) => {
     if (onSelectProposal) {
@@ -146,38 +209,32 @@ export function HeatZoneMergeSplitPanel({
     }
   };
 
-  const handleApprove = async () => {
-    if (!activeProposal || !onApproveProposal) return;
+  const handleDecision = async (kind: "approve" | "reject") => {
+    if (!targetAvailable || !decisionTarget || decisionPending.current ||
+        (kind === "approve" ? !onApproveProposal : !onRejectProposal || !rejectionReason.trim())) return;
+    const proposalId = decisionTarget.id;
+    const scope = decisionScope.current;
+    decisionPending.current = true;
     setActionInProgress(true);
     setFeedbackMessage(null);
     try {
-      await onApproveProposal(activeProposal.proposal_id, operatorNotes || undefined);
-      setFeedbackMessage({ type: "success", text: `提案 ${activeProposal.proposal_id} 已核准；請以最新提案狀態確認生效。` });
+      const receipt = kind === "approve"
+        ? await onApproveProposal!(proposalId, operatorNotes.trim() || undefined)
+        : await onRejectProposal!(proposalId, rejectionReason.trim());
+      if (scope !== decisionScope.current) return;
+      setAcknowledgedIds((ids) => new Set(ids).add(proposalId));
+      const label = kind === "approve" ? "核准" : "拒絕";
+      setFeedbackMessage({ type: "success", text: receipt?.readbackConfirmed
+        ? `提案 ${proposalId} ${label}請求已成功；最新提案狀態已讀回確認。`
+        : `提案 ${proposalId} ${label}請求已成功；最新狀態尚未確認，請重新載入提案，勿重複提交。` });
       setShowApproveModal(false);
-      setOperatorNotes("");
-    } catch (err: any) {
-      setFeedbackMessage({ type: "error", text: `核准失敗: ${err?.message || "未知錯誤"}` });
-    } finally {
-      setActionInProgress(false);
-    }
-  };
-
-  const handleReject = async () => {
-    if (!activeProposal || !onRejectProposal) return;
-    if (!rejectionReason.trim()) {
-      setFeedbackMessage({ type: "error", text: "請輸入拒絕理由" });
-      return;
-    }
-    setActionInProgress(true);
-    setFeedbackMessage(null);
-    try {
-      await onRejectProposal(activeProposal.proposal_id, rejectionReason);
-      setFeedbackMessage({ type: "success", text: `提案 ${activeProposal.proposal_id} 已標記為拒絕。` });
       setShowRejectModal(false);
+      setOperatorNotes("");
       setRejectionReason("");
     } catch (err: any) {
-      setFeedbackMessage({ type: "error", text: `拒絕失敗: ${err?.message || "未知錯誤"}` });
+      if (scope === decisionScope.current) setFeedbackMessage({ type: "error", text: `決策請求未確認成功: ${err?.message || "未知錯誤"}` });
     } finally {
+      decisionPending.current = false;
       setActionInProgress(false);
     }
   };
@@ -214,7 +271,7 @@ export function HeatZoneMergeSplitPanel({
         </div>
       </div>
 
-      {feedbackMessage && (
+      {feedbackMessage && !showApproveModal && !showRejectModal && (
         <div
           data-testid="feedback-message"
           role={feedbackMessage.type === "error" ? "alert" : "status"}
@@ -223,7 +280,7 @@ export function HeatZoneMergeSplitPanel({
             padding: "10px 14px",
             borderRadius: "6px",
             backgroundColor: feedbackMessage.type === "success" ? "#dcfce7" : "#fee2e2",
-            color: feedbackMessage.type === "success" ? "#15803d" : "#b91c1c",
+            color: feedbackMessage.type === "success" ? "#166534" : "#b91c1c",
             fontSize: "13px",
             fontWeight: 600,
           }}
@@ -376,6 +433,12 @@ export function HeatZoneMergeSplitPanel({
                     {previewLoading ? "預覽計算中…" : "預覽拓撲效果"}
                   </button>
 
+                  {activeProposal.status === "PROPOSED" && acknowledgedIds.has(activeProposal.proposal_id) && (
+                    <span role="status">決策請求已成功，等待最新狀態確認。
+                      <button type="button" disabled={actionInProgress || !onReloadProposals} onClick={() => void onReloadProposals?.()}>重新載入提案</button>
+                    </span>
+                  )}
+
                   {activeProposal.status === "PROPOSED" && !canDecide && (
                     <span data-testid="composition-decision-denied" style={{ fontSize: "12px", color: "#b45309" }}>
                       {COMPOSITION_DECISION_DENIED_NOTE}
@@ -386,8 +449,8 @@ export function HeatZoneMergeSplitPanel({
                     <>
                       <button
                         type="button"
-                        onClick={() => setShowApproveModal(true)}
-                        disabled={actionInProgress || previewLoading || !onApproveProposal}
+                        onClick={() => openDecision("approve")}
+                        disabled={actionInProgress || previewLoading || !onApproveProposal || acknowledgedIds.has(activeProposal.proposal_id)}
                         data-testid="btn-open-approve"
                         style={{
                           padding: "6px 14px",
@@ -404,8 +467,8 @@ export function HeatZoneMergeSplitPanel({
                       </button>
                       <button
                         type="button"
-                        onClick={() => setShowRejectModal(true)}
-                        disabled={actionInProgress || previewLoading || !onRejectProposal}
+                        onClick={() => openDecision("reject")}
+                        disabled={actionInProgress || previewLoading || !onRejectProposal || acknowledgedIds.has(activeProposal.proposal_id)}
                         data-testid="btn-open-reject"
                         style={{
                           padding: "6px 14px",
@@ -569,141 +632,17 @@ export function HeatZoneMergeSplitPanel({
         </div>
       )}
 
-      {/* Approve Modal */}
-      {showApproveModal && (
-        <div
-          data-testid="approve-modal"
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: "#ffffff",
-              borderRadius: "8px",
-              padding: "24px",
-              width: "480px",
-              maxWidth: "90%",
-              boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1)",
-            }}
-          >
-            <h4 style={{ margin: "0 0 12px 0", fontSize: "16px", color: "#0f172a" }}>
-              確認核准熱區拓撲提案
-            </h4>
-            <p style={{ fontSize: "13px", color: "#475569", margin: "0 0 16px 0" }}>
-              核准將寫入 <code>expansion.heatzone_composition</code> Append-Only 歷史，並將現有衝突活躍關聯自動軟性回滾 (Soft-Rollback)。
-            </p>
-            <div style={{ marginBottom: "16px" }}>
-              <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "#334155" }}>
-                決策附註 / Override 說明 (選填)
-              </label>
-              <textarea
-                rows={3}
-                value={operatorNotes}
-                onChange={(e) => setOperatorNotes(e.target.value)}
-                placeholder="例如：依 Q3 實績吸收率確認合併..."
-                style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
-              />
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
-              <button
-                type="button"
-                onClick={() => setShowApproveModal(false)}
-                disabled={actionInProgress}
-                style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid #cbd5e1", backgroundColor: "#ffffff", cursor: "pointer" }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={handleApprove}
-                disabled={actionInProgress}
-                data-testid="btn-confirm-approve"
-                style={{ padding: "8px 16px", borderRadius: "6px", border: "none", backgroundColor: "#16a34a", color: "#ffffff", fontWeight: 700, cursor: "pointer" }}
-              >
-                {actionInProgress ? "處理中…" : "確認核准並寫入"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Reject Modal */}
-      {showRejectModal && (
-        <div
-          data-testid="reject-modal"
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: "#ffffff",
-              borderRadius: "8px",
-              padding: "24px",
-              width: "480px",
-              maxWidth: "90%",
-              boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1)",
-            }}
-          >
-            <h4 style={{ margin: "0 0 12px 0", fontSize: "16px", color: "#0f172a" }}>
-              拒絕熱區拓撲提案
-            </h4>
-            <p style={{ fontSize: "13px", color: "#475569", margin: "0 0 16px 0" }}>
-              請輸入拒絕理由。拒絕記錄將寫入審計軌跡以供合規與覆盤。
-            </p>
-            <div style={{ marginBottom: "16px" }}>
-              <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "#334155" }}>
-                拒絕理由 (必填) *
-              </label>
-              <textarea
-                rows={3}
-                value={rejectionReason}
-                onChange={(e) => setRejectionReason(e.target.value)}
-                placeholder="例如：行政區邊界不連續或待商圈重評估..."
-                style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
-              />
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
-              <button
-                type="button"
-                onClick={() => setShowRejectModal(false)}
-                disabled={actionInProgress}
-                style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid #cbd5e1", backgroundColor: "#ffffff", cursor: "pointer" }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={handleReject}
-                disabled={actionInProgress}
-                data-testid="btn-confirm-reject"
-                style={{ padding: "8px 16px", borderRadius: "6px", border: "none", backgroundColor: "#dc2626", color: "#ffffff", fontWeight: 700, cursor: "pointer" }}
-              >
-                {actionInProgress ? "處理中…" : "確認拒絕"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {(showApproveModal || showRejectModal) && decisionTarget && <CompositionDecisionDialog
+        kind={showApproveModal ? "approve" : "reject"}
+        proposalId={decisionTarget.id}
+        value={showApproveModal ? operatorNotes : rejectionReason}
+        onChange={showApproveModal ? setOperatorNotes : setRejectionReason}
+        onClose={() => { if (!decisionPending.current) { setShowApproveModal(false); setShowRejectModal(false); } }}
+        onConfirm={() => void handleDecision(showApproveModal ? "approve" : "reject")}
+        pending={actionInProgress}
+        available={targetAvailable}
+        feedback={feedbackMessage?.type === "error" ? feedbackMessage.text : null}
+      />}
     </div>
   );
 }
