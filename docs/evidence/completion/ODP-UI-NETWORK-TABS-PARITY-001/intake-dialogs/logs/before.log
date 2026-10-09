@@ -1,0 +1,48 @@
+[WebServer] 2026/10/09 16:12:36 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 16:12:39 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 16:12:39 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [1954383]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T16:12:44.785029+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "efa5d335-e292-4ac4-8acf-56706ed0698e", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 4 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T16:13:25.850739+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "64a8d2e2-506f-4dc7-9efc-eb052ddffd74", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-listings/reset ok"}
+  ✘  1 [chromium] › tests/visual/operator-intake-dialogs-parity.spec.ts:39:9 › field-fix paired geometry and focus at 1440 (16.2s)
+  -  2 [chromium] › tests/visual/operator-intake-dialogs-parity.spec.ts:39:9 › decision paired geometry and focus at 1440
+  -  3 [chromium] › tests/visual/operator-intake-dialogs-parity.spec.ts:39:9 › field-fix paired geometry and focus at 390
+  -  4 [chromium] › tests/visual/operator-intake-dialogs-parity.spec.ts:39:9 › decision paired geometry and focus at 390
+
+
+  1) [chromium] › tests/visual/operator-intake-dialogs-parity.spec.ts:39:9 › field-fix paired geometry and focus at 1440 
+
+    Error: expect(locator).toHaveText(expected) failed
+
+    Locator: getByTestId('intake-detail-stage')
+    Expected: "可決策"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toHaveText" with timeout 5000ms
+      - waiting for getByTestId('intake-detail-stage')
+
+
+      51 |       await page.getByTestId("intake-url-input").fill("https://www.synthetic.example/detail-77120345.html");
+      52 |       await page.getByTestId("intake-submit-button").click();
+    > 53 |       await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
+         |                                                             ^
+      54 |       const trigger = page.getByTestId(screen.trigger);
+      55 |       await trigger.click();
+      56 |       const overlay = page.getByTestId(screen.testId);
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-intake-dialogs-parity.spec.ts:53:61
+
+    Error Context: test-results/operator-intake-dialogs-pa-3ae4c--geometry-and-focus-at-1440-chromium/error-context.md
+
+    Error Context: test-results/operator-intake-dialogs-pa-3ae4c--geometry-and-focus-at-1440-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/visual/operator-intake-dialogs-parity.spec.ts:39:9 › field-fix paired geometry and focus at 1440 
+  3 did not run

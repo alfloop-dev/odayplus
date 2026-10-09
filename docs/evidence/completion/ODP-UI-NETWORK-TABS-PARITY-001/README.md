@@ -17,6 +17,15 @@ three-panel design/before/after images plus geometry. Earlier screenshots and
 receipts below are retained history, not the repaired render's final evidence.
 Full Intake/all-tab/VDC acceptance remains open; **do not resubmit or merge yet**.
 
+## Intake modal increment
+
+[intake-dialogs/README.md](intake-dialogs/README.md) adds field-fix/receipt-decision
+1440/390 design-before-after pairs, four geometry/focus/reason-gate/axe checks,
+113 Intake unit tests and three durable correction/decision/reload E2E checks.
+Required later-spec risk acknowledgement remains visible, with compact design
+spacing. Continuous detail, Transfer/Pause, Promotion, Review Decision and
+permission/conflict visual states remain pending; this is not full acceptance.
+
 ## History-preserving base advance
 
 - Resumed clean task branch at `8e5183f47e3a`.
@@ -153,9 +162,10 @@ release acceptance or independent reviewer approval.
 
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
-1. Complete paired Intake detail, field correction, receipt decision, separate
-   Transfer/Pause, Promotion and Review Decision audit and 1440/390 captures;
-   add per-dialog geometry, focus return/trap, contrast and permission assertions.
+1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
+   axe are recorded in `intake-dialogs/`. Complete paired continuous Intake detail,
+   separate Transfer/Pause, Promotion and Review Decision at 1440/390, plus their
+   geometry/focus and all applicable permission/conflict visual states.
    Preserve VDC-001 conditional controls, conflict input preservation and receipts.
 2. Capture/inspect other Network tabs, batch score view and states. Reconcile the
    English `Blocked until candidate exists` stepper banner with actual selected
