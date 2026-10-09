@@ -224,6 +224,20 @@ scoped AA axe violations. Three geometry/keyboard/focus/unchanged-state checks,
 unchanged 125/18 inventory passed. Other tabs/state pairs/authority/VDC outcomes
 remain open; **this is not a full-scope review resubmission**.
 
+## Radar full-tab / empty-filter increment
+
+[radar-surface/README.md](radar-surface/README.md) records baseline `54466d1ecdb5`
+and render `2e83d084b66e`: actual 1440/390 design-before-after list/detail and
+empty-filter pairs, supplemental 1024 geometry, preserved six-track source cards
+and compact Intake search, keyboard row selection, wrapped URLs, reference-style
+explicitly unavailable secondary actions, and source-backed missing/zero values.
+Off-filter stale detail is retired; row/detail share hard-rule/pending/terminal
+write gates. Scoped baseline 24 contrast nodes repaired; list and empty states
+have zero AA axe violations at all three widths. Full web 730, focused 16,
+durable Listing Radar E2E 8, typecheck/lint/boundaries and unchanged 125/18
+inventory passed. Original missing-identity/typecheck diagnostics are retained.
+Other tab/negative-state/authority/VDC scope remains open; **not ready to resubmit**.
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped
@@ -236,8 +250,11 @@ remain open; **this is not a full-scope review resubmission**.
    are in `review-decision/`; complete further applicable permission/conflict visual
    states and full-scope detail density review.
    Preserve VDC-001 conditional controls, conflict input preservation and receipts.
-2. Capture/inspect Find Areas, Radar, Rebalance and Spatial, plus remaining
-   batch write/error/empty states. Review full-tab pairs, tablet/mobile geometry,
+2. Capture/inspect Find Areas, Rebalance and Spatial, plus remaining
+   batch write/error/empty states. Radar full-tab/source-empty pairs, tablet/mobile
+   geometry, keyboard/scoped AA and real source/write gates are in `radar-surface/`;
+   remaining applicable error/permission/conflict visual states still need evidence.
+   Review full-tab pairs, tablet/mobile geometry,
    scoped AA/keyboard and unavailable-action integration are in `review-surface/`.
    Batch baseline/no-selection geometry, keyboard and scoped axe plus compact
    flow hint are recorded in `sitescore-states/`. Backend flow gates are preserved;

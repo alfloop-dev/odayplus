@@ -1,0 +1,121 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "owner": "Pi",
+  "scope": "bounded Radar increment; not full task acceptance",
+  "baseline_commit": "54466d1ecdb5",
+  "render_commit": "2e83d084b66e",
+  "origin_dev": "2fe3ef933794d0bb293449b74dffe9602d53f767",
+  "source_binding": "source.sha256",
+  "receipt_method": "original synchronous shell exit status captured immediately; no inferred completion",
+  "checks": [
+    {
+      "run": "after-tablet-empty",
+      "exit_code": 0,
+      "log": "logs/after-tablet-empty.log",
+      "diagnostic": false
+    },
+    {
+      "run": "after",
+      "exit_code": 0,
+      "log": "logs/after.log",
+      "diagnostic": false
+    },
+    {
+      "run": "before-empty",
+      "exit_code": 0,
+      "log": "logs/before-empty.log",
+      "diagnostic": false
+    },
+    {
+      "run": "before-hydrated",
+      "exit_code": 0,
+      "log": "logs/before-hydrated.log",
+      "diagnostic": false
+    },
+    {
+      "run": "before",
+      "exit_code": 1,
+      "log": "logs/before.log",
+      "diagnostic": true
+    },
+    {
+      "run": "boundaries",
+      "exit_code": 0,
+      "log": "logs/boundaries.log",
+      "diagnostic": false
+    },
+    {
+      "run": "diff-check",
+      "exit_code": 0,
+      "log": "logs/diff-check.log",
+      "diagnostic": false
+    },
+    {
+      "run": "durable-e2e",
+      "exit_code": 0,
+      "log": "logs/durable-e2e.log",
+      "diagnostic": false
+    },
+    {
+      "run": "focused-final",
+      "exit_code": 0,
+      "log": "logs/focused-final.log",
+      "diagnostic": false
+    },
+    {
+      "run": "focused-unit",
+      "exit_code": 0,
+      "log": "logs/focused-unit.log",
+      "diagnostic": false
+    },
+    {
+      "run": "inventory",
+      "exit_code": 0,
+      "log": "logs/inventory.log",
+      "diagnostic": false
+    },
+    {
+      "run": "lint",
+      "exit_code": 0,
+      "log": "logs/lint.log",
+      "diagnostic": false
+    },
+    {
+      "run": "typecheck-final",
+      "exit_code": 0,
+      "log": "logs/typecheck-final.log",
+      "diagnostic": false
+    },
+    {
+      "run": "typecheck",
+      "exit_code": 2,
+      "log": "logs/typecheck.log",
+      "diagnostic": true
+    },
+    {
+      "run": "unit",
+      "exit_code": 0,
+      "log": "logs/unit.log",
+      "diagnostic": false
+    }
+  ],
+  "accepted_results": {
+    "geometry_keyboard_list_and_empty_axe": 3,
+    "full_web_unit": 730,
+    "web_files": 69,
+    "focused": 16,
+    "durable_listing_e2e": 8,
+    "business_inventory": {
+      "tests": 125,
+      "files": 18
+    }
+  },
+  "no_claims": [
+    "full task completion",
+    "production build",
+    "remote CI",
+    "live product acceptance",
+    "independent VDC sign-off",
+    "review resubmission"
+  ]
+}

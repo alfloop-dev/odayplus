@@ -57,10 +57,10 @@ describe("Radar source-backed detail and reachable controls", () => {
     expect(detail).toHaveTextContent("未提供檢查結果");
     expect(detail).toHaveTextContent("0m");
     expect(detail).not.toHaveTextContent("3/3 通過");
-    expect(screen.getByRole("button", { name: "地圖", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "地圖" })).toBeDisabled();
     expect(screen.getByTestId("listing-detail-primary")).toBeDisabled();
     for (const label of ["加入 Watchlist", "聯絡仲介", "直接送 SiteScore（資料足夠）", "標記不適合／封存"]) {
-      expect(screen.getByRole("button", { name: label, exact: true })).toBeDisabled();
+      expect(screen.getByRole("button", { name: label })).toBeDisabled();
     }
   });
 

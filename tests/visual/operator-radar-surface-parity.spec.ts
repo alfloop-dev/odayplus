@@ -32,7 +32,7 @@ async function shot(page: Page, info: TestInfo, name: string) {
   const clip = await page.evaluate(() => ({ x: 0, y: 0, width: innerWidth, height: document.documentElement.scrollHeight }));
   await page.screenshot({ path: await artifact(info, `${name}.png`), fullPage: true, clip, animations: "disabled" });
 }
-for (const width of [1440, 390]) {
+for (const width of [1440, 1024, 390]) {
   test(`Radar sources, list, detail and empty filter at ${width}`, async ({ page, request }, info) => {
     await page.setViewportSize({ width, height: 900 });
     page.setDefaultTimeout(30_000);
@@ -61,7 +61,7 @@ for (const width of [1440, 390]) {
     const boxes = { panel: await measure(panel), layout: await measure(layout), sources: await measure(panel.getByLabel("Listing sources")), source: await measure(panel.getByLabel("Listing sources").locator("article").first()), filters: await measure(panel.getByLabel("來源篩選")), inbox: await measure(panel.getByTestId("network-listing-table").locator("..")), detail: await measure(detail), search: await measure(panel.getByTestId("intake-search-input")), searchControls: await measure(panel.getByTestId("intake-filter-method").locator("..")) };
     await shot(page, info, `${phase}-radar-${width}`);
     let designGeometry;
-    if (process.env.NETWORK_PARITY_DESIGN === "1") {
+    if (process.env.NETWORK_PARITY_DESIGN === "1" && width !== 1024) {
       const design = await page.context().newPage();
       await design.setViewportSize({ width, height: 900 });
       await design.route(/^https?:\/\//, (route) => route.abort());
@@ -75,6 +75,10 @@ for (const width of [1440, 390]) {
       await expect(reference).toContainText("物件收件匣");
       await shot(design, info, `design-radar-${width}`);
       designGeometry = await measure(reference);
+      // Reference zero-row source; no fixtures or DOM content are synthesized.
+      await reference.getByRole("button", { name: /^永慶\s+0/ }).dispatchEvent("click");
+      await expect(reference).toContainText("此篩選下沒有物件");
+      await shot(design, info, `design-empty-${width}`);
       await design.close();
     }
     const document = await page.evaluate(() => ({ width: innerWidth, scrollWidth: window.document.documentElement.scrollWidth }));
@@ -106,10 +110,20 @@ for (const width of [1440, 390]) {
       expect(Math.abs(boxes.search.y - boxes.searchControls.y)).toBeLessThanOrEqual(2);
     } else {
       expect(boxes.detail.y).toBeGreaterThanOrEqual(boxes.inbox.y + boxes.inbox.height);
-      expect(boxes.filters.overflowX).toBe("auto");
+      if (width === 390) expect(boxes.filters.overflowX).toBe("auto");
+      else {
+        expect(boxes.filters.width).toBe(180);
+        expect(boxes.inbox.x).toBe(boxes.filters.x + 194);
+        expect(boxes.detail.width).toBe(boxes.layout.width);
+      }
     }
     expect(axe.violations).toEqual([]);
     // Keyboard selection must not trigger a durable conversion.
+    const otherPick = panel.getByTestId("listing-row-L-2025").getByRole("button", { name: /查看.*L-2025/ });
+    await otherPick.focus();
+    await page.keyboard.press("Enter");
+    await expect(detail.locator("dl")).toContainText("板橋");
+    await expect(otherPick).toHaveAttribute("aria-pressed", "true");
     await row.getByRole("button", { name: /查看.*L-2024/ }).focus();
     await page.keyboard.press("Enter");
     await expect(detail).toContainText("L-2024");
@@ -121,6 +135,9 @@ for (const width of [1440, 390]) {
     await expect(detail).toContainText("此篩選下沒有物件");
     await expect(detail.getByTestId("listing-detail-primary")).toHaveCount(0);
     await shot(page, info, `${phase}-empty-${width}`);
+    const emptyAxe = await new AxeBuilder({ page }).include('[data-testid="network-panel-listings"]').withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+    await save(info, `after-empty-axe-${width}.json`, emptyAxe);
+    expect(emptyAxe.violations).toEqual([]);
     const final = await request.get(`${api}/api/v1/operator/network-listings`, { headers });
     expect(final.status()).toBe(200);
     const finalPayload = await final.json();

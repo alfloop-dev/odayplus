@@ -1,0 +1,89 @@
+{
+  "boxes": {
+    "panel": {
+      "x": 20,
+      "y": -177.03125,
+      "width": 984,
+      "height": 1659.734375,
+      "scrollWidth": 984,
+      "columns": "984px",
+      "overflowX": "visible"
+    },
+    "layout": {
+      "x": 20,
+      "y": 260.953125,
+      "width": 984,
+      "height": 1221.75,
+      "scrollWidth": 984,
+      "columns": "180px 790px",
+      "overflowX": "visible"
+    },
+    "sources": {
+      "x": 20,
+      "y": 114.765625,
+      "width": 984,
+      "height": 134.1875,
+      "scrollWidth": 984,
+      "columns": "240px 240px 240px 240px",
+      "overflowX": "visible"
+    },
+    "source": {
+      "x": 20,
+      "y": 114.765625,
+      "width": 240,
+      "height": 134.1875,
+      "scrollWidth": 238,
+      "columns": "214px",
+      "overflowX": "visible"
+    },
+    "filters": {
+      "x": 20,
+      "y": 260.953125,
+      "width": 180,
+      "height": 239.203125,
+      "scrollWidth": 178,
+      "columns": "150px",
+      "overflowX": "visible"
+    },
+    "inbox": {
+      "x": 214,
+      "y": 260.953125,
+      "width": 790,
+      "height": 548.9375,
+      "scrollWidth": 788,
+      "columns": "none",
+      "overflowX": "hidden"
+    },
+    "detail": {
+      "x": 20,
+      "y": 823.890625,
+      "width": 984,
+      "height": 658.8125,
+      "scrollWidth": 982,
+      "columns": "950px",
+      "overflowX": "visible"
+    },
+    "search": {
+      "x": 21,
+      "y": -16.046875,
+      "width": 330,
+      "height": 35,
+      "scrollWidth": 328,
+      "columns": "none",
+      "overflowX": "clip"
+    },
+    "searchControls": {
+      "x": 359,
+      "y": -17.046875,
+      "width": 644,
+      "height": 37,
+      "scrollWidth": 644,
+      "columns": "none",
+      "overflowX": "visible"
+    }
+  },
+  "document": {
+    "width": 1024,
+    "scrollWidth": 1024
+  }
+}
