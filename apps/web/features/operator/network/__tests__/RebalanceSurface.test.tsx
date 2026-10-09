@@ -55,7 +55,7 @@ describe("Package 10 Rebalance source semantics", () => {
     expect(screen.queryByTestId("rebalance-primary-action")).toBeNull();
   });
   it("keeps governance gating outside the collapsed detailed plan", () => {
-    mount({ status: "netplanreview", selectedScenarioId: "move", netPlanScenarios: [{ id: "move", name: "Move", roi: "0%", inv: "0", payback: "—", risk: "—", time: "—", modelledConstraintClasses: ["CAPITAL"], unmodelledConstraintClasses: [] }] });
+    mount({ status: "netplanreview", selectedScenarioId: "move", netPlanScenarios: [{ id: "move", name: "Move", roi: "0%", inv: "0", payback: "—", risk: "—", time: "—", modelledConstraintClasses: ["CAPITAL"], unmodelledConstraintClasses: [], modelled_constraint_classes: ["CAPITAL"], unmodelled_constraint_classes: [] }] });
     const disclosure = screen.getByTestId("rebalance-plan-disclosure");
     expect(disclosure).not.toHaveAttribute("open");
     expect(within(disclosure).getByText("執行計畫與完整限制揭露")).toBeInTheDocument();
@@ -68,6 +68,6 @@ describe("Package 10 Rebalance source semantics", () => {
   it("defines every referenced CSS-module key", () => {
     const source = readFileSync("features/operator/network/RebalancePanel.tsx", "utf8");
     const css = readFileSync("features/operator/networkFindAreas.module.css", "utf8");
-    for (const match of source.matchAll(/styles\.([A-Za-z0-9_]+)/g)) expect(css, match[1]).toMatch(new RegExp(`\\.${match[1]}(?:[\\s:{.#\\[])`));
+    for (const match of source.matchAll(/styles\.([A-Za-z0-9_]+)/g)) expect(css, match[1]).toMatch(new RegExp(`\\.${match[1]}(?:[\\s,:{.#\\[])`));
   });
 });

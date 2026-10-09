@@ -14,7 +14,7 @@ const OPS_HEADERS = {
   "x-tenant-id": "tenant-a",
 };
 
-test.describe.configure({ mode: "serial" });
+test.describe.configure({ mode: "serial", timeout: 120_000 });
 
 test.describe("ODP-OC-R4-008 Network Rebalance", () => {
   test.beforeEach(async () => {
@@ -33,6 +33,9 @@ test.describe("ODP-OC-R4-008 Network Rebalance", () => {
     ).toBeVisible();
 
     await page.getByTestId("network-tab-6").click();
+    // The later-spec AVM/NetPlan panel is lazy loaded. Wait on that actual
+    // boundary, not a five-second assumption about a cold development bundle.
+    await expect(page.getByTestId("rebalance-panel-loading")).toBeHidden({ timeout: 30_000 });
     await expect(page.getByTestId("network-panel-rebalance")).toBeVisible();
     await expect(page.getByTestId("rebalance-card-RB-801")).toContainText(
       "新北板橋文化",
