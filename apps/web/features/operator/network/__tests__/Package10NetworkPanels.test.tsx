@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CandidatePanel } from "../CandidatePanel";
 import { ComparePanel } from "../ComparePanel";
+import { ExpansionStepper } from "../ExpansionStepper";
 import { NetworkShell } from "../NetworkShell";
 import { SiteScorePanel } from "../SiteScorePanel";
 import type {
@@ -186,9 +187,26 @@ describe("Package 10 Network non-intake panels", () => {
     expect(screen.getByTestId("network-tab-1")).toHaveTextContent("物件雷達Listing Radar");
     expect(screen.getByTestId("network-step-find")).toHaveTextContent("completed");
     expect(screen.getByTestId("network-step-candidate")).toHaveTextContent("blocked");
-    expect(screen.getByRole("status")).toHaveTextContent("需補地址");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByLabelText("Network Golden Flow")).toHaveTextContent("此流程下一步受阻：需補地址");
     fireEvent.click(screen.getByTestId("network-step-find"));
     expect(onTabChange).toHaveBeenCalledWith(0);
+  });
+
+  it("scopes the compact blocker to the active journey without enabling unavailable steps", () => {
+    const steps = [
+      { id: "find", label: "找區域", state: "current" as const, tabIndex: 0, summary: "區域已選定" },
+      { id: "candidate", label: "候選點", state: "next" as const, tabIndex: 2, summary: "建立候選點" },
+      { id: "sitescore", label: "SiteScore", state: "blocked" as const, tabIndex: 3, summary: "Blocked until candidate exists." },
+    ];
+    const view = render(<ExpansionStepper activeTab={3} onStepSelect={vi.fn()} steps={steps} />);
+    expect(screen.getByRole("status")).toHaveTextContent("此流程受阻：須先建立此流程候選點");
+    expect(screen.getByTestId("network-step-sitescore")).toBeDisabled();
+    expect(screen.getByTestId("network-step-sitescore")).toHaveAttribute("title", "須先建立此流程候選點");
+    view.rerender(<ExpansionStepper activeTab={0} onStepSelect={vi.fn()} steps={steps} />);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByLabelText("Network Golden Flow")).not.toHaveTextContent("Blocked until");
+    expect(screen.getByTestId("network-step-sitescore")).toBeDisabled();
   });
 
   it("renders the Candidate pipeline, data gate and existing score callbacks", () => {
@@ -313,6 +331,18 @@ describe("Package 10 Network non-intake panels", () => {
     expect(report).not.toHaveTextContent("NT$920K");
     expect(report).not.toHaveTextContent("280m 2家");
     expect(report).not.toHaveTextContent("NT$3,800K");
+  });
+
+  it("uses only explicit source risk tones and does not render missing/unknown risks as passing", () => {
+    render(<SiteScorePanel candidates={[]} fallbackRows={[]} scorecards={[{
+      ...scorecards[0], subScoreTones: { rentReasonableness: "watch", cannibalization: "risk", competition: "good" },
+    }]} />);
+    const risk = within(screen.getByTestId("sitescore-card-CS-1001")).getByLabelText("Risk breakdown");
+    const values = risk.querySelectorAll("dd");
+    expect(values[0]).toHaveAttribute("data-tone", "watch");
+    expect(values[1]).toHaveAttribute("data-tone", "risk");
+    for (const value of [...values].slice(2)) expect(value).toHaveAttribute("data-tone", "unknown");
+    expect(values[2]).toHaveTextContent("未提供");
   });
 
   it("does not announce durable writes for unavailable or rejected SiteScore/Compare actions", async () => {

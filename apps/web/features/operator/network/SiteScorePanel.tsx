@@ -79,7 +79,7 @@ export function SiteScorePanel({
       role="tabpanel"
     >
       <div className={styles.scoreLabToolbar}>
-        <div className={styles.scoreLabModes} aria-label="SiteScore view">
+        <div className={styles.scoreLabModes} aria-label="SiteScore view" role="group">
           <button
             aria-pressed={mode === "single"}
             onClick={() => setMode("single")}
@@ -216,7 +216,7 @@ export function SiteScorePanel({
                     onClick={() => toggleBatchItem(candidate.id)}
                     type="button"
                   >
-                    <span className={styles.batchCheckmark}>{checked ? "☑" : "☐"}</span>
+                    <span className={styles.batchCheckmark} aria-hidden="true">{checked ? "☑" : "☐"}</span>
                     <strong className={styles.batchCandidateName}>{candidate.title}</strong>
                     <ToneBadge tone={recommendationTone(candidate.recommendation)}>
                       {candidate.gate.passed ? candidate.recommendation : "缺資料"}
@@ -241,7 +241,7 @@ export function SiteScorePanel({
 
           <div className={styles.scoreLabBatchResultsWrap}>
             <div className={styles.batchHeaderTitle}>批次結果 · 依分數排序</div>
-            <div className={styles.tableWrap}>
+            <div className={styles.tableWrap} role="region" aria-label="批次評分結果，可水平捲動" tabIndex={0}>
               <table className={styles.dataTable} data-testid="sitescore-batch-table">
                 <thead>
                   <tr>
@@ -406,17 +406,22 @@ function ScoreReport({
 
       <div className={styles.riskBreakdownSection}>
         <div className={styles.filterTitle}>RISK BREAKDOWN</div>
-        <div className={styles.riskBreakdownGrid} aria-label="Risk breakdown">
+        <dl className={styles.riskBreakdownGrid} aria-label="Risk breakdown">
           {SUB_SCORE_LABELS.map(([key, label]) => {
             const val = card.subScores[key] || "未提供";
+            // Never infer a passing risk grade from recommendation or prose.
+            // Older/live receipts without explicit presentation metadata are neutral.
+            const declared = card.subScoreTones?.[key];
+            const tone = card.subScores[key] && ["good", "watch", "risk"].includes(declared ?? "")
+              ? declared : "unknown";
             return (
               <div className={styles.riskBreakdownCard} key={key}>
-                <span className={styles.riskCardKey}>{label}</span>
-                <span className={styles.riskCardVal}>{val}</span>
+                <dt className={styles.riskCardKey}>{label}</dt>
+                <dd className={styles.riskCardVal} data-tone={tone}>{val}</dd>
               </div>
             );
           })}
-        </div>
+        </dl>
       </div>
 
       <div className={styles.reasonCols}>

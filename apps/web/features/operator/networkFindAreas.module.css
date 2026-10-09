@@ -4955,6 +4955,9 @@
   align-items: center;
   gap: 9px;
   width: 100%;
+  min-height: 44px;
+  min-width: 0;
+  flex-wrap: wrap;
   text-align: left;
   background: #fbfcfe;
   border: 1px solid #eef1f6;
@@ -4974,6 +4977,8 @@
 }
 
 .batchCandidateName {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 12px;
   font-weight: 700;
   color: #1c2333;
@@ -5004,11 +5009,45 @@
 }
 
 .scoreLabBatchResultsWrap {
+  min-width: 0;
   background: #ffffff;
   border: 1px solid #e3e8f0;
   border-radius: 12px;
   overflow: hidden;
   padding: 14px 16px;
+}
+
+.scoreLabBatchWorkspace .tableWrap:focus-visible,
+.batchRowItem:focus-visible,
+.batchRunButton:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+.batchRowItem:disabled {
+  cursor: not-allowed;
+  background: #f3f5f9;
+}
+
+@media (max-width: 759px) {
+  .scoreLabBatchWorkspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scoreLabBatchSelector,
+  .scoreLabBatchResultsWrap {
+    padding: 12px;
+  }
+
+  .scoreLabBatchWorkspace .dataTable {
+    min-width: 680px;
+  }
+
+  .batchRent {
+    flex-basis: 100%;
+    margin-left: 23px;
+    overflow-wrap: anywhere;
+  }
 }
 
 .scoreMonoCell {
@@ -5176,8 +5215,9 @@
 
 .riskBreakdownGrid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
+  margin: 0;
 }
 
 .riskBreakdownCard {
@@ -5201,14 +5241,29 @@
   align-self: flex-start;
   font-size: 10px;
   font-weight: 700;
-  background: #e5f3ea;
-  color: #1e7f4f;
+  background: #eef1f5;
+  color: #3a4362;
   border-radius: 5px;
+  margin: 0;
   padding: 1px 7px;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.riskCardVal[data-tone="good"] {
+  background: #e5f3ea;
+  color: #1e7f4f;
+}
+
+.riskCardVal[data-tone="watch"] {
+  background: #fbf1dd;
+  color: #96610b;
+}
+
+.riskCardVal[data-tone="risk"] {
+  background: #fce8e6;
+  color: #b3261e;
 }
 
 .posHeading {

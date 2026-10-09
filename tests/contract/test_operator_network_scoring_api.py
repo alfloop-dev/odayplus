@@ -64,11 +64,18 @@ def test_candidate_wait_and_reject_expose_conditions_and_reasons() -> None:
     assert any("站前施工" in item for item in wait["conditions"])
     assert wait["revenuePath"]["m12"] == 372
     assert wait["band"]["p50"] == "NT$372K"
+    # Presentation metadata is explicitly fixture-declared; a high demand
+    # value is positive while high competition is a risk, never prose-parsed.
+    assert wait["subScoreTones"]["competition"] == "risk"
+    assert wait["subScoreTones"]["demand"] == "good"
+    assert wait["subScoreTones"]["rentReasonableness"] == "watch"
 
     reject = cards["CS-1004"]
     assert reject["recommendation"] == "REJECT"
     assert reject["conditionTitle"] == "拒絕原因"
     assert any("回本期 41 個月" in item for item in reject["conditions"])
+    assert reject["subScoreTones"]["rentReasonableness"] == "risk"
+    assert reject["subScoreTones"]["access"] == "risk"
 
 
 def test_sitescore_gate_blocks_missing_data_candidate_server_side() -> None:

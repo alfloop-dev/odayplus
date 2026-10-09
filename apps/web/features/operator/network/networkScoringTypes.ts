@@ -64,6 +64,8 @@ export type ScoreCard = {
     poiFit?: string;
     access?: string;
   };
+  // Optional source-declared display tone, never a client-computed risk grade.
+  subScoreTones?: Partial<Record<keyof ScoreCard["subScores"], "good" | "watch" | "risk">>;
   capex: string;
   rentAssumption: string;
   drivers: string[];
