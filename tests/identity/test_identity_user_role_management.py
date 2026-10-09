@@ -231,6 +231,37 @@ def test_bootstrap_admin_must_rotate_then_reaches_admin_but_not_business(stack: 
     assert stack.client.get("/api/v1/operator/bootstrap", headers=headers).status_code == 403
 
 
+def test_explicit_operator_view_grant_preserves_admin_scope_status_and_audit(stack: Any) -> None:
+    admin_id = _bootstrap_admin(stack)
+    _rotate_password(stack, admin_id)
+    admin = _sign_in(stack, admin_id)
+    before = stack.client.get(f"/api/v1/operator/users/{admin_id}", headers=admin).json()
+    assert stack.client.get("/api/v1/operator/bootstrap", headers=admin).status_code == 403
+    saved = stack.client.post(
+        "/api/v1/operator/users", headers=admin,
+        json={"subjectId": admin_id, "roles": ["platform_admin", "operator_viewer"],
+              "scope": before["scope"], "status": before["status"], "reason": "Explicit bounded read grant"},
+    )
+    assert saved.status_code == 200, saved.text
+    after = saved.json()["user"]
+    assert after["scope"] == before["scope"]
+    assert after["status"] == before["status"] == "active"
+    # Per-request durable resolution: no role/tenant claims or new auth path.
+    assert _roles_seen_by_boundary(stack, admin) == {"platform_admin", "operator_viewer"}
+    assert stack.client.get("/api/v1/operator/bootstrap", headers=admin).status_code == 200
+    assert stack.client.get("/api/v1/operator/users", headers=admin).status_code == 200
+    assert stack.client.get("/api/v1/operator/bootstrap", headers={**admin, "X-Operator-Role": "expansion-manager"}).status_code == 403
+    assert "identity.account.roles_updated" in _audit_types(stack)
+    trail = stack.client.get("/api/v1/operator/users/audit-trail", headers=admin).json()["events"]
+    event = next(e for e in trail if e["event_type"] == "identity.account.roles_updated")
+    assert event["metadata"]["roles_before"] == ["platform_admin"]
+    assert set(event["metadata"]["roles_after"]) == {"platform_admin", "operator_viewer"}
+    # Another unmodified pure administrator still cannot read business data.
+    pure_id = _invited_account(stack, "other.admin", "platform_admin")
+    pure = _sign_in(stack, pure_id)
+    assert stack.client.get("/api/v1/operator/bootstrap", headers=pure).status_code == 403
+
+
 def test_role_change_is_authoritative_tenant_scoped_and_audited(stack: Any) -> None:
     admin_id = _bootstrap_admin(stack)
     _rotate_password(stack, admin_id)
@@ -351,6 +382,95 @@ def test_live_gate_tenant_probe_is_refused_by_the_real_tenant_policy(stack: Any)
         (admin_id,),
     ) == db_before
     assert _audit_types(stack).count("identity.account.roles_updated") == 0
+
+
+@pytest.mark.parametrize("roles", [
+    ["platform_admin"], ["platform_admin", "auditor"],
+    ["platform_admin", "operator_viewer"], ["platform_admin", "auditor", "operator_viewer"],
+    ["platform_admin", "auditor", "executive"],
+])
+def test_live_gate_read_admin_branch_against_real_identity_and_product_routers(
+    stack: Any, monkeypatch: pytest.MonkeyPatch, roles: list[str],
+) -> None:
+    """Existing Web gate fixtures swap cookies for real PostgreSQL identity tokens.
+
+    Product reads use the real API router (local fixture data); the live gate
+    must reject that provenance, not manufacture live acceptance. Account,
+    principal, grants, scope, tenant probe and business denials are real routers.
+    """
+    import importlib.util
+    import sys
+    from dataclasses import replace
+
+    from apps.api.oday_api.main import create_app
+    from apps.api.oday_api.security import dependencies
+    from shared.infrastructure.persistence import build_persistence
+
+    spec = importlib.util.spec_from_file_location(
+        "dev_admin_real_router_fixtures", Path("tests/e2e/test_live_e2e_gate_dev_admin.py")
+    )
+    assert spec and spec.loader
+    fixtures = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = fixtures
+    spec.loader.exec_module(fixtures)
+    gate = fixtures.gate
+    admin_id = _bootstrap_admin(stack)
+    _rotate_password(stack, admin_id)
+    admin = _sign_in(stack, admin_id)
+    before = stack.client.get("/api/v1/operator/users", headers=admin).json()["users"][0]
+    if roles != ["platform_admin"]:
+        grant = stack.client.post("/api/v1/operator/users", headers=admin, json={
+            "subjectId": admin_id, "roles": roles, "scope": before["scope"],
+            "status": before["status"], "reason": "explicit bounded read grant test input",
+        })
+        assert grant.status_code == 200, grant.text
+        admin = _sign_in(stack, admin_id)  # grant revoked the previous session
+
+    bundle = replace(build_persistence(mode="memory"), engine=stack.engine,
+                     identity_store=stack.identity, session_service=stack.sessions)
+    monkeypatch.setattr(dependencies, "OPERATOR_TENANT_ID", TENANT)
+    client = TestClient(create_app(persistence=bundle, audit_log=stack.audit,
+                                  external_provider_validation=lambda: None))
+    monkeypatch.setattr(dependencies, "default_boundary", lambda: stack.boundary)
+    monkeypatch.setattr(fixtures, "USERNAME", "root.admin")
+    monkeypatch.setattr(fixtures, "ADMIN_ACCOUNT_ID", admin_id)
+    monkeypatch.setattr(fixtures, "ADMIN_TENANT_ID", TENANT)
+
+    class RealRouterWeb(fixtures.AdminWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Any:
+            headers = kwargs.get("headers") or {}
+            cookie = headers.get("cookie", "")
+            if path.startswith("/api/v1/"):
+                # The existing BFF contract: only its server-held credential is
+                # forwarded; caller Authorization/tenant/roles are never trusted.
+                upstream = dict(admin) if fixtures.SESSION_VALUE in cookie and not self.logged_out else {}
+                if headers.get("x-operator-role"):
+                    upstream["x-operator-role"] = headers["x-operator-role"]
+                api = stack.client if path.startswith("/api/v1/operator/users") else client
+                response = api.request(method, path, headers=upstream, json=kwargs.get("body"))
+                return fixtures.base.response(response.status_code, response.json())
+            return super().request(method, path, **kwargs)
+
+    checks: list[Any] = []
+    report: dict[str, Any] = {}
+    gate._check_dev_admin_session(
+        web=RealRouterWeb(fixtures.web_routes()), config=fixtures.dev_admin_config(),
+        correlation_id="real-router-read-admin", checks=checks, report=report,
+    )
+    failed = {c.name for c in checks if not c.ok}
+    if "executive" in roles:
+        assert failed == {"admin:identity_user_list"}
+    elif roles == ["platform_admin"]:
+        assert not failed, [(c.name, c.detail) for c in checks if not c.ok]
+        assert report["dev_admin"]["account_mode"] == "pure-admin"
+    else:
+        # Actual local fixture bootstrap200 is not live read evidence. Every
+        # authoritative auth/tenant/audit and mutation refusal check must pass.
+        assert failed == {"admin:scoped_business_read"}, [(c.name, c.detail) for c in checks if not c.ok]
+        assert report["dev_admin"]["account_mode"] == "read-enabled-admin"
+    after = stack.client.get("/api/v1/operator/users", headers=admin).json()["users"][0]
+    assert after["scope"] == before["scope"] and after["status"] == before["status"]
+    assert after["roles"] == sorted(roles)
 
 
 def test_disable_revokes_sessions_and_reenable_requires_admin(stack: Any) -> None:

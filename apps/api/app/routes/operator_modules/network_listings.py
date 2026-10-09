@@ -23,6 +23,8 @@ from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.external_data.security import contains_sensitive_submission_material
 from modules.listing.application.intake_authorization import (
     authorize_intake_action,
+    collection_rows_are_scope_projected,
+    intake_resource_in_scope,
     mask_intake,
     mask_listing,
 )
@@ -31,6 +33,10 @@ from modules.opsboard.application.network_listings import (
     NetworkListingNotFound,
     NetworkListingPolicyError,
     NetworkListingService,
+)
+from modules.opsboard.application.network_read_scope import (
+    project_intake_record,
+    project_listing_snapshot,
 )
 from shared.audit import InMemoryAuditLog
 from shared.auth import Principal, Role
@@ -145,6 +151,9 @@ def create_network_listings_sub_router(
         authorize_intake_action(
             principal,
             "view",
+            collection_scope=(
+                {"heatZoneId": selected_heat_zone_id} if selected_heat_zone_id else None
+            ),
             operator_role_id=operator_role_id,
             audit_log=audit_log,
             correlation_id=x_correlation_id,
@@ -186,6 +195,9 @@ def create_network_listings_sub_router(
                     for intake in snap["assistedIntakes"]
                     if is_record_owner(principal, intake)
                 ]
+
+        if collection_rows_are_scope_projected(principal):
+            snap = project_listing_snapshot(principal, snap)
 
         if "listings" in snap:
             snap["listings"] = [mask_listing(principal, lst) for lst in snap["listings"]]
@@ -514,6 +526,9 @@ def create_network_listings_sub_router(
 
         if is_staff:
             intakes = [intake for intake in intakes if is_record_owner(principal, intake)]
+        if collection_rows_are_scope_projected(principal):
+            intakes = [i for i in intakes if intake_resource_in_scope(principal, i)]
+            intakes = [project_intake_record(intake) for intake in intakes]
         visible = [mask_intake(principal, intake) for intake in intakes]
         processing_stages = {
             "SUBMITTED",
@@ -616,6 +631,8 @@ def create_network_listings_sub_router(
                 audit_log=audit_log,
                 correlation_id=correlation_id,
             )
+            if principal.has_role(Role.OPERATOR_VIEWER):
+                intake = project_intake_record(intake)
             return mask_intake(principal, intake)
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

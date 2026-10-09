@@ -1,7 +1,8 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GovernanceWorkspace } from "../GovernanceWorkspace";
+import { GovernanceWorkspace, inspectGovernanceSnapshot } from "../GovernanceWorkspace";
+import { normalizeGovernanceStatusBoard } from "../governance/governanceEnvelope";
 
 const snapshot = {
   approvals: [{
@@ -63,6 +64,43 @@ describe("GovernanceWorkspace high-risk failures", () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it("renders the real canonical producer's repository counts without claiming model readiness", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const canonical = {
+      approvals: [], decisions: [], auditRows: [], evidencePackages: [], source: "canonical",
+      // GovernanceService._refresh_from_canonical, including a true zero state.
+      statusBoard: [
+        { name: "SiteScore decisions", status: "live", count: 0 },
+        { name: "AVM cases", status: "live", count: 0 },
+        { name: "NetPlan scenarios", status: "live", count: 0 },
+        { name: "PriceOps plans", status: "live", count: 0 },
+      ],
+    };
+    expect(inspectGovernanceSnapshot(canonical)).toBe("ready");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(canonical), { status: 200 })));
+    render(<GovernanceWorkspace roleId="pm-audit" canDecide={false} />);
+    await screen.findByTestId("governance-workspace");
+    fireEvent.click(screen.getByTestId("governance-tab-statusBoard"));
+    expect(screen.getByTestId("governance-record-counts")).toHaveTextContent("非模型／來源就緒證明");
+    expect(screen.getByText("SiteScore decisions")).toBeInTheDocument();
+    expect(screen.getAllByText("0 筆")).toHaveLength(4);
+    expect(screen.queryByText("sitescore-v4.8")).toBeNull();
+  });
+
+  it.each([null, {}, { models: [] }, [{ name: "SiteScore decisions", status: "live", count: -1 }],
+    [{ name: "SiteScore decisions", status: "live", count: "1" }],
+    { ...snapshot.statusBoard, models: [{ name: "model", status: "ready" }] },
+  ].map((statusBoard) => [statusBoard]))("fails closed on malformed or incomplete status DTO %j without throwing", (statusBoard) => {
+    expect(inspectGovernanceSnapshot({ ...snapshot, statusBoard } as any)).toBe("empty");
+  });
+
+  it("does not inspect missing row arrays before validating the envelope", () => {
+    expect(inspectGovernanceSnapshot({ source: "canonical", statusBoard: snapshot.statusBoard } as any)).toBe("empty");
+    expect(inspectGovernanceSnapshot({ source: "canonical", approvals: [], decisions: [], auditRows: [], evidencePackages: [], statusBoard: [] })).toBe("empty");
+    expect(normalizeGovernanceStatusBoard([{ name: "x", status: "live", count: Number.NaN }])).toBeNull();
+    expect(inspectGovernanceSnapshot({ ...snapshot, source: "fixture", statusBoard: [] })).toBe("seed");
   });
 
   it("does not create a local decision or evidence package after API failure", async () => {

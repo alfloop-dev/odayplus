@@ -153,6 +153,37 @@ def test_no_deleted_specs_referenced_and_inventory_consistent() -> None:
 
 
 @pytest.mark.parametrize(
+    "output,exit_code,expected_error",
+    [
+        ("Total: 125 tests in 18 files", 0, None),
+        ("Total: 122 tests in 18 files", 0, "must be exactly 125 tests in 18 files"),
+        ("Total: 126 tests in 18 files", 0, "must be exactly 125 tests in 18 files"),
+        ("Total: 125 tests in 17 files", 0, "must be exactly 125 tests in 18 files"),
+        ("", 0, "no parseable total"),
+        ("Total: 125 tests in 18 files", 1, "exited 1"),
+    ],
+)
+def test_playwright_inventory_remains_exact_and_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    output: str,
+    exit_code: int,
+    expected_error: str | None,
+) -> None:
+    def list_tests(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        assert command == ["npx", "playwright", "test", "--list", "--project=chromium"]
+        assert kwargs["cwd"] == ROOT
+        return subprocess.CompletedProcess(command, exit_code, stdout=output, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", list_tests)
+    errors = validate_acceptance_scenarios_and_inventory(ROOT)
+    if expected_error is None:
+        assert errors == []
+    else:
+        assert len(errors) == 1
+        assert expected_error in errors[0]
+
+
+@pytest.mark.parametrize(
     "status,exit_code",
     [
         ("failed", 1),

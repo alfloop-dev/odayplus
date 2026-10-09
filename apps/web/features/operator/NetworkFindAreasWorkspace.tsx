@@ -268,29 +268,28 @@ export function resolveNetworkDataUnavailableState(
 
 export function resolveNetworkTabGateState({
   activeTab,
-  bindingLoadStates,
+  findAreasLoadState,
   fixturesAllowed,
-  networkLoadState,
   proposalsLoadState,
   rebalanceLoadState,
   reviewsLoadState,
   scoringLoadState,
 }: {
   activeTab: number;
-  bindingLoadStates: readonly OperatorDataAvailability[];
+  /** The scoped snapshot state as seen by Find Areas (HeatZones required). */
+  findAreasLoadState: OperatorDataAvailability;
   fixturesAllowed: boolean;
-  networkLoadState: OperatorDataAvailability;
   proposalsLoadState?: OperatorDataAvailability;
   rebalanceLoadState: OperatorDataAvailability;
   reviewsLoadState: OperatorDataAvailability;
   scoringLoadState: OperatorDataAvailability;
 }): Exclude<OperatorDataAvailability, "ready" | "fixture"> | null {
   if (fixturesAllowed || activeTab === 1) return null;
+  // Find Areas renders the scoped operator snapshot, which supersedes the
+  // legacy heatzone/candidate domain bindings. Those domain reads stay denied
+  // for operator-only grants, so they must not gate a ready scoped snapshot.
   if (activeTab === 0) {
-    return resolveNetworkDataUnavailableState([
-      ...bindingLoadStates,
-      networkLoadState,
-    ]);
+    return resolveNetworkDataUnavailableState([findAreasLoadState]);
   }
   if (activeTab >= 2 && activeTab <= 4) {
     return resolveNetworkDataUnavailableState([scoringLoadState]);
@@ -322,11 +321,23 @@ export function inspectNetworkListingsSnapshot(
   const hasRequiredShape =
     snapshot.source === "api" &&
     requiredCollections.every(Array.isArray);
+  // A scoped read may legitimately withhold whole-zone HeatZone aggregates
+  // while still authorizing individual listings/candidates. The snapshot is
+  // usable when it carries any authorized record; each tab then decides
+  // whether the records it renders are present (see resolveNetworkTabGateState).
   const hasUsableRows =
-    (snapshot.heatZones?.length ?? 0) > 0 &&
-    (snapshot.listingSources?.length ?? 0) > 0 &&
-    ((snapshot.listings?.length ?? 0) > 0 || (snapshot.candidates?.length ?? 0) > 0);
+    (snapshot.heatZones?.length ?? 0) > 0 ||
+    (snapshot.listings?.length ?? 0) > 0 ||
+    (snapshot.candidates?.length ?? 0) > 0;
   return hasRequiredShape && hasUsableRows ? "ready" : "empty";
+}
+
+/** Find Areas renders HeatZones; a ready snapshot without any is empty for that tab. */
+export function resolveNetworkFindAreasLoadState(
+  networkLoadState: OperatorDataAvailability,
+  heatZoneCount: number,
+): OperatorDataAvailability {
+  return networkLoadState === "ready" && heatZoneCount === 0 ? "empty" : networkLoadState;
 }
 
 export function inspectNetworkScoringSnapshot(
@@ -362,10 +373,6 @@ export function inspectNetworkReviewsSnapshot(
     : "empty";
 }
 
-const NETWORK_OPERATOR_HEADERS = operatorSecurityHeaders(
-  "expansion-manager",
-);
-
 const NETWORK_ACTOR = {
   actorRoleId: "expansionManager",
 };
@@ -374,32 +381,17 @@ const NETWORK_ACTOR = {
 // role, not hardcoded. Deciding a review requires sitescore APPROVE, which the
 // Site Reviewer backend role holds but Expansion (expansion_user) does not.
 //
-// - An authorized reviewer console role (see NETWORK_REVIEW_DECIDER_ROLE_IDS)
-//   reads and decides as the Site Reviewer backend identity (sitescore
-//   VIEW+APPROVE) and sees the GO / WAIT / 退回 / 駁回 decision bar.
-// - Expansion (and any other network-capable role) reads as expansion_user
-//   (sitescore VIEW) and can prepare/submit, but the decision bar is hidden
-//   (canDecide=false). If a decide POST is still attempted it carries the
-//   role's own non-approving identity, so the API fails closed with 403 —
-//   defense in depth behind the hidden bar.
-const SITE_REVIEWER_REVIEW_HEADERS = operatorSecurityHeaders("site-reviewer");
+// UI decision visibility is only presentation: every request retains the
+// active persona and the API enforces sitescore APPROVE against durable grants.
+// Read-only administrators/auditors must never be projected as expansion users.
+// Never substitute a reviewer/expansion persona for the active console role.
+// The API resolves the durable identity and enforces its real grants.
 
-const EXPANSION_REVIEW_HEADERS = operatorSecurityHeaders(
-  "expansion-manager",
-);
-
-const SITE_REVIEWER_ACTOR = {
-  actorRoleId: "siteReviewer",
-};
-
-const EXPANSION_ACTOR = {
-  actorRoleId: "expansionManager",
-};
-
-// Console roles authorized to decide a Network site review. Only the operations
-// lead carries an approval mandate on this surface; Expansion prepares/submits
-// but cannot decide (ODP-OC-R4-007 acceptance).
-const NETWORK_REVIEW_DECIDER_ROLE_IDS: ReadonlySet<OperatorRoleId> = new Set(["ops-lead"]);
+// The canonical expansion-manager persona requires site_reviewer/executive
+// grants; ops-lead alone is operations_manager, not a SiteScore approver.
+// This only controls presentation. The API verifies APPROVE and derives the
+// decision actor from its authenticated principal, never from this persona.
+const NETWORK_REVIEW_DECIDER_ROLE_IDS: ReadonlySet<OperatorRoleId> = new Set(["expansion-manager"]);
 
 type NetworkReviewIdentity = {
   canDecide: boolean;
@@ -409,19 +401,12 @@ type NetworkReviewIdentity = {
 };
 
 function resolveNetworkReviewIdentity(roleId: OperatorRoleId): NetworkReviewIdentity {
-  if (NETWORK_REVIEW_DECIDER_ROLE_IDS.has(roleId)) {
-    return {
-      canDecide: true,
-      readHeaders: SITE_REVIEWER_REVIEW_HEADERS,
-      decideHeaders: SITE_REVIEWER_REVIEW_HEADERS,
-      actor: SITE_REVIEWER_ACTOR,
-    };
-  }
+  const headers = operatorSecurityHeaders(roleId);
   return {
-    canDecide: false,
-    readHeaders: EXPANSION_REVIEW_HEADERS,
-    decideHeaders: EXPANSION_REVIEW_HEADERS,
-    actor: EXPANSION_ACTOR,
+    canDecide: NETWORK_REVIEW_DECIDER_ROLE_IDS.has(roleId),
+    readHeaders: headers,
+    decideHeaders: headers,
+    actor: { actorRoleId: roleId },
   };
 }
 
@@ -445,20 +430,23 @@ async function fetchNetworkReviewsSnapshot(
   }
 }
 
+// The scoped operator snapshot is the authoritative Network read. Without a
+// selection it is requested unfiltered, and the API projects it to the verified
+// scope and names the first visible zone; legacy /heatzones grants are never
+// needed to choose one.
 async function fetchNetworkSnapshot(
-  selectedHeatZoneId: string,
+  selectedHeatZoneId: string | null,
   lens: NetworkFindAreasLens,
+  roleId: OperatorRoleId,
 ): Promise<NetworkListingsSnapshot | null> {
   try {
-    const params = new URLSearchParams({
-      lens,
-      selectedHeatZoneId,
-    });
+    const params = new URLSearchParams({ lens });
+    if (selectedHeatZoneId) params.set("selectedHeatZoneId", selectedHeatZoneId);
     const response = await fetch(`/api/v1/operator/network-listings?${params.toString()}`, {
       cache: "no-store",
       headers: {
-        ...NETWORK_OPERATOR_HEADERS,
-        "X-Correlation-Id": `corr-r4-005-read-${selectedHeatZoneId}-${lens}`,
+        ...operatorSecurityHeaders(roleId),
+        "X-Correlation-Id": `corr-r4-005-read-${selectedHeatZoneId ?? "initial"}-${lens}`,
       },
     });
     if (!response.ok) {
@@ -470,12 +458,12 @@ async function fetchNetworkSnapshot(
   }
 }
 
-async function fetchNetworkScoringSnapshot(): Promise<NetworkScoringSnapshot | null> {
+async function fetchNetworkScoringSnapshot(roleId: OperatorRoleId): Promise<NetworkScoringSnapshot | null> {
   try {
     const response = await fetch(`/api/v1/operator/network-scoring`, {
       cache: "no-store",
       headers: {
-        ...NETWORK_OPERATOR_HEADERS,
+        ...operatorSecurityHeaders(roleId),
         "X-Correlation-Id": "corr-r4-006-scoring-read",
       },
     });
@@ -488,12 +476,12 @@ async function fetchNetworkScoringSnapshot(): Promise<NetworkScoringSnapshot | n
   }
 }
 
-async function fetchNetworkRebalanceSnapshot(): Promise<NetworkRebalanceSnapshot | null> {
+async function fetchNetworkRebalanceSnapshot(roleId: OperatorRoleId): Promise<NetworkRebalanceSnapshot | null> {
   try {
     const response = await fetch("/api/v1/operator/network-rebalance", {
       cache: "no-store",
       headers: {
-        ...NETWORK_OPERATOR_HEADERS,
+        ...operatorSecurityHeaders(roleId),
         "X-Correlation-Id": "corr-r4-008-rebalance-read",
       },
     });
@@ -602,6 +590,7 @@ export function NetworkFindAreasWorkspace({
   const router = useRouter();
   const searchParams = useSearchParams();
   const fixturesAllowed = operatorFixturesAllowed();
+  const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId]);
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
   const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
@@ -802,7 +791,7 @@ export function NetworkFindAreasWorkspace({
 
   // True when every Network R4 binding is using the local/POC fixture path.
   const isFixtureFallback =
-    networkSnapshot?.source !== "api" &&
+    fixturesAllowed && networkSnapshot?.source !== "api" &&
     ((liveHeatZones !== undefined && liveHeatZones.source !== "api") ||
       (liveCandidates !== undefined && liveCandidates.source !== "api"));
 
@@ -835,13 +824,18 @@ export function NetworkFindAreasWorkspace({
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      if (!effectiveSelectedId) {
-        if (!fixturesAllowed) setNetworkLoadState("loading");
-        return;
-      }
-      const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
+      const snapshot = await fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId);
       if (!cancelled && snapshot) {
         const inspection = inspectNetworkListingsSnapshot(snapshot);
+        const serverSelectedId = snapshot.selectedHeatZoneId;
+        if (
+          inspection === "ready" &&
+          !effectiveSelectedId &&
+          serverSelectedId &&
+          snapshot.heatZones?.some((zone) => zone.id === serverSelectedId)
+        ) {
+          setLocalSelectedId(serverSelectedId);
+        }
         setNetworkSnapshot(
           inspection === "ready" || fixturesAllowed
             ? snapshot
@@ -868,12 +862,12 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [effectiveLens, effectiveSelectedId, fixturesAllowed]);
+  }, [activeRoleId, effectiveLens, effectiveSelectedId, fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadScoring() {
-      const snapshot = await fetchNetworkScoringSnapshot();
+      const snapshot = await fetchNetworkScoringSnapshot(activeRoleId);
       if (!cancelled && snapshot) {
         const inspection = inspectNetworkScoringSnapshot(snapshot);
         setScoringSnapshot(
@@ -896,12 +890,12 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [fixturesAllowed]);
+  }, [activeRoleId, fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadRebalance() {
-      const snapshot = await fetchNetworkRebalanceSnapshot();
+      const snapshot = await fetchNetworkRebalanceSnapshot(activeRoleId);
       if (!cancelled && snapshot) {
         const inspection = inspectNetworkRebalanceSnapshot(snapshot);
         setRebalanceSnapshot(
@@ -930,7 +924,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [fixturesAllowed]);
+  }, [activeRoleId, fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1013,7 +1007,7 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadScoringSnapshot() {
-    const snapshot = await fetchNetworkScoringSnapshot();
+    const snapshot = await fetchNetworkScoringSnapshot(activeRoleId);
     if (snapshot) {
       setScoringSnapshot(snapshot);
     }
@@ -1073,7 +1067,7 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadRebalanceSnapshot() {
-    const snapshot = await fetchNetworkRebalanceSnapshot();
+    const snapshot = await fetchNetworkRebalanceSnapshot(activeRoleId);
     if (snapshot) {
       setRebalanceSnapshot(snapshot);
       setRebalanceApiError(null);
@@ -1262,7 +1256,7 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadNetworkSnapshot() {
-    const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
+    const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId);
     if (snapshot) {
       setNetworkSnapshot(snapshot);
       setNetworkApiError(null);
@@ -1389,20 +1383,11 @@ export function NetworkFindAreasWorkspace({
       : []);
   const selectedZoneLabel = selectedZone?.label ?? heatZones.find((zone) => zone.id === effectiveSelectedId)?.label;
 
-  const bindingLoadStates: OperatorDataAvailability[] = [liveHeatZones, liveCandidates].map(
-    (binding) => {
-      if (!binding) return "loading";
-      if (binding.state === "ready" && binding.source === "api") return "ready";
-      if (binding.state === "empty") return "empty";
-      if (binding.state === "error" || binding.state === "unconfigured") return "error";
-      return "seed";
-    },
-  );
+  const findAreasLoadState = resolveNetworkFindAreasLoadState(networkLoadState, heatZones.length);
   const activeTabGateState = resolveNetworkTabGateState({
     activeTab,
-    bindingLoadStates,
+    findAreasLoadState,
     fixturesAllowed,
-    networkLoadState,
     proposalsLoadState,
     rebalanceLoadState,
     reviewsLoadState,
@@ -1410,7 +1395,10 @@ export function NetworkFindAreasWorkspace({
   });
   const activeTabGateDetail =
     activeTab === 0
-      ? networkApiError
+      ? networkApiError ??
+        (findAreasLoadState !== networkLoadState
+          ? "HeatZone aggregates are not authorized for this read scope; scoped listings remain in Listing Radar."
+          : null)
       : activeTab === 6
         ? rebalanceApiError
         : activeTab === 7

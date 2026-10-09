@@ -29,6 +29,7 @@ from modules.opsboard.application.network_scoring import (
     NetworkScoringRuntimeUnavailable,
     NetworkScoringService,
 )
+from shared.auth import Role
 
 
 class NetworkScoringActorPayload(BaseModel):
@@ -53,6 +54,7 @@ def create_network_scoring_sub_router(
     require_write_permission_fn: Callable[..., Any],
     service_resolver: Callable[[Request], Any] | None = None,
     allow_reset: bool = True,
+    read_scope_snapshot_fn: Callable[[Request], dict[str, Any]] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-scoring")
 
@@ -68,9 +70,14 @@ def create_network_scoring_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return resolve_service(request, service, service_resolver).snapshot(
-                correlation_id=x_correlation_id
-            )
+            principal = request.state.operator_principal
+            kwargs: dict[str, Any] = {"correlation_id": x_correlation_id}
+            if principal.has_role(Role.OPERATOR_VIEWER):
+                kwargs.update(
+                    principal=principal,
+                    scope_snapshot=(read_scope_snapshot_fn(request) if read_scope_snapshot_fn else {}),
+                )
+            return resolve_service(request, service, service_resolver).snapshot(**kwargs)
         except NetworkScoringRuntimeUnavailable as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

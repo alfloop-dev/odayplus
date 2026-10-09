@@ -1,0 +1,87 @@
+.........FF.F                                                            [100%]
+=================================== FAILURES ===================================
+____ test_cross_zone_merge_hides_excluded_target_from_source_visible_scope _____
+
+tmp_path = PosixPath('/tmp/pytest-of-lupin/pytest-2140/test_cross_zone_merge_hides_ex0')
+
+    def test_cross_zone_merge_hides_excluded_target_from_source_visible_scope(tmp_path):
+        reader = merged_listing_client(tmp_path)
+        response = reader.get("/network-listings?selectedHeatZoneId=HZ-02",
+                              headers={**HEADERS, "X-Heat-Zone-Ids": "HZ-02"})
+        assert response.status_code == 200, response.text
+        rows = {row["id"]: row for row in response.json()["listings"]}
+        assert set(rows) == {"L-2025", "L-2029"}
+        source = rows["L-2029"]
+        assert source["status"] == "duplicate"
+>       assert source["duplicateOfId"] is None and source["mergedIntoId"] is None
+E       AssertionError: assert ('L-2024' is None)
+
+tests/security/test_operator_network_read_scope.py:236: AssertionError
+____ test_cross_zone_merge_hides_excluded_source_from_target_visible_scope _____
+
+tmp_path = PosixPath('/tmp/pytest-of-lupin/pytest-2140/test_cross_zone_merge_hides_ex1')
+
+    def test_cross_zone_merge_hides_excluded_source_from_target_visible_scope(tmp_path):
+        reader = merged_listing_client(tmp_path)
+        response = reader.get("/network-listings?selectedHeatZoneId=HZ-01",
+                              headers={**HEADERS, "X-Heat-Zone-Ids": "HZ-01"})
+        assert response.status_code == 200, response.text
+        rows = {row["id"]: row for row in response.json()["listings"]}
+        assert set(rows) == {"L-2024", "L-2030"}
+        target = rows["L-2024"]
+>       assert target["mergedSourceListingIds"] == []
+E       AssertionError: assert ['L-2029'] == []
+E         
+E         Left contains one more item: 'L-2029'
+E         Use -v to get more diff
+
+tests/security/test_operator_network_read_scope.py:249: AssertionError
+__ test_listing_fields_outside_the_contract_and_foreign_evidence_are_withheld __
+
+    def test_listing_fields_outside_the_contract_and_foreign_evidence_are_withheld():
+        seed = NetworkListingService().export_state()
+        rows = {row["id"]: row for row in seed["listings"]}
+        lookalike = {**deepcopy(rows["L-2025"]), "id": "L-2024-X", "sourceEvidence": ["EV-L-2024-X-RAW"]}
+        seed["listings"].append(lookalike)
+        rows["L-2024"].update({
+            # Intake decisions and merges append other objects' refs to the target.
+            "sourceEvidence": ["EV-L-2024-RAW-591", "EV-IN-9-DUPLICATE", "EV-IN-8-REVISION",
+                               "EV-L-2024-X-RAW", "broker note on L-2025", {"ref": "L-2025"}],
+            "brokerNote": "Also see L-2025",
+            "mergedSourceListingIds": "L-2025",
+            "mergeReason": "Combined with L-2025",
+            "duplicateOfId": ["L-2025"],
+            "candidateId": "CS-9-L-2025",
+        })
+        service = NetworkListingService(initial_state=seed, seed_fixtures=False)
+        for intake_id, zone in (("IN-8", "HZ-01"), ("IN-9", "HZ-02")):
+            service._save_intake({"id": intake_id, "tenantId": "tenant-a", "heatZoneId": zone,
+                                  "stage": "READY", "auditEvents": []})
+        app = FastAPI()
+        app.include_router(create_network_listings_sub_router(
+            service,
+            require_view_permission_fn=require_operator_permission(
+                "listing", Action.VIEW, scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE),
+            require_write_permission_fn=require_operator_permission("listing", Action.UPDATE),
+        ))
+        response = TestClient(app).get("/network-listings", headers={**HEADERS, "X-Heat-Zone-Ids": "HZ-01"})
+        assert response.status_code == 200, response.text
+        target = next(row for row in response.json()["listings"] if row["id"] == "L-2024")
+>       assert target["sourceEvidence"] == ["EV-L-2024-RAW-591", "EV-IN-8-REVISION"]
+E       AssertionError: assert ['EV-L-2024-R...f': 'L-2025'}] == ['EV-L-2024-R...N-8-REVISION']
+E         
+E         At index 1 diff: 'EV-IN-9-DUPLICATE' != 'EV-IN-8-REVISION'
+E         Left contains 4 more items, first extra item: 'EV-IN-8-REVISION'
+E         Use -v to get more diff
+
+tests/security/test_operator_network_read_scope.py:296: AssertionError
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /tmp/pantheon-worker-worktrees/pantheon/odp-operator-read-authorization-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/security/test_operator_network_read_scope.py::test_cross_zone_merge_hides_excluded_target_from_source_visible_scope
+FAILED tests/security/test_operator_network_read_scope.py::test_cross_zone_merge_hides_excluded_source_from_target_visible_scope
+FAILED tests/security/test_operator_network_read_scope.py::test_listing_fields_outside_the_contract_and_foreign_evidence_are_withheld

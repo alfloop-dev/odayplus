@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from apps.api.app.routes._common import reset_allowed_guard
 from apps.api.app.routes.operator_modules.live_service import resolve_service
+from modules.opsboard.application.network_read_scope import project_review_snapshot
 from modules.opsboard.application.network_reviews import (
     DECISION_ACTIONS,
     NetworkReviewConflict,
@@ -39,6 +40,7 @@ from modules.opsboard.application.network_reviews import (
     NetworkReviewRuntimeUnavailable,
     NetworkReviewService,
 )
+from shared.auth import Role
 
 
 class ReviewDecisionPayload(BaseModel):
@@ -70,6 +72,7 @@ def create_network_review_sub_router(
     require_decide_permission_fn: Callable[..., Any],
     service_resolver: Callable[[Request], Any] | None = None,
     allow_reset: bool = True,
+    read_scope_snapshot_fn: Callable[[Request], dict[str, Any]] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-reviews")
 
@@ -85,9 +88,16 @@ def create_network_review_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return resolve_service(request, service, service_resolver).snapshot(
+            snapshot = resolve_service(request, service, service_resolver).snapshot(
                 correlation_id=x_correlation_id
             )
+            principal = request.state.operator_principal
+            if principal.has_role(Role.OPERATOR_VIEWER):
+                return project_review_snapshot(
+                    principal, snapshot,
+                    read_scope_snapshot_fn(request) if read_scope_snapshot_fn else {},
+                )
+            return snapshot
         except NetworkReviewRuntimeUnavailable as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -115,6 +125,16 @@ def create_network_review_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
+        # The APPROVE guard establishes this principal before the handler runs.
+        # Persona/display fields in the body must not manufacture decision
+        # authority or impersonate the actor in the five synchronized records.
+        principal = request.state.operator_principal
+        if Role.SITE_REVIEWER in principal.roles:
+            actor_role_id = Role.SITE_REVIEWER.value
+        elif Role.EXECUTIVE in principal.roles:
+            actor_role_id = Role.EXECUTIVE.value
+        else:  # defense in depth if the HTTP permission matrix ever changes
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="reviewer role required")
         try:
             return resolve_service(request, service, service_resolver).decide_review(
                 review_id=review_id,
@@ -123,8 +143,8 @@ def create_network_review_sub_router(
                 conditions=body.conditions,
                 required_data=body.requiredData,
                 override_ack=body.overrideAck,
-                actor_role_id=body.actorRoleId,
-                actor_name=body.actorName,
+                actor_role_id=actor_role_id,
+                actor_name=principal.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
             )

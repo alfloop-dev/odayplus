@@ -28,6 +28,12 @@ vi.mock("../ListingRadarPanel", () => ({
   },
 }));
 
+vi.mock("../ReviewPanel", () => ({
+  ReviewPanel: ({ canDecide }: { canDecide: boolean }) => (
+    <div data-testid="review-authority" data-can-decide={String(canDecide)} />
+  ),
+}));
+
 function unavailableBinding<T>(): ApiBinding<T> {
   return {
     error: "snapshot unavailable",
@@ -59,6 +65,46 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it("uses the active verified persona for every Network read without false fixture labels", async () => {
+    const view = render(
+      <NetworkFindAreasWorkspace activeRoleId="platform-admin" selectedHeatZoneId="live-zone"
+        liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />,
+    );
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+    const calls = vi.mocked(fetch).mock.calls;
+    expect(calls.map(([url]) => String(url))).toEqual(expect.arrayContaining([
+      expect.stringContaining("network-listings?"), "/api/v1/operator/network-scoring",
+      "/api/v1/operator/network-rebalance", "/api/v1/operator/network-reviews",
+    ]));
+    for (const [, init] of calls) {
+      expect(init?.headers).toMatchObject({ "X-Operator-Role": "platform-admin" });
+      expect(init?.headers).not.toHaveProperty("X-Roles");
+    }
+    expect(screen.queryByLabelText("Data source: fixtures")).toBeNull();
+    expect(screen.queryByText("fixture data")).toBeNull();
+    vi.mocked(fetch).mockClear();
+    view.rerender(
+      <NetworkFindAreasWorkspace activeRoleId="pm-audit" selectedHeatZoneId="live-zone"
+        liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />,
+    );
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+    for (const [, init] of vi.mocked(fetch).mock.calls) {
+      expect(init?.headers).toMatchObject({ "X-Operator-Role": "pm-audit" });
+    }
+  });
+
+  it.each([
+    ["expansion-manager", "true"],
+    ["ops-lead", "false"],
+    ["pm-audit", "false"],
+    ["platform-admin", "false"],
+  ] as const)("presents review authority for %s without impersonation", (roleId, canDecide) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    navigation.search = "ws=network&tab=review";
+    render(<NetworkFindAreasWorkspace activeRoleId={roleId} initialTabId="review" />);
+    expect(screen.getByTestId("review-authority")).toHaveAttribute("data-can-decide", canDecide);
   });
 
   it("cold-opens Radar even when every unrelated Network snapshot is unavailable", async () => {

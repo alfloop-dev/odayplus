@@ -112,9 +112,10 @@ dev-admin gate cannot close them, and its receipt says so:
 
 The gate signs in through the deployed Web origin the way a browser does. It
 uses the password form endpoint, the sealed session cookie, the BFF proxy that
-swaps the cookie for the server-side session bearer, and exercises the single
-pure `platform_admin` account created by the identity bootstrap (§5.1). It
-never injects a bearer, role or tenant header.
+swaps the cookie for the server-side session bearer, and exercises the configured
+existing administrator created by the identity bootstrap (§5.1). Pure admin
+retains the baseline below; explicitly read-enabled admin must satisfy §5.6.
+It never injects a bearer or tenant header.
 
 The supported operations exercised, in order:
 
@@ -229,6 +230,119 @@ reads display **unknown**, never model-ready or assumed model absence. Raw
 readiness errors, secrets and transport tokens are not sent to the browser.
 The full profile and all existing API/gate refusal policies are unchanged.
 
+### 5.5 Explicit tenant-bounded operator reads (ODP-OPERATOR-READ-AUTHORIZATION-001)
+
+`operator_viewer` is an **opt-in persisted identity role**, not a new auth path
+or a privilege implied by `platform_admin`. Its finite grants are only
+`VIEW` on the two operator-only resources `operator_console` and
+`operator_network`. The console already aggregates StoreOps/Growth/Governance
+under `operator_console`. `operator_network` is accepted only by the Operator
+Console Network listings/intake, scoring and review read guards, whose handlers
+project the verified tenant and object scope. It grants **no** general domain
+`listing`, `sitescore` or `heatzone` VIEW: those routers (for example
+`/sitescore/realized`, `/heatzones/map`, `/listings/*`, `/market-survey/*`) are
+RBAC-only, not tenant/scope filtered, and stay refused, as does Network
+rebalance until it has its own scoped projection. No wildcard, business write,
+approval, execution, export, publication, admin grant or cross-tenant bypass is
+added.
+It selects the existing `pm-audit` console persona; a read-enabled administrator
+may also select their existing `platform-admin` persona. Network requests retain
+the active verified persona instead of impersonating an expansion/reviewer role.
+Network review controls use the canonical `expansion-manager` persona backed by
+`site_reviewer` / `executive`; `ops-lead` alone is not a SiteScore approver. The
+API still requires `sitescore:approve` and derives the decision actor from the
+verified principal, ignoring caller-supplied actor fields. No grants are added.
+
+Network reader scope is applied to the complete envelope, not only its listings:
+child candidates/reviews must join an allowed authoritative listing, and scoring
+cards, comparison results, decisions and counts derive only from allowed records.
+A whole-zone HeatZone summary needs its own scope evidence; one visible listing
+cannot authorize a brand/region/store-wide aggregate. Missing restricted-axis
+metadata fails closed. Unscoped pipeline steps/comparison prose and free-form
+cross-object audit metadata are withheld from this reader rather than presented
+as scoped progress. The existing non-viewer flows and model refusal remain intact.
+A read collection query (for example `?selectedHeatZoneId=`) is checked only on
+the filter axes it supplies; an axis it does not name is not missing evidence,
+because every returned record is still projected against the full scope. Target
+objects and creates keep the complete-envelope check on every restricted axis.
+The Console initialises Network from this scoped snapshot: it first requests it
+without a selection, adopts the zone the API names, and never needs, or is
+gated by, the denied general `/heatzones` / candidate domain reads. An
+authorized empty scoped snapshot is shown as empty, not as an error or fixtures.
+
+Identity role editing remains the existing tenant-scoped `/operator/users` API
+and atomic `identity.account.roles_updated` audit transaction. There is **no
+automatic grant**, bootstrap expansion, direct SQL grant, scope enlargement or
+status change. Before a coordinator grants this role to the requested existing
+account after independent review, required CI, merge and admitted deployment:
+
+1. Read the authoritative account, full scope, status and current roles through
+   the authenticated Web/BFF API. Preserve admin and every scope axis/status.
+2. Submit the bounded role change through that API with an explicit reason.
+   `operator_viewer` itself adds no export authority (unlike `auditor`); any
+   removal of a previously granted role needs its own explicit authorization.
+3. Fresh-read account/session permissions and the new audit event; prove the
+   same tenant, scope/status/admin grants, positive reads, rejected unauthorized
+   personas and business writes, and rejected foreign-tenant reads.
+4. Check Network and Governance on the deployed exact candidate. Canonical
+   Governance `statusBoard` is a list of persisted record counts; Web displays
+   those observations separately, **not** as model/connector readiness. Invalid
+   rows/boards fail closed; zero records are not manufactured approvals.
+5. Record real remote receipts without secrets. StoreOps 503 for absent
+   materialized state and actual empty data stay limitations. Do not enable
+   sources, backfill, train/promote models, bypass admission, or self-approve F11.
+
+The bootstrap role and §5 pure-admin verifier branch stay **unchanged**. A
+read-enabled account cannot claim that baseline journey passed; it must satisfy
+the additional §5.6 contract. Offline regression inputs are not live grant
+evidence; engineering review/merge does not close post-deployment acceptance.
+
+### 5.6 Existing explicitly read-enabled release administrator
+
+Actual deployed dev-admin verifier subject is `ajoe734` (account
+`17e9cb99-db46-4a07-8e61-6bf9b22cf5d2`, tenant
+`e34f2117-de4b-478c-82fd-13c4ef428d42`). The user-authorized, audited addition of
+`auditor` on 2026-10-09 must be preserved; there is no separately bound pure-admin
+account. The verifier uses the **same existing username/password binding**, not a
+second account, new credential, role header, configuration switch or gate waiver.
+
+It selects the stricter read-enabled branch only from authoritative active
+`identity.accounts` data: exactly `platform_admin` plus `auditor` and/or
+`operator_viewer`, no duplicate/unknown/additional roles. Each role's effective
+permissions must equal the finite canonical RBAC set pinned by the gate; future
+expansion, wildcard or business-mutating grants fail closed. Existing auditor
+`audit:export` is explicitly retained, not newly granted; all other non-admin
+verbs remain VIEW-only. User/role/feature-flag administration remains supported.
+
+Required additional proof, not replacements for existing checks:
+
+- Web session username, unique identity account UUID, tenant UUID and exact role
+  set bind to server-verified `/api/v1/auth/principal`. Caller headers cannot
+  manufacture these facts.
+- Bootstrap audit plus explicit `identity.account.roles_updated` audit must bind
+  the current account, tenant, complete scope, active status and current roles.
+- Existing foreign-tenant policy probe and full unchanged readback remain required.
+- Successful scoped self-account detail and business bootstrap reads are required;
+  business bootstrap must carry truthful live provenance and no surrogate markers.
+  Missing data/binding 503 is a blocker, not converted to a successful empty read.
+- Business write/approval/execution/publication probes deliberately violate typed
+  DTO fields (`url={}`, `decision={}`, `candidateIds={}`, and
+  `approvalId={}/action={}`, respectively). Empty batch-scoring `{}` is valid
+  and **must not** be used; a non-existent object id alone is not a safety guard.
+  A regressed permission guard must stop at DTO validation before any handler,
+  scoring, provider or persistence call. Only authorization 403 passes the live
+  deny proof; validation 422 (or 404/503) blocks, never counts as permission denial.
+  The offline real-router regression forwards the gate's actual bodies and checks
+  both intact-guard 403 and bypassed-guard 422 with zero downstream calls. Wrong
+  persona, admin page, durable logout/revocation and both password journeys
+  remain required.
+
+The receipt labels `account_mode=read-enabled-admin`, never `pure-admin` proof.
+Pure-admin baseline still requires business403 and rejects business200. Full
+profile/model/registry/source/admission boundaries remain unchanged. This permits
+verification of the actual current audited subject, not permission promotion or
+full-product/F11 acceptance.
+
 ## 6. Operator / coordinator handoff
 
 **Changed release interface**
@@ -265,8 +379,9 @@ The full profile and all existing API/gate refusal policies are unchanged.
 
 **Prerequisites in the `dev` GitHub environment** (vars are environment-scoped)
 
-- `ODP_DEV_ADMIN_USERNAME`: the username of the single pure `platform_admin`
-  account created by the bootstrap.
+- `ODP_DEV_ADMIN_USERNAME`: the username of the existing bootstrap administrator,
+  pure-admin or explicitly audited read-enabled administrator (§5.6). The current
+  binding is `ajoe734`; this task changes neither binding nor credentials.
 - `ODP_DEV_ADMIN_PASSWORD` (environment **secret**): the permanent rotated
   password of that account.
 - `ODP_DEV_ADMIN_INITIAL_PASSWORD` (environment **secret**): the one-time initial

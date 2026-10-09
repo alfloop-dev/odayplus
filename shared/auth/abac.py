@@ -95,6 +95,20 @@ def require_authenticated(request: AccessRequest) -> Decision | None:
     return None
 
 
+def operator_viewer_tenant_isolation(request: AccessRequest) -> Decision | None:
+    """The opt-in read role never authorizes tenant-less or foreign objects."""
+
+    principal = request.principal
+    if principal.has_role(Role.OPERATOR_VIEWER) and (
+        not principal.tenant_id or request.resource.tenant_id != principal.tenant_id
+    ):
+        return Decision.deny(
+            "operator viewer requires matching tenant evidence",
+            policy_id="operator.tenant_isolation",
+        )
+    return None
+
+
 def scope_containment(request: AccessRequest) -> Decision | None:
     """Brand/region/store scope must contain the resource (SD-09 §4.2).
 
@@ -144,6 +158,7 @@ def franchisee_isolation(request: AccessRequest) -> Decision | None:
 # (any single deny wins) but is arranged cheap-checks-first for readability.
 DEFAULT_POLICIES: tuple[AbacPolicy, ...] = (
     require_authenticated,
+    operator_viewer_tenant_isolation,
     scope_containment,
     data_classification_visibility,
     franchisee_isolation,

@@ -1,0 +1,72 @@
+[WebServer] 2026/10/09 07:16:44 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /home/lupin/odayplus/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 07:16:46 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 07:16:46 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [1415345]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8217 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T07:16:50.668452+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "5dffa2b3-fef1-43ee-9f33-f8c9a2d79816", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 1 test using 1 worker
+
+  ✘  1 [chromium] › tests/e2e/operator-shell-layout.spec.ts:69:9 › Operator shared header layout › Today long ingestion identifiers and human titles remain readable at 390px (6.6s)
+
+
+  1) [chromium] › tests/e2e/operator-shell-layout.spec.ts:69:9 › Operator shared header layout › Today long ingestion identifiers and human titles remain readable at 390px 
+
+    Error: expect(locator).toHaveCount(expected) failed
+
+    Locator:  getByTestId('operator-today-queue').getByRole('button')
+    Expected: 7
+    Received: 0
+    Timeout:  5000ms
+
+    Call log:
+      - Expect "toHaveCount" with timeout 5000ms
+      - waiting for getByTestId('operator-today-queue').getByRole('button')
+        14 × locator resolved to 0 elements
+           - unexpected value "0"
+
+
+      94 |       await openWorkspace(page, "today");
+      95 |       const rows = page.getByTestId("operator-today-queue").getByRole("button");
+    > 96 |       await expect(rows).toHaveCount(ids.length);
+         |                          ^
+      97 |       for (const [index, id] of ids.entries()) {
+      98 |         await expect(rows.nth(index).locator("small").first()).toHaveText(id);
+      99 |         await expect(rows.nth(index).locator("strong").first()).toHaveText(title);
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-operator-read-authorization-001/tests/e2e/operator-shell-layout.spec.ts:96:26
+
+    Error: "route.fetch: Test ended.
+    Call log:
+      - → GET http://localhost:3217/api/v1/operator/bootstrap
+        - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.7827.55 Safari/537.36
+        - accept: */*
+        - accept-encoding: gzip,deflate,br
+        - x-subject-id: product-e2e-test
+        - x-roles: finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive
+        - x-tenant-id: tenant-a
+        - accept-language: en-US
+        - referer: http://localhost:3217/operator?ws=today
+        - x-correlation-id: corr-operator-bootstrap-dca22bc9-a7ac-4f8f-957a-c13af297cde9
+        - x-operator-role: ops-lead
+        - sec-ch-ua: "HeadlessChrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"
+        - sec-ch-ua-mobile: ?0
+        - sec-ch-ua-platform: "Windows"
+    " while running route callback.
+    Consider awaiting `await page.unrouteAll({ behavior: 'ignoreErrors' })`
+    before the end of the test to ignore remaining routes in flight.
+
+      80 |       const title = "External ingestion requires review";
+      81 |       await page.route(/\/api\/v1\/operator\/(bootstrap|today)(\?.*)?$/, async (route) => {
+    > 82 |         const response = await route.fetch();
+         |                                      ^
+      83 |         expect(response.status()).toBe(200);
+      84 |         const envelope = await response.json();
+      85 |         expect(envelope.today.queue.length).toBeGreaterThan(0);
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-operator-read-authorization-001/tests/e2e/operator-shell-layout.spec.ts:82:38
+
+    Error Context: ../../../../home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261009T071413Z-f6330bec/today-playwright-results/operator-shell-layout-Oper-9c292-es-remain-readable-at-390px-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/e2e/operator-shell-layout.spec.ts:69:9 › Operator shared header layout › Today long ingestion identifiers and human titles remain readable at 390px 
