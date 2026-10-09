@@ -234,7 +234,9 @@ export function SiteScorePanel({
                     <ToneBadge tone={recommendationTone(candidate.recommendation)}>
                       {candidate.gate.passed ? candidate.recommendation : "缺資料"}
                     </ToneBadge>
-                    <span className={styles.batchRent}>{candidate.rent}</span>
+                    <span className={styles.batchRent}>
+                      {cards.find((card) => card.id === candidate.id)?.rentAssumption || "—"}
+                    </span>
                   </button>
                 );
               })}

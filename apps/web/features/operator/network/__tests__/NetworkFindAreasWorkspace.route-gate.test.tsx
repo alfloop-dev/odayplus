@@ -1,9 +1,31 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiBinding } from "../../../../src/lib/api/binding";
 import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
 import type { Candidate, OperatorHeatZone } from "../../types";
+import { LISTING_FIXTURES } from "../../fixtures";
+import type { NetworkScoringSnapshot, ScoringCandidate } from "../networkScoringTypes";
+
+const apiCandidate: ScoringCandidate = {
+  id: "CS-live",
+  listingId: null,
+  heatZoneId: "HZ-live",
+  title: "Live candidate",
+  zoneLabel: "Live zone",
+  address: "Live address",
+  modelVersion: "v3",
+  datasetSnapshotId: "snapshot-live",
+  stage: "needdata",
+  gate: {
+    state: "blocked", passed: false, missing: ["address"], otherMissing: [],
+    blockNote: "", checks: [], okCount: 0, totalCount: 1,
+  },
+  scored: false,
+  score: null,
+  recommendation: null,
+  inCompare: false,
+};
 
 const navigation = vi.hoisted(() => ({
   pathname: "/operator",
@@ -146,6 +168,59 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     expect(screen.getByRole("heading", { name: "展店與店網" })).toBeInTheDocument();
     expect(screen.getByLabelText("Network tabs")).toBeInTheDocument();
     expect(radarProps.calls.at(-1)).toMatchObject({ intakeDetailOpen: false });
+  });
+
+  it("can enter and leave intake detail without changing hook order", () => {
+    const props = { liveCandidates: unavailableCandidates, liveHeatZones: unavailableHeatZones };
+    const view = render(<NetworkFindAreasWorkspace {...props} />);
+    expect(screen.getByLabelText("Network tabs")).toBeInTheDocument();
+
+    navigation.search = "ws=network&tab=radar&selected=IN-3001&dialog=detail";
+    view.rerender(<NetworkFindAreasWorkspace {...props} />);
+    expect(screen.queryByLabelText("Network tabs")).not.toBeInTheDocument();
+
+    navigation.search = "ws=network&tab=radar";
+    view.rerender(<NetworkFindAreasWorkspace {...props} />);
+    expect(screen.getByLabelText("Network tabs")).toBeInTheDocument();
+  });
+
+  it.each([{ rows: [apiCandidate] }, { rows: [] }])("uses scoring candidate rows without leaking fallback rows (%j)", async ({ rows }) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const snapshot: NetworkScoringSnapshot = {
+      source: "fixture",
+      modelVersion: "v3",
+      candidates: rows,
+      scorecards: [],
+      batchResults: [],
+      compare: { columns: [], metrics: [], recommendation: null, empty: true },
+      compareSet: [],
+    };
+    vi.mocked(fetch).mockImplementation((url) => {
+      if (String(url) === "/api/v1/operator/network-scoring") {
+        return Promise.resolve(new Response(JSON.stringify(snapshot)));
+      }
+      if (String(url) === "/api/v1/operator/network-reviews") {
+        return Promise.resolve(new Response(JSON.stringify({ source: "api", reviews: [] })));
+      }
+      return new Promise<Response>(() => undefined);
+    });
+
+    const view = render(
+      <NetworkFindAreasWorkspace listings={LISTING_FIXTURES.map((listing) => ({ ...listing, status: "archived" }))} />,
+    );
+    const stats = screen.getByLabelText("Network Find Areas state");
+    await waitFor(() => {
+      expect(within(stats).getByText("進行中候選", { exact: false })).toHaveTextContent(`${rows.length} 進行中候選`);
+      expect(within(stats).getByText("待審 Review", { exact: false })).toHaveTextContent("0 待審 Review");
+    });
+    expect(within(stats).getByText("今日新物件", { exact: false })).toHaveTextContent("0 今日新物件");
+    expect(screen.getByTestId("network-tab-2")).toHaveTextContent(rows.length ? "Candidates1" : "Candidates");
+    expect(screen.getByTestId("network-tab-5")).toHaveTextContent("審核Review");
+
+    // Reprojecting the same scoring payload on every render would repeatedly
+    // set localCandidates in an effect and cause a maximum-depth render loop.
+    view.rerender(<NetworkFindAreasWorkspace />);
+    expect(within(stats).getByText("進行中候選", { exact: false })).toHaveTextContent(`${rows.length} 進行中候選`);
   });
 
   it("writes a history entry without dropping unrelated query parameters", () => {

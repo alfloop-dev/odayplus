@@ -788,11 +788,11 @@ export function NetworkFindAreasWorkspace({
     : fixturesAllowed
       ? listingSources
       : networkSnapshot?.listingSources ?? [];
-  const candidates =
-    scoringSnapshot?.candidates?.length
+  const candidates = useMemo<Candidate[]>(() =>
+    scoringSnapshot
       ? scoringSnapshot.candidates.map((c) => ({
           id: c.id,
-          listingId: c.listingId,
+          listingId: c.listingId ?? undefined,
           heatZoneId: c.heatZoneId,
           title: c.title,
           address: c.address,
@@ -814,7 +814,9 @@ export function NetworkFindAreasWorkspace({
       : networkSnapshot?.candidates ??
         (liveCandidates?.source === "api" && liveCandidates.items.length > 0
           ? liveCandidates.items
-          : candidatesProp);
+          : candidatesProp),
+    [scoringSnapshot, networkSnapshot?.candidates, liveCandidates, candidatesProp],
+  );
   const siteReviewsEffective = networkSnapshot?.siteReviews ?? siteReviews;
   const rebalanceStoresEffective = rebalanceSnapshot?.stores?.length
     ? rebalanceSnapshot.stores
@@ -1495,17 +1497,15 @@ export function NetworkFindAreasWorkspace({
   }
 
   const newListingsCount =
-    listingsEffective.filter((l) => l.status === "new" || l.status === "unread").length ||
-    listingsEffective.length;
+    listingsEffective.filter((l) => l.status === "new").length;
   const activeCandidatesCount = localCandidates.length;
   const pendingReviewsCount =
-    reviewsSnapshot?.items?.filter((r) => r.status === "pending").length ??
+    reviewsSnapshot?.reviews.filter((r) => r.status === "pending").length ??
     localSiteReviews.filter((r) => r.status === "pending").length;
   const rebalanceCandidatesCount = rebalanceStoresEffective.length;
   const compareCount = scoringSnapshot?.compare?.columns?.length ?? (fixturesAllowed ? 2 : 0);
 
-  const dynamicNetworkTabs = useMemo(
-    () => [
+  const dynamicNetworkTabs = [
       { label: "找區域", englishLabel: "Find Areas" },
       {
         label: "物件雷達",
@@ -1535,15 +1535,7 @@ export function NetworkFindAreasWorkspace({
           rebalanceCandidatesCount > 0 ? String(rebalanceCandidatesCount) : undefined,
       },
       { label: "空間治理", englishLabel: "Merge & Split" },
-    ],
-    [
-      newListingsCount,
-      activeCandidatesCount,
-      compareCount,
-      pendingReviewsCount,
-      rebalanceCandidatesCount,
-    ],
-  );
+    ];
 
   return (
     <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">

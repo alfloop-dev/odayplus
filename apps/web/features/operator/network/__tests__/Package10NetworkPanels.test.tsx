@@ -226,6 +226,9 @@ describe("Package 10 Network non-intake panels", () => {
     fireEvent.click(screen.getByRole("button", { name: "批次評分" }));
     expect(screen.getByTestId("sitescore-batch-table")).toHaveTextContent("82");
     expect(screen.getByTestId("sitescore-batch-table")).toHaveTextContent("76");
+    const batchCandidate = screen.getByRole("button", { name: /信義松仁候選點.*NT\$58,000/ });
+    expect(batchCandidate).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /中壢中原候選點.*—/ })).toBeInTheDocument();
   });
 
   it("keeps comparison evidence and recommendation priority in one dense workspace", () => {
