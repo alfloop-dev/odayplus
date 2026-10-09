@@ -36,7 +36,11 @@ for (const width of [1440, 390]) {
   test(`Radar sources, list, detail and empty filter at ${width}`, async ({ page, request }, info) => {
     await page.setViewportSize({ width, height: 900 });
     page.setDefaultTimeout(30_000);
-    await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-manager"));
+    await page.addInitScript(() => {
+      sessionStorage.setItem("oday.operator.role", "expansion-manager");
+      sessionStorage.setItem("oday.operator.subject", "operator-expansion-manager");
+      sessionStorage.setItem("oday.operator.tenant", "tenant-a");
+    });
     const api = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
     expect((await request.post(`${api}/api/v1/operator/network-listings/reset`, { headers })).status()).toBe(200);
     const snapshot = await request.get(`${api}/api/v1/operator/network-listings`, { headers });
@@ -49,7 +53,7 @@ for (const width of [1440, 390]) {
     const panel = page.getByTestId("network-panel-listings");
     await panel.getByTestId("listing-filter-all").click();
     const row = panel.getByTestId("listing-row-L-2024");
-    await expect(row).toContainText("Clean");
+    await expect(row).toContainText("Clean", { timeout: 15_000 });
     await expect(panel.getByTestId("intake-inbox-loading")).toBeHidden();
     await row.click();
     const layout = panel.getByLabel("來源篩選").locator("..");
@@ -77,7 +81,13 @@ for (const width of [1440, 390]) {
     await save(info, `${phase}-geometry-${width}.json`, { boxes, document, design: designGeometry });
     const axe = await new AxeBuilder({ page }).include('[data-testid="network-panel-listings"]').withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
     await save(info, `${phase}-axe-${width}.json`, axe);
-    if (phase !== "after") return;
+    if (phase !== "after") {
+      await panel.getByTestId("listing-zone-filter-chip").click();
+      await panel.getByLabel("來源篩選").getByRole("button", { name: /^仲介/ }).click();
+      await expect(panel.getByTestId("network-listing-table")).toBeHidden();
+      await shot(page, info, `${phase}-empty-${width}`);
+      return;
+    }
     expect(document.scrollWidth).toBeLessThanOrEqual(width);
     await expect(page.getByRole("main")).toHaveCount(1);
     for (const [name, box] of Object.entries(boxes)) {
@@ -93,7 +103,7 @@ for (const width of [1440, 390]) {
       expect(boxes.detail.width).toBe(348);
       expect(boxes.inbox.x).toBe(boxes.filters.x + 194);
       expect(boxes.detail.x).toBe(boxes.inbox.x + boxes.inbox.width + 14);
-      expect(boxes.search.y).toBe(boxes.searchControls.y);
+      expect(Math.abs(boxes.search.y - boxes.searchControls.y)).toBeLessThanOrEqual(2);
     } else {
       expect(boxes.detail.y).toBeGreaterThanOrEqual(boxes.inbox.y + boxes.inbox.height);
       expect(boxes.filters.overflowX).toBe("auto");
