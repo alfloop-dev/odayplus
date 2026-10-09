@@ -28,10 +28,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from models.shared_ml.production_runtime import ProductionModelRuntimeError
-from modules.opsboard.application.network_read_scope import scoped_audit_events, visible_candidate_ids
+from modules.opsboard.application.network_read_scope import (
+    scoped_audit_events,
+    visible_candidate_ids,
+)
 from modules.sitescore.application.reporting import SiteScoreReportService
-from shared.auth import Principal
 from modules.sitescore.domain.scoring import SiteScoreFeatureInput, SiteScoreReport
+from shared.auth import Principal
 
 MODEL_VERSION = "SiteScore v2.3"
 

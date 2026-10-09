@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from apps.api.app.routes._common import reset_allowed_guard
 from apps.api.app.routes.operator_modules.live_service import resolve_service
+from modules.opsboard.application.network_read_scope import project_review_snapshot
 from modules.opsboard.application.network_reviews import (
     DECISION_ACTIONS,
     NetworkReviewConflict,
@@ -39,7 +40,6 @@ from modules.opsboard.application.network_reviews import (
     NetworkReviewRuntimeUnavailable,
     NetworkReviewService,
 )
-from modules.opsboard.application.network_read_scope import project_review_snapshot
 from shared.auth import Role
 
 

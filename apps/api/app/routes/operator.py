@@ -1041,12 +1041,17 @@ def create_operator_router(
             )
 
     # Network listing intake — read/write paths for R4 Listing Radar.
+    network_listing_service = NetworkListingService(
+        listing_repository=operator_listing_repository,
+        intake_repository=shared_intake_repo,
+    )
+
+    def local_network_read_scope_snapshot(request: Request) -> dict[str, Any]:
+        return network_listing_service.snapshot(tenant_id=request.state.operator_principal.tenant_id)
+
     router.include_router(
         create_network_listings_sub_router(
-            NetworkListingService(
-                listing_repository=operator_listing_repository,
-                intake_repository=shared_intake_repo,
-            ),
+            network_listing_service,
             require_view_permission_fn=require_operator_permission(
                 "listing", Action.VIEW, engine=authz_engine
             ),
@@ -1063,6 +1068,7 @@ def create_operator_router(
     router.include_router(
         create_network_scoring_sub_router(
             NetworkScoringService(),
+            read_scope_snapshot_fn=local_network_read_scope_snapshot,
             require_view_permission_fn=require_operator_permission(
                 "sitescore", Action.VIEW, engine=authz_engine
             ),
@@ -1080,6 +1086,7 @@ def create_operator_router(
     router.include_router(
         create_network_review_sub_router(
             NetworkReviewService(),
+            read_scope_snapshot_fn=local_network_read_scope_snapshot,
             require_view_permission_fn=require_operator_permission(
                 "sitescore", Action.VIEW, engine=authz_engine
             ),

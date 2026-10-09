@@ -246,6 +246,15 @@ Network review controls use the canonical `expansion-manager` persona backed by
 API still requires `sitescore:approve` and derives the decision actor from the
 verified principal, ignoring caller-supplied actor fields. No grants are added.
 
+Network reader scope is applied to the complete envelope, not only its listings:
+child candidates/reviews must join an allowed authoritative listing, and scoring
+cards, comparison results, decisions and counts derive only from allowed records.
+A whole-zone HeatZone summary needs its own scope evidence; one visible listing
+cannot authorize a brand/region/store-wide aggregate. Missing restricted-axis
+metadata fails closed. Unscoped pipeline steps/comparison prose and free-form
+cross-object audit metadata are withheld from this reader rather than presented
+as scoped progress. The existing non-viewer flows and model refusal remain intact.
+
 Identity role editing remains the existing tenant-scoped `/operator/users` API
 and atomic `identity.account.roles_updated` audit transaction. There is **no
 automatic grant**, bootstrap expansion, direct SQL grant, scope enlargement or

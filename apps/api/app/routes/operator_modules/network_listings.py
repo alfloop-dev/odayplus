@@ -33,7 +33,10 @@ from modules.opsboard.application.network_listings import (
     NetworkListingPolicyError,
     NetworkListingService,
 )
-from modules.opsboard.application.network_read_scope import project_listing_snapshot
+from modules.opsboard.application.network_read_scope import (
+    project_intake_record,
+    project_listing_snapshot,
+)
 from shared.audit import InMemoryAuditLog
 from shared.auth import Principal, Role
 
@@ -524,6 +527,8 @@ def create_network_listings_sub_router(
             intakes = [intake for intake in intakes if is_record_owner(principal, intake)]
         if principal.has_role(Role.OPERATOR_VIEWER):
             intakes = [i for i in intakes if intake_resource_in_scope(principal, i)]
+        if principal.has_role(Role.OPERATOR_VIEWER):
+            intakes = [project_intake_record(intake) for intake in intakes]
         visible = [mask_intake(principal, intake) for intake in intakes]
         processing_stages = {
             "SUBMITTED",
@@ -626,6 +631,8 @@ def create_network_listings_sub_router(
                 audit_log=audit_log,
                 correlation_id=correlation_id,
             )
+            if principal.has_role(Role.OPERATOR_VIEWER):
+                intake = project_intake_record(intake)
             return mask_intake(principal, intake)
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
