@@ -28,8 +28,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from shared.auth import Role
-
 from apps.api.app.routes._common import reset_allowed_guard
 from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.network_reviews import (
@@ -41,6 +39,7 @@ from modules.opsboard.application.network_reviews import (
     NetworkReviewRuntimeUnavailable,
     NetworkReviewService,
 )
+from shared.auth import Role
 
 
 class ReviewDecisionPayload(BaseModel):

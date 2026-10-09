@@ -97,7 +97,8 @@ def test_go_decision_syncs_five_records_and_survives_reload() -> None:
     assert body["decision"]["finalDecision"] == "Approved"
     assert body["decision"]["mappedStatus"] == "approved"
     assert body["auditEvent"]["action"] == "review.decision"
-    assert body["auditEvent"]["actor"] == REVIEWER_HEADERS["x-subject-id"]
+    assert body["auditEvent"]["actorName"] == REVIEWER_HEADERS["x-subject-id"]
+    assert body["decision"]["actor"] == REVIEWER_HEADERS["x-subject-id"]
     assert body["auditEvent"]["actorRoleId"] == "site_reviewer"
     assert body["decision"]["actorRoleId"] == "site_reviewer"
     assert body["records"] == {
@@ -362,7 +363,7 @@ def test_decision_uses_verified_role_not_client_actor_fields() -> None:
     )
     assert response.status_code == 200, response.text
     assert response.json()["auditEvent"]["actorRoleId"] == "site_reviewer"
-    assert response.json()["auditEvent"]["actor"] == REVIEWER_HEADERS["x-subject-id"]
+    assert response.json()["auditEvent"]["actorName"] == REVIEWER_HEADERS["x-subject-id"]
 
 
 def test_client_reviewer_claim_cannot_promote_read_only_roles() -> None:
