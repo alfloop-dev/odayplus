@@ -464,6 +464,73 @@ remote CI and independent review must bind the newly submitted exact PR head;
 old CI receipts cannot approve it. No grant/deployment/source/model operation
 or F11 self-approval was performed. Live obligations below remain outstanding.
 
+## Deny-probe safety repair — 2026-10-09
+
+Owner repair dispatch and PR1435 comment6076850380 identified that the old
+read-admin execution probe sent `{}` to `network-scoring/score`. That is a valid
+`NetworkScoringBatchPayload` with `candidateIds=None`, not an invalid DTO; if
+authorization regressed it could score all candidates. A non-existent review id
+also cannot itself guarantee no handler execution. No live business negative
+mutation or viewer grant was performed while assessing or repairing this issue.
+
+Initial anchor: `87a1d922b797`; final implementation/tested clean anchor:
+`1ec3698eae8d`. All four negative probes now violate typed DTO fields: intake
+`url={}`, review `decision={}`, batch `candidateIds={}`, governance
+`approvalId={}/action={}`. Each still requires authorization **403**; validation
+422 blocks the gate and is never accepted as permission-denial proof. Existing
+account/tenant/role binding, canonical finite grants, explicit role-change and
+bootstrap audits, foreign-tenant policy refusal/full unchanged readback, scoped
+positive reads, wrong-persona and durable logout/password checks are preserved.
+
+The regression forwards the actual bodies emitted by the existing gate into the
+real four router factories and DTOs. For each of the three allowed read-admin
+role sets, intact real RBAC guards return403 with four deny audit events; bypassed
+guards return422 with no manufactured authorization audit, and all four deny
+checks fail the gate. Endpoint/resolver/service spies show **zero handler and
+service calls**, including the wrapped real `NetworkScoringService`; its model
+runtime, listing repository and SiteScore repository also receive zero calls.
+The offline sensitivity control then bypasses the guard and sends the old `{}`:
+it reaches the handler and stubbed `score_batch(candidate_ids=None)`, proving the
+spy is live and the predecessor payload unsafe. The control stubs that method
+before invocation; no actual scoring/provider/persistence or live state executes.
+This reuses the existing gate test client, not a parallel authentication harness.
+
+Declared focused offline commands (recorded through canonical status before tests):
+
+```sh
+timeout 180 "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q \
+  tests/e2e/test_live_e2e_gate_dev_admin.py \
+  tests/security/test_operator_read_authorization.py \
+  --junitxml="$ORCH_SCRATCH_DIR/safety-complete.xml"
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check \
+  delivery_toolchain/e2e/check_live_e2e_gate.py tests/e2e/test_live_e2e_gate_dev_admin.py
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check
+```
+
+All four original terminal exits **0**. JUnit records **135 tests**, zero
+failures/errors/skips (21.289 seconds), including six real-router cases. Pytest's
+existing quiet configuration emits no final count; the count above is read from
+that completed JUnit, not inferred from process presence or a rerun. Final log,
+JUnit, lint and boundary receipts are `safety-complete.log/.xml`,
+`safety-ruff.log` and `safety-boundaries.log` beside this README.
+
+Initial development invocations failed: lint import formatting; then six test
+setup assertions expecting eagerly flattened FastAPI routes; then three observed
+handlers instead of four because the review route has a path parameter. The test
+now instruments endpoints before lazy router inclusion and resolves the review
+path parameter. The six-case diagnostic run then exited0, followed by the final
+135-case run after adding the offline sensitivity control. These earlier failures
+are not claimed as passing evidence; their logs remain in worker scratch.
+
+CI [37901190137](https://github.com/alfloop-dev/odayplus/actions/runs/37901190137)
+binds **only** prior head `4135d7b9bd2aae60dc3f91084453796e5935f3da` (still
+in progress when checked at08:07 UTC). It is not safety-repair head CI success.
+The following evidence-only commit changes no tested code inputs. Resubmission
+must obtain required CI and independent review on its exact new head. There is
+no gate waiver, live business probe, viewer grant, deployment/source/model
+operation, full-product claim or F11 self-approval. All live holds below remain.
+
 ## Outstanding live acceptance (not completed here)
 
 After required CI, independent exact-head review, merge and admitted deployment,
