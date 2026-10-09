@@ -506,6 +506,13 @@ else:
         reason: str = Field(..., min_length=3, max_length=4000)
         expected_resume_at: DateTimeString
 
+        @field_validator("reason")
+        @classmethod
+        def nonblank_reason(cls, value: str) -> str:
+            if len(value.strip()) < 3:
+                raise ValueError("pause reason must contain at least 3 nonblank characters")
+            return value.strip()
+
     class SlaReceipt(BaseModel):
         sla_instance_id: UuidString
         state: SlaState
@@ -1718,6 +1725,22 @@ else:
         def linked_intake(value: dict[str, Any]) -> dict[str, Any] | None:
             intake_id = value.get("intake_id")
             return active.intakes.get(intake_id) if intake_id else None
+
+        def require_sla_scope(principal: Principal, value: dict[str, Any]) -> None:
+            # Child tenant metadata alone must not authorize a linked Intake
+            # outside the actor's brand/region/store/area/heat-zone scope.
+            # A dangling link cannot fall back to the less-specific child row.
+            if value.get("intake_id"):
+                intake = linked_intake(value)
+                if intake is None:
+                    raise HTTPException(403, "SCOPE_DENIED")
+                if intake.get("scope", {}).get("tenant_id") != principal.tenant_id:
+                    raise HTTPException(403, "TENANT_SCOPE_DENIED")
+                require_intake_scope(principal, intake)
+            else:
+                # Historical standalone SLAs retain their own scope envelope.
+                # Missing axes fail closed for restricted principals.
+                require_intake_scope(principal, value)
 
         def require_actor(request: Request) -> str:
             principal = get_principal(request)
@@ -4278,6 +4301,7 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
+            require_sla_scope(principal, current)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
@@ -4299,8 +4323,21 @@ else:
                 updated["audit_event_id"] = str(uuid4())
                 updated["correlation_id"] = correlation_id or str(uuid4())
                 updated["receipt"] = f"RCPT-SLA-PAUSE-{str(uuid4())[:8].upper()}"
-
-
+                updated["pause_intervals"] = [
+                    *updated.get("pause_intervals", []),
+                    {
+                        "pause_interval_id": updated["active_pause_interval_id"],
+                        "started_at": updated["updated_at"],
+                        "expected_resume_at": body.expected_resume_at,
+                        "reason": body.reason,
+                        "actor_subject_id": actor_id,
+                        "state_before_pause": updated["state_before_pause"],
+                        "version_after_pause": updated["version"],
+                        "audit_event_id": updated["audit_event_id"],
+                        "correlation_id": updated["correlation_id"],
+                        "ended_at": None,
+                    },
+                ]
                 return updated, 200
 
             val, code, was_replayed = replay(
@@ -4346,6 +4383,7 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
+            require_sla_scope(principal, current)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
@@ -4362,12 +4400,26 @@ else:
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 resume_state = current.pop("state_before_pause", "ON_TRACK")
+                interval_id = current.get("active_pause_interval_id")
                 updated = generic_mutate(active.slas, sla_instance_id, resume_state, actor_id)
                 updated["active_pause_interval_id"] = None
                 updated["audit_event_id"] = str(uuid4())
                 updated["correlation_id"] = correlation_id or str(uuid4())
-
-
+                for interval in updated.get("pause_intervals", []):
+                    if interval.get("pause_interval_id") == interval_id and interval.get("ended_at") is None:
+                        interval.update({
+                            "ended_at": updated["updated_at"],
+                            "resume_reason": body.reason,
+                            "resumed_by_subject_id": actor_id,
+                            "version_after_resume": updated["version"],
+                            "resume_audit_event_id": updated["audit_event_id"],
+                            "resume_correlation_id": updated["correlation_id"],
+                        })
+                        elapsed = datetime.fromisoformat(updated["updated_at"].replace("Z", "+00:00")) - datetime.fromisoformat(interval["started_at"].replace("Z", "+00:00"))
+                        updated["paused_duration_seconds"] += max(0, int(elapsed.total_seconds()))
+                        break
+                # Legacy rows without an interval retain the existing total;
+                # never fabricate a start time or elapsed duration for them.
                 return updated, 200
 
             val, code, was_replayed = replay(
