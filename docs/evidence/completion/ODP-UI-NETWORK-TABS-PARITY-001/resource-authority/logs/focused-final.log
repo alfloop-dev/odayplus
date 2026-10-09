@@ -1,0 +1,275 @@
+
+> @oday-plus/web@0.1.0 test
+> vitest run features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx
+
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+ ❯ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx (33 tests | 1 failed) 4169ms
+     × supersedes a cached claim receipt after a real container 409 refresh without losing the transfer draft 1279ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > supersedes a cached claim receipt after a real container 409 refresh without losing the transfer draft
+Error: [2mexpect([22m[31melement[39m[2m).toHaveTextContent()[22m
+
+Expected element to have text content:
+[32m  v9[39m
+Received:
+[31m  v8[39m
+
+Ignored nodes: comments, script, style
+[36m<html>[39m
+  [36m<head />[39m
+  [36m<body>[39m
+    [36m<div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"_intakeDetailLayer_eb8a11"[39m
+        [33mdata-testid[39m=[32m"intake-detail-layer"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"收件處理詳情"[39m
+          [33mclass[39m=[32m"_intakeFullPage_eb8a11"[39m
+          [33mdata-screen-label[39m=[32m"Intake 收件處理詳情頁"[39m
+          [33mdata-testid[39m=[32m"intake-detail-dialog"[39m
+        [36m>[39m
+          [36m<header[39m
+            [33mclass[39m=[32m"_intakeFullPageHeader_eb8a11"[39m
+            [33mdata-testid[39m=[32m"intake-detail-header"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33mclass[39m=[32m"_secondaryButton_eb8a11"[39m
+              [33mdata-testid[39m=[32m"intake-return-button"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0m← 返回收件匣[0m
+            [36m</button>[39m
+            [36m<div>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"_dialogTitle_eb8a11"[39m
+              [36m>[39m
+                [0m收件處理詳情 Intake Processing Detail[0m
+              [36m</div>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"_intakeHeaderChips_eb8a11"[39m
+              [36m>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"_rowId_eb8a11"[39m
+                  [33mdata-testid[39m=[32m"intake-detail-id"[39m
+                [36m>[39m
+                  [0mIN-PRODUCTION-101[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"_chip_eb8a11"[39m
+                  [33mdata-testid[39m=[32m"intake-detail-stage"[39m
+                  [33mdata-tone[39m=[32m"watch"[39m
+                [36m>[39m
+                  [0m待人工覆核[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"_chip_eb8a11"[39m
+                  [33mdata-testid[39m=[32m"intake-detail-match"[39m
+                  [33mdata-tone[39m=[32m"watch"[39m
+                [36m>[39m
+                  [0m疑似重複[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"_chip_eb8a11"[39m
+                  [33mdata-tone[39m=[32m"good"[39m
+                [36m>[39m
+                  [0m已核准擷取[0m
+                [36m</span>[39m
+                [36m<span>[39m
+                  [0m版本 v[0m
+                  [0m71[0m
+                [36m</span>[39m
+              [36m</div>[39m
+              [36m<a[39m
+                [33mclass[39m=[32m"_deepLink_eb8a11"[39m
+                [33mdata-testid[39m=[32m"intake-detail-deeplink"[39m
+                [33mhref[39m=[32m"/intake/IN-PRODUCTION-101?selected=IN-PRODUCTION-101&dialog=detail&decision=transfer"[39m
+              [36m>[39m
+                [0m/intake/IN-PRODUCTION-101?selected=IN-PRODUCTION-101&dialog=detail&decision=transfer[0m
+                [0m · 可直接開啟、重新載入與返回[0m
+              [36m</a>[39m
+            [36m</div>[39m
+            [36m<button[39m
+              [33mclass[39m=[32m"_secondaryButton_eb8a11"[39m
+              [33mdata-testid[39m=[32m"intake-refresh-button"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0m重新整理[0m
+            [36m</button>[39m
+          [36m</header>[39m
+          [36m<section[39m
+            [33mclass[39m=[32m"_sectionBox_eb8a11"[39m
+            [33mdata-testid[39m=[32m"intake-submission-summary"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"_sectionHead_eb8a11"[39m
+            [36m>[39m
+              [0m送件摘要 SUBMISSION SUMMARY[0m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"_metaGrid_eb8a11"[39m
+            [36m>[39m
+              [36m<div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaCaption_eb8a11"[39m
+                [36m>[39m
+                  [0m原始 URL[0m
+                [36m</div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaValue_eb8a11"[39m
+                [36m>[39m
+                  [0mhttps://source.example/listing/101[0m
+                [36m</div>[39m
+              [36m</div>[39m
+              [36m<div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaCaption_eb8a11"[39m
+                [36m>[39m
+                  [0mCanonical URL[0m
+                [36m</div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaValue_eb8a11"[39m
+                [36m>[39m
+                  [0mhttps://canonical.example/listing/101[0m
+                [36m</div>[39m
+              [36m</div>[39m
+              [36m<div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaCaption_eb8a11"[39m
+                [36m>[39m
+                  [0m來源提供者 ID／政策[0m
+                [36m</div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaValue_eb8a11"[39m
+                [36m>[39m
+                  [0msrc-591 · 核准單頁讀取[0m
+                [36m</div>[39m
+              [36m</div>[39m
+              [36m<div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaCaption_eb8a11"[39m
+                [36m>[39m
+                  [0m提供者物件 ID[0m
+                [36m</div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaValue_eb8a11"[39m
+                [36m>[39m
+                  [0mUNAVAILABLE[0m
+                [36m</div>[39m
+              [36m</div>[39m
+              [36m<div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaCaption_eb8a11"[39m
+                [36m>[39m
+                  [0m送件時間 Submitted At[0m
+                [36m</div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaValue_eb8a11"[39m
+                [36m>[39m
+                  [0mUNAVAILABLE[0m
+                [36m</div>[39m
+              [36m</div>[39m
+              [36m<div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaCaption_eb8a11"[39m
+                [36m>[39m
+                  [0m擷取時間 Captured At[0m
+                [36m</div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaValue_eb8a11"[39m
+                  [33mdata-testid[39m=[32m"intake-captured-at"[39m
+                [36m>[39m
+                  [0m2026-07-26T10:00:00Z[0m
+                [36m</div>[39m
+              [36m</div>[39m
+              [36m<div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"_metaCaption_eb8a11"[39m
+                [36m>[39m
+        ...
+ ❯ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx:667:79
+    665|     expect(transferHeaders[0]!.get("if-match")).toBe('W/"8"');
+    666|     fireEvent.click(screen.getByTestId("transfer-conflict-refresh-btn"…
+    667|     await waitFor(() => expect(screen.getByTestId("transfer-record-ver…
+       |                                                                               ^
+    668|     expect(screen.getByTestId("transfer-record-owner")).toHaveTextCont…
+    669|     expect(screen.getByTestId("transfer-handoff-note")).toHaveValue("p…
+ ❯ runWithExpensiveErrorDiagnosticsDisabled ../../node_modules/@testing-library/dom/dist/config.js:47:12
+ ❯ checkCallback ../../node_modules/@testing-library/dom/dist/wait-for.js:124:77
+ ❯ Timeout.checkRealTimersCallback ../../node_modules/@testing-library/dom/dist/wait-for.js:118:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 47 passed (48)
+   Start at  21:47:32
+   Duration  7.37s (transform 2.48s, setup 0ms, import 3.52s, tests 4.36s, environment 1.02s)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+npm error workspace @oday-plus/web@0.1.0
+npm error location /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+npm error command failed
+npm error command sh -c vitest run features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx

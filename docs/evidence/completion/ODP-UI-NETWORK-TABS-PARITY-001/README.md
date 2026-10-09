@@ -313,6 +313,22 @@ missing-uv API-suite receipt remain. This does not prove PostgreSQL/live deploym
 production WORM/auth, full server restart, split readiness or independent VDC.
 **Still not ready for full-scope resubmission.**
 
+## Intake resource-token / conflict-refresh increment
+
+[`resource-authority/README.md`](resource-authority/README.md) records anchors
+`356abaeab220` and `7f16fca8c36c`: Transfer/Pause now display resource-specific
+versions, reject mismatched receipts/unsafe tokens and disable unresolved-conflict
+writes. Successful rereads supersede cached claim/resume receipts; failed rereads
+retain conflict/refresh and drafts. Controlled mounted regressions prove v8→409→
+refresh→v9 requests, not backend durability. Real local API 1440/390 deep-link
+probes expose fresh Operator Intake's absent Assignment/SLA IDs/versions, with
+four unavailable-state screenshots and no resource POST. They are **not** modal
+repair/design pairs or successful Transfer/Pause acceptance. Full web790,
+browser2, lint/typecheck/boundaries/inventory125-18 have original exit0 receipts;
+early focused failures are retained. Genuine provisioning/read-model/target-scope
+integration must precede modal acceptance; no ID/version/production evidence was
+invented. **Not ready for full-scope resubmission.**
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped

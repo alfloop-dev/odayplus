@@ -56,6 +56,9 @@ for (const width of [1440, 390]) {
       for (const action of ["claim", "transfer", "pause", "resume"]) {
         await expect(page.getByTestId(`asg-btn-${action}`)).toHaveCount(0);
       }
+      // Capture the unavailable authority block itself, including on mobile
+      // where it lies below the continuous detail's submission summary.
+      await page.getByTestId("assignment-sla-summary").scrollIntoViewIfNeeded();
       const geometry = await page.getByTestId("assignment-sla-summary").evaluate((element) => {
         const box = element.getBoundingClientRect();
         return { width: innerWidth, documentScrollWidth: document.documentElement.scrollWidth, summary: { x: box.x, width: box.width, scrollWidth: element.scrollWidth } };
