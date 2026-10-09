@@ -491,6 +491,8 @@ describe("AssistedIntakeSection production container", () => {
     expect(nav.state.search).toContain(`selected=${record.id}`);
     expect(nav.state.search).not.toContain("dialog=detail");
     expect(nav.state.replaceCalls.at(-1)).toContain("selected=");
+    expect(new URLSearchParams(nav.state.search).get("ws")).toBe("network");
+    expect(new URLSearchParams(nav.state.search).get("tab")).toBe("radar");
     expect(nav.state.pushCalls).toHaveLength(1);
   });
 

@@ -360,7 +360,9 @@ export function AssistedIntakeSection({
   }, [selected, gateKey, gateSnapshots]);
 
   function closeDialog() {
-    if (durableRouteSelectedId) {
+    // A workspace detail can be reloaded without its prior local Radar tab
+    // override. Return must select the inbox explicitly, just like /intake/:id.
+    if (durableRouteSelectedId || (selectedId && dialog === "detail")) {
       router.replace(buildInboxReturnHref({
         ...urlState,
         selectedId,
