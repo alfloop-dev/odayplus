@@ -350,6 +350,63 @@ describe("Cloud Run HTML login redirects", () => {
   );
 });
 
+describe("Cloud Run alias hostnames keep the form login on their own host", () => {
+  const publicOrigin = "https://oday-web-767864276141.asia-east1.run.app";
+
+  function aliasFormRequest(host: string, origin: string, password = "Admin12345678!") {
+    const request = new NextRequest("https://0.0.0.0:3000/login", {
+      method: "POST",
+      headers: {
+        accept: "text/html",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ username: "admin", password, returnTo: "/operator?view=admin" }).toString(),
+    });
+    request.headers.set("host", host);
+    request.headers.set("origin", origin);
+    request.headers.set("x-forwarded-for", IP);
+    return request;
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("ODP_WEB_BASE_URL", publicOrigin);
+    vi.stubEnv("ODP_AUTH_MODE", "local");
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    installThrottle();
+    setIdentityStoreForTests(new MockIdentityStore(ACCOUNTS));
+  });
+
+  it.each([
+    "oday-web-2l6wuyl67q-de.a.run.app",
+    "candidate-aa3705ec5a2f7909---oday-web-2l6wuyl67q-de.a.run.app",
+  ])("signs in on %s and redirects back to the same host", async (host) => {
+    const response = await POST(aliasFormRequest(host, `https://${host}`));
+    expect(response.status).toBe(303);
+    const destination = new URL(response.headers.get("location")!);
+    expect(destination.origin).toBe(`https://${host}`);
+    expect(destination.pathname).toBe("/operator");
+    expect(response.headers.get("set-cookie")).toContain(webSessionCookieName);
+  });
+
+  it("returns a failed alias login to the alias /login with the error", async () => {
+    const host = "oday-web-2l6wuyl67q-de.a.run.app";
+    const response = await POST(aliasFormRequest(host, `https://${host}`, "wrong-password-xxx"));
+    const destination = new URL(response.headers.get("location")!);
+    expect(destination.origin).toBe(`https://${host}`);
+    expect(destination.pathname).toBe("/login");
+    expect(destination.searchParams.get("error")).toBe("AUTH_INVALID_CREDENTIALS");
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("still refuses a cross-site form aimed at an alias host", async () => {
+    const response = await POST(
+      aliasFormRequest("oday-web-2l6wuyl67q-de.a.run.app", "https://attacker.example"),
+    );
+    expect(response.status).toBe(403);
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // §2  Account Threshold — Formal TypeScript Rate Limit (§6.4)
 // ═══════════════════════════════════════════════════════════════════════════

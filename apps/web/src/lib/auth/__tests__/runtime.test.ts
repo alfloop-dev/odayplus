@@ -5,6 +5,7 @@ import {
   resolveAuthMode,
   resolveWebBaseUrl,
   safeReturnTo,
+  trustedRequestOrigin,
   verifyCsrfOrigin,
 } from "../runtime";
 
@@ -190,5 +191,67 @@ describe("web auth runtime policy", () => {
         canonicalEnv,
       ),
     ).toBe(false);
+  });
+});
+
+describe("Cloud Run hostname aliases", () => {
+  const cloudRunEnv = { ODP_WEB_BASE_URL: "https://oday-web-767864276141.asia-east1.run.app" };
+  const internal = { origin: "http://0.0.0.0:3000" };
+  const formFrom = (host: string, origin: string) => ({
+    headers: new Headers({ host, origin }),
+    nextUrl: internal,
+  });
+
+  it.each([
+    "oday-web-767864276141.asia-east1.run.app",
+    "oday-web-2l6wuyl67q-de.a.run.app",
+    "candidate-aa3705ec5a2f7909---oday-web-2l6wuyl67q-de.a.run.app",
+    "candidate-aa3705ec5a2f7909---oday-web-767864276141.asia-east1.run.app",
+  ])("treats %s as this service and accepts its same-origin form", (host) => {
+    expect(trustedRequestOrigin({ headers: new Headers({ host }) }, cloudRunEnv)).toBe(`https://${host}`);
+    expect(verifyCsrfOrigin(formFrom(host, `https://${host}`), cloudRunEnv)).toBe(true);
+  });
+
+  it("still rejects a cross-site page posting to an alias host", () => {
+    expect(
+      verifyCsrfOrigin(formFrom("oday-web-2l6wuyl67q-de.a.run.app", "https://attacker.example"), cloudRunEnv),
+    ).toBe(false);
+  });
+
+  it("rejects an Origin that is a different alias than the Host the browser addressed", () => {
+    expect(
+      verifyCsrfOrigin(
+        formFrom("oday-web-767864276141.asia-east1.run.app", "https://oday-web-2l6wuyl67q-de.a.run.app"),
+        cloudRunEnv,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "attacker.example",
+    "other-service-767864276141.asia-east1.run.app",
+    "oday-web-999.asia-east1.run.app",
+    "oday-web-767864276141.us-central1.run.app",
+    "oday-web-2l6wuyl67q-de.a.run.app.attacker.example",
+  ])("does not trust Host %s even when Origin matches it", (host) => {
+    expect(trustedRequestOrigin({ headers: new Headers({ host }) }, cloudRunEnv)).toBeNull();
+    expect(verifyCsrfOrigin(formFrom(host, `https://${host}`), cloudRunEnv)).toBe(false);
+  });
+
+  it("ignores X-Forwarded-Host and derives no aliases for a custom domain", () => {
+    expect(
+      trustedRequestOrigin(
+        { headers: new Headers({ "x-forwarded-host": "oday-web-2l6wuyl67q-de.a.run.app" }) },
+        cloudRunEnv,
+      ),
+    ).toBeNull();
+    const customEnv = { ODP_WEB_BASE_URL: "https://ops.oday.plus" };
+    expect(trustedRequestOrigin({ headers: new Headers({ host: "ops.oday.plus" }) }, customEnv)).toBe(
+      "https://ops.oday.plus",
+    );
+    expect(
+      trustedRequestOrigin({ headers: new Headers({ host: "oday-web-2l6wuyl67q-de.a.run.app" }) }, customEnv),
+    ).toBeNull();
+    expect(trustedRequestOrigin({ headers: new Headers({ host: "ops.oday.plus" }) }, {})).toBeNull();
   });
 });

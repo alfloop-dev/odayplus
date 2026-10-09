@@ -154,6 +154,62 @@ function extractOrigin(urlOrOrigin: string): string | null {
   }
 }
 
+/**
+ * Cloud Run serves one Web service under several hostnames: the configured
+ * public URL (`<service>-<project-number>.<region>.run.app`), the legacy hash
+ * URL (`<service>-<hash>-<region-code>.a.run.app`) and tagged revision URLs
+ * (`<tag>---<either host>`) used to validate a candidate before traffic moves.
+ * A browser on any of them posts same-origin forms, and the session cookie is
+ * host-only (`__Host-`), so the sign-in flow must stay on the host it started
+ * on. Returns that origin when the request's own Host is one of this service's
+ * Cloud Run hostnames; otherwise null (callers fall back to the configured
+ * origin).
+ *
+ * Only the `Host` header is read: Cloud Run passes the hostname the browser
+ * used, while `X-Forwarded-Host` is client-controllable and ignored.
+ */
+export function trustedRequestOrigin(
+  request: { headers: Headers },
+  environment: Record<string, string | undefined> = process.env,
+): string | null {
+  const configured = environment.ODP_WEB_BASE_URL?.trim();
+  const host = request.headers.get("host")?.trim().toLowerCase();
+  if (!configured || !host) return null;
+
+  let configuredHost: string;
+  try {
+    const parsed = new URL(configured);
+    if (parsed.protocol !== "https:") return null;
+    configuredHost = parsed.host.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (host === configuredHost) return `https://${host}`;
+
+  // Aliases are derived only from a Cloud Run public URL of the form
+  // <service>-<project-number>.<region>.run.app; custom domains get none.
+  const match = /^([a-z0-9-]+?)-(\d+)\.([a-z0-9-]+)\.run\.app$/.exec(configuredHost);
+  if (!match) return null;
+  const [, service, projectNumber, region] = match;
+  const tag = "(?:[a-z0-9-]+---)?";
+  const aliases = [
+    new RegExp(`^${tag}${service}-${projectNumber}\\.${region}\\.run\\.app$`),
+    new RegExp(`^${tag}${service}-[a-z0-9]+-[a-z]{2,4}\\.a\\.run\\.app$`),
+  ];
+  return aliases.some((pattern) => pattern.test(host)) ? `https://${host}` : null;
+}
+
+/** Base URL for same-host redirects in the browser sign-in flow. */
+export function resolveRequestWebBaseUrl(
+  request: { headers: Headers; nextUrl: { origin: string } },
+  environment: Record<string, string | undefined> = process.env,
+): string {
+  return (
+    trustedRequestOrigin(request, environment) ??
+    resolveWebBaseUrl(request.nextUrl.origin, environment)
+  );
+}
+
 export function verifyCsrfOrigin(
   request: { headers: Headers; nextUrl?: { origin?: string; href?: string }; url?: string },
   environment: Record<string, string | undefined> = process.env,
@@ -199,6 +255,12 @@ export function verifyCsrfOrigin(
   } catch {
     // If canonical URL does not resolve in test mode
   }
+
+  // A form posted from a page on the very Cloud Run hostname it targets is
+  // same-origin; a cross-site page still fails because its Origin differs
+  // from the Host the browser addressed.
+  const selfOrigin = trustedRequestOrigin(request, environment);
+  if (selfOrigin) allowedOrigins.add(selfOrigin);
 
   return allowedOrigins.has(targetOrigin);
 }

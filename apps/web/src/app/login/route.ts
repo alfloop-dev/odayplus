@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import {
   isOidcEnabled,
   resolveAuthMode,
-  resolveWebBaseUrl,
+  resolveRequestWebBaseUrl,
   safeReturnTo,
   verifyCsrfOrigin,
 } from "../../lib/auth/runtime";
@@ -246,7 +246,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   ).catch(() => null);
   if (existingSession) {
     const response = NextResponse.redirect(
-      new URL(returnTo, resolveWebBaseUrl(request.nextUrl.origin)),
+      new URL(returnTo, resolveRequestWebBaseUrl(request)),
     );
     if (existingSession.legacyUpgrade) {
       response.cookies.set(
@@ -457,7 +457,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // HTML Form Submission: Redirect back to /login with error query
     const loginRedirectUrl = new URL(
       "/login",
-      resolveWebBaseUrl(request.nextUrl.origin),
+      resolveRequestWebBaseUrl(request),
     );
     loginRedirectUrl.searchParams.set("error", code);
     loginRedirectUrl.searchParams.set("returnTo", targetReturnTo);
@@ -641,7 +641,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   } else {
     const destination = new URL(
       targetReturnTo,
-      resolveWebBaseUrl(request.nextUrl.origin),
+      resolveRequestWebBaseUrl(request),
     );
     response = NextResponse.redirect(destination, 303);
     response.headers.set("cache-control", "no-store");
