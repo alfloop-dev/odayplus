@@ -501,6 +501,13 @@ else:
         handoff_note: str = Field(..., min_length=3, max_length=4000)
         due_at: DateTimeString | None = None
 
+        @field_validator("reason", "handoff_note")
+        @classmethod
+        def nonblank_handoff_text(cls, value: str) -> str:
+            if len(value.strip()) < 3:
+                raise ValueError("transfer reason and handoff note require 3 nonblank characters")
+            return value.strip()
+
     class SlaPauseRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
         reason: str = Field(..., min_length=3, max_length=4000)
@@ -1742,6 +1749,49 @@ else:
                 # Missing axes fail closed for restricted principals.
                 require_intake_scope(principal, value)
 
+        def require_assignment_scope(principal: Principal, value: dict[str, Any]) -> None:
+            # Assignment and SLA share the same linked-resource scope boundary.
+            require_sla_scope(principal, value)
+
+        def require_assignment_target(
+            request: Request, subject_id: str, role_id: str, resource: dict[str, Any],
+        ) -> None:
+            # Resolve fresh grants through the authentication identity store even
+            # on retries: disabled or revoked targets cannot receive work.
+            bundle = getattr(request.app.state, "persistence_bundle", None)
+            identities = getattr(bundle, "identity_store", None)
+            if identities is None:
+                raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
+            account = identities.find_account_by_id(subject_id)
+            tenant_id = get_principal(request).tenant_id
+            if account is None or not account.is_active or str(account.tenant_id) != tenant_id:
+                raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
+            role_grants = {
+                "reviewer": (Role.SITE_REVIEWER,),
+                "site-reviewer": (Role.SITE_REVIEWER,),
+                "siteReviewer": (Role.SITE_REVIEWER,),
+                "site_reviewer": (Role.SITE_REVIEWER,),
+                "expansion-manager": (Role.SITE_REVIEWER, Role.EXECUTIVE),
+                "expansionManager": (Role.SITE_REVIEWER, Role.EXECUTIVE),
+                "executive": (Role.EXECUTIVE,),
+                "steward": (Role.DATA_OWNER,),
+                "data-steward": (Role.DATA_OWNER,),
+                "dataSteward": (Role.DATA_OWNER,),
+                "data_owner": (Role.DATA_OWNER,),
+                "expansion-staff": (Role.EXPANSION_USER,),
+                "expansionStaff": (Role.EXPANSION_USER,),
+                "expansion_user": (Role.EXPANSION_USER,),
+            }
+            roles = identities.get_account_roles(subject_id)
+            target_scope = identities.get_account_scope(subject_id)
+            target = Principal(subject_id=subject_id, roles=roles, scope=target_scope)
+            if (
+                not target.has_role(*role_grants.get(role_id, ()))
+                or target.tenant_id != tenant_id
+                or not intake_resource_in_scope(target, resource)
+            ):
+                raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
+
         def require_actor(request: Request) -> str:
             principal = get_principal(request)
             if not principal.authenticated:
@@ -2874,6 +2924,7 @@ else:
                     raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
 
             actor_id = principal.subject_id
+            require_assignment_target(request, body.owner_subject_id, body.owner_role, current)
 
             def make() -> tuple[dict[str, Any], int]:
                 require_version(if_match, current["version"])
@@ -4038,9 +4089,7 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
-            intake = linked_intake(current)
-            if intake is not None:
-                require_intake_scope(principal, intake)
+            require_assignment_scope(principal, current)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -4132,9 +4181,7 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
-            intake = linked_intake(current)
-            if intake is not None:
-                require_intake_scope(principal, intake)
+            require_assignment_scope(principal, current)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -4147,6 +4194,10 @@ else:
             if not (is_manager or is_staff or is_steward):
                 raise HTTPException(403, "ROLE_DENIED")
 
+            require_assignment_target(
+                request, body.target_owner_subject_id, body.target_owner_role,
+                linked_intake(current) or current,
+            )
             prior = load_replay(
                 key,
                 body.model_dump(),
@@ -4233,9 +4284,7 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
-            intake = linked_intake(current)
-            if intake is not None:
-                require_intake_scope(principal, intake)
+            require_assignment_scope(principal, current)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"

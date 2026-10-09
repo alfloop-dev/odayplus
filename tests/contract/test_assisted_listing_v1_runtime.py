@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 from apps.api.oday_api.main import create_app
 from apps.api.oday_api.security import dependencies as auth_dependencies
 from modules.opsboard.auth import SigningKey, encode_compact_jwt
+from shared.auth import Role, Scope
+from shared.identity.store import Account
 
 HEADERS = {
     "X-Tenant-Id": "00000000-0000-0000-0000-000000000001",
@@ -51,7 +53,13 @@ def test_batch_partial_success_and_cursor_failure() -> None:
 
 
 def test_if_match_and_assignment_contract() -> None:
-    client = TestClient(create_app())
+    app = create_app()
+    identities = app.state.persistence_bundle.identity_store
+    target = "00000000-0000-0000-0000-000000000003"
+    identities.save_account(Account(UUID(target), UUID(HEADERS["X-Tenant-Id"]), "reviewer", "reviewer@example.invalid"))
+    identities.set_account_roles(target, [Role.SITE_REVIEWER])
+    identities.set_account_scope(target, Scope(tenant_id=HEADERS["X-Tenant-Id"]))
+    client = TestClient(app)
     intake = submit(client, "url-assignment-key-1").json()
     url = f'/api/v1/intakes/{intake["intake_id"]}/assignment'
     body = {"owner_subject_id": "00000000-0000-0000-0000-000000000003", "owner_role": "reviewer",

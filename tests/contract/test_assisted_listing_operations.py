@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import json
 import re
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +14,8 @@ from jsonschema import Draft202012Validator, FormatChecker
 from apps.api.app.routes.listings import AssistedIntakeStore
 from apps.api.oday_api.main import create_app
 from delivery_toolchain.openapi.generate_assisted_listing_intake_client import ARTIFACT
+from shared.auth import Role, Scope
+from shared.identity.store import Account
 
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 TENANT_B = "00000000-0000-0000-0000-000000000002"
@@ -124,6 +126,19 @@ HEADERS_B = {
 @pytest.fixture
 def client() -> TestClient:
     app = create_app()
+    # Explicit synthetic identity fixtures: shape-only UUIDs no longer confer
+    # assignment authority. These are not provisioned Operator/cloud accounts.
+    identities = app.state.persistence_bundle.identity_store
+    for subject, tenant, roles in (
+        (ACTOR_A, TENANT_A, [Role.SITE_REVIEWER, Role.EXPANSION_USER]),
+        (ACTOR_A_REVIEWER, TENANT_A, [Role.SITE_REVIEWER]),
+        (ACTOR_C, TENANT_A, [Role.SITE_REVIEWER]),
+        (ACTOR_B, TENANT_B, [Role.SITE_REVIEWER]),
+        (OWNER_STEWARD, TENANT_A, [Role.DATA_OWNER]),
+    ):
+        identities.save_account(Account(UUID(subject), UUID(tenant), subject, f"{subject}@example.invalid"))
+        identities.set_account_roles(subject, roles)
+        identities.set_account_scope(subject, Scope(tenant_id=tenant))
     return ContractTestClient(app)
 
 

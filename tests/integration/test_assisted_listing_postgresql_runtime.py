@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import copy
 import re
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from shared.auth import Role, Scope
+from shared.identity.store import Account
 from shared.infrastructure.persistence.assisted_listing_intake import (
     ALL_TABLES,
     AssistedIntakePersistenceConflict,
@@ -290,6 +294,15 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
     app = create_app(
         external_provider_validation=_live_provider_validation(),
     )
+    # Use the actual identity schema/store for assignment recipients. Explicit
+    # test accounts, not production/Operator provisioning or login acceptance.
+    with intake_blank_db.connect(autocommit=True) as connection:
+        connection.execute((REPO_ROOT / "infra/db/migrations/000011_identity_schema.sql").read_text())
+    identities = app.state.persistence_bundle.identity_store
+    for subject, role in ((OWNER_ID, Role.DATA_OWNER), (REVIEWER_ID, Role.SITE_REVIEWER)):
+        identities.save_account(Account(UUID(subject), UUID(TENANT_ID), subject, f"{subject}@example.invalid"))
+        identities.set_account_roles(subject, [role])
+        identities.set_account_scope(subject, Scope(tenant_id=TENANT_ID))
     client = TestClient(app)
     submit_key = f"production-submit-{uuid4()}"
     submitted = client.post(
@@ -365,6 +378,19 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
     )
     assert corrected.status_code == 201, corrected.text
     correction = corrected.json()
+    transfer_path = f"/api/v1/assignments/{assigned.json()['assignment_id']}/actions/transfer"
+    transfer_body = {
+        "target_owner_subject_id": REVIEWER_ID, "target_owner_role": "reviewer",
+        "reason": "Route to the independent reviewer",
+        "handoff_note": "Check the original source correction evidence",
+    }
+    transfer_headers = {
+        **_headers(ACTOR_ID, key=f"production-transfer-{uuid4()}"),
+        "If-Match": assigned.headers["ETag"],
+    }
+    transferred = client.post(transfer_path, json=transfer_body, headers=transfer_headers)
+    assert transferred.status_code == 200, transferred.text
+    assert transferred.json()["owner_subject_id"] == REVIEWER_ID
     app.state.persistence_bundle.engine.close()
 
     restarted = create_app(
@@ -378,6 +404,27 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
         )
         assert detail.status_code == 200, detail.text
         assert detail.json()["assignment_id"] == assigned.json()["assignment_id"]
+        assert detail.json()["assignment_version"] == transferred.json()["version"]
+        assert detail.json()["assignment_status"] == "TRANSFERRED"
+        assert detail.json()["assigned_to"] == REVIEWER_ID
+        # Read fresh SQL identity state on retries, not the original recipient
+        # cache or the UUID payload. Revocation denies without business mutation.
+        identities = restarted.state.persistence_bundle.identity_store
+        target_account = identities.find_account_by_id(REVIEWER_ID)
+        identities.save_account(replace(target_account, status="disabled"))
+        state = restarted.state.assisted_intake_store
+        state.refresh(TENANT_ID)
+        before = copy.deepcopy((state.intakes, state.assignments, state.replays))
+        denied = restarted_client.post(transfer_path, json=transfer_body, headers=transfer_headers)
+        assert denied.status_code == 403, denied.text
+        assert denied.json()["code"] == "ASSIGNMENT_SCOPE_DENIED"
+        state.refresh(TENANT_ID)
+        assert (state.intakes, state.assignments, state.replays) == before
+        identities.save_account(target_account)
+        transfer_replay = restarted_client.post(transfer_path, json=transfer_body, headers=transfer_headers)
+        assert transfer_replay.status_code == 200, transfer_replay.text
+        assert transfer_replay.json() == transferred.json()
+        assert transfer_replay.headers["ETag"] == transferred.headers["ETag"]
         assert detail.json()["sla_instance_id"] == sla_id
         assert detail.json()["sla_state"] == "PAUSED"
         assert detail.json()["sla_version"] == paused.json()["version"] == 24
@@ -417,6 +464,10 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
         try:
             reloaded.assisted_intake_store.refresh(TENANT_ID)
             assert reloaded.assisted_intake_store.slas[sla_id] == sla
+            assignment_id = assigned.json()["assignment_id"]
+            assert reloaded.assisted_intake_store.assignments[assignment_id]["owner_subject_id"] == REVIEWER_ID
+            assert reloaded.assisted_intake_store.assignments[assignment_id]["version"] == transferred.json()["version"]
+            assert reloaded.assisted_intake_store.intakes[receipt["intake_id"]]["assigned_to"] == REVIEWER_ID
         finally:
             reloaded.engine.close()
 
