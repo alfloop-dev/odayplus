@@ -33,10 +33,6 @@ import {
   newMergeIdempotencyKey,
   type ListingApiError,
 } from "./network/listingsClient";
-import { canMergeListing } from "./network/listingPermissions";
-import { CandidatePanel } from "./network/CandidatePanel";
-import { SiteScorePanel } from "./network/SiteScorePanel";
-import { ComparePanel } from "./network/ComparePanel";
 import { ReviewPanel } from "./network/ReviewPanel";
 import { NetworkShell } from "./network/NetworkShell";
 import type { RebalancePanelProps } from "./network/RebalancePanel";
@@ -149,6 +145,60 @@ const HeatZoneMergeSplitPanel = dynamic<HeatZoneMergeSplitPanelProps>(
           role="status"
         >
           熱區重組提案載入中…
+        </div>
+      );
+    },
+  },
+);
+
+const CandidatePanel = dynamic(
+  () => import("./network/CandidatePanel").then((mod) => mod.CandidatePanel),
+  {
+    loading: function CandidatePanelLoading() {
+      return (
+        <div
+          aria-live="polite"
+          className={styles.mapLoading}
+          data-testid="candidate-panel-loading"
+          role="status"
+        >
+          候選點面板載入中…
+        </div>
+      );
+    },
+  },
+);
+
+const SiteScorePanel = dynamic(
+  () => import("./network/SiteScorePanel").then((mod) => mod.SiteScorePanel),
+  {
+    loading: function SiteScorePanelLoading() {
+      return (
+        <div
+          aria-live="polite"
+          className={styles.mapLoading}
+          data-testid="sitescore-panel-loading"
+          role="status"
+        >
+          SiteScore 面板載入中…
+        </div>
+      );
+    },
+  },
+);
+
+const ComparePanel = dynamic(
+  () => import("./network/ComparePanel").then((mod) => mod.ComparePanel),
+  {
+    loading: function ComparePanelLoading() {
+      return (
+        <div
+          aria-live="polite"
+          className={styles.mapLoading}
+          data-testid="compare-panel-loading"
+          role="status"
+        >
+          比較面板載入中…
         </div>
       );
     },
