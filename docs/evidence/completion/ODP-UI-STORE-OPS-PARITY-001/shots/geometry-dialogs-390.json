@@ -1,0 +1,135 @@
+{
+  "triage": {
+    "actual": {
+      "x": 20,
+      "y": 217.3125,
+      "width": 350,
+      "height": 465.375,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "design": {
+      "x": 20,
+      "y": 231.6875,
+      "width": 350,
+      "height": 436.625,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "accessibilityViolations": []
+  },
+  "assign": {
+    "actual": {
+      "x": 20,
+      "y": 236.53125,
+      "width": 350,
+      "height": 426.9375,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "design": {
+      "x": 20,
+      "y": 273.234375,
+      "width": 350,
+      "height": 353.53125,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "accessibilityViolations": []
+  },
+  "action": {
+    "actual": {
+      "x": 20,
+      "y": 223.5625,
+      "width": 350,
+      "height": 452.875,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "design": {
+      "x": 20,
+      "y": 194.65625,
+      "width": 350,
+      "height": 510.671875,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "accessibilityViolations": []
+  },
+  "outcome": {
+    "actual": {
+      "x": 20,
+      "y": 106.984375,
+      "width": 350,
+      "height": 686.03125,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "design": {
+      "x": 20,
+      "y": 108.09375,
+      "width": 350,
+      "height": 683.8125,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "accessibilityViolations": []
+  },
+  "escalate": {
+    "actual": {
+      "x": 20,
+      "y": 216.796875,
+      "width": 350,
+      "height": 466.40625,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "design": {
+      "x": 20,
+      "y": 248.78125,
+      "width": 350,
+      "height": 402.4375,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "accessibilityViolations": []
+  },
+  "cameraPurpose": {
+    "actual": {
+      "x": 20,
+      "y": 211.171875,
+      "width": 350,
+      "height": 477.640625,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "design": {
+      "x": 20,
+      "y": 276.15625,
+      "width": 350,
+      "height": 347.671875,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "accessibilityViolations": []
+  },
+  "replyReview": {
+    "actual": {
+      "x": 20,
+      "y": 264.5625,
+      "width": 350,
+      "height": 370.875,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "design": {
+      "x": 20,
+      "y": 262.625,
+      "width": 350,
+      "height": 374.734375,
+      "scrollWidth": 350,
+      "radius": "14px"
+    },
+    "accessibilityViolations": []
+  }
+}

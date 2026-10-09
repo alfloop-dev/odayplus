@@ -496,6 +496,12 @@ jobs:
       - name: Install product E2E dependencies
         run: make product-e2e-bootstrap
 
+      # Fixture UI geometry/axe checks are supplemental, not part of the exact
+      # 18-spec/122-test business-acceptance receipt inventory. Fail this required
+      # lane on visual regressions without changing release authority or counts.
+      - name: Verify Store Ops Package 10 geometry and accessibility
+        run: npx playwright test --config tests/visual/operator-store-ops-parity.config.ts
+
       # A reviewed task PR must prove its current source through the complete
       # deterministic E2E runner. It must not manufacture production release
       # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while

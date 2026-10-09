@@ -423,11 +423,12 @@ test("ODP-OC-PROD-014 productization gate rejects iframe-only or non-API-backed 
     .getByRole("button", { exact: true, name: "完成 Triage" })
     .last()
     .click();
-  await expect(
-    page.locator('[data-screen-label="Dialog Triage"]'),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { exact: true, name: "Submit Triage" })
+  const triageDialog = page.locator('[data-screen-label="Dialog Triage"]');
+  await expect(triageDialog).toBeVisible();
+  // Package 10 uses the same Chinese CTA in the rail and submit action;
+  // scope to the dialog so this exercises the API-backed form, not its opener.
+  await triageDialog
+    .getByRole("button", { exact: true, name: "完成 Triage" })
     .click();
   await expect
     .poll(() =>
