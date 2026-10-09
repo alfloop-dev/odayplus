@@ -167,10 +167,6 @@ export function RebalancePanel({
   if (!rows.length || !selected) {
     return (
       <div className={styles.tabPanel} data-screen-label="Network 低效重配" data-testid="network-panel-rebalance" role="tabpanel">
-        <div className={styles.panelHeader}>
-          <h3>低效重配 / Rebalance</h3>
-          <span>0 stores</span>
-        </div>
         <div className={styles.emptyState}>No rebalance candidates</div>
       </div>
     );
@@ -206,13 +202,6 @@ export function RebalancePanel({
 
   return (
     <div className={styles.tabPanel} data-screen-label="Network 低效重配" data-testid="network-panel-rebalance" role="tabpanel">
-      <div className={styles.panelHeader}>
-        <div>
-          <h3>低效重配 / Rebalance</h3>
-          <p>AVM 服務估值 → NetPlan 三案 → Govern 核准；送審不代表搬遷已執行。</p>
-        </div>
-        <span>{rows.length} stores</span>
-      </div>
       {apiError ? (
         <div className={styles.rebalanceError} data-testid="rebalance-api-error">
           {apiError}

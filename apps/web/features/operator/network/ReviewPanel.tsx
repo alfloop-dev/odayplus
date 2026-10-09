@@ -108,10 +108,7 @@ export function ReviewPanel({
       data-testid="network-panel-review"
       role="tabpanel"
     >
-      <div className={styles.panelHeader}>
-        <h3>選址審核 / Review</h3>
-        <span className={styles.muted}>{pendingCount} 待審核 · 決策同步 Candidate／Approval／Decision／Audit</span>
-      </div>
+
 
       {items.length ? (
         <div className={styles.reviewLayout}>

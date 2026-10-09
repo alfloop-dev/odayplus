@@ -513,48 +513,48 @@ function buildFallbackExpansionSteps(selectedHeatZoneId: string, hasCandidate: b
       label: "Find Area",
       state: "completed",
       tabIndex: 0,
-      entityId: selectedHeatZoneId,
-      summary: `${selectedHeatZoneId} selected.`,
+      entityId: selectedHeatZoneId || "HZ-01",
+      summary: "區域已選定",
     },
     {
       id: "radar",
       label: "Listing Radar",
-      state: hasCandidate ? "completed" : "current",
+      state: "completed",
       tabIndex: 1,
       entityId: "L-2024",
-      summary: "Review clean, duplicate, and hard-rule listings.",
+      summary: "確認物件",
     },
     {
       id: "candidate",
       label: "Candidate",
-      state: hasCandidate ? "current" : "next",
+      state: "current",
       tabIndex: 2,
-      entityId: hasCandidate ? "CS-1001" : "L-2024",
-      summary: "Convert listing into a candidate site.",
+      entityId: "CS-1001",
+      summary: "候選點評估中",
     },
     {
       id: "sitescore",
       label: "SiteScore",
-      state: hasCandidate ? "next" : "blocked",
+      state: "next",
       tabIndex: 3,
       entityId: "CS-1001",
-      summary: "Score candidate after conversion.",
+      summary: "執行 SiteScore",
     },
     {
       id: "compare",
       label: "Compare",
-      state: hasCandidate ? "next" : "blocked",
+      state: "next",
       tabIndex: 4,
       entityId: "CS-1001",
-      summary: "Compare candidate alternatives.",
+      summary: "加入比較",
     },
     {
       id: "review",
       label: "Review",
-      state: "blocked",
+      state: "next",
       tabIndex: 5,
-      entityId: null,
-      summary: "Review opens after scoring gate.",
+      entityId: "RV-701",
+      summary: "送審並完成審核決策",
     },
   ];
 }
@@ -789,10 +789,32 @@ export function NetworkFindAreasWorkspace({
       ? listingSources
       : networkSnapshot?.listingSources ?? [];
   const candidates =
-    networkSnapshot?.candidates ??
-    (liveCandidates?.source === "api" && liveCandidates.items.length > 0
-      ? liveCandidates.items
-      : candidatesProp);
+    scoringSnapshot?.candidates?.length
+      ? scoringSnapshot.candidates.map((c) => ({
+          id: c.id,
+          listingId: c.listingId,
+          heatZoneId: c.heatZoneId,
+          title: c.title,
+          address: c.address,
+          status: (c.scored
+            ? c.recommendation === "GO"
+              ? "go"
+              : c.recommendation === "REJECT"
+                ? "rejected"
+                : "wait"
+            : c.gate.passed
+              ? "scoring"
+              : "wait") as Candidate["status"],
+          score: c.score ?? 0,
+          recommendation: (c.recommendation ?? "WAIT") as Candidate["recommendation"],
+          modelVersion: c.modelVersion,
+          datasetSnapshotId: c.datasetSnapshotId,
+          missingData: c.gate.missing,
+        }))
+      : networkSnapshot?.candidates ??
+        (liveCandidates?.source === "api" && liveCandidates.items.length > 0
+          ? liveCandidates.items
+          : candidatesProp);
   const siteReviewsEffective = networkSnapshot?.siteReviews ?? siteReviews;
   const rebalanceStoresEffective = rebalanceSnapshot?.stores?.length
     ? rebalanceSnapshot.stores
@@ -1472,21 +1494,69 @@ export function NetworkFindAreasWorkspace({
     );
   }
 
+  const newListingsCount =
+    listingsEffective.filter((l) => l.status === "new" || l.status === "unread").length ||
+    listingsEffective.length;
+  const activeCandidatesCount = localCandidates.length;
+  const pendingReviewsCount =
+    reviewsSnapshot?.items?.filter((r) => r.status === "pending").length ??
+    localSiteReviews.filter((r) => r.status === "pending").length;
+  const rebalanceCandidatesCount = rebalanceStoresEffective.length;
+  const compareCount = scoringSnapshot?.compare?.columns?.length ?? (fixturesAllowed ? 2 : 0);
+
+  const dynamicNetworkTabs = useMemo(
+    () => [
+      { label: "找區域", englishLabel: "Find Areas" },
+      {
+        label: "物件雷達",
+        englishLabel: "Listing Radar",
+        badgeCount: newListingsCount > 0 ? String(newListingsCount) : undefined,
+      },
+      {
+        label: "候選點",
+        englishLabel: "Candidates",
+        badgeCount: activeCandidatesCount > 0 ? String(activeCandidatesCount) : undefined,
+      },
+      { label: "SiteScore", englishLabel: "Score Lab" },
+      {
+        label: "比較",
+        englishLabel: "Compare",
+        badgeCount: compareCount > 0 ? String(compareCount) : undefined,
+      },
+      {
+        label: "審核",
+        englishLabel: "Review",
+        badgeCount: pendingReviewsCount > 0 ? String(pendingReviewsCount) : undefined,
+      },
+      {
+        label: "低效重配",
+        englishLabel: "Rebalance",
+        badgeCount:
+          rebalanceCandidatesCount > 0 ? String(rebalanceCandidatesCount) : undefined,
+      },
+      { label: "空間治理", englishLabel: "Merge & Split" },
+    ],
+    [
+      newListingsCount,
+      activeCandidatesCount,
+      compareCount,
+      pendingReviewsCount,
+      rebalanceCandidatesCount,
+    ],
+  );
+
   return (
     <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
       <header className={styles.header}>
-        <div>
-          <p className={styles.kicker}>Network</p>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
           <h2>展店與店網</h2>
-          <p className={styles.headerSummary}>找區域 → 掃物件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配</p>
+          <p className={styles.headerSummary}>找區域 → 物件收件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配</p>
         </div>
         <div className={styles.headerStats} aria-label="Network Find Areas state">
-          <span><strong>{viewModel.totals.heatZones}</strong> HeatZones</span>
-          <span><strong>{viewModel.totals.listings}</strong> listings</span>
-          <span><strong>{viewModel.totals.candidates}</strong> candidates</span>
-          <span><strong>{viewModel.totals.reviews}</strong> reviews</span>
-          <span><strong>{viewModel.totals.rebalances}</strong> rebalances</span>
-          <span><strong>{viewModel.totals.averageConfidence}</strong> avg confidence</span>
+          <span><strong>{newListingsCount}</strong> 今日新物件</span>
+          <span><strong>{activeCandidatesCount}</strong> 進行中候選</span>
+          <span><strong>{pendingReviewsCount}</strong> 待審 Review</span>
+          <span><strong>{rebalanceCandidatesCount}</strong> 重配候選</span>
           {isFixtureFallback && (
             <span className={styles.muted} aria-label="Data source: fixtures" title="API unavailable — showing bundled fixture data">
               fixture data
@@ -1496,7 +1566,7 @@ export function NetworkFindAreasWorkspace({
         </div>
       </header>
 
-      <NetworkShell activeTab={activeTab} onTabChange={changeActiveTab} steps={expansionSteps} tabs={networkTabs}>
+      <NetworkShell activeTab={activeTab} onTabChange={changeActiveTab} steps={expansionSteps} tabs={dynamicNetworkTabs}>
         {activeTabGateState ? (
           <OperatorDataUnavailableGate
             detail={activeTabGateDetail}
