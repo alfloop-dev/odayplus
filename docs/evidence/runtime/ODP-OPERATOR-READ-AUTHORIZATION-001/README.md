@@ -1,0 +1,913 @@
+# ODP-OPERATOR-READ-AUTHORIZATION-001 — engineering evidence
+
+Owner: Claude (reassigned from Pi/Antigravity2) · Current reviewer: Codex · 2026-10-09
+
+## Scope and limits
+
+Engineering only; no deployment, production identity mutation, source enablement,
+backfill, training, model publication or admission/F11 approval was performed.
+The previous live `auditor` grant is not evidence of complete operator authorization.
+StoreOps missing-materialization 503, truthful empty data, source/model/data and
+admission holds remain in force. Required CI and independent exact-PR-head review
+are still required. No live/full-product acceptance or task completion is claimed.
+
+Baseline: `origin/dev` / deployed source `36c94d7156011b41d71a8f6774558f35b1b45b83`.
+Task branch: `task/ODP-OPERATOR-READ-AUTHORIZATION-001`.
+Implementation anchors: `6ddba98038dc`, `c33a2425d699`, `76d101f40e89`.
+
+## Implemented contract
+
+- Explicit persisted `operator_viewer` role: finite VIEW on the operator-only
+  resources `operator_console` and `operator_network` (narrowed from the earlier
+  `listing`/`sitescore`/`heatzone` grant; see §Operator-only grant repair below);
+  no wildcard, export or business mutations.
+  It does not grant user administration or widen pure `platform_admin` grants.
+- Existing durable identity boundary, session and audited role-management API
+  remain authoritative. Existing `pm-audit` persona is selectable by the new
+  role; no caller header can manufacture the role. Tenant-less/foreign object
+  authorization is refused. No waiver bypass is introduced.
+- Intake VIEW composes with explicit read-enabled administration only. Existing
+  masks remain, collection filtering precedes pagination/counts, and store scope
+  joins existing brand/region/assigned-area/heat-zone checks. Detail reads still
+  require object-derived tenant/scope evidence.
+- Network reads and writes retain the active console persona rather than
+  impersonating expansion/reviewer roles. Production unavailable bindings no
+  longer show a false bundled-fixture label.
+- Canonical GovernanceService `statusBoard` is **a list of persisted counts**,
+  not five readiness panels. Web accepts that real DTO and renders the counts
+  separately, including zero, without inventing model/connector availability.
+  Existing complete grouped boards remain supported; incomplete/malformed boards
+  fail closed before row-length access. Missing required arrays are not defaulted
+  into apparently valid envelopes; refreshed empty evidence history clears old rows.
+- The pure-admin release journey/bootstrap/grants remain unchanged. The original
+  separate-subject handoff was rejected by PR1435 R1: no such subject is bound.
+  The actual existing subject now has a strictly bound read-enabled gate branch
+  (below); it does not claim pure-admin proof.
+
+## Verification receipts
+
+Final implementation checks ran on clean committed head
+`76d101f40e89218822c3a28d204d3280569ce9eb` (all runtime/test changes committed).
+The evidence/inventory-only commit after this head does not change those inputs.
+Actual original terminal exit codes, not a grep-based inference, determined success.
+The Python count is read from the existing JUnit receipt, not from another test run.
+
+Commands (repository cwd unless noted):
+
+```sh
+# Existing locked CI setup; not a new dependency specification.
+npm ci --no-audit --no-fund
+
+# PATH has no uv / system pytest; existing canonical environment is used solely
+# as interpreter/dependencies. Imports and test targets are this task worktree.
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q \
+  tests/security/test_operator_read_authorization.py \
+  tests/security/test_rbac_abac.py \
+  tests/security/test_operator_shell_security.py \
+  tests/security/test_assisted_listing_intake_authorization_matrix.py \
+  tests/security/test_assisted_listing_intake_privacy.py \
+  tests/identity/test_identity_user_role_management.py \
+  --junitxml="$ORCH_SCRATCH_DIR/pytest-final.xml"
+
+npm test --workspace=@oday-plus/web -- \
+  features/operator/__tests__/GovernanceWorkspace.test.tsx \
+  features/operator/__tests__/GovernanceDelayedEnvelope.test.tsx \
+  features/operator/__tests__/productionWorkspaceData.test.tsx \
+  features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx
+npm run typecheck --workspace=@oday-plus/web
+
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check \
+  shared/auth/identity.py shared/auth/rbac.py shared/auth/abac.py \
+  apps/api/oday_api/security/dependencies.py \
+  modules/listing/application/intake_authorization.py \
+  apps/api/app/routes/operator_modules/network_listings.py \
+  tests/security/test_operator_read_authorization.py \
+  tests/identity/test_identity_user_role_management.py
+```
+
+| Check | Original exit | Result |
+|---|---:|---|
+| npm ci | 0 | 486 locked packages installed; lockfile unchanged |
+| Focused Python (360-second shell bound, tool bound 390 seconds) | 0 | 80 tests, 0 errors/failures/skips; PostgreSQL identity included |
+| Focused Web | 0 | 4 files / 52 tests passed |
+| Web typecheck | 0 | No diagnostics |
+| Touched Python ruff | 0 | All checks passed |
+
+Logs and JUnit are alongside this README. Covered positives/negatives: VIEW-only
+finite grants; pure-admin remains denied; admin+viewer still administrates;
+unauthorized persona/tenant-less/foreign reads denied and audited; brand/region/
+store/module/classification restrictions; collection counts and private-field
+masks; business POSTs refused; PostgreSQL API grant immediately visible through
+real auth boundary with unchanged full scope/status and fresh role audit; another
+pure admin unaffected; active Network persona across role changes; canonical
+Governance count DTO/zero records, malformed boards/missing arrays, source seed
+refusal and unchanged StoreOps limitations.
+
+Earlier attempts are **not** passing receipts: `uv` exit 127; system Python lacked
+pytest; first Python invocation lost its terminal receipt at the 240-second tool
+bound and its log contained a new-test envelope assertion failure. That assertion
+was corrected against the actual user GET DTO. Initial Web/typecheck runs exited
+1/2; a strict-board regression expectation, an empty-board test expectation and a
+union-array type error were repaired. Final successful runs above followed those
+code changes, not a rerun merely to count tests. Existing Starlette deprecation
+warnings remain warnings, not failures.
+
+Boundary inventory initially failed as stale after the new test module. It was
+regenerated with `python3 delivery_toolchain/governance/check_code_boundaries.py
+--write-inventory`; only task-owned new paths are added. Finalization must verify
+that inventory and lint before publishing the PR.
+
+## CI repair dispatch — 2026-10-09
+
+PR #1435 at `17bc7a1c` failed CI run `37885795073`: unit/security had
+exactly two obsolete `18`-role assertions; E2E had two Network review decision
+failures. Other required lanes reported success; the aggregate product failure
+was downstream of unit/security. This was not a transient-infrastructure retry.
+
+Repair anchors: `1dbe790e005e`, `b132e56c6577`, `f0e2daf408a4`.
+
+- Role catalog tests require exactly the canonical enum set, including
+  `operator_viewer`, not just a replacement magic count.
+- Review UI uses canonical `expansion-manager` (verified reviewer/executive)
+  rather than impersonating a reviewer as `ops-lead`. The API retains its
+  APPROVE guard and derives role/name from its authenticated principal. Body
+  actor fields cannot promote an operations manager, expansion staff, or
+  admin+viewer, and cannot forge audit attribution. No RBAC grants changed.
+- Browser positives explicitly select the reviewer persona; the read-only
+  presentation negative uses operations manager. The Network smoke requires a
+  200 API listing response for that active persona before inspecting rows.
+  Expansion-user API denial remains tested with the actual expansion_user
+  role (the old contract fixture incorrectly declared site_reviewer).
+
+Original tool completion receipts for the focused repairs:
+
+| Check | Tested implementation head | Exit | Result |
+|---|---|---:|---|
+| Python role management, Network review contract, operator read authorization | `b132e56c6577` | 0 | 40 tests; JUnit: no failures/errors/skips |
+| Network route/persona Web tests | `1dbe790e005e` | 0 | 16 tests |
+| Web typecheck | `1dbe790e005e` | 0 | No diagnostics |
+| Changed Python ruff | `b132e56c6577` | 0 | All checks passed |
+| Browser Network review + six-tab smoke | `f0e2daf408a4` | 0 | 9 tests passed (real local Next/API + Chromium, fixture runtime only) |
+
+The earlier `b132e56c` commit trailer's Web count of 22 was a transcription
+error; the original Vitest receipt records **16**, as above. Python's initial
+exit 1 concerned two new assertions using `auditEvent.actor` instead of the
+actual `auditEvent.actorName`; the corrected DTO assertions passed. First
+browser attempt passed 8 review tests but failed the smoke on local fallback
+rows, with cold Next JSON parsing errors. One bounded retry still failed the
+same smoke. The explicit active-persona API response wait fixed that race; the
+smoke and final combined run exited 0 after that test change. None of those
+failed attempts is claimed as a passing receipt.
+
+Commands (logs/JUnit copied to `ci-repair-*` alongside this README):
+
+```sh
+timeout 360 "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q \
+  tests/security/test_user_role_management.py \
+  tests/contract/test_operator_network_review_api.py \
+  tests/security/test_operator_read_authorization.py \
+  --junitxml="$ORCH_SCRATCH_DIR/pytest-ci-repair-final.xml"
+npm test --workspace=@oday-plus/web -- \
+  features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx
+npm run typecheck --workspace=@oday-plus/web
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check \
+  apps/api/app/routes/operator_modules/network_reviews.py \
+  tests/contract/test_operator_network_review_api.py \
+  tests/security/test_user_role_management.py
+timeout 300 env NODE_PATH="$PWD/node_modules" \
+  ODP_API_BASE_URL=http://127.0.0.1:8217 npx playwright test \
+  --config /tmp/odp-read-auth-playwright.config.ts \
+  tests/e2e/operator-network-review.spec.ts tests/e2e/e2e-operator-console.spec.ts \
+  --grep 'Network Review decision|Network workspace exposes all six'
+```
+
+The temporary Playwright config (preserved as `ci-repair-playwright-config.txt`)
+imports the **existing repository config** and only relocates ports, interpreter,
+output directory and server cwd for this isolated worker. It uses the existing
+fixture-mode test runtime; no parallel authentication harness or live data
+claim is introduced. The final combined browser run used clean committed head
+`f0e2daf408a4`; subsequent documentation/receipt copies do not change test inputs.
+Required remote CI on the resubmitted head and independent exact-head review
+remain outstanding; these local checks are not the full product E2E gate.
+
+## R1 actual delivery integration repair — 2026-10-09
+
+Finding: PR1435 comment6075181569. The actual deployed verifier binding is the
+existing `ajoe734` account, not a separately configured pure administrator. The
+foreground canonical grant receipt binds account
+`17e9cb99-db46-4a07-8e61-6bf9b22cf5d2`, tenant
+`e34f2117-de4b-478c-82fd-13c4ef428d42`, active `auditor+platform_admin`, unchanged
+full scope and a fresh audited API grant. It is located in canonical status root
+`docs/audits/operator-console-layout-regression-20261008/authorization-readback-20261009/grant-receipt.json`.
+This worker read that sanitized receipt; no credential, live account, cloud-IAM,
+source/model or configuration mutation was performed.
+
+Original green CI receipt is **retained**, not reused as new-head approval:
+[CI37888864575](https://github.com/alfloop-dev/odayplus/actions/runs/37888864575),
+`completed/success`, exact old head `8f0a451de056b5ac6b76cbe7a3aee713c528f3c5`.
+New exact-head required CI and independent Codex2 review must pass again.
+
+Anchor `7f9ea12d9c70`; final implementation `c36e3dfe9e9b` (the tested working
+code/test tree was committed without further code changes). This repair:
+
+- Keeps the same configured account/credentials and pure-admin business403
+  branch. No second account, automatic grant or bypass is introduced.
+- Accepts only active identity-backed admin plus explicit auditor/viewer roles;
+  pins each exact finite grant set against canonical RBAC. Unknown, duplicate,
+  unrelated read roles, business-mutating roles, wildcard/future grant expansion
+  fail closed. Auditor's pre-existing audit export is retained, not expanded.
+- Binds Web username and unique authoritative account UUID/tenant/roles to the
+  actual server `/api/v1/auth/principal`, then requires bootstrap audit and an
+  explicit grant event matching account/tenant/full scope/roles/active status.
+- Preserves the policy-specific foreign-tenant422 plus unchanged full readback.
+  Requires successful scoped account detail and truthful live business bootstrap;
+  checks business write/approval/execution/publication403 with invalid bodies /
+  non-existent object (no legitimate business write is sent). Persona denial,
+  both login journeys, admin page and durable logout remain required.
+- Reports `read-enabled-admin` and the verified account/tenant/role binding, never
+  claims the pure-admin branch passed or promotes release/F11/model acceptance.
+
+Original terminal receipts (not inferred from log summary):
+
+```sh
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check \
+  delivery_toolchain/e2e/check_live_e2e_gate.py \
+  tests/e2e/test_live_e2e_gate_dev_admin.py \
+  tests/identity/test_identity_user_role_management.py
+timeout 360 "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q \
+  tests/identity/test_identity_user_role_management.py \
+  tests/e2e/test_live_e2e_gate_dev_admin.py tests/e2e/test_live_e2e_gate.py \
+  tests/release/test_release_profile.py --junitxml="$ORCH_SCRATCH_DIR/r1-final.xml"
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check
+```
+
+All four exits **0**. Existing JUnit records **334 tests**, no errors/failures/skips.
+`r1-final.log` / `r1-final.xml` preserve final pytest receipts. The suites retain
+full-profile, missing-model, admission/dev-only and pure-admin negative coverage.
+New negatives cover wrong principal/account/tenant/exact roles, mismatched grant
+scope/status, unknown/extra/mutating roles, canonical RBAC expansion, unsuccessful
+reads and mutation probes returning422 instead of403.
+
+Real PostgreSQL + production AuthenticationBoundary + actual identity/product
+routers exercise pure admin and admin+auditor/viewer/both, plus mutating executive
+role rejection. Read-role principal, audited grant, exact flat user detail DTO,
+tenant policy/readback, business403 and pure-admin403 pass. The local product
+router's **fixture** bootstrap200 is intentionally rejected as non-live, not
+rewritten into a passing remote receipt. No live data or full-gate success is
+claimed from this offline integration.
+
+Earlier R1 attempts are not passing receipts: the first integration run used
+local product-router fixture tenant/user wiring rather than the existing identity
+router and failed5 tests; after correct wiring, three detail assertions failed
+because the verifier expected a `user` wrapper rather than the actual flat GET
+DTO. Correcting the verifier and fixture to that real DTO preceded the final
+334-test pass. Initial ruff import-order failure was repaired. No failed run was
+misreported or rerun merely to collect test counts.
+
+## P1 complete Network scope repair — 2026-10-09
+
+Codex reopened exact head `04e7b311b977c2c0c44ec19787067ecf9e287fae`:
+only listings/intakes were filtered, leaving excluded HeatZones, candidates,
+reviews, audit events and pre-filter counts visible within the caller's tenant.
+The old exact-head CI success is not approval of this repair.
+
+Anchors: `8df0f1f6698f` and final implementation `13a9cfa20ab5`. The tested
+working code/test tree was committed at the latter without further runtime/test
+changes. Only this evidence/receipt commit follows it.
+
+- Project the complete listing envelope using verified tenant and every
+  restricted brand/region/store/assigned-area/heat-zone axis. Child candidates
+  must join visible authoritative listings; duplicate tenant fields or child
+  scope cannot override an excluded parent. Missing restricted metadata denies.
+- Require HeatZone-owned scope evidence for whole-zone summaries (the existing
+  durable tenant resolver supplies the zone's tenant partition). A visible
+  listing alone does not grant its entire zone's brand/store aggregate. This
+  intentionally leaves zones unavailable where their scope evidence is absent.
+- Recompute counts and zone ranks/selection, restrict source relationships,
+  clear excluded merge/review links and intake match results. Withhold unscoped
+  pipeline steps, review cross-queue comparison prose and opaque cross-object
+  audit messages/metadata, rather than mislabel them as scoped observations.
+- Actual live scoring/review route composition reuses the existing tenant-bound
+  listing resolver as its authoritative scope index. Scorecards, batch ranks,
+  compare columns/metrics/recommendation and counts are built from visible
+  candidates only; reviews/approvals/decisions/audit follow the same allowed
+  candidate relationship. No model fallback or second authorization path.
+- Non-viewer flows and write guards remain unchanged. The test inputs are
+  offline fixtures and durable SQLite-backed integration inputs, not live data
+  or PostgreSQL/live-grant evidence. The existing session boundary still owns
+  production principal verification; header fixtures are test-only.
+
+Original terminal status and exit code determined completion. Final checks:
+
+```sh
+timeout 240 "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q \
+  tests/security/test_operator_network_read_scope.py \
+  tests/security/test_operator_read_authorization.py \
+  tests/contract/test_operator_network_listings_api.py \
+  tests/contract/test_operator_network_scoring_api.py \
+  tests/contract/test_operator_network_review_api.py \
+  tests/integration/test_operator_live_domain_modules.py \
+  tests/security/test_assisted_listing_intake_authorization_matrix.py \
+  tests/security/test_assisted_listing_intake_privacy.py \
+  --junitxml="$ORCH_SCRATCH_DIR/scope-final.xml"
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check \
+  apps/api/app/routes/operator.py \
+  apps/api/app/routes/operator_modules/network_listings.py \
+  apps/api/app/routes/operator_modules/network_scoring.py \
+  apps/api/app/routes/operator_modules/network_reviews.py \
+  modules/opsboard/application/network_read_scope.py \
+  modules/opsboard/application/network_scoring.py \
+  tests/security/test_operator_network_read_scope.py \
+  tests/integration/test_operator_live_domain_modules.py
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check
+```
+
+All final exits **0**. Existing `scope-final.xml` records **85 tests**, zero
+failures/errors/skips (209.201 seconds); `scope-final.log` preserves the original
+pytest output. No rerun solely to count tests. New full-envelope regressions
+cover heat-zone/brand/region/store/assigned-area restrictions, missing metadata,
+foreign/conflicting child scope, related records/aggregates, real review decision
+records, cross-object audit/match data, unchanged stored state/non-viewer flows,
+and actual durable tenant service resolution. Inventory adds only the new helper
+and focused test module.
+
+Earlier diagnostics are not passing final receipts: first 18-test subset exit0;
+expanded 67-test run exit1 because the new fixture used unsupported APPROVE
+instead of producer GO and cleanup used SQLAlchemy dispose instead of the actual
+SqliteEngine close. Both test-only mistakes were fixed before final85. Initial
+ruff import-order/test lambda findings and stale inventory were repaired. A
+cross-directory anchor attempt was refused before commit until its required
+Cross-Dir trailer was added. No failed run is claimed as successful.
+
+Required remote CI and independent review must bind the new submitted head.
+No account role grant, credential/cloud configuration change, deployment, source
+activation, backfill, model operation or F11 approval was performed in this repair.
+All outstanding live acceptance below remains outstanding.
+
+## Today real-content readability repair — 2026-10-09
+
+Authorized scope: PR1435 comment6076021503 and the owner dispatch task brief.
+The predecessor authenticated read-only probe at explicit `/operator?ws=today`
+found seven persisted ingestion identifiers extending to643.55px and human titles
+to651.55px at390px, despite document/header width checks passing. Original
+sanitized observation remains `/tmp/odp-read-auth-integration-20261009/predecessor-today-layout.json`
+and `predecessor-today-390.png`; it is not post-fix deployment proof.
+
+Implementation/test anchor: `dbafb714ab48af43262bdd30421338a58e072528`.
+Only `operator.module.css` and the existing `operator-shell-layout.spec.ts`
+change in this repair; all R2 Network scope/privacy changes are preserved.
+Today identifier/title labels now occupy separate shrinkable grid rows and wrap
+complete text. No identifier shortening, hidden human title or new tooltip-only
+access is introduced. Existing button text, accessible name, target and handlers
+are unchanged. No live account, data, configuration or source/model mutation.
+
+The real-CSS test replays the seven sanitized predecessor IDs through offline
+bootstrap/Today response substitution using the actual React and Next CSS.
+It asserts full ID/title text, button accessible names and each painted text
+fragment's bounds inside its label, row and viewport at390/1024/1440px; document
+width alone cannot conceal clipping. This is fixture-mode engineering evidence,
+not authenticated production or F11 acceptance. Existing header geometry across
+five workspaces/eight widths, popover hit-testing, six-role Today envelopes,
+search, navigation and local fixture approval refresh were checked as well.
+The approval test mutates only the disposable local fixture API, not live state.
+
+Commands on the clean implementation anchor (original terminal exit receipts):
+
+```sh
+timeout 300 env NODE_PATH="$PWD/node_modules" \
+  ODP_API_BASE_URL=http://127.0.0.1:8217 npx playwright test \
+  --config "$ORCH_SCRATCH_DIR/today-playwright.config.ts" \
+  tests/e2e/operator-shell-layout.spec.ts tests/e2e/operator-shell-today.spec.ts
+npm run typecheck --workspace=@oday-plus/web
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check
+```
+
+All four exits **0**; original browser receipt: **18 passed**, no retries,
+1.9 minutes. Logs are `today-final.log` and `today-typecheck.log` alongside this
+README; `today-playwright-config.txt` preserves the temporary config, which
+imports the existing repository config and relocates only worker ports/cwd,
+interpreter and output directory. No new authentication harness was added.
+
+Pre-fix negative: same new test at390px with unchanged old CSS exited **1**,
+rejecting all14 identifier/title text fragments (`today-before-final.log`).
+The first attempt exited1 before geometry due to the cold bootstrap exceeding
+the default5-second row wait; the test wait was bounded at45 seconds before the
+successful reproduction. Neither failed invocation is reported as a pass.
+The final test run followed the CSS repair; no test was rerun just for counts.
+
+Prior CI [37896858030](https://github.com/alfloop-dev/odayplus/actions/runs/37896858030)
+binds only old head `02a1625a7f78722f16136c230b8d580bf570522e` (still in progress
+when read at07:20 UTC). It is retained and is **not** new-head CI success.
+Required CI and independent exact-new-head review must pass after resubmission.
+Admitted deployment, bounded audited grant, real remote readback and independent
+F11/live acceptance remain outstanding. StoreOps/source/model/admission holds
+are unchanged.
+
+## Base advance and canonical inventory CI repair — 2026-10-09
+
+The owner repair dispatch is in progress (not immutable approved closeout).
+Clean task head `277f1de3b230` was composed with fetched `origin/dev`
+`43286b34e8c0d840f96d94cc6b1a24be87942a10` through merge `9f3fb29ad`.
+No conflicts, reset, history discard, rebase or force-push. The existing task
+commits are preserved. The base adds Web runtime-cookie/auth-route repairs;
+focused merged auth, administration, Governance and Network tests pass below.
+
+[CI37898688381](https://github.com/alfloop-dev/odayplus/actions/runs/37898688381)
+on old head `277f1de3b230` failed three Python assertions and the dev-merge E2E
+static preflight on the same cause: canonical inventory still required119 tests
+although the three new Today viewport cases make **122 tests in18 files**.
+The aggregate product failure is downstream, not a transient infra failure.
+The browser gate did not start in that failed CI run.
+
+Implementation anchor/tested clean head: `156748aad889`. The canonical count
+now includes those three cases; exact file/count checks remain mandatory.
+Regression tests require rejection of119/123 tests,17 files, missing totals and
+nonzero runner exits, and accept only122/18. No scenario, historical raw report,
+full-product receipt, release registry, gate waiver or live acceptance is rewritten.
+
+Original tool terminal exits were all **0**:
+
+```sh
+npx playwright test --list
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge
+timeout 180 "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q \
+  tests/e2e/test_acceptance_coverage.py tests/e2e/test_release_gate_registry.py \
+  --junitxml="$ORCH_SCRATCH_DIR/inventory-final.xml"
+npm test --workspace=@oday-plus/web -- \
+  src/lib/auth/__tests__/runtime.test.ts tests/login-route.test.ts \
+  features/operator/__tests__/OperatorAdminAccess.test.tsx \
+  features/operator/__tests__/GovernanceWorkspace.test.tsx \
+  features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx
+npm run typecheck --workspace=@oday-plus/web
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check \
+  delivery_toolchain/e2e/product_e2e_receipt.py tests/e2e/test_acceptance_coverage.py
+python3 delivery_toolchain/governance/check_code_boundaries.py
+timeout 300 env NODE_PATH="$PWD/node_modules" \
+  ODP_API_BASE_URL=http://127.0.0.1:8217 npx playwright test \
+  --config "$ORCH_SCRATCH_DIR/base-playwright.config.ts" \
+  tests/e2e/operator-shell-layout.spec.ts tests/e2e/operator-shell-today.spec.ts
+git diff --check
+```
+
+Python JUnit records **98 tests**, zero failures/errors/skips; Web records
+**130 tests in5 files**; actual Chromium/Next/API records **18 passed**, no
+retries (2.0 minutes). Counts come from existing completed receipts, not reruns.
+Inventory lists122/18; static dev-merge gate, lint, boundary and typecheck pass.
+Logs/JUnit/list/config are preserved as `base-*` alongside this README.
+The temporary config imports the repository config with isolated ports/cwd,
+interpreter/output only. Browser tests use disposable fixture state, not live
+accounts/data; no parallel auth harness or full E2E/live proof is claimed.
+
+The following evidence-only commit does not alter these tested inputs. Required
+remote CI and independent review must bind the newly submitted exact PR head;
+old CI receipts cannot approve it. No grant/deployment/source/model operation
+or F11 self-approval was performed. Live obligations below remain outstanding.
+
+## Deny-probe safety repair — 2026-10-09
+
+Owner repair dispatch and PR1435 comment6076850380 identified that the old
+read-admin execution probe sent `{}` to `network-scoring/score`. That is a valid
+`NetworkScoringBatchPayload` with `candidateIds=None`, not an invalid DTO; if
+authorization regressed it could score all candidates. A non-existent review id
+also cannot itself guarantee no handler execution. No live business negative
+mutation or viewer grant was performed while assessing or repairing this issue.
+
+Initial anchor: `87a1d922b797`; final implementation/tested clean anchor:
+`1ec3698eae8d`. All four negative probes now violate typed DTO fields: intake
+`url={}`, review `decision={}`, batch `candidateIds={}`, governance
+`approvalId={}/action={}`. Each still requires authorization **403**; validation
+422 blocks the gate and is never accepted as permission-denial proof. Existing
+account/tenant/role binding, canonical finite grants, explicit role-change and
+bootstrap audits, foreign-tenant policy refusal/full unchanged readback, scoped
+positive reads, wrong-persona and durable logout/password checks are preserved.
+
+The regression forwards the actual bodies emitted by the existing gate into the
+real four router factories and DTOs. For each of the three allowed read-admin
+role sets, intact real RBAC guards return403 with four deny audit events; bypassed
+guards return422 with no manufactured authorization audit, and all four deny
+checks fail the gate. Endpoint/resolver/service spies show **zero handler and
+service calls**, including the wrapped real `NetworkScoringService`; its model
+runtime, listing repository and SiteScore repository also receive zero calls.
+The offline sensitivity control then bypasses the guard and sends the old `{}`:
+it reaches the handler and stubbed `score_batch(candidate_ids=None)`, proving the
+spy is live and the predecessor payload unsafe. The control stubs that method
+before invocation; no actual scoring/provider/persistence or live state executes.
+This reuses the existing gate test client, not a parallel authentication harness.
+
+Declared focused offline commands (recorded through canonical status before tests):
+
+```sh
+timeout 180 "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q \
+  tests/e2e/test_live_e2e_gate_dev_admin.py \
+  tests/security/test_operator_read_authorization.py \
+  --junitxml="$ORCH_SCRATCH_DIR/safety-complete.xml"
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check \
+  delivery_toolchain/e2e/check_live_e2e_gate.py tests/e2e/test_live_e2e_gate_dev_admin.py
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check
+```
+
+All four original terminal exits **0**. JUnit records **135 tests**, zero
+failures/errors/skips (21.289 seconds), including six real-router cases. Pytest's
+existing quiet configuration emits no final count; the count above is read from
+that completed JUnit, not inferred from process presence or a rerun. Final log,
+JUnit, lint and boundary receipts are `safety-complete.log/.xml`,
+`safety-ruff.log` and `safety-boundaries.log` beside this README.
+
+Initial development invocations failed: lint import formatting; then six test
+setup assertions expecting eagerly flattened FastAPI routes; then three observed
+handlers instead of four because the review route has a path parameter. The test
+now instruments endpoints before lazy router inclusion and resolves the review
+path parameter. The six-case diagnostic run then exited0, followed by the final
+135-case run after adding the offline sensitivity control. These earlier failures
+are not claimed as passing evidence; their logs remain in worker scratch.
+
+CI [37901190137](https://github.com/alfloop-dev/odayplus/actions/runs/37901190137)
+binds **only** prior head `4135d7b9bd2aae60dc3f91084453796e5935f3da` (still
+in progress when checked at08:07 UTC). It is not safety-repair head CI success.
+The following evidence-only commit changes no tested code inputs. Resubmission
+must obtain required CI and independent review on its exact new head. There is
+no gate waiver, live business probe, viewer grant, deployment/source/model
+operation, full-product claim or F11 self-approval. All live holds below remain.
+
+## Operator-only grant repair — 2026-10-09
+
+Owner: Claude (manager reassignment after Antigravity2 quota backoff; full prior
+history retained). Codex reopen on exact head `b968c303e006` found that the
+`operator_viewer` grants `listing`/`sitescore`/`heatzone` VIEW also opened the
+general RBAC-only domain routers: tenant-A viewer could list cross-tenant
+`/api/v1/sitescore/realized`, and a heat-zone-restricted viewer could read the
+whole latest `/api/v1/heatzones/map`. Those routers do not filter by principal
+tenant/object scope, so a Network-only projection could not secure them.
+
+Repair (anchor `b4b8c381ec5c`) narrows the role instead of widening unscoped
+routers:
+
+- `operator_viewer` = VIEW on `operator_console` and the new operator-only
+  `operator_network` resource only. No `listing`/`sitescore`/`heatzone` grant.
+- `require_operator_permission(..., scoped_read_resource=...)` admits a VIEW
+  holder of that resource only for VIEW, and only where explicitly passed. It is
+  passed solely on the Operator Network listings/intake, scoring and review read
+  guards (both live-composition and local wiring), whose handlers apply the
+  existing complete-envelope scope projection. Writes/approve/execute guards are
+  unchanged and still refuse the reader.
+- Operator `network-rebalance` has no scoped projection, so it is **not** opted
+  in and now refuses this reader (403). The Web Rebalance tab then shows its
+  existing truthful `network-rebalance API unavailable` error state (no fixture
+  fallback in production); other Network tabs load independently. A scoped
+  rebalance projection is a follow-up, not claimed here.
+- Live gate canonical RBAC pin for `operator_viewer` updated to the new finite
+  set; any future expansion still fails closed. Design profile §5.5 updated.
+- Existing `auditor` grants (which pre-date this task and already include
+  `listing` VIEW) and admin/scope/status are untouched.
+
+Regressions (`tests/security/test_operator_read_authorization.py`), on the real
+`create_app` routers:
+
+- Two-tenant / restricted-scope probes (tenant-a, tenant-b, heat-zone restricted,
+  brand+region restricted on tenant-b): eleven general SiteScore/HeatZone/Listing
+  reads and Operator rebalance return **403** for the reader, while an
+  `expansion_user` control passes the same RBAC guard (non-vacuous).
+- Differential over **every** GET route in OpenAPI for tenant-a and tenant-b:
+  routes that become 2xx for `platform_admin+operator_viewer` but not for pure
+  `platform_admin` must all be under `/api/v1/operator/` and exclude rebalance.
+- Guard unit: scoped VIEW admitted; same guard without opt-in, UPDATE with
+  opt-in, pure admin, and tenant-less principal all refused.
+- Existing Network scope projection/router tests now build guards exactly as
+  production does (`scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE`).
+
+A/B sensitivity (tmp copy of this worktree with only `shared/auth/rbac.py`
+reverted to `b968c303`): the new tests fail — tenant-b viewer gets 200 from
+`/api/v1/sitescore/realized`, and the differential finds 18 general
+`/api/v1/heatzones|sitescore|listings` routes opened. Exit 1 (expected);
+failure summary `repair-ab-old-rbac.log`. Broad-run log/JUnit:
+`repair-scope.log` / `repair-scope.xml` beside this README.
+
+Commands (clean committed head `b4b8c381ef7a`):
+
+```sh
+PYTHONPATH=. "$PANTHEON_STATUS_ROOT/.venv/bin/python" -m pytest -q -p no:cacheprovider \
+  tests/security tests/contract/test_operator_api.py \
+  tests/contract/test_operator_assisted_listing_api.py \
+  tests/contract/test_operator_governance_api.py tests/contract/test_operator_growth_api.py \
+  tests/contract/test_operator_network_listings_api.py \
+  tests/contract/test_operator_network_rebalance_api.py \
+  tests/contract/test_operator_network_review_api.py \
+  tests/contract/test_operator_network_scoring_api.py tests/contract/test_operator_shell_api.py \
+  tests/contract/test_assisted_listing_promotion_api.py \
+  tests/e2e/test_live_e2e_gate_dev_admin.py tests/e2e/test_acceptance_coverage.py \
+  tests/identity/test_identity_user_role_management.py \
+  tests/integration/test_operator_live_domain_modules.py \
+  --junitxml=repair-scope.xml
+"$PANTHEON_STATUS_ROOT/.venv/bin/python" -m ruff check <changed .py files>
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check b968c303e b4b8c381e   # implementation range
+```
+
+Results (original terminal exits; counts read from completed JUnit, no rerun):
+
+| Check | Exit | Result |
+| --- | --- | --- |
+| Focused 8 operator/RBAC/identity/gate/integration files (pre-anchor) | 0 | JUnit 230 tests, 0 failures/errors/skips |
+| Broad regression above on clean `b4b8c381ef7a` | 1 | JUnit 816 tests, 810 pass, **6 environmental failures**, 0 errors/skips |
+| Changed Python ruff | 0 | All checks passed (after an initial import-order fix) |
+| `check_code_boundaries.py` | 0 | no new files; inventory unchanged |
+| `git diff --check b968c303e b4b8c381e` | 0 | implementation/test/doc range clean; raw pytest receipts keep pytest's own trailing whitespace, like earlier receipts |
+
+The six failures are unrelated host-environment checks, not authorization:
+five (`test_lock_consistency`, `test_notice_check_cli_passes`, three
+`test_supply_chain_security_gate` cases) fail identically on an untouched
+`git archive b968c303e` copy with `FileNotFoundError: 'uv'` (no `uv` on worker
+PATH). `test_oss_notice::test_notice_matches_the_installed_trees` compares NOTICE
+with the shared canonical venv, whose installed `multidict` 6.9.1 differs from
+the lock's 6.7.1 (it skips on the archive copy, which has no `node_modules`).
+This repair touches no lock, NOTICE or supply-chain input; required CI runs them
+in its locked environment. They are recorded as failures, not claimed as passes.
+
+No Web/E2E source changed, so the 122/18 Playwright inventory, Today CSS
+regression and Governance/Network DTO receipts above are unaffected. CI
+37903210687 binds only old head `b968c303`; new exact-head CI and independent
+review are required. No live grant, deployment, source/model/StoreOps action,
+gate waiver or F11 claim.
+
+## Merge relationship scope repair (R6) — 2026-10-09
+
+Owner: Claude. Codex reopen (P2) on exact head `bbe7af78efa1`:
+`project_listing_snapshot` cleared only `mergedIntoId` for an excluded merge
+target, but `merge_listing` also writes `duplicateOfId` on the source,
+`mergedSourceListingIds` on the target, a shared `mergeReason`/`mergedAt`, and
+copies the source's `sourceEvidence` refs onto the target. All are persisted
+listing metadata and reload unchanged, so a cross-zone merge (L-2029 HZ-02 into
+L-2024 HZ-01) disclosed the excluded counterpart to a heat-zone-restricted
+`operator_viewer` on both sides.
+
+Producer field inventory (every `NetworkListingService` listing writer: seed,
+repository reload `_listing_to_dict` + `_sync_listing_to_repo` metadata,
+convert, merge, archive, intake decide create/revise/duplicate, plus route
+read fields such as legal hold/proposer):
+
+| Class | Fields | Scoped-reader rule |
+| --- | --- | --- |
+| Own state | id, tenant/scope axes, source ids/URL, address/geo, status, rent/area/floor/frontage, confidences, hard rules, fitScore, firstSeen/converted/archived(+reason), SiteScore prior-90d cell fields, legal hold, proposer/submitter/owner, masked contact/raw fields | `LISTING_OWN_FIELDS` allowlist; clearance masking still applies after |
+| Listing references | `duplicateOfId`, `mergedIntoId`, `mergedSourceListingIds` | kept only if the referenced listing is visible; malformed values become `null`/`[]` |
+| Merge-wide context | `mergeReason`, `mergedAt` | kept only when every merge counterpart is visible (the target keeps only the latest reason, so it cannot be attributed to one merge) |
+| Candidate reference | `candidateId` | kept only for a visible candidate |
+| Evidence refs | `sourceEvidence` (`EV-<listing or intake id>-<kind>`; merge copies source refs, intake revise/duplicate append intake refs) | kept only when the longest matching known id is a visible listing/intake; unattributable or non-string refs withheld |
+| Anything else | unclassified | withheld — a new producer field is not scoped evidence until classified |
+
+Listing `status: duplicate` stays: it is the record's own lifecycle state and
+names no counterpart. Other returned objects were re-checked: candidates carry
+only their visible parent `listingId` and projected `reviewId`; site reviews
+only a visible `candidateId`; intakes already drop `matchResult` unless its
+target is visible and keep only allowlisted audit keys; top-level audit events
+keep no message/metadata; heat-zone prose is gated by zone scope; expansion
+steps stay empty. The operator_network-only grants from the previous repair are
+unchanged.
+
+Regressions (`tests/security/test_operator_network_read_scope.py`): a real
+HTTP merge by an authorized `expansion-manager` (listing UPDATE) into a durable
+SQLite store, then a fresh service reload behind the real router, read by
+(1) a source-visible HZ-02 viewer, (2) a target-visible HZ-01 viewer and
+(3) an unrestricted viewer control that still sees the full relationship. The
+fixture asserts the relationship persisted before projection. A fourth test
+covers malformed merge fields, out-of-contract fields, intake-derived and
+look-alike-prefix evidence refs.
+
+A/B (`r6-ab-old-scope.log`): with `bbe7af78e`'s `network_read_scope.py`
+restored, the source-visible, target-visible and contract tests fail
+(exit 1); the unrestricted control passes. Repaired module restored afterwards.
+
+Commands (anchor `547e45ad932d`; `uv` from `~/.local/bin`, Python 3.12, locked env):
+
+```sh
+uv run --frozen --python 3.12 pytest -q -p no:cacheprovider \
+  tests/security tests/contract/test_operator_api.py \
+  tests/contract/test_operator_assisted_listing_api.py \
+  tests/contract/test_operator_governance_api.py tests/contract/test_operator_growth_api.py \
+  tests/contract/test_operator_network_listings_api.py \
+  tests/contract/test_operator_network_rebalance_api.py \
+  tests/contract/test_operator_network_review_api.py \
+  tests/contract/test_operator_network_scoring_api.py tests/contract/test_operator_shell_api.py \
+  tests/contract/test_assisted_listing_promotion_api.py \
+  tests/contract/test_assisted_listing_v1_runtime.py \
+  tests/e2e/test_live_e2e_gate_dev_admin.py tests/e2e/test_acceptance_coverage.py \
+  tests/identity/test_identity_user_role_management.py \
+  tests/integration/test_operator_live_domain_modules.py --junitxml=r6-scope.xml
+uv run --frozen --python 3.12 ruff check <changed .py files>
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check bbe7af78e 547e45ad9
+```
+
+Results (original terminal exits; counts read from the completed JUnit, no rerun):
+
+| Check | Exit | Result |
+| --- | --- | --- |
+| A/B new tests against old `network_read_scope.py` (`r6-ab-old-scope.log`) | 1 | 3 `FAILED` (source-visible, target-visible, contract); unrestricted control passes |
+| Broad regression above (`r6-scope.log`, `r6-scope.xml`, `r6-scope.exit`) | 0 | JUnit 830 tests, 0 failures/errors/skips |
+| Changed Python ruff (`r6-ruff.log`) | 0 | All checks passed |
+| `check_code_boundaries.py` (`r6-boundaries.log`) | 0 | inventory unchanged |
+| `git diff --check bbe7af78e 547e45ad9` | 0 | clean |
+
+The six host-environment failures recorded for the previous broad run (missing
+`uv` on the worker PATH, canonical-venv NOTICE drift) do not occur here because
+this run used the locked `uv` environment; they were never authorization
+failures.
+
+No Web/E2E source changed (the frontend reads only contract fields:
+id/status/address/rent/area/floor/geocode/hard rules/fitScore/source*/
+heatZoneId/candidateId/duplicateOfId/mergedIntoId/sourceEvidence/
+archivedReason). New exact-head CI and independent review are required. No live
+grant, deployment, source/model/StoreOps action, gate waiver or F11 claim.
+
+## Base advance and R7 scoped Network read repair — 2026-10-09
+
+Owner: Claude2 (owner-churn reassignment after R7). Codex reopen (P2 x2) on
+exact head `8ce5cb14d765`.
+
+**Base advance.** `origin/dev` `963090d6fc32` (PR #1437 UI content parity) is
+merged as `4fa7d39f2` (normal two-parent merge, no rebase/force). The only
+conflict was `EXPECTED_PLAYWRIGHT_TEST_COUNT`: this task added three Today
+viewport regressions (119 -> 122) and dev independently added three shell layout
+regressions (119 -> 122) to `operator-shell-layout.spec.ts`. The merged spec set
+has both, so the constant is 125 and the inventory unit test
+(`tests/e2e/test_acceptance_coverage.py`) is aligned; `npx playwright test
+--list --project=chromium` on the merge reports `Total: 125 tests in 18 files`.
+`git rev-list --count HEAD..origin/dev` = 0.
+
+**1. Selected-zone reads with combined scope axes.** The route passed
+`collection_scope={heatZoneId: selected}` and `authorize_intake_action` applied
+the complete-envelope `intake_resource_in_scope` to it, so a viewer restricted on
+brand/region/store/assigned-area plus heat zone got `403 SCOPE_DENIED` for
+`?selectedHeatZoneId=HZ-01` (no brand in the query) while the queryless read
+succeeded. `collection_filters_in_scope` now checks only the axes a read
+collection request supplies; each supplied value must be allowed. Records,
+relationships and aggregates are still projected on the full scope
+(`project_listing_snapshot`, intake filtering unchanged). Target objects and
+creates (`submit_url`/`submit_csv`, which land an object) keep the
+complete-envelope check.
+
+**2. Production Network initialisation.** The actual Console mount supplies no
+`selectedHeatZoneId`/`heatZones`; the legacy `/heatzones` read is 403 for the
+operator-only grant (intended), so no zone was ever selected and the scoped
+snapshot was never requested; Find Areas gated on the denied legacy binding.
+`NetworkFindAreasWorkspace` now requests the scoped snapshot without a selection,
+adopts the API-named `selectedHeatZoneId` when it is a visible zone, and the
+Find Areas gate reads only that authoritative snapshot (it already supersedes
+the legacy heatzone/candidate bindings for rendering). An authorized empty
+snapshot shows the `empty` gate. General-domain grants stay denied
+(`shared/auth/rbac.py` unchanged).
+
+Regressions:
+- `tests/security/test_operator_network_read_scope.py`: for brand/region/store/
+  assigned-area each combined with `HZ-01`, queryless and `?selectedHeatZoneId=HZ-01`
+  both return 200 with only `L-2024` (same-zone `L-2030` projected out),
+  candidate/review/count projection, withheld zone aggregates, the intake list
+  with the selected zone, an excluded-zone `HZ-02` `SCOPE_DENIED` control on both
+  routes and no state mutation; a restricted non-viewer reviewer keeps the full
+  envelope and the HZ-02 denial.
+- `tests/security/test_operator_read_authorization.py`: supplied filter axes are
+  enforced, target objects still need every restricted axis, and `submit_url`
+  still needs a complete envelope.
+- `apps/web/.../NetworkConsoleScopedSnapshot.test.tsx`: full production
+  `OperatorConsole` (`ws=network`, no injected selection, live bootstrap,
+  `/heatzones` + `/listings/candidates` 403). Nonempty: first snapshot request has
+  no `selectedHeatZoneId`, the API-named `HZ-SCOPED-02` (not the first array item)
+  is then requested, persona header retained, Find Areas renders 2 zones /
+  1 listing, no gate, no fixture label. Empty: `empty` gate, no selection.
+- `productionWorkspaceData.test.tsx`: Find Areas gate follows only the scoped
+  snapshot state.
+
+A/B (repaired files restored afterwards, `git diff --stat` re-checked):
+`r7-ab-old-authorization.log` — new backend tests against `8ce5cb14d`'s
+`intake_authorization.py`: 6 failed, exit 1. `r7-ab-old-workspace.log` — new
+Console composition tests against `8ce5cb14d`'s `NetworkFindAreasWorkspace.tsx`:
+2 failed, exit 1.
+
+Implementation anchor `eac9c17dd`; all receipts below ran on that content
+(`uv` from `~/.local/bin`, Python 3.12 locked env):
+
+```sh
+uv run --frozen --python 3.12 pytest -q -p no:cacheprovider <R6 broad set> \
+  --junitxml=r7-scope.xml
+(cd apps/web && npx tsc --noEmit && npx vitest run features/operator)
+uv run --frozen ruff check <changed .py files>
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check 8ce5cb14d eac9c17dd
+```
+
+| Check | Exit | Result |
+| --- | --- | --- |
+| A/B backend (`r7-ab-old-authorization.log`) | 1 | 6 `FAILED` on old authorization |
+| A/B Console composition (`r7-ab-old-workspace.log`) | 1 | 2 `FAILED` on old workspace |
+| Broad backend regression (`r7-scope.log`, `r7-scope.xml`, `r7-scope.exit`) | 0 | JUnit 836 tests, 0 failures/errors/skips (2661 s) |
+| Web typecheck (`r7-typecheck.log`) | 0 | `tsc --noEmit` clean |
+| Operator vitest (`r7-vitest.log`) | 0 | 40 files, 400 tests passed |
+| Changed Python ruff (`r7-ruff.log`) | 0 | All checks passed |
+| `check_code_boundaries.py` (`r7-boundaries.log`) | 0 | inventory unchanged |
+| `git diff --check 8ce5cb14d eac9c17dd` | 0 | clean |
+
+New exact-head CI and independent review are required. No live grant,
+deployment, source/model/StoreOps action, gate waiver or F11 claim.
+
+## R8 producer-consumer scope repair — 2026-10-09
+
+Exact-head review of PR #1435 at `09dd3a28e` (base `963090d6f`) rejected two
+producer-consumer gaps. Both are repaired on implementation anchor `efcf86852`.
+
+**P2-1. Withheld HeatZone aggregates discarded authorized rows.**
+`project_listing_snapshot` deliberately returns `heatZones=[]` for combined
+brand/region/store/assigned-area scope while keeping the visible listings and
+candidates. `inspectNetworkListingsSnapshot` required nonempty HeatZones and
+listing sources, so the production workspace discarded the whole valid snapshot
+and Listing Radar showed nothing. Snapshot readiness now requires the API source,
+array-shaped collections and at least one authorized HeatZone, listing or
+candidate. Availability is per tab: `resolveNetworkFindAreasLoadState` makes Find
+Areas (which renders HeatZones) report a ready snapshot without zones as `empty`,
+with a detail naming the withheld aggregate; Listing Radar renders the scoped
+rows. Empty, malformed (non-array/non-API) and seed snapshots are still refused.
+
+**P2-2. Collection VIEW relaxation reached unprojected callers.**
+`collection_filters_in_scope` (partial-filter check) applied to every role, but
+only `operator_viewer` reads are projected per row on the complete scope. A
+`site_reviewer` restricted to `brand-a` + `HZ-01` could request
+`?selectedHeatZoneId=HZ-01` and receive same-zone `brand-b` intakes/counts or the
+unprojected snapshot. `collection_rows_are_scope_projected(principal)` is now the
+single predicate for both sides: `authorize_intake_action` relaxes collection
+filters only for it, and both `/network-listings` and `/network-listings/intake`
+project rows on the same predicate before counts and pagination. Every other
+caller keeps the complete-envelope `SCOPE_DENIED`.
+
+Regressions:
+- `tests/security/test_operator_read_authorization.py::test_partial_collection_filters_stay_denied_for_unprojected_callers`:
+  restricted reviewer refused on the partial filter (unit and both routes,
+  `SCOPE_DENIED`), still admitted with a complete `brand-a`+`HZ-01` envelope;
+  the operator viewer with the same scope gets only the `brand-a` intake/listing
+  (foreign-brand `brand-b` row projected out, counts `ready=1`, `needsReview=0`)
+  and `HZ-02` is refused.
+- `tests/security/test_operator_network_read_scope.py`: the R7 test
+  `test_selected_zone_read_admits_restricted_nonviewer_without_new_projection`
+  asserted the rejected leak (restricted non-viewer admitted on `HZ-01` with
+  unprojected counts). It is replaced by
+  `test_selected_zone_read_keeps_complete_envelope_denial_for_unprojected_nonviewer`:
+  `SCOPE_DENIED` on both collection routes for `HZ-01` and `HZ-02`, state
+  unchanged (anchor `280328523`).
+- `NetworkConsoleScopedSnapshot.test.tsx`: full production `OperatorConsole`
+  with a snapshot carrying 1 listing and withheld HeatZones: Find Areas shows the
+  `empty` gate with the withheld-aggregate detail, header `0 HeatZones / 1
+  listings`, no selection injected; `tab=radar` renders `Scoped Road 1`, no gate,
+  no fixture label.
+- `productionWorkspaceData.test.tsx`: withheld zones stay `ready`, all-empty,
+  missing collection and non-API source stay `empty`, seed stays `seed`;
+  `resolveNetworkFindAreasLoadState` maps only ready+0 zones to `empty`.
+
+A/B (repaired files restored afterwards, `git diff --stat` re-checked):
+`r8-ab-old-authorization.log` — new backend test against `09dd3a28e`'s
+`intake_authorization.py` + `network_listings.py`: 1 failed, exit 1.
+`r8-ab-old-workspace.log` — new Console test against `09dd3a28e`'s
+`NetworkFindAreasWorkspace.tsx`: 1 failed, exit 1.
+
+Commands (`uv` from `~/.local/bin`, Python 3.12 locked env). Web, ruff and
+boundary receipts ran on `efcf86852`; `280328523` changes only the Python test
+above. The final broad backend receipt ran on `280328523`:
+
+```sh
+PATH="$HOME/.local/bin:$PATH" \
+uv run --frozen --python 3.12 pytest -q -p no:cacheprovider <R6 broad set> \
+  --junitxml=r8b-scope.xml
+(cd apps/web && npx tsc --noEmit && npx vitest run features/operator)
+uv run --frozen ruff check <changed .py files>
+python3 delivery_toolchain/governance/check_code_boundaries.py
+git diff --check 09dd3a28e 280328523
+```
+
+| Check | Exit | Result |
+| --- | --- | --- |
+| A/B backend (`r8-ab-old-authorization.log`) | 1 | 1 `FAILED` on old authorization |
+| A/B Console composition (`r8-ab-old-workspace.log`) | 1 | 1 `FAILED` on old workspace |
+| First broad run on `efcf86852` (`r8-scope.log/.xml/.exit`) — **not a passing receipt** | 1 | JUnit 837 tests, 5 failures: the stale R7 leak assertion above (fixed in `280328523`) and 4 supply-chain/lock tests that subprocess `uv`, which was not on that shell's `PATH` (`FileNotFoundError: 'uv'`) |
+| Final broad backend regression on `280328523` (`r8b-scope.log/.xml/.exit`) | 0 | JUnit 837 tests, 0 failures/errors/skips (1291 s) |
+| Web typecheck (`r8-typecheck.log`) | 0 | `tsc --noEmit` clean |
+| Operator vitest (`r8-vitest.log`) | 0 | 40 files, 402 tests passed |
+| Changed Python ruff (`r8-ruff.log`) | 0 | All checks passed |
+| `check_code_boundaries.py` (`r8-boundaries.log`) | 0 | inventory unchanged |
+| `git diff --check 09dd3a28e 280328523` | 0 | clean |
+
+New exact-head CI and independent review are required. No live grant,
+deployment, source/model/StoreOps action, gate waiver or F11 claim.
+
+## Outstanding live acceptance (not completed here)
+
+After required CI, independent exact-head review, merge and admitted deployment,
+the coordinator must use the existing authenticated Web/BFF `/operator/users`
+API to grant `operator_viewer` to the requested existing account. Read the complete
+authoritative account first; preserve admin, status and every scope axis. Do not
+silently remove the already granted auditor role; any role removal requires
+explicit authorization. Capture a fresh role-change audit and account/session
+readback, then exercise Network/Governance real DTOs and negative write/persona/
+foreign-tenant probes on the exact deployed candidate. Keep StoreOps/source/model
+limitations visible. Record sanitized remote receipts without cookies, bearers,
+passwords or signing material. F11/live acceptance belongs to independent review
+and the authorized human/coordinator, never this worker's self-approval.

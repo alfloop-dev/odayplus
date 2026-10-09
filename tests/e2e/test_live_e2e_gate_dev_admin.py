@@ -14,8 +14,10 @@ import importlib.util
 import json
 import sys
 from copy import deepcopy
+from functools import wraps
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -1176,6 +1178,256 @@ def test_missing_web_client_blocks_the_session_journey() -> None:
     checks, report = base.run_gate(api_routes(), cfg=dev_admin_config(), web_http=None)
 
     assert "session:web_client" in blockers(report)
+
+
+# ---------------------------------------------------------------------------
+# Explicit read-enabled administration (same configured account/credentials)
+# ---------------------------------------------------------------------------
+
+
+def read_admin_routes(roles: list[str]) -> dict[str, Any]:
+    record = admin_users(roles)["users"][0]
+    audit = admin_audit_trail()
+    audit["events"].append({
+        "event_type": "identity.account.roles_updated",
+        "metadata": {"account_id": ADMIN_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID,
+                     "roles_after": sorted(roles), "scope_after": admin_scope(), "status": "active"},
+    })
+    routes = web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, admin_users(roles)),
+        "GET /api/v1/auth/principal [session]": base.response(200, {
+            "account_id": ADMIN_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID, "roles": sorted(roles),
+        }),
+        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, audit),
+        f"GET /api/v1/operator/users/{ADMIN_ACCOUNT_ID} [session]": base.response(200, record),
+        "GET /api/v1/operator/bootstrap [session]": base.response(200, {
+            "data_mode": "live", "data_source": "postgresql://operator-live",
+        }),
+    })
+    for path in ("network-listings/intake/submit", "network-reviews/live-gate-no-such-review/decide",
+                 "network-scoring/score", "governance/decisions"):
+        routes[f"POST /api/v1/operator/{path} [session]"] = base.response(403, {"detail": "role denied"})
+    return routes
+
+
+@pytest.mark.parametrize("roles", [
+    ["platform_admin", "auditor"], ["platform_admin", "operator_viewer"],
+    ["platform_admin", "auditor", "operator_viewer"],
+])
+def test_explicit_read_admin_requires_positive_reads_and_negative_mutations(roles: list[str]) -> None:
+    checks, report, _ = run_dev_admin(web=AdminWeb(read_admin_routes(roles)))
+    assert report["ok"], report["blockers"]
+    assert report["dev_admin"]["account_mode"] == "read-enabled-admin"
+    names = {c.name for c in checks}
+    assert "admin:business_shell_denied" not in names
+    assert {"admin:read_principal_bound", "admin:read_grant_audited", "admin:scoped_business_read",
+            "admin:scoped_account_read", "admin:business_write_denied", "admin:business_approve_denied",
+            "admin:business_execute_denied", "admin:business_publish_denied"} <= names
+    assert report["release_profile"]["full_product_acceptance_claimed"] is False
+
+
+@pytest.mark.parametrize("extra", ["unknown", "architecture_owner", "expansion_user", "site_reviewer",
+                                   "operations_manager", "executive", "model_owner", "platform_admin"])
+def test_read_admin_additional_or_duplicate_roles_fail_closed(extra: str) -> None:
+    _, report, _ = run_dev_admin(web=AdminWeb(read_admin_routes(["platform_admin", "auditor", extra])))
+    assert "admin:identity_user_list" in blockers(report)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("account_id", "another-account"), ("tenant_id", gate.FOREIGN_TENANT_PROBE_ID),
+    ("tenant_id", None), ("roles", ["platform_admin"]),
+    ("roles", ["platform_admin", "auditor", "executive"]),
+])
+def test_read_admin_principal_must_bind_account_tenant_and_exact_roles(field: str, value: Any) -> None:
+    routes = read_admin_routes(["platform_admin", "auditor"])
+    routes["GET /api/v1/auth/principal [session]"].payload[field] = value
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    assert "admin:read_principal_bound" in blockers(report)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("account_id", "another-account"), ("tenant_id", gate.FOREIGN_TENANT_PROBE_ID),
+    ("roles_after", ["platform_admin"]), ("scope_after", {}), ("status", "disabled"),
+])
+def test_read_admin_requires_matching_explicit_audit(field: str, value: Any) -> None:
+    routes = read_admin_routes(["platform_admin", "auditor"])
+    routes["GET /api/v1/operator/users/audit-trail [session]"].payload["events"][-1]["metadata"][field] = value
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    assert "admin:read_grant_audited" in blockers(report)
+
+
+@pytest.mark.parametrize("path,check", [
+    ("operator/bootstrap", "admin:scoped_business_read"),
+    (f"operator/users/{ADMIN_ACCOUNT_ID}", "admin:scoped_account_read"),
+    ("operator/network-listings/intake/submit", "admin:business_write_denied"),
+    ("operator/network-reviews/live-gate-no-such-review/decide", "admin:business_approve_denied"),
+    ("operator/network-scoring/score", "admin:business_execute_denied"),
+    ("operator/governance/decisions", "admin:business_publish_denied"),
+])
+def test_read_admin_each_required_read_and_denial_blocks(path: str, check: str) -> None:
+    routes = read_admin_routes(["platform_admin", "auditor"])
+    method = "GET" if "read" in check else "POST"
+    routes[f"{method} /api/v1/{path} [session]"] = base.response(503 if method == "GET" else 422, {})
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    assert check in blockers(report)
+
+
+@pytest.mark.parametrize("roles", [
+    ["platform_admin", "auditor"], ["platform_admin", "operator_viewer"],
+    ["platform_admin", "auditor", "operator_viewer"],
+])
+@pytest.mark.parametrize("bypass_guard", [False, True], ids=["real-guard", "broken-guard"])
+def test_read_admin_gate_mutation_probes_never_reach_real_handlers(
+    monkeypatch: pytest.MonkeyPatch, roles: list[str], bypass_guard: bool,
+) -> None:
+    """Feed the gate's actual bodies through real DTOs, routers and RBAC guards.
+
+    The bypass models a permission regression, not an expected live operation.
+    Validation must stop all handlers/services and fail the gate with 422.
+    """
+    from fastapi import FastAPI
+    from fastapi.routing import APIRoute
+    from fastapi.testclient import TestClient
+
+    from apps.api.app.routes.operator_modules.governance import create_governance_sub_router
+    from apps.api.app.routes.operator_modules.network_listings import (
+        create_network_listings_sub_router,
+    )
+    from apps.api.app.routes.operator_modules.network_reviews import (
+        create_network_review_sub_router,
+    )
+    from apps.api.app.routes.operator_modules.network_scoring import (
+        NetworkScoringBatchPayload,
+        create_network_scoring_sub_router,
+    )
+    from apps.api.oday_api.security import dependencies
+    from modules.opsboard.application.network_scoring import NetworkScoringService
+    from shared.audit import InMemoryAuditLog
+    from shared.auth import Action, AuthorizationEngine, Principal, Role, Scope
+
+    # This is exactly why the old {} scoring probe was unsafe.
+    assert NetworkScoringBatchPayload.model_validate({}).candidateIds is None
+    principal = Principal(ADMIN_ACCOUNT_ID, frozenset(Role(r) for r in roles),
+                          Scope(tenant_id=ADMIN_TENANT_ID))
+    monkeypatch.setattr(dependencies, "principal_from_headers", lambda *a, **k: principal)
+    monkeypatch.setattr(dependencies, "default_boundary", lambda: None)
+    audit = InMemoryAuditLog()
+    engine = AuthorizationEngine(audit_log=audit)
+    app = FastAPI()
+    guards = []
+
+    def guard(resource: str, action: Action) -> Any:
+        dependency = dependencies.require_operator_permission(resource, action, engine=engine)
+        guards.append(dependency)
+        return dependency
+
+    listing_repository = Mock(tenant_id=ADMIN_TENANT_ID)
+    score_repository = Mock(tenant_id=ADMIN_TENANT_ID)
+    model_runtime = Mock()
+    scoring = Mock(wraps=NetworkScoringService(
+        seed_fixtures=False, listing_repository=listing_repository,
+        sitescore_repository=score_repository, model_runtime=model_runtime,
+        tenant_id=ADMIN_TENANT_ID,
+    ))
+    services = [Mock(), Mock(), scoring, Mock()]
+    resolvers = [Mock(return_value=service) for service in services]
+    factories = [
+        (create_network_listings_sub_router, "require_write_permission_fn", "listing", Action.UPDATE),
+        (create_network_review_sub_router, "require_decide_permission_fn", "sitescore", Action.APPROVE),
+        (create_network_scoring_sub_router, "require_write_permission_fn", "sitescore", Action.EXECUTE),
+        (create_governance_sub_router, "require_decision_permission_fn", "intervention", Action.APPROVE),
+    ]
+    paths = {
+        "/api/v1/operator/network-listings/intake/submit": "write",
+        "/api/v1/operator/network-reviews/live-gate-no-such-review/decide": "approve",
+        "/api/v1/operator/network-scoring/score": "execute",
+        "/api/v1/operator/governance/decisions": "publish",
+    }
+    handlers = []
+
+    def observe(endpoint: Any) -> Any:
+        spy = Mock(wraps=endpoint)
+        handlers.append(spy)
+
+        @wraps(endpoint)
+        def observed(*args: Any, **kwargs: Any) -> Any:
+            return spy(*args, **kwargs)
+
+        return observed
+
+    for (factory, permission_arg, resource, action), service, resolver in zip(
+        factories, services, resolvers, strict=True,
+    ):
+        router = factory(
+            service, require_view_permission_fn=lambda: None,
+            service_resolver=resolver, **{permission_arg: guard(resource, action)},
+        )
+        # Instrument before inclusion; FastAPI may compose included routers lazily.
+        for route in router.routes:
+            if isinstance(route, APIRoute) and (
+                "/api/v1/operator" + route.path.replace("{review_id}", "live-gate-no-such-review")
+            ) in paths:
+                route.endpoint = observe(route.endpoint)
+                route.dependant.call = route.endpoint
+        app.include_router(router, prefix="/api/v1/operator")
+    if bypass_guard:
+        for dependency in guards:
+            app.dependency_overrides[dependency] = lambda: None
+    assert len(handlers) == 4
+    client = TestClient(app)
+    routes = read_admin_routes(roles)
+    received = {}
+
+    def send(path: str, body: Any, headers: dict[str, str]) -> Any:
+        assert headers["origin"] == base.WEB_URL
+        assert headers["cookie"] == f"{SESSION_COOKIE}={SESSION_VALUE}"
+        response = client.post(path, json=body)
+        received[path] = response
+        return base.response(response.status_code, response.json())
+
+    for path in paths:
+        # Capture only the path; bodies still come from the real gate under test.
+        routes[f"POST {path} [session]"] = lambda body, headers, path=path: send(path, body, headers)
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    assert set(received) == set(paths)
+    assert {response.status_code for response in received.values()} == {422 if bypass_guard else 403}
+    assert report["ok"] is (not bypass_guard), report["blockers"]
+    if bypass_guard:
+        assert {f"admin:business_{label}_denied" for label in paths.values()} <= blockers(report).keys()
+        assert not audit.list_events()  # No authorization proof is fabricated.
+        for response in received.values():
+            assert any(error["loc"][0] == "body" for error in response.json()["detail"])
+    else:
+        assert len(audit.list_events()) == 4
+        assert all(event.outcome == "deny" for event in audit.list_events())
+    for spy in [*handlers, *resolvers, *services, listing_repository, score_repository, model_runtime]:
+        assert spy.mock_calls == [], "probe must never invoke handlers, scoring, providers or persistence"
+    assert report["release_profile"]["full_product_acceptance_claimed"] is False
+
+    # Offline sensitivity control: the original {} probe WOULD reach batch
+    # scoring with candidate_ids=None if authorization broke. Stub the method
+    # for this control only, so no real scoring/provider/persistence executes.
+    for dependency in guards:
+        app.dependency_overrides[dependency] = lambda: None
+    scoring.score_batch.return_value = {"offline_handler_control": True}
+    control = client.post("/api/v1/operator/network-scoring/score", json={})
+    assert control.status_code == 200, control.text
+    assert sum(spy.call_count for spy in handlers) == 1
+    resolvers[2].assert_called_once()
+    scoring.score_batch.assert_called_once()
+    assert scoring.score_batch.call_args.kwargs["candidate_ids"] is None
+    for spy in (listing_repository, score_repository, model_runtime):
+        assert spy.mock_calls == []
+
+
+def test_read_admin_canonical_permission_expansion_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shared.auth import Action, Role
+    from shared.auth.rbac import ROLE_PERMISSIONS, Permission
+
+    monkeypatch.setitem(ROLE_PERMISSIONS, Role.AUDITOR,
+                        ROLE_PERMISSIONS[Role.AUDITOR] | {Permission("listing", Action.UPDATE)})
+    _, report, _ = run_dev_admin(web=AdminWeb(read_admin_routes(["platform_admin", "auditor"])))
+    assert "admin:identity_user_list" in blockers(report)
 
 
 # ---------------------------------------------------------------------------

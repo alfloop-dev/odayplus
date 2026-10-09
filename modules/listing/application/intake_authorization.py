@@ -28,6 +28,7 @@ from shared.auth import (
 _SCOPE_AXIS_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("brand", ("brand_id", "brandId")),
     ("region", ("region_id", "regionId")),
+    ("store", ("store_id", "storeId")),
     ("assigned_area", ("assigned_area_id", "assignedAreaId")),
     ("heat_zone", ("heat_zone_id", "heatZoneId")),
 )
@@ -41,6 +42,42 @@ def _resource_scope_value(resource: dict[str, Any], keys: tuple[str, ...]) -> An
             if value is not None:
                 return value
     return None
+
+
+def collection_filters_in_scope(principal: Principal, filters: dict[str, Any]) -> bool:
+    """Return whether every filter a read collection request supplies is in scope.
+
+    A read query is not an object envelope: an axis the caller did not filter on
+    is not missing evidence, because every returned record is still projected
+    against the complete principal scope.  Each supplied axis must be allowed.
+    Object targets and creates keep the complete-envelope check of
+    :func:`intake_resource_in_scope`.
+    """
+
+    checks = {
+        "brand": principal.scope.permits_brand,
+        "region": principal.scope.permits_region,
+        "store": principal.scope.permits_store,
+        "assigned_area": principal.scope.permits_assigned_area,
+        "heat_zone": principal.scope.permits_heat_zone,
+    }
+    for axis, keys in _SCOPE_AXIS_KEYS:
+        value = _resource_scope_value(filters, keys)
+        if value is not None and not checks[axis](value):
+            return False
+    return True
+
+
+def collection_rows_are_scope_projected(principal: Principal) -> bool:
+    """Return whether collection routes project every returned row for ``principal``.
+
+    Only the verified operator read grant is paired with a per-row projection
+    against its complete scope (before counts and pagination).  Any other caller
+    receives the service rows for the declared filters unprojected, so its
+    collection filters must still form a complete scope envelope.
+    """
+
+    return principal.has_role(Role.OPERATOR_VIEWER)
 
 
 # A collection request addresses a query scope, not an object.  It is audited
@@ -81,6 +118,7 @@ def intake_resource_in_scope(principal: Principal, resource: dict[str, Any]) -> 
     checks = {
         "brand": principal.scope.permits_brand,
         "region": principal.scope.permits_region,
+        "store": principal.scope.permits_store,
         "assigned_area": principal.scope.permits_assigned_area,
         "heat_zone": principal.scope.permits_heat_zone,
     }
@@ -199,6 +237,9 @@ def authorize_intake_action(
         else None
     )
 
+    if principal.has_role(Role.OPERATOR_VIEWER) and target_tenant != principal.tenant_id:
+        _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED")
+
     tenant_decision = check_tenant_isolation(
         principal=principal,
         resource_tenant_id=target_tenant,
@@ -212,11 +253,21 @@ def authorize_intake_action(
 
     # 3. Brand/Region/Area/HeatZone scope
     #
-    # Collection requests are checked against their declared filters; target
-    # requests against the object envelope.  Either way the principal's own
+    # Read collection requests from a caller whose returned records are each
+    # projected against the full scope are checked against the filters they
+    # declare.  Every other subject -- unprojected collection reads, target
+    # objects and creates (which must land inside every restricted axis) -- is
+    # checked as a complete envelope.  Either way the principal's own
     # restrictions must contain the subject.
     if scope_subject is not None:
-        if not intake_resource_in_scope(principal, scope_subject):
+        in_scope = (
+            collection_filters_in_scope(principal, scope_subject)
+            if is_collection_request
+            and action == "view"
+            and collection_rows_are_scope_projected(principal)
+            else intake_resource_in_scope(principal, scope_subject)
+        )
+        if not in_scope:
             _raise_and_audit(status_code=403, detail="SCOPE_DENIED")
 
     # 4. Role mapping and matrix rules
@@ -250,8 +301,12 @@ def authorize_intake_action(
         "privacyOfficer",
     )
 
-    # Deny platform admin from accessing business data
-    if is_admin and not (is_manager or is_staff or is_steward):
+    # An explicit verified read grant composes with administration, but only
+    # for VIEW. A caller-selected persona can never manufacture this grant.
+    is_operator_viewer = principal.has_role(Role.OPERATOR_VIEWER)
+    if is_admin and not (
+        is_manager or is_staff or is_steward or (action == "view" and is_operator_viewer)
+    ):
         _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     def _is_owner(owner: Any, submitter: Any) -> bool:
@@ -270,7 +325,7 @@ def authorize_intake_action(
             if not _is_owner(owner, submitter):
                 _raise_and_audit(status_code=403, detail="OWNERSHIP_REQUIRED")
         # Ensure allowed roles
-        if not (is_staff or is_manager or is_steward or is_governance or is_privacy):
+        if not (is_staff or is_manager or is_steward or is_governance or is_privacy or is_operator_viewer):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action in ("submit_url", "submit_csv"):

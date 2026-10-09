@@ -95,7 +95,10 @@ export type GovernanceStatusRow = {
   note: string;
 };
 
-/** The five status-board panels every value builder must expose. */
+/** Canonical producer reports persisted record counts, not model readiness. */
+export type GovernanceRecordCount = { name: string; status: string; count: number };
+
+/** Grouped local/legacy status panels, plus canonical repository observations. */
 export type GovernanceStatusBoard = {
   dataQuality: GovernanceStatusRow[];
   models: GovernanceStatusRow[];
@@ -103,6 +106,7 @@ export type GovernanceStatusBoard = {
   sla: GovernanceStatusRow[];
   users: GovernanceStatusRow[];
   runbooks?: GovernanceStatusRow[];
+  recordCounts?: GovernanceRecordCount[];
 };
 
 /** An evidence-package history row. */
@@ -120,7 +124,7 @@ export type GovernanceSnapshot = {
   approvals: GovernanceApproval[];
   decisions: GovernanceDecisionRow[];
   auditRows: GovernanceAuditRow[];
-  statusBoard: GovernanceStatusBoard;
+  statusBoard: GovernanceStatusBoard | GovernanceRecordCount[];
   evidencePackages: GovernanceEvidencePackage[];
   correlationId?: string;
   source?: string;
@@ -171,7 +175,7 @@ export async function fetchGovernanceSnapshot(
     approvals: GovernanceApproval[];
     decisions: GovernanceDecisionRow[];
     auditRows: GovernanceAuditRow[];
-    statusBoard: GovernanceStatusBoard;
+    statusBoard: GovernanceStatusBoard | GovernanceRecordCount[];
     evidencePackages: GovernanceEvidencePackage[];
     correlation_id?: string;
     source?: string;
@@ -179,11 +183,11 @@ export async function fetchGovernanceSnapshot(
   if (!result.ok || !result.data) return null;
   const data = result.data;
   return {
-    approvals: data.approvals ?? [],
-    decisions: data.decisions ?? [],
-    auditRows: data.auditRows ?? [],
+    approvals: data.approvals,
+    decisions: data.decisions,
+    auditRows: data.auditRows,
     statusBoard: data.statusBoard,
-    evidencePackages: data.evidencePackages ?? [],
+    evidencePackages: data.evidencePackages,
     correlationId: data.correlation_id,
     source: data.source,
   };
