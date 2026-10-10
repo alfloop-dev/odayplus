@@ -85,6 +85,9 @@ async function openInvitedCredentials() {
   fireEvent.change(screen.getByTestId("edit-email-input"), {
     target: { value: "invited@example.invalid" },
   });
+  fireEvent.change(screen.getByPlaceholderText(/請輸入權限調整原因/i), {
+    target: { value: "回歸測試邀請憑證交接" },
+  });
   fireEvent.click(screen.getByTestId("save-user-roles-submit"));
   await screen.findByTestId("invited-credentials-modal");
   return { ...stub, accountId };
