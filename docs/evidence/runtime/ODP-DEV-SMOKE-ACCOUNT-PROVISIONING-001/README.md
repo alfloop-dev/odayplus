@@ -899,3 +899,30 @@ live gate. Existing actual-router/PostgreSQL lifecycle and refusal tests remain.
 This is an incremental source anchor, not review-ready or deployment evidence.
 No worker live login, identity/secret/config, IAM, traffic, sources or model action.
 Verification pending at this anchor; exact declarations will be measured next.
+
+### Exact admission-enforcement verification
+
+Source anchor `c25e742970e04ad311c7c466e0e69c6017bb4b4b` completed all five exact
+declarations once through the canonical foreground verification module. The
+original tool terminal returned exit0; every retained receipt binds source SHA,
+exact command/selection, actual exit code and duration. Existing uv, scratch
+Corepack pnpm9.15.9 launcher and installed workspace binaries were reused; no
+tracked dependency changes, background polling, count-only rerun or wider suite.
+
+| Exact declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.018s | `c3968c7c7339195d` |
+| Invitation/provisioning/workflow pytest | 0 | 291.108s | `f1ffb3a3cd72ca99` |
+| Gate/operator pytest | 0 | 45.246s | `aef9f6fc10b8b99f` |
+| Invitation Web Vitest | 0 | 3.140s | `c3983c5e5fa24889` |
+| Web typecheck | 0 | 8.075s | `fe8956887b73ac42` |
+
+Original JSON receipts remain in canonical `.orchestrator/evidence`. This later
+evidence-only commit is not the measured source SHA. Required exact-head CI and
+independent Codex review remain before activation. Next source work: authenticated
+foreground source/custody authority and rollback-owned promoted-before-gate hookup
+with independently acquired admission trust roots. Library admission enforcement
+is now wired; default workflow still only consumes an already staged bundle.
+No live login/account/secret/configuration/IAM/traffic/source/model action or
+passing live gate/deployment/full-product/F11 acceptance is claimed. Task remains
+in progress, not review-ready; this is an increment, not review submission.
