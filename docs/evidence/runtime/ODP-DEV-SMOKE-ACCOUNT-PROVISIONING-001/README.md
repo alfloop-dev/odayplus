@@ -564,3 +564,82 @@ credentials; worker never obtains them. Task remains in progress, not ready for
 formal PR/review: exact-head CI and independent Codex approval remain required
 once that end-to-end boundary is implemented. No live account/login/session,
 secret/configuration, deployment, source or model action occurred here.
+
+## Anchor 11 — encrypted matched-pair bundle staging (not activation)
+
+Source: `e1a683b29baad8a1d968ffa934f8246e4d47706f`.
+Verified current repository configuration against fetched `origin/dev`; default
+workflow still reads the standing username variable/password and optional initial
+password secrets. No workflow or PR1445 deployment/inventory code was changed.
+Canonical task scope was extended only for `pyproject.toml` / `uv.lock` to use
+standard PyNaCl/libsodium sealed-box encryption (`pynacl==1.6.2` locked), not a
+custom cryptographic implementation. `uv lock --python 3.12` returned exit0;
+only that dependency's records were added.
+
+`DevCredentialBundleExecutor.execute` composes the actual Web lifecycle with
+GitHub staging in a **single call**; it does not accept an arbitrary lifecycle
+receipt or separate username/password pair as creation proof. The very same new
+password used for invitation acceptance and fresh-login proof is encrypted with
+the approved plan username and new account/tenant/execution identifiers. Original
+admin password, email, acceptance capability, session cookies and initial-password
+fallback are absent from this JSON bundle.
+
+The pinned HTTPS GitHub API adapter authenticates with a foreground-owned token,
+reads the exact repository identity and dev environment public key, and refuses
+an existing `ODP_DEV_ADMIN_CREDENTIAL_BUNDLE`. It stages **one encrypted secret**
+rather than partially writing a username variable and password secret. Existing
+standing vars/secrets remain untouched. There is no CLI, redirect, subprocess,
+plaintext request, file output, delete, value readback, retry or workflow hook.
+GitHub cannot retrieve decrypted secrets; HTTP201 acknowledges creation only.
+External concurrent secret writers must be excluded by the trusted custodian:
+GitHub offers no create-only conditional PUT. HTTP204 (replacement/race), timeout
+or error is uncertainty, not acknowledged creation or a rollback instruction.
+
+A separate same-engine integrity-verified audit journal commits `binding-intent`
+before PUT and `binding-acknowledged` only after HTTP201. Audit failure, lost
+reply after the simulated remote commit, forbidden/replacement result or any
+post-lifecycle uncertainty quarantines the root. A committed intent/root
+reservation still forbids retry if quarantine cannot persist. Restarts inspect
+identifier-only receipts, never recreate/reset/delete/replace the account or
+retry PUT. This increment supplies diagnosis/quarantine, **not automatic remote
+reconciliation or a recovery activation authority**.
+
+Offline tests use actual sealed-box encrypt/decrypt, mocked pinned GitHub HTTP,
+the existing labelled memory BFF adapter, actual API routers, PostgreSQL,
+Argon2id/session/canonical-boundary lifecycle. They prove one matched pair,
+durable intent before ciphertext upload, original identity/credentials/other
+sessions preservation, no subprocess/secret output, repository/key/absence and
+redirect refusals before login, uncertain/lost/replacement PUT quarantine,
+append-then-fail transaction rollback, and restart with no second lifecycle/PUT.
+These are not real Next/live custody/GitHub secret/deployment receipts.
+
+### Exact source-head verification
+
+The canonical foreground runner returned exit0, recording all five **exact**
+declared commands once at the source head. No timeout, polling, count-only rerun
+or broader suite. PATH used existing uv, Corepack pnpm (scratch launcher) and
+workspace binaries; no Node installation/config change. The frozen Python run
+installed the newly locked PyNaCl dependency.
+
+| Exact declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.015s | `d93090e878c8dff4` |
+| Invitation/provisioning/workflow pytest | 0 | 181.732s | `f2d39e4d1d96902c` |
+| Gate/operator pytest | 0 | 46.955s | `10382d020fef6739` |
+| Invitation Web Vitest | 0 | 2.781s | `b43381b7cbc6eaf3` |
+| Web typecheck | 0 | 6.772s | `c478cad0ad7d2baf` |
+
+Original JSON receipts copied to canonical `.orchestrator/evidence`. A preliminary
+runner path lookup exited2 (no such file) before any test command launched; the
+correct canonical tool then ran once. This later evidence-only commit is not the
+measured source head.
+
+**Remaining exact boundary:** implement the strict memory-only matched-bundle
+consumer (including no stale bootstrap-secret mixing), authenticated foreground
+custody/source-approval/exact dev admission and promoted-before-unchanged-gate
+orchestration. The staged bundle is currently **not consumed** by any workflow;
+`binding_write_acknowledged` is not `credential_binding_verified` and neither is
+live gate/deployment success. Exact-head CI, independent Codex review and formal
+`task_finalize.sh` submission are required once end-to-end source is ready.
+No live account/login/session, GitHub token/secret/configuration, IAM, deployment,
+source activation or model action occurred. Task remains in progress.
