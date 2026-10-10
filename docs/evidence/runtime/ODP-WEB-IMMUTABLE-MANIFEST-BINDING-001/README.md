@@ -4,8 +4,13 @@ Task: ODP-WEB-IMMUTABLE-MANIFEST-BINDING-001 · Owner: Pi · Reviewer: Codex2
 
 ## Scope and provenance
 
-Baseline `origin/dev` and deployed source:
+Initial baseline and last authenticated deployed source:
 `31785c571e062b9bef4512ec3d848391c47621d3`.
+On 2026-10-10 at 14:22 UTC, before independent approval, the owner synchronized
+this task with actual `origin/dev`
+`d99de4a05ef58340247470ab213089b8706543c7`: #1448 had normally merged at
+14:00:26 UTC and archived at 14:04:24 UTC. This is meaningful reviewed-source
+composition, not a cosmetic release commit.
 The task-scoped handoff records Runtime Release 38044574206 succeeding under
 `dev-admin`, but authenticated Web manifest metadata was empty. This task
 repairs that source omission; it does not claim a new runtime readback.
@@ -28,12 +33,20 @@ at `0191f99282db7de486a43e7ca18221188f67a810`. Its deploy-script changes concern
 profile/foreground setup and the final gate, not this Web serializer. This PR
 neither imports nor moves that approved head or its account/bundle/journal logic.
 The canonical task note records the composition boundary before edits.
+Those statements describe the initial preparation. The current unapproved
+branch now inherits the already merged #1448 source through `origin/dev`;
+its frozen approved head was not edited or reopened. Original 78244003 and
+4a7b929e receipts remain historical, not final-head verification.
 
-Before a normal release is frozen or given exact-source approval, Worker
-Manager / merge queue must compose BOTH independently reviewed PRs into the
-candidate tree. Verify that integrated tree and required CI, then obtain fresh
-manifest/admission for its exact SHA/image/digest/profile tuple. Neither old
-SourceApproval nor the prior successful release authorizes a new composition.
+Before a normal release is frozen or given exact-source approval, verify this
+integrated account-source plus Web-binding tree and required CI, then obtain
+fresh manifest/admission for its exact SHA/image/digest/profile tuple. The strict
+source observer requires the entire admitted candidate tree to equal the
+reviewed head. Neither old SourceApproval nor the prior successful release
+authorizes a new composition. UI #1451's independent P2 repair is owner-scheduled
+after the consented foreground staging; it is not an invitation transport
+prerequisite. Its later ordinary release must start after staging to consume
+the actual GitHub bundle, without any same-job secret-refresh assumption.
 No deployment, live env patch, secret/token read, IAM, account, credential, role,
 business, source, model or provisioning effect was performed here.
 
