@@ -2118,4 +2118,6 @@ from tests.integration.dev_smoke_remote_journal_cases import (  # noqa: E402, F4
     test_remote_journal_lost_committed_reply_never_retries_or_replaces,
     test_remote_journal_actual_auth_guard_precedes_any_ledger_write,
     test_remote_journal_reserve_uses_server_account_tuple_and_global_single_use,
+    test_remote_gate_preflight_refuses_before_journal_session_login,
+    test_remote_journal_server_audit_failure_rolls_back_reservation_without_issue,
 )

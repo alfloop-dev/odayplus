@@ -164,6 +164,51 @@ def test_remote_journal_actual_auth_guard_precedes_any_ledger_write(
     assert local.inspect() is None and _q(s, "SELECT count(*) FROM identity.invitations") == [(0,)]
 
 
+@pytest.mark.parametrize("fault", ["deployment", "profile", "source", "origin", "sha"])
+def test_remote_gate_preflight_refuses_before_journal_session_login(
+    remote_binding: Any, fault: str,
+) -> None:
+    from dataclasses import replace
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    from tests.integration.test_dev_smoke_provisioning import _foreground_gate_template
+    _, web, local, binding, github, _, plan, args = remote_binding
+    config = _foreground_gate_template(binding, args)
+    fields = {"deployment": {"expected_deployment": "production"},
+              "profile": {"release_profile": "full"},
+              "source": {"external_provider_mode": "live"},
+              "origin": {"web_url": "https://foreign.example.invalid"},
+              "sha": {"expected_sha": "f" * 40}}
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_GATE_CONFIG_INVALID"):
+        binding.execute_and_check_gate(
+            plan, gate_config=replace(config, **fields[fault]), worker_job="offline-worker",
+            gcp_region="asia-east1", gcp_project="offline-project", **args,
+        )
+    assert not web.calls and not github.calls and local.inspect() is None
+
+
+def test_remote_journal_server_audit_failure_rolls_back_reservation_without_issue(
+    remote_binding: Any, monkeypatch: Any,
+) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    from tests.integration.test_dev_smoke_provisioning import _q
+    s, web, local, binding, github, _, plan, args = remote_binding
+    original = s.audit.record
+
+    def fail(event: Any) -> Any:
+        if event.event_type == "release.dev_smoke.reservation":
+            raise RuntimeError(args["new_password"])
+        return original(event)
+
+    monkeypatch.setattr(s.audit, "record", fail)
+    with pytest.raises(ProvisioningRefused) as error:
+        binding.execute(plan, **args)
+    assert args["new_password"] not in str(error.value)
+    assert local.inspect() is None and not github.uploads
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+    assert _q(s, "SELECT count(*) FROM identity.invitations") == [(0,)]
+    assert not any(path == "/auth/invitations" for _, path in web.calls)
+
+
 def test_remote_journal_reserve_uses_server_account_tuple_and_global_single_use(
     remote_binding: Any, monkeypatch: Any,
 ) -> None:

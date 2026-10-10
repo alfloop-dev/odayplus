@@ -670,12 +670,12 @@ class ProvisioningJournal:
             with self._engine.lock:
                 self._lock()
                 now = self._now()
+                if self._events():
+                    raise ProvisioningRefused("PROVISIONING_ALREADY_RESERVED")
                 checked = validate_foreground_plan(
                     plan, original_account=original_account, release_sha=release_sha,
                     manifest_digest=manifest_digest, now=now,
                 )
-                if self._events():
-                    raise ProvisioningRefused("PROVISIONING_ALREADY_RESERVED")
                 digest = "sha256:" + hashlib.sha256(json.dumps(
                     plan, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
                 ).encode()).hexdigest()
@@ -917,7 +917,8 @@ class RemoteProvisioningJournal:
         except Exception:
             raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID") from None
         return AuditEvent(event_id=event_id, event_type="release.dev_smoke.binding", actor="",
-                          action="DEV_SMOKE_BINDING", resource="", outcome="success")
+                          action="DEV_SMOKE_BINDING", resource="", outcome="success",
+                          correlation_id=DevSmokeBindingJournal._CORRELATION)
 
 
 class WebInvitationExecutor:
@@ -1466,15 +1467,6 @@ class DevCredentialBundleExecutor(DevSmokeBindingJournal):
     intent or quarantine as a no-retry boundary. No password reset, secret delete,
     value retrieval, rollback, replacement or automatically repeated PUT exists.
     """
-
-    _CORRELATION = f"dev-smoke-binding:{AUTHORIZATION_ID}"
-    _ACTOR = "system:dev-smoke-credential-binding"
-    _TYPE = "release.dev_smoke.binding"
-    _KEYS = frozenset({
-        "authorization_id", "execution_id", "plan_digest", "release_sha", "manifest_digest",
-        "tenant_id", "account_id", "secret_name", "stage", "execution_authorized",
-        "credential_binding_verified", "secret_values_redacted",
-    })
 
     def __init__(self, *, lifecycle: WebInvitationExecutor, store: GitHubDevSecretStore) -> None:
         if not isinstance(lifecycle, WebInvitationExecutor) or not isinstance(store, GitHubDevSecretStore):
