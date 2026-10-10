@@ -840,5 +840,30 @@ Ed25519 key and real local durable state; positive observation is read-only,
 with process/mint/consume spies. Thirty negative cases cover tuple, key/signature,
 manifest/profile/sources/images/registry, state and time uncertainty. These are
 labelled offline inputs, not live release or control-plane approval receipts.
-Verification pending on the source anchor. No worker live login, identity,
-secret/configuration, IAM, traffic, sources or model action.
+No worker live login, identity, secret/configuration, IAM, traffic, sources or
+model action.
+
+### Exact consumed-admission observation verification
+
+Source anchor `e437484644b3e69e1ca7a2b80a9ac44938ec8000` completed all five exact
+task declarations once via the canonical foreground verification module; the
+original tool terminal returned exit0. Every retained receipt binds the exact
+command/selection, source SHA, actual exit code and duration. Existing uv,
+scratch pnpm9.15.9 launcher and workspace binaries were reused without dependency
+changes. No background polling, summary-count rerun or wider suite.
+
+| Exact declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.017s | `b580f130dfd0a25c` |
+| Invitation/provisioning/workflow pytest | 0 | 248.531s | `a6b258ad5f474739` |
+| Gate/operator pytest | 0 | 64.668s | `46e84ebdc3f44bc3` |
+| Invitation Web Vitest | 0 | 3.745s | `41e69a54c21f20f0` |
+| Web typecheck | 0 | 7.935s | `d0f605e60a57aaa5` |
+
+Original JSON receipts remain in canonical `.orchestrator/evidence`. This later
+evidence-only commit is not the measured source SHA. Required exact-head CI and
+independent Codex review remain before activation. Next: independently authenticated
+foreground custody/source approval, mandatory exact-dev observation enforcement,
+and rollback-owned promoted-before-gate hookup. The helper remains read-only and
+unwired; no live control-plane approval, gate pass or deployment is claimed.
+Task remains in progress, not review-ready; no review submission was attempted.
