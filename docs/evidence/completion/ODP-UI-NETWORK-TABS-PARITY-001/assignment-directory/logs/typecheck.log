@@ -1,0 +1,4 @@
+features/operator/network/intake/AssistedIntakeSection.tsx(994,13): error TS2345: Argument of type 'string | null | undefined' is not assignable to parameter of type 'string | undefined'.
+  Type 'null' is not assignable to type 'string | undefined'.
+features/operator/network/intake/__tests__/TransferTargets.test.tsx(37,43): error TS2493: Tuple type '[]' of length '0' has no element at index '0'.
+features/operator/network/intake/intakeClient.ts(287,12): error TS2304: Cannot find name 'safePromotionCall'.

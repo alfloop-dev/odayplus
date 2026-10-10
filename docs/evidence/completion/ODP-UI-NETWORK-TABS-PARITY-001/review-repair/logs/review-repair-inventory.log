@@ -1,0 +1,127 @@
+Listing tests:
+  [chromium] › e2e-network-find-areas-api-binding.spec.ts:35:7 › ODP-FIN-FE-002 Network Find Areas API binding › Network Find Areas workspace renders with Package 10 summary stats
+  [chromium] › e2e-network-find-areas-api-binding.spec.ts:49:7 › ODP-FIN-FE-002 Network Find Areas API binding › Network workspace shows fixture data indicator when API is unavailable
+  [chromium] › e2e-network-find-areas-api-binding.spec.ts:66:7 › ODP-FIN-FE-002 Network Find Areas API binding › Listing Radar tab renders the listing table
+  [chromium] › e2e-network-find-areas-api-binding.spec.ts:80:7 › ODP-FIN-FE-002 Network Find Areas API binding › Candidate Pipeline tab renders without crash
+  [chromium] › e2e-network-find-areas-api-binding.spec.ts:91:7 › ODP-FIN-FE-002 Network Find Areas API binding › SiteScore Lab tab renders without crash
+  [chromium] › e2e-network-find-areas-api-binding.spec.ts:97:7 › ODP-FIN-FE-002 Network Find Areas API binding › Rebalance tab renders without crash (fixture-only, no backend endpoint)
+  [chromium] › e2e-network-find-areas-api-binding.spec.ts:105:7 › ODP-FIN-FE-002 Network Find Areas API binding › Find Areas panel shows HeatZone map with zone markers
+  [chromium] › e2e-operator-console.spec.ts:21:5 › ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and Store Ops dialog
+  [chromium] › e2e-operator-console.spec.ts:102:5 › ODP-FIN-FE-003 command palette and task center are API-bound
+  [chromium] › e2e-operator-console.spec.ts:153:5 › ODP-OC-FE-05 Governance Workspace details and evidence package export
+  [chromium] › e2e-operator-console.spec.ts:251:5 › ODP-OC-FE-04 Network workspace exposes all six remaining tabs
+  [chromium] › e2e-operator-console.spec.ts:408:5 › ODP-OC-PROD-014 productization gate rejects iframe-only or non-API-backed /operator
+  [chromium] › market_intelligence.spec.ts:4:7 › Market Intelligence Features › Market Explorer, Site Dossier, and Candidate Compare render without crashing
+  [chromium] › operator-assisted-listing-intake-a11y.spec.ts:67:7 › VDC-003 Keyboard Navigation & Focus Management › focus lands inside dialog on open and Escape key restores focus to trigger button
+  [chromium] › operator-assisted-listing-intake-a11y.spec.ts:85:7 › VDC-003 Keyboard Navigation & Focus Management › dialog controls are navigable via Tab and Enter
+  [chromium] › operator-assisted-listing-intake-a11y.spec.ts:102:7 › VDC-003 Screen Reader Landmarks & Accessibility Attributes › screen-reader stage labels and aria landmarks are correctly populated
+  [chromium] › operator-assisted-listing-intake-a11y.spec.ts:121:7 › VDC-003 Screen Reader Landmarks & Accessibility Attributes › respects prefers-reduced-motion media query
+  [chromium] › operator-assisted-listing-intake-a11y.spec.ts:129:7 › VDC-003 Axe Automated Accessibility Scan › intake queue page passes axe accessibility scan
+  [chromium] › operator-assisted-listing-intake-a11y.spec.ts:151:7 › VDC-003 Axe Automated Accessibility Scan › intake detail dialog passes axe accessibility scan
+  [chromium] › operator-assisted-listing-intake-mobile.spec.ts:131:7 › VDC-002 Responsive Layout & Zero Overflow (390px Mobile) › 390px mobile viewport has zero horizontal overflow on intake queue
+  [chromium] › operator-assisted-listing-intake-mobile.spec.ts:139:7 › VDC-002 Responsive Layout & Zero Overflow (390px Mobile) › 390px mobile viewport shows desktop-required warning on compare panel
+  [chromium] › operator-assisted-listing-intake-mobile.spec.ts:163:7 › VDC-002 Responsive Layout & Zero Overflow (1024px Tablet) › 1024px tablet viewport folds 5-up meta grid and has zero horizontal overflow
+  [chromium] › operator-assisted-listing-intake-mobile.spec.ts:186:7 › VDC-002 Responsive Layout & Zero Overflow (1440px Desktop) › 1440px desktop viewport displays full side-by-side comparison and zero overflow
+  [chromium] › operator-assisted-listing-intake.spec.ts:206:5 › canonical 1: exact URL duplicate is intercepted before retrieval
+  [chromium] › operator-assisted-listing-intake.spec.ts:219:5 › canonical 2: assisted-entry-only keeps URL and validates durable manual input
+  [chromium] › operator-assisted-listing-intake.spec.ts:256:5 › canonical 3: possible match requires explicit reason and risk acknowledgement
+  [chromium] › operator-assisted-listing-intake.spec.ts:291:5 › canonical 4: independent reviewer completes promotion with durable Candidate and SiteScore receipts
+  [chromium] › operator-assisted-listing-intake.spec.ts:344:5 › canonical 5 and 6: SCORE_FAILED retains Candidate and same-key replay queues only once
+  [chromium] › operator-assisted-listing-intake.spec.ts:449:5 › source policy fails closed for blocked and unknown sources
+  [chromium] › operator-assisted-listing-intake.spec.ts:467:5 › retryable retrieval failure exposes code, correlation, recovery and preserved durable state
+  [chromium] › operator-assisted-listing-intake.spec.ts:486:5 › governance reviewer gets masked read-only intake while unrelated roles fail closed
+  [chromium] › operator-governance.spec.ts:38:5 › Govern workspace exposes all five tabs and the DQ/Model/Connector/SLA/Users board
+  [chromium] › operator-governance.spec.ts:75:5 › Govern approval return is blocked without a sufficient reason
+  [chromium] › operator-governance.spec.ts:102:5 › Govern surfaces Store/Growth decisions and a pending Network approval
+  [chromium] › operator-governance.spec.ts:121:5 › Evidence Package export produces a record and an audit event
+  [chromium] › operator-growth.spec.ts:28:5 › Growth workspace renders segments, recommendations, and actions from fixtures
+  [chromium] › operator-growth.spec.ts:62:5 › Growth segment card opens a scoped activity draft
+  [chromium] › operator-growth.spec.ts:79:5 › Three create-entry cards are present and open the five-step builder
+  [chromium] › operator-growth.spec.ts:104:5 › Five-step builder navigates all steps and emits a create audit on submit
+  [chromium] › operator-growth.spec.ts:145:5 › Growth builder can be dismissed without submitting
+  [chromium] › operator-growth.spec.ts:157:5 › HARD_CONSTRAINT_FAILED recommendation has disabled draft button
+  [chromium] › operator-growth.spec.ts:179:5 › Draft action exposes a submit-for-approval affordance
+  [chromium] › operator-growth.spec.ts:198:5 › Ineffective Growth Action is blocked from direct closeout
+  [chromium] › operator-growth.spec.ts:217:5 › Inconclusive Growth Action is blocked and shows required action
+  [chromium] › operator-growth.spec.ts:240:5 › Effective Growth Action can be closed and emits console audit log
+  [chromium] › operator-growth.spec.ts:277:5 › Observing Growth Action cannot enter closeout before its window matures
+  [chromium] › operator-network-assisted-intake.spec.ts:145:7 › Assisted Listing Intake — Package 7 product surfaces › Package 10 inbox and continuous detail replace retired Package 7 surfaces
+  [chromium] › operator-network-assisted-intake.spec.ts:178:7 › Assisted Listing Intake — Package 7 product surfaces › empty state, then a clean URL submits to a durable READY / NEW record
+  [chromium] › operator-network-assisted-intake.spec.ts:218:7 › Assisted Listing Intake — Package 7 product surfaces › exact duplicate is caught before retrieval and never creates a second record
+  [chromium] › operator-network-assisted-intake.spec.ts:237:7 › Assisted Listing Intake — Package 7 product surfaces › possible match requires a human decision and refuses an empty reason
+  [chromium] › operator-network-assisted-intake.spec.ts:295:7 › Assisted Listing Intake — Package 7 product surfaces › identity-field correction demands a reason, then records before/after
+  [chromium] › operator-network-assisted-intake.spec.ts:370:7 › Assisted Listing Intake — Package 7 product surfaces › correct and decide writes carry retry-stable idempotency keys
+  [chromium] › operator-network-assisted-intake.spec.ts:454:7 › Assisted Listing Intake — Package 7 product surfaces › assisted-entry-only source keeps the URL and never fetches the page
+  [chromium] › operator-network-assisted-intake.spec.ts:502:7 › Assisted Listing Intake — Package 7 product surfaces › unapproved source fails closed into quarantine with a governance reason
+  [chromium] › operator-network-assisted-intake.spec.ts:523:7 › Assisted Listing Intake — Package 7 product surfaces › retryable failure shows code, correlation and next action, and retry preserves input
+  [chromium] › operator-network-assisted-intake.spec.ts:546:7 › Assisted Listing Intake — Package 7 product surfaces › revision outcome offers append-version against the matched listing
+  [chromium] › operator-network-assisted-intake.spec.ts:560:7 › Assisted Listing Intake — Package 7 product surfaces › deep link reopens the intake record after leaving the page
+  [chromium] › operator-network-assisted-intake.spec.ts:582:7 › Assisted Listing Intake — Package 7 product surfaces › queue counts reflect real server state across mixed outcomes
+  [chromium] › operator-network-assisted-intake.spec.ts:604:7 › Assisted Listing Intake — Package 7 product surfaces › a role without listing permission gets the permission-limited state, not an empty queue
+  [chromium] › operator-network-assisted-intake.spec.ts:619:7 › Assisted Listing Intake — Package 7 product surfaces › dialogs are keyboard operable and Escape closes them
+  [chromium] › operator-network-assisted-intake.spec.ts:632:7 › Assisted Listing Intake — Package 7 product surfaces › mobile routes ambiguous side-by-side compare to a desktop-required state
+  [chromium] › operator-network-assisted-intake.spec.ts:648:7 › Assisted Listing Intake — Package 7 product surfaces › AUTH_REQUIRED policy flow and form submission
+  [chromium] › operator-network-assisted-intake.spec.ts:696:7 › Assisted Listing Intake — Package 7 product surfaces › prove the correct fetch or no-fetch behavior per policy state
+  [chromium] › operator-network-assisted-intake.spec.ts:759:7 › Assisted Listing Intake — Package 7 product surfaces › explicit assertion of all 11 stage transitions in the UI stepper
+  [chromium] › operator-network-assisted-intake.spec.ts:868:7 › Assisted Listing Intake — Package 7 product surfaces › decisions and corrections survive page reload and a fresh browser context
+  [chromium] › operator-network-assisted-intake.spec.ts:966:7 › Assisted Listing Intake — Package 7 product surfaces › tablet viewport folds the 5-up meta grid correctly
+  [chromium] › operator-network-assisted-intake.spec.ts:978:7 › Assisted Listing Intake — Package 7 product surfaces › verify audit envelope for CREATE and PROMOTE decisions
+  [chromium] › operator-network-assisted-intake.spec.ts:1069:7 › Assisted Listing Intake — Package 7 product surfaces › verify audit envelope for REVISE decision
+  [chromium] › operator-network-assisted-intake.spec.ts:1108:7 › Assisted Listing Intake — Package 7 product surfaces › verify audit envelope for DUPLICATE decision
+  [chromium] › operator-network-assisted-intake.spec.ts:1147:7 › Assisted Listing Intake — Package 7 product surfaces › verify audit envelope for QUARANTINE decision
+  [chromium] › operator-network-assisted-intake.spec.ts:1190:7 › Assisted Listing Intake — Package 7 product surfaces › verify audit envelope for REJECT decision
+  [chromium] › operator-network-listings.spec.ts:38:7 › ODP-OC-R4-005 Network Listing Radar › HZ-01 to L-2024 to CS-1001 completes through UI and API
+  [chromium] › operator-network-listings.spec.ts:114:7 › ODP-OC-R4-005 Network Listing Radar › L-2029 merge retains evidence and L-2030 archives with reason
+  [chromium] › operator-network-listings.spec.ts:184:7 › ODP-OC-R4-005 Network Listing Radar › merge writes nothing when cancelled, unacknowledged, or missing a reason
+  [chromium] › operator-network-listings.spec.ts:244:7 › ODP-OC-R4-005 Network Listing Radar › a merged listing retires both merge entry points
+  [chromium] › operator-network-listings.spec.ts:296:7 › ODP-OC-R4-005 Network Listing Radar › a role without listing:UPDATE is offered no merge entry point at all
+  [chromium] › operator-network-listings.spec.ts:332:7 › ODP-OC-R4-005 Network Listing Radar › the merge dialog is keyboard operable and restores focus
+  [chromium] › operator-network-listings.spec.ts:357:7 › ODP-OC-R4-005 Network Listing Radar › an in-flight merge cannot be dismissed and retries reuse one idempotency key
+  [chromium] › operator-network-listings.spec.ts:432:7 › ODP-OC-R4-005 Network Listing Radar › real HeatZone map stays nonblank and synchronized to selected zone and lens
+  [chromium] › operator-network-rebalance.spec.ts:27:7 › ODP-OC-R4-008 Network Rebalance › AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution
+  [chromium] › operator-network-review.spec.ts:41:7 › ODP-OC-R4-007 Network Review decision › Review panel opens the decision dialog and approves the golden GO flow
+  [chromium] › operator-network-review.spec.ts:68:7 › ODP-OC-R4-007 Network Review decision › WAIT decision requires pass conditions before it can submit
+  [chromium] › operator-network-review.spec.ts:85:7 › ODP-OC-R4-007 Network Review decision › GO decision syncs five records and survives reload
+  [chromium] › operator-network-review.spec.ts:107:7 › ODP-OC-R4-007 Network Review decision › Decision mapping covers WAIT / Return / Reject
+  [chromium] › operator-network-review.spec.ts:134:7 › ODP-OC-R4-007 Network Review decision › Failed transaction leaves all five records unchanged
+  [chromium] › operator-network-review.spec.ts:148:7 › ODP-OC-R4-007 Network Review decision › Idempotent replay creates no duplicate records
+  [chromium] › operator-network-review.spec.ts:165:7 › ODP-OC-R4-007 Network Review decision › Operations lead sees read-only review actions (no decision bar)
+  [chromium] › operator-network-review.spec.ts:190:7 › ODP-OC-R4-007 Network Review decision › Expansion may read but not decide; reviewer may decide
+  [chromium] › operator-network-scoring.spec.ts:25:7 › ODP-OC-R4-006 Network SiteScore scoring › Candidate gate blocks CS-1003 and exposes the golden-flow candidates
+  [chromium] › operator-network-scoring.spec.ts:60:7 › ODP-OC-R4-006 Network SiteScore scoring › SiteScore Lab renders GO/WAIT/REJECT scorecards with conditions and reasons
+  [chromium] › operator-network-scoring.spec.ts:91:7 › ODP-OC-R4-006 Network SiteScore scoring › Compare recommends primary / alternate / avoid consistently
+  [chromium] › operator-network-scoring.spec.ts:117:7 › ODP-OC-R4-006 Network SiteScore scoring › batch SiteScore job sorts persisted results and skips gated candidate
+  [chromium] › operator-shell-layout.spec.ts:69:9 › Operator shared header layout › Today long ingestion identifiers and human titles remain readable at 390px
+  [chromium] › operator-shell-layout.spec.ts:69:9 › Operator shared header layout › Today long ingestion identifiers and human titles remain readable at 1024px
+  [chromium] › operator-shell-layout.spec.ts:69:9 › Operator shared header layout › Today long ingestion identifiers and human titles remain readable at 1440px
+  [chromium] › operator-shell-layout.spec.ts:131:9 › Operator shared header layout › header geometry is identical across workspaces at 390px
+  [chromium] › operator-shell-layout.spec.ts:131:9 › Operator shared header layout › header geometry is identical across workspaces at 1024px
+  [chromium] › operator-shell-layout.spec.ts:131:9 › Operator shared header layout › header geometry is identical across workspaces at 1240px
+  [chromium] › operator-shell-layout.spec.ts:131:9 › Operator shared header layout › header geometry is identical across workspaces at 1241px
+  [chromium] › operator-shell-layout.spec.ts:131:9 › Operator shared header layout › header geometry is identical across workspaces at 1279px
+  [chromium] › operator-shell-layout.spec.ts:131:9 › Operator shared header layout › header geometry is identical across workspaces at 1280px
+  [chromium] › operator-shell-layout.spec.ts:131:9 › Operator shared header layout › header geometry is identical across workspaces at 1440px
+  [chromium] › operator-shell-layout.spec.ts:131:9 › Operator shared header layout › header geometry is identical across workspaces at 1920px
+  [chromium] › operator-shell-layout.spec.ts:168:7 › Operator shared header layout › header popovers and account actions stay inside a 390px viewport
+  [chromium] › operator-shell-layout.spec.ts:198:7 › Operator shared header layout › account menu is not clipped in the desktop intake-detail context
+  [chromium] › operator-shell-layout.spec.ts:231:7 › Operator shared header layout › workspace content sits on the shared page container without a second chrome
+  [chromium] › operator-shell-layout.spec.ts:273:7 › Operator shared header layout › Store Ops detail fits a 390px viewport except for its scrollable strips
+  [chromium] › operator-shell-layout.spec.ts:295:7 › Operator shared header layout › Listing inbox filters stay on one compact row
+  [chromium] › operator-shell-layout.spec.ts:314:7 › Operator shared header layout › header does not change when workspace content is replaced by a data gate
+  [chromium] › operator-shell-today.spec.ts:24:5 › bootstrap and today APIs return role-aware envelope data for all six roles
+  [chromium] › operator-shell-today.spec.ts:54:5 › Ctrl+K search opens the exact entity and tab from the API target
+  [chromium] › operator-shell-today.spec.ts:72:5 › Today queue selection opens the queue target workspace, entity, and tab
+  [chromium] › operator-shell-today.spec.ts:85:5 › approval writes refresh header counts from the API envelope without session reset
+  [chromium] › operator-store-ops.spec.ts:146:5 › Package 10 issue detail exposes the four-light evidence without legacy filter chips
+  [chromium] › operator-store-ops.spec.ts:168:5 › ISS-1024 lifecycle writes through Store Ops API and reloads updated state
+  [chromium] › operator-store-ops.spec.ts:251:5 › camera evidence remains locked until permitted purpose is submitted
+  [chromium] › product-e2e-env.spec.ts:12:5 › Product E2E environment exposes durable API, seeded evidence, and source stub state
+  [chromium] › shell-resource-binding.spec.ts:40:5 › ODP-PGAP-SHELL-001 binding classifies a healthy response as ready
+  [chromium] › shell-resource-binding.spec.ts:52:5 › ODP-PGAP-SHELL-001 an empty-but-healthy shell is ready, not a fixture fallback
+  [chromium] › shell-resource-binding.spec.ts:65:5 › ODP-PGAP-SHELL-001 binding classifies 403 as forbidden and keeps the server's reason
+  [chromium] › shell-resource-binding.spec.ts:81:5 › ODP-PGAP-SHELL-001 binding classifies 401 as forbidden
+  [chromium] › shell-resource-binding.spec.ts:91:5 › ODP-PGAP-SHELL-001 binding classifies 500 as an error, and 503 as maintenance
+  [chromium] › shell-resource-binding.spec.ts:112:5 › ODP-PGAP-SHELL-001 binding classifies a transport failure as an error
+  [chromium] › shell-resource-binding.spec.ts:129:5 › ODP-PGAP-SHELL-001 an unconfigured API never degrades to fixture data
+  [chromium] › shell-resource-binding.spec.ts:142:5 › ODP-PGAP-SHELL-001 product mode is explicit and defaults production fail-closed
+Total: 125 tests in 18 files

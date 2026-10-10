@@ -1,0 +1,128 @@
+{
+  "boxes": {
+    "detail": {
+      "x": 12,
+      "y": 237.96875,
+      "width": 366,
+      "height": 7578.375,
+      "scrollWidth": 366,
+      "padding": "12px 10px 28px",
+      "gap": "12px",
+      "radius": "0px"
+    },
+    "intake-detail-header": {
+      "x": 22,
+      "y": 249.96875,
+      "width": 346,
+      "height": 215.671875,
+      "scrollWidth": 344,
+      "padding": "16px",
+      "gap": "14px",
+      "radius": "12px"
+    },
+    "intake-submission-summary": {
+      "x": 22,
+      "y": 477.640625,
+      "width": 346,
+      "height": 239.28125,
+      "scrollWidth": 418,
+      "padding": "0px",
+      "gap": "normal",
+      "radius": "10px"
+    },
+    "assignment-sla-summary": {
+      "x": 22,
+      "y": 728.921875,
+      "width": 346,
+      "height": 595.125,
+      "scrollWidth": 344,
+      "padding": "0px",
+      "gap": "normal",
+      "radius": "10px"
+    },
+    "intake-processing-stages": {
+      "x": 22,
+      "y": 1336.046875,
+      "width": 346,
+      "height": 133.140625,
+      "scrollWidth": 346,
+      "padding": "0px",
+      "gap": "normal",
+      "radius": "0px"
+    },
+    "intake-source-policy-evidence": {
+      "x": 22,
+      "y": 1481.1875,
+      "width": 346,
+      "height": 528.6875,
+      "scrollWidth": 346,
+      "padding": "0px",
+      "gap": "normal",
+      "radius": "0px"
+    },
+    "intake-parsed-lineage": {
+      "x": 22,
+      "y": 2021.875,
+      "width": 346,
+      "height": 1686.03125,
+      "scrollWidth": 346,
+      "padding": "0px",
+      "gap": "normal",
+      "radius": "0px"
+    },
+    "intake-match-evidence-section": {
+      "x": 22,
+      "y": 3719.90625,
+      "width": 346,
+      "height": 417.90625,
+      "scrollWidth": 346,
+      "padding": "0px",
+      "gap": "normal",
+      "radius": "0px"
+    },
+    "intake-comparison-decision-section": {
+      "x": 22,
+      "y": 4149.8125,
+      "width": 346,
+      "height": 1265.578125,
+      "scrollWidth": 346,
+      "padding": "0px",
+      "gap": "normal",
+      "radius": "0px"
+    },
+    "intake-receipts-section": {
+      "x": 22,
+      "y": 6143.3125,
+      "width": 346,
+      "height": 958,
+      "scrollWidth": 346,
+      "padding": "0px",
+      "gap": "normal",
+      "radius": "0px"
+    },
+    "intake-timeline-audit-section": {
+      "x": 22,
+      "y": 7113.3125,
+      "width": 346,
+      "height": 675.03125,
+      "scrollWidth": 346,
+      "padding": "0px",
+      "gap": "normal",
+      "radius": "0px"
+    }
+  },
+  "document": {
+    "width": 390,
+    "scrollWidth": 390
+  },
+  "design": {
+    "x": 0,
+    "y": 50,
+    "width": 390,
+    "height": 2507,
+    "scrollWidth": 390,
+    "padding": "14px 20px 46px",
+    "gap": "normal",
+    "radius": "0px"
+  }
+}

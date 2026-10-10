@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
-import type { AssistedIntake } from "@oday-plus/openapi-client";
+import { useState, useEffect, useCallback } from "react";
+import type { AssistedIntake, OdpApiClient } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
-import type { IntakeApiError } from "./intakeClient";
+import { intakeApi, type IntakeApiError } from "./intakeClient";
 
 export interface TransferTargetOption {
   id: string;
@@ -10,12 +10,58 @@ export interface TransferTargetOption {
   role: string;
 }
 
-export const DEFAULT_TRANSFER_TARGETS: TransferTargetOption[] = [
-  { id: "actor-mgr", name: "吳孟哲（展店主管）", role: "expansion-manager" },
-  { id: "actor-steward", name: "周育安（資料管理員）", role: "data-steward" },
-  { id: "actor-staff", name: "許庭瑜（展店）", role: "expansion-staff" },
-  { id: "gov-queue", name: "治理覆核佇列", role: "site-reviewer" },
-];
+// Shape guards are not identity/scope authorization. The caller must supply
+// fresh, resource-scoped directory results; the server must revalidate on write.
+export function usableTransferTargets(options: TransferTargetOption[]): TransferTargetOption[] {
+  return options.filter((option) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(option.id) &&
+    Boolean(option.name.trim()) && Boolean(option.role.trim()) &&
+    options.filter((other) => other.id.toLowerCase() === option.id.toLowerCase()).length === 1,
+  );
+}
+
+// Only the exact enabled resource/client context can consume a completed read.
+// Changing selection, role/client, version or closing the dialog drops authority
+// immediately, even before the new effect runs. Late responses are ignored.
+export function useAssignmentTransferTargets(
+  client: OdpApiClient | null, assignmentId: string | null | undefined,
+  version: number | null, enabled: boolean,
+) {
+  const key = enabled && assignmentId && version !== null ? `${assignmentId}:v${version}` : null;
+  const [generation, setGeneration] = useState(0);
+  const [directory, setDirectory] = useState<{
+    client: OdpApiClient | null; key: string | null; generation: number;
+    state: "loading" | "ready" | "error"; options: TransferTargetOption[]; error: IntakeApiError | null;
+  } | null>(null);
+  const refreshTargets = useCallback(() => setGeneration((value) => value + 1), []);
+  useEffect(() => {
+    if (!client || !key || !assignmentId) return;
+    let cancelled = false;
+    setDirectory({ client, key, generation, state: "loading", options: [], error: null });
+    void intakeApi.transferTargets(client, assignmentId).then((result) => {
+      if (cancelled) return;
+      const matches = result.ok && result.value.assignment_version === version;
+      setDirectory({
+        client, key, generation, state: matches ? "ready" : "error",
+        options: matches && result.ok ? usableTransferTargets(result.value.items) : [],
+        error: !result.ok ? result.error : !matches ? {
+          status: 409, code: "ODP-INTAKE-CONFLICT", summary: "指派版本已變更，請重新整理指派後再載入對象。",
+          nextAction: "重新整理 owner／指派版本。", retryable: false,
+          correlationId: null, occurredAt: new Date().toISOString(),
+        } : null,
+      });
+    });
+    return () => { cancelled = true; };
+  }, [client, key, assignmentId, version, generation]);
+  const current = key && directory?.key === key && directory.client === client && directory.generation === generation
+    ? directory : null;
+  return {
+    options: current?.options ?? [],
+    state: current?.state ?? (key && client ? "loading" as const : "idle" as const),
+    error: current?.error ?? null,
+    refreshTargets,
+  };
+}
 
 export interface TransferIntakeDialogProps {
   busy: boolean;
@@ -29,8 +75,14 @@ export interface TransferIntakeDialogProps {
     riskAcknowledged: boolean;
   }) => void;
   record: AssistedIntake;
+  /** Assignment concurrency token, never the unrelated intake version. */
+  resourceVersion?: number | null;
   onConflictRefresh?: () => void;
+  /** No fixture fallback: unavailable directory authority closes submission. */
   targetOptions?: TransferTargetOption[];
+  targetLoadState?: "idle" | "loading" | "ready" | "error";
+  targetLoadError?: IntakeApiError | null;
+  onRefreshTargets?: () => void;
 }
 
 /**
@@ -44,12 +96,17 @@ export function TransferIntakeDialog({
   onClose,
   onSubmit,
   record,
+  resourceVersion = null,
   onConflictRefresh,
-  targetOptions = DEFAULT_TRANSFER_TARGETS,
+  targetOptions = [],
+  targetLoadState = "ready",
+  targetLoadError = null,
+  onRefreshTargets,
 }: TransferIntakeDialogProps) {
-  const [targetId, setTargetId] = useState(targetOptions[0]?.id || "");
+  const targets = usableTransferTargets(targetOptions);
+  const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
   const [handoffNote, setHandoffNote] = useState("");
-  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
+  const [acknowledgedTarget, setAcknowledgedTarget] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -61,16 +118,29 @@ export function TransferIntakeDialog({
     };
   }, []);
 
-  const selectedTarget =
-    targetOptions.find((o) => o.id === targetId) || targetOptions[0] || { id: "", name: "未指定", role: "" };
+  // Never silently substitute another person after a directory refresh.
+  const selectedTarget = targets.find((option) => option.id === targetId);
+  const targetConsentKey = selectedTarget
+    ? JSON.stringify([record.id, selectedTarget.id, selectedTarget.name, selectedTarget.role])
+    : null;
+  const riskAcknowledged = targetConsentKey !== null && acknowledgedTarget === targetConsentKey;
+  useEffect(() => {
+    setAcknowledgedTarget(null);
+    setLocalError(null);
+  }, [targetConsentKey]);
 
   const title = "轉交收件（Transfer）";
-  const riskSummary =
-    `將收件 ${record.id} 轉交給 ${selectedTarget.name}。` +
-    `此操作會變更指派的處理者與責任。前後值與交接說明會寫入 Audit 歷程。`;
+  const riskSummary = selectedTarget
+    ? `將收件 ${record.id} 轉交給 ${selectedTarget.name}。` +
+      `此操作會變更指派的處理者與責任。前後值與交接說明會寫入 Audit 歷程。`
+    : "TRANSFER_TARGETS_UNAVAILABLE — 尚無可確認的轉交對象；不會變更負責人。";
+
+  const hasAuthority = Boolean(record.assignmentId) &&
+    Number.isSafeInteger(resourceVersion) && (resourceVersion ?? 0) >= 1;
+  const versionLabel = hasAuthority ? `v${resourceVersion}` : "UNAVAILABLE";
 
   function handleSubmit() {
-    if (busy) return;
+    if (busy || !hasAuthority || !selectedTarget || error?.status === 409 || error?.code === "ODP-INTAKE-CONFLICT") return;
     setLocalError(null);
 
     if (!handoffNote.trim()) {
@@ -128,7 +198,7 @@ export function TransferIntakeDialog({
         >
           收件編號：<strong>{record.id}</strong> · 目前負責人：
           <strong data-testid="transfer-record-owner">{record.owner || "未指派"}</strong> · 版本：
-          <span data-testid="transfer-record-version">v{record.version || 1}</span>
+          <span data-testid="transfer-record-version">{versionLabel}</span>
         </div>
 
         <div>
@@ -139,16 +209,33 @@ export function TransferIntakeDialog({
             className={styles.select}
             data-testid="transfer-target-select"
             id="transfer-target-select"
+            disabled={busy || targets.length === 0}
             onChange={(e) => setTargetId(e.target.value)}
-            value={targetId}
+            value={selectedTarget?.id ?? ""}
+            aria-describedby={!selectedTarget ? "transfer-targets-unavailable" : undefined}
           >
-            {targetOptions.map((opt) => (
+            <option value="" disabled>請選擇可用對象</option>
+            {targets.map((opt) => (
               <option key={opt.id} value={opt.id}>
                 {opt.name}
               </option>
             ))}
           </select>
+          {!selectedTarget ? (
+            <div className={styles.noteBox} data-testid="transfer-targets-unavailable"
+              id="transfer-targets-unavailable" role="status">
+              {targetLoadState === "loading" ? "正在載入此指派的權威轉交對象…" :
+                targetLoadError?.summary || "TRANSFER_TARGETS_UNAVAILABLE — 尚無可轉交的對象，或原選擇已不可用。請重新整理權威指派與身分範圍；不使用示範人物或治理佇列代替。"}
+            </div>
+          ) : null}
         </div>
+
+        {onRefreshTargets ? (
+          <button className={styles.secondaryButton} type="button" onClick={onRefreshTargets}
+            disabled={busy || targetLoadState === "loading"} data-testid="transfer-targets-refresh">
+            重新載入轉交對象
+          </button>
+        ) : null}
 
         <div>
           <label className={styles.fieldLabel} htmlFor="transfer-handoff-note">
@@ -168,10 +255,10 @@ export function TransferIntakeDialog({
         {isConflict && onConflictRefresh ? (
           <div className={styles.errorPanel} data-testid="transfer-conflict-panel" role="alert">
             <span className={styles.errorSummary}>
-              409 OWNER_CONFLICT — 此收件的 owner 在你開啟後已變更
+              {error?.summary || "409 OWNER_CONFLICT — 此收件的 owner 在你開啟後已變更"}
             </span>
             <span className={styles.errorMeta}>
-              目前 owner：{record.owner || "未指定"} · 版本 v{record.version || 1}
+              目前 owner：{record.owner || "未指定"} · 指派版本 {versionLabel}
             </span>
             <span className={styles.errorNext}>
               重新整理套用最新狀態後再送出 — 你的交接說明與選項已保留。
@@ -212,7 +299,8 @@ export function TransferIntakeDialog({
               checked={riskAcknowledged}
               data-testid="transfer-risk-ack"
               id="transfer-risk-ack"
-              onChange={(e) => setRiskAcknowledged(e.target.checked)}
+              disabled={busy || !selectedTarget}
+              onChange={(e) => setAcknowledgedTarget(e.target.checked ? targetConsentKey : null)}
               type="checkbox"
             />
             <span>我已閱讀並了解上述風險，確認執行轉交操作（寫入 Audit 歷程）</span>
@@ -227,7 +315,7 @@ export function TransferIntakeDialog({
         <button
           className={styles.primaryButton}
           data-testid="transfer-submit-btn"
-          disabled={busy}
+          disabled={busy || !hasAuthority || !selectedTarget || isConflict}
           onClick={handleSubmit}
           type="button"
         >

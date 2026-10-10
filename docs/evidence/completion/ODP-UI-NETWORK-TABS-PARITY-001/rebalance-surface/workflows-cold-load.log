@@ -1,0 +1,64 @@
+[WebServer] 2026/10/09 20:12:34 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 20:12:36 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 20:12:36 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [2140433]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T20:12:40.336712+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "101a3dac-0b48-484f-a82e-83f283a5e078", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 1 test using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T20:12:55.613764+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "52bd75e1-c613-4457-b021-22e8b4be4c2d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-rebalance/reset ok"}
+[WebServer]  ⨯ SyntaxError: Unexpected end of JSON input
+[WebServer]     at JSON.parse (<anonymous>) {
+[WebServer]   type: 'SyntaxError',
+[WebServer]   page: '/api/v1/operator/network-listings'
+[WebServer] }
+[WebServer]  ⨯ SyntaxError: Unexpected end of JSON input
+[WebServer]     at JSON.parse (<anonymous>) {
+[WebServer]   type: 'SyntaxError',
+[WebServer]   page: '/api/v1/operator/network-listings'
+[WebServer] }
+[WebServer]  ⨯ SyntaxError: Unexpected end of JSON input
+[WebServer]     at JSON.parse (<anonymous>) {
+[WebServer]   type: 'SyntaxError',
+[WebServer]   page: '/api/v1/operator/network-listings'
+[WebServer] }
+[WebServer]  ⨯ SyntaxError: Unexpected end of JSON input
+[WebServer]     at JSON.parse (<anonymous>) {
+[WebServer]   type: 'SyntaxError',
+[WebServer]   page: '/api/v1/operator/network-listings'
+[WebServer] }
+  ✘  1 [chromium] › tests/e2e/operator-network-rebalance.spec.ts:27:7 › ODP-OC-R4-008 Network Rebalance › AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution (9.3s)
+
+
+  1) [chromium] › tests/e2e/operator-network-rebalance.spec.ts:27:7 › ODP-OC-R4-008 Network Rebalance › AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByTestId('network-panel-rebalance')
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 5000ms
+      - waiting for getByTestId('network-panel-rebalance')
+
+
+      34 |
+      35 |     await page.getByTestId("network-tab-6").click();
+    > 36 |     await expect(page.getByTestId("network-panel-rebalance")).toBeVisible();
+         |                                                               ^
+      37 |     await expect(page.getByTestId("rebalance-card-RB-801")).toContainText(
+      38 |       "新北板橋文化",
+      39 |     );
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/e2e/operator-network-rebalance.spec.ts:36:63
+
+    Error Context: test-results/operator-network-rebalance-1525d--approval-without-execution-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/e2e/operator-network-rebalance.spec.ts:27:7 › ODP-OC-R4-008 Network Rebalance › AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution 
+
+EXIT_CODE=1

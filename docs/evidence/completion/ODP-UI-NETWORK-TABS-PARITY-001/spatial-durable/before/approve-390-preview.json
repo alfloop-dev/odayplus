@@ -1,0 +1,49 @@
+{
+  "proposal": {
+    "proposal_id": "364b99c4-462b-40e1-b817-257759adaaf8",
+    "zone_id": "MZ-ca05c0859cfe5762",
+    "tenant_id": "tenant-a",
+    "composition_kind": "MERGED",
+    "member_cell_ids": [
+      "cell-taipei-00",
+      "cell-taipei-01"
+    ],
+    "member_count": 2,
+    "parent_zone_id": null,
+    "ndcg_gain": 0.0761,
+    "cannibalization_variance_reduction": 0.4887,
+    "correlation_rho": 0.9983,
+    "disconnect_index": 0.0544,
+    "split_density_ratio": null,
+    "child_partitions": [],
+    "child_zone_ids": [],
+    "confidence": 0.972,
+    "model_version": "heatzone-composition-v1",
+    "policy_version_id": "heatzone-merge-v1:tenant-a",
+    "status": "PROPOSED",
+    "reasons": [
+      "demand_correlation_over_8_shared_periods",
+      "demand_continuous_across_boundary",
+      "counterfactual_ndcg_outperformance",
+      "cannibalization_variance_reduced_under_joint_model",
+      "source_snapshot:pg16-production-model-inventory-2027-04-01-v1"
+    ],
+    "warnings": [],
+    "created_at": "2026-10-09T21:25:49.164538+00:00",
+    "approved_by": null,
+    "approved_at": null,
+    "rejection_reason": null
+  },
+  "current_active_compositions": [],
+  "proposed_zone_id": "MZ-ca05c0859cfe5762",
+  "proposed_kind": "MERGED",
+  "proposed_member_cells": [
+    "cell-taipei-00",
+    "cell-taipei-01"
+  ],
+  "expected_ndcg_gain": 0.0761,
+  "expected_cannibalization_variance_reduction": 0.4887,
+  "correlation_rho": 0.9983,
+  "disconnect_index": 0.0544,
+  "confidence": 0.972
+}

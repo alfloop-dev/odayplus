@@ -1,0 +1,200 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "status": "increment_only_not_full_acceptance",
+  "owner": "Pi",
+  "reviewer": "Codex2",
+  "base": "1b064bb00cda3a031d2cbb6007488afeceea8379",
+  "tested_head": "633b8f8a0135007b4b4a67598740c9db9923d01d",
+  "geometry_render_head": "4480acc404b7b51aff6c2f0ed16e6ddc25a05fc4",
+  "receipt_method": "synchronous original tool terminal status and shell-captured exit code",
+  "checks": [
+    {
+      "command": "npm run lint --workspace=@oday-plus/web",
+      "exit_code": 0,
+      "log": "lint.log"
+    },
+    {
+      "command": "npm run typecheck --workspace=@oday-plus/web",
+      "exit_code": 0,
+      "log": "typecheck.log"
+    },
+    {
+      "command": "npm test --workspace=@oday-plus/web",
+      "exit_code": 0,
+      "log": "unit.log"
+    },
+    {
+      "command": "npm test --workspace=@oday-plus/web -- features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx features/operator/network/__tests__/Package10NetworkPanels.test.tsx features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx",
+      "exit_code": 0,
+      "log": "focused-unit.log"
+    },
+    {
+      "command": "OPSBOARD_PORT=3310 ODP_API_PORT=8310 ODP_API_BASE_URL=http://127.0.0.1:8310 NETWORK_PARITY_DESIGN=1 NETWORK_PARITY_EVIDENCE_DIR=<shots> npx playwright test --config tests/visual/operator-network-tabs-parity.config.ts",
+      "exit_code": 0,
+      "log": "geometry.log"
+    },
+    {
+      "command": "OPSBOARD_PORT=3310 ODP_API_PORT=8310 ODP_API_BASE_URL=http://127.0.0.1:8310 ODP_E2E_MODE=true ODP_PRODUCT_MODE=poc ODP_DATA_BINDING_MODE=fixture npx playwright test tests/e2e/e2e-network-find-areas-api-binding.spec.ts tests/e2e/operator-network-scoring.spec.ts tests/e2e/operator-network-listings.spec.ts tests/e2e/operator-network-review.spec.ts --workers=1 --retries=0 --project=chromium",
+      "exit_code": 0,
+      "log": "workflows.log"
+    },
+    {
+      "command": "npm run build --workspace=@oday-plus/web",
+      "exit_code": 0,
+      "log": "build.log"
+    },
+    {
+      "command": "python3 delivery_toolchain/governance/check_code_boundaries.py",
+      "exit_code": 0,
+      "log": "boundaries.log"
+    },
+    {
+      "command": "npx playwright test --list",
+      "exit_code": 0,
+      "log": "inventory.log"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "counts": {
+    "vitest": 701,
+    "focused_vitest": 27,
+    "geometry": 9,
+    "network_workflows": 27,
+    "business_inventory": {
+      "tests": 125,
+      "files": 18
+    }
+  },
+  "diagnostic_failed_runs": [
+    {
+      "log": "geometry-before.log",
+      "exit_code": 1
+    },
+    {
+      "log": "geometry-build-collision.log",
+      "exit_code": 1
+    },
+    {
+      "log": "composition-unit-before.log",
+      "exit_code": 1
+    },
+    {
+      "log": "composition-workflows-before.log",
+      "exit_code": 1
+    }
+  ],
+  "source_sha256": {
+    "apps/web/features/operator/NetworkFindAreasWorkspace.tsx": "7bc821f7a4f5c085d99d1ab40b00a03deaf31bf2750b6fb61bfee70cca012cd6",
+    "apps/web/features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx": "a2632f18bb38239b81c7b7f1890f3ca8f503218ce0fafc63ce78caea8f0e9ced",
+    "apps/web/features/operator/fixtures.ts": "b2b972fbd3d9adff5d201443080be21151435b5bb2a512e1be68c3a46d12c6ed",
+    "apps/web/features/operator/network/CandidatePanel.tsx": "8396db03924bf4a07433667906c79ae239091aac548e54879139df619eb1b5a5",
+    "apps/web/features/operator/network/ComparePanel.tsx": "5ba75da6481c26ba4b2745b24bd14cb514233ef363165560f3ec6ba102ffbe73",
+    "apps/web/features/operator/network/NetworkShell.tsx": "1af98f0723f979fd4a0ae7ff8749df5fad0f86dce017396e757bd60ad9091828",
+    "apps/web/features/operator/network/RebalancePanel.tsx": "f075753ed4735dd62461b3e0153b335194dd8613427092c6bf0e274093c0aedd",
+    "apps/web/features/operator/network/ReviewPanel.tsx": "0e4fe4d6e652cf96c83d525dae5c697e19726da1776d1ee877036c2029b21995",
+    "apps/web/features/operator/network/SiteScorePanel.tsx": "b62a22fec25f7e83871dc6bcc7769ba924bd13d83d16cff4ddb0b882b2b01448",
+    "apps/web/features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx": "0c9c9e6ed10c49c6c5d221e34dad263fd44c121dc79d4de5e3ec0a8e15560cac",
+    "apps/web/features/operator/network/__tests__/Package10NetworkPanels.test.tsx": "96f43278842d6edcbd7d84fc40d83a698db57c18f9e1a648a342f99edc6466b3",
+    "apps/web/features/operator/networkFindAreas.module.css": "713f21610bde64ae4fc55e5375e32cd3fc913de98e54cf0d3b15bc07221ef669",
+    "docs/evidence/NETWORK_TABS_CI_REPAIR_20261009.md": "0675f4a449b070ae14cf552935445fe3654bee349038e88fbd02953f3f74eb40",
+    "tests/e2e/e2e-network-find-areas-api-binding.spec.ts": "fed809866e8f9f18962d0d915785a894e2e83f7770be010b5cbcae9190fbb93d",
+    "tests/e2e/operator-network-listings.spec.ts": "4f347678504332e7dbdb7652599c805e9e8dcfe66ed8e047a247912b1bc57639",
+    "tests/e2e/operator-network-review.spec.ts": "4d680216d3c3fc1dd1399ac7021b8d07717f178083d79aea82662bb615701cc8",
+    "tests/e2e/operator-network-scoring.spec.ts": "426cce2188aa65501c065e597748f25826caed1cf7259e8858fb7c61f169252c",
+    "tests/visual/operator-network-tabs-parity.config.ts": "aeadf86179bf4b6fbabb0f43d9dd351831af993d162c5ce48469474654f0b7dc",
+    "tests/visual/operator-network-tabs-parity.spec.ts": "f2e8801bec9daadf4645bd5f1e273ac8b17cff21c1e3c3d8092d019291e64e02"
+  },
+  "log_sha256": {
+    "focused-unit.log": "005b20d8f0e4cdf4a0b7a413c4736dabbe7068c9ac6837cb7aade87c8d4ec2a7",
+    "typecheck.log": "9ba92cce9af815ab2c325d50003dc5c004952c62e9d2d0960233ee2556d2a177",
+    "geometry.log": "feaabc4c96c08799cb658676abc7ccdaba083a9b108dc7d02c446a1babc81c26",
+    "boundaries.log": "618c10bc5cd8a870c5bc802a5834b36b619ab2c63988d63a9407eb415c7f27ab",
+    "build.log": "d4c088ef264a678bf0a64b0a6d58f55c5a3828226c02ed16cf1a45e1077ceaa1",
+    "geometry-before.log": "e7085c7f3d56a159c2d9bb878bb2c4f175cc87dc44299ea801f697bf59baba84",
+    "inventory.log": "087ed603f1984ff22df9a1a1e56d83c3a2bf4272c9d762b85e7fd602387c56a8",
+    "composition-unit-before.log": "bbc0effa433b7b81934a5fd71cc79195ae27605f3609d0731883071c45c95a9a",
+    "lint.log": "6152babc25988659173225e2f3e219978adcd5f9d0d642f79e3843e4404b6c3f",
+    "workflows.log": "49e0695dc5ca3390f1289385a8b9189e11a508122d105f5a4722443283c66dc8",
+    "composition-workflows-before.log": "21c06a1fefd93f00c35be0097ec546311e85e7cdfade89266f6a56c19f9a46c8",
+    "unit.log": "ee799fb5e7b416078ba456528e4e0a0a051769d3e7bb931ca5e81ecec7a7a045",
+    "geometry-build-collision.log": "64e2f89414d1a94088a659784212045b322b905b7756c37ee3b3fbb7b6ea6c07"
+  },
+  "shots_manifest_sha256": "363d7f83f6085607a1282bccac81deb42ec38f5e3f6c9544eec3ebf437163eff",
+  "png_dimensions": {
+    "after-candidates-1440.png": [
+      1440,
+      1398
+    ],
+    "after-candidates-390.png": [
+      390,
+      3076
+    ],
+    "after-compare-1440.png": [
+      1440,
+      1294
+    ],
+    "after-compare-390.png": [
+      390,
+      2352
+    ],
+    "after-sitescore-1440.png": [
+      1440,
+      1245
+    ],
+    "after-sitescore-390.png": [
+      390,
+      2558
+    ],
+    "before-increment-candidates-1440.png": [
+      1440,
+      1164
+    ],
+    "before-increment-candidates-390.png": [
+      390,
+      2842
+    ],
+    "before-increment-compare-1440.png": [
+      1440,
+      1252
+    ],
+    "before-increment-compare-390.png": [
+      390,
+      2327
+    ],
+    "before-increment-sitescore-1440.png": [
+      1440,
+      1254
+    ],
+    "before-increment-sitescore-390.png": [
+      390,
+      2400
+    ],
+    "design-candidates-1440.png": [
+      1440,
+      1326
+    ],
+    "design-candidates-390.png": [
+      390,
+      1739
+    ],
+    "design-compare-1440.png": [
+      1440,
+      1236
+    ],
+    "design-compare-390.png": [
+      390,
+      1711
+    ],
+    "design-sitescore-1440.png": [
+      1440,
+      1181
+    ],
+    "design-sitescore-390.png": [
+      390,
+      3594
+    ]
+  }
+}

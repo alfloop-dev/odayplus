@@ -4,7 +4,7 @@ import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AssistedIntake, AssignmentReceipt, SlaReceipt } from "@oday-plus/openapi-client";
 import { AssignmentSlaSummary, computeSlaState, SLA_STATE_MAP } from "../AssignmentSlaSummary";
-import { TransferIntakeDialog, DEFAULT_TRANSFER_TARGETS } from "../TransferIntakeDialog";
+import { TransferIntakeDialog } from "../TransferIntakeDialog";
 import { PauseSlaDialog } from "../PauseSlaDialog";
 import { IntakeProcessingDetail } from "../IntakeProcessingDetail";
 import type { IntakeApiError } from "../intakeClient";
@@ -47,6 +47,12 @@ const sampleIntakeRecord: AssistedIntake = {
   parsedFields: {},
 };
 
+// Explicit component-test fixtures, never a runtime directory fallback.
+const transferTargets = [
+  { id: "00000000-0000-0000-0000-000000000102", name: "Fixture manager", role: "expansion-manager" },
+  { id: "00000000-0000-0000-0000-000000000105", name: "Fixture steward", role: "data-steward" },
+];
+
 const conflictError: IntakeApiError = {
   status: 409,
   code: "ODP-INTAKE-CONFLICT",
@@ -59,18 +65,45 @@ const conflictError: IntakeApiError = {
 
 describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001)", () => {
   describe("AssignmentSlaSummary Component & SLA Logic", () => {
-    it("computes SLA states correctly based on time and flags", () => {
-      expect(computeSlaState({ ...sampleIntakeRecord, slaState: "PAUSED" })).toBe("PAUSED");
-      expect(computeSlaState({ ...sampleIntakeRecord, isBreached: true } as any)).toBe("BREACHED");
+    it.each(["ON_TRACK", "DUE_SOON", "OVERDUE", "BREACHED", "PAUSED", "COMPLETED"] as const)(
+      "preserves authoritative %s independently of browser time, deadlines and legacy flags",
+      (slaState) => {
+        for (const dueAt of [undefined, "invalid", "2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z"]) {
+          expect(computeSlaState({
+            ...sampleIntakeRecord, slaState, dueAt, isBreached: true, isSlaPaused: true,
+          } as any)).toBe(slaState);
+        }
+      },
+    );
 
-      const futureDue = new Date(Date.now() + 120 * 60 * 1000).toISOString();
-      expect(computeSlaState({ ...sampleIntakeRecord, dueAt: futureDue } as any)).toBe("ON_TRACK");
+    it.each([undefined, null, "", "UNKNOWN", "toString", "__proto__", "on_track"])(
+      "does not derive a state from deadlines or flags when authority is %s",
+      (slaState) => {
+        for (const dueAt of [undefined, "invalid", "2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z"]) {
+          expect(computeSlaState({
+            ...sampleIntakeRecord, slaState, dueAt, isBreached: true, isSlaPaused: true,
+          } as any)).toBe("UNAVAILABLE");
+        }
+      },
+    );
 
-      const soonDue = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-      expect(computeSlaState({ ...sampleIntakeRecord, dueAt: soonDue } as any)).toBe("DUE_SOON");
+    it.each([undefined, "", "invalid"])("shows an unavailable due time for %s", (slaDueAt) => {
+      const html = renderToString(<AssignmentSlaSummary record={{ ...sampleIntakeRecord, slaDueAt } as any} />);
+      expect(html).toMatch(/到期時間：(?:<!-- -->)?UNAVAILABLE/);
+      expect(html).not.toContain("Invalid Date");
+      expect(html).toContain("[✓ ON TRACK]");
+    });
 
-      const pastDue = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-      expect(computeSlaState({ ...sampleIntakeRecord, dueAt: pastDue } as any)).toBe("OVERDUE");
+    it.each(["BREACHED", "COMPLETED", "UNKNOWN", null])("does not offer Pause for %s even with a callback", (slaState) => {
+      const html = renderToString(<AssignmentSlaSummary
+        record={{ ...sampleIntakeRecord, slaState }} onOpenPause={vi.fn()} onResume={vi.fn()}
+      />);
+      expect(html).not.toContain("asg-btn-pause");
+      expect(html).not.toContain("asg-btn-resume");
+      if (slaState === "COMPLETED") {
+        expect(html).toContain("[✓ COMPLETED]");
+        expect(html).not.toContain('data-testid="sla-action-unavailable"');
+      }
     });
 
     it("verifies SLA text plus icon/pattern mapping for WCAG AA compliance", () => {
@@ -79,6 +112,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(SLA_STATE_MAP.OVERDUE.pattern).toBe("[‼ OVERDUE]");
       expect(SLA_STATE_MAP.BREACHED.pattern).toBe("[🔥 BREACHED]");
       expect(SLA_STATE_MAP.PAUSED.pattern).toBe("[⏸ PAUSED]");
+      expect(SLA_STATE_MAP.COMPLETED.pattern).toBe("[✓ COMPLETED]");
 
       expect(SLA_STATE_MAP.ON_TRACK.icon).toBe("✓");
       expect(SLA_STATE_MAP.DUE_SOON.icon).toBe("⚠");
@@ -109,6 +143,24 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
     });
   });
 
+  it.each([
+    ["transfer", TransferIntakeDialog, "transfer-record-version", "transfer-submit-btn"],
+    ["pause", PauseSlaDialog, "pause-record-version", "pause-submit-btn"],
+  ] as const)("%s displays only resource authority and disables missing tokens", (_kind, Dialog, versionTestId, submitTestId) => {
+    const props = { busy: false, error: null, onClose: vi.fn(), onSubmit: vi.fn(), record: { ...sampleIntakeRecord, version: 71 } };
+    const html = renderToString(<Dialog {...props} resourceVersion={14} />);
+    expect(html).toContain(`data-testid="${versionTestId}">v14`);
+    expect(html).not.toContain(">v71");
+    for (const resourceVersion of [undefined, null, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const unavailable = renderToString(<Dialog {...props} resourceVersion={resourceVersion} />);
+      expect(unavailable).toContain(`data-testid="${versionTestId}">UNAVAILABLE`);
+      expect(unavailable).toMatch(new RegExp(`data-testid="${submitTestId}"[^>]*disabled`));
+    }
+    const missingId = renderToString(<Dialog {...props} record={{ ...props.record, assignmentId: null, slaInstanceId: null }} resourceVersion={14} />);
+    expect(missingId).toContain(`data-testid="${versionTestId}">UNAVAILABLE`);
+    expect(missingId).toMatch(new RegExp(`data-testid="${submitTestId}"[^>]*disabled`));
+  });
+
   describe("TransferIntakeDialog (VDC-001 & 409 Conflict Draft Preservation)", () => {
     it("renders target selection and handoff note ONLY per VDC-001", () => {
       const onSubmit = vi.fn();
@@ -134,8 +186,10 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(html).not.toContain('data-testid="pause-reason-input"');
       expect(html).not.toContain('data-testid="pause-resume-time-input"');
 
-      expect(DEFAULT_TRANSFER_TARGETS.length).toBeGreaterThan(0);
-      expect(DEFAULT_TRANSFER_TARGETS[0].id).toBe("actor-mgr");
+      expect(html).toContain("TRANSFER_TARGETS_UNAVAILABLE");
+      expect(html).not.toContain("actor-mgr");
+      expect(html).not.toContain("gov-queue");
+      expect(html).toMatch(/data-testid="transfer-submit-btn"[^>]*disabled/);
     });
 
     it("preserves transfer draft inputs across a 409 OWNER_CONFLICT refresh and exposes current owner/version upon completion", () => {
@@ -520,6 +574,8 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
         <TransferIntakeDialog
           busy={false}
           error={error}
+          resourceVersion={record.version}
+          targetOptions={transferTargets}
           onClose={() => {}}
           onConflictRefresh={() => {
             setRecord(refreshedRecord);
@@ -551,6 +607,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
         <PauseSlaDialog
           busy={false}
           error={error}
+          resourceVersion={record.version}
           onClose={() => {}}
           onConflictRefresh={() => {
             setRecord(refreshedRecord);
@@ -591,11 +648,11 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       const handoffTextarea = container.querySelector('[data-testid="transfer-handoff-note"]') as HTMLTextAreaElement;
       const riskCheckbox = container.querySelector('[data-testid="transfer-risk-ack"]') as HTMLInputElement;
 
-      setInputValue(targetSelect, "actor-steward");
+      setInputValue(targetSelect, transferTargets[1].id);
       setInputValue(handoffTextarea, "Preserved draft handoff note across 409 refresh");
       setInputValue(riskCheckbox, true);
 
-      expect(targetSelect.value).toBe("actor-steward");
+      expect(targetSelect.value).toBe(transferTargets[1].id);
       expect(handoffTextarea.value).toBe("Preserved draft handoff note across 409 refresh");
       expect(riskCheckbox.checked).toBe(true);
 
@@ -608,7 +665,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(container.querySelector('[data-testid="transfer-record-version"]')?.textContent).toBe("v4");
       expect(container.querySelector('[data-testid="transfer-record-owner"]')?.textContent).toBe("周育安（資料管理員）");
 
-      expect((container.querySelector('[data-testid="transfer-target-select"]') as HTMLSelectElement).value).toBe("actor-steward");
+      expect((container.querySelector('[data-testid="transfer-target-select"]') as HTMLSelectElement).value).toBe(transferTargets[1].id);
       expect((container.querySelector('[data-testid="transfer-handoff-note"]') as HTMLTextAreaElement).value).toBe("Preserved draft handoff note across 409 refresh");
       expect((container.querySelector('[data-testid="transfer-risk-ack"]') as HTMLInputElement).checked).toBe(true);
 
@@ -620,7 +677,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(onSubmitSpy).toHaveBeenCalledTimes(1);
       expect(onSubmitSpy).toHaveBeenCalledWith(
         {
-          target_owner_subject_id: "actor-steward",
+          target_owner_subject_id: transferTargets[1].id,
           target_owner_role: "data-steward",
           handoff_note: "Preserved draft handoff note across 409 refresh",
           riskSummary: expect.any(String),

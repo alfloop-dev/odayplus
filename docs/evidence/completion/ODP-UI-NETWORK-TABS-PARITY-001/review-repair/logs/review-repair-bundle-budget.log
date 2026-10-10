@@ -1,0 +1,29 @@
+
+> @oday-plus/web@0.1.0 bundle:budget
+> node scripts/check-bundle-budget.mjs
+
+First Load JS budget (gzip, kB = 1000 bytes)
+
+route                           first load      budget  status
+/operator                        3407.7 kB    300.0 kB  OVER by 3107.7 kB
+/_not-found                      1797.8 kB    130.0 kB  OVER by 1667.8 kB
+/api/v1/[...path]                1790.3 kB    130.0 kB  OVER by 1660.3 kB
+
+shared by all: 1789.7 kB
+
+Budget exceeded:
+  /operator: 3407.7 kB > 300.0 kB (+3107.7 kB)
+  /_not-found: 1797.8 kB > 130.0 kB (+1667.8 kB)
+  /api/v1/[...path]: 1790.3 kB > 130.0 kB (+1660.3 kB)
+  (shared by all): 1789.7 kB > 115.0 kB (+1674.7 kB)
+
+Split the newly added weight behind next/dynamic, or raise the budget in
+apps/web/bundle-budget.json with before/after evidence for why the route
+genuinely needs it.
+npm error Lifecycle script `bundle:budget` failed with error:
+npm error code 1
+npm error path /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+npm error workspace @oday-plus/web@0.1.0
+npm error location /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+npm error command failed
+npm error command sh -c node scripts/check-bundle-budget.mjs

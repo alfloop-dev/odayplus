@@ -1,0 +1,57 @@
+[WebServer] 2026/10/09 16:30:37 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 16:30:39 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 16:30:39 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [1969849]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T16:30:43.687909+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ffb3090c-46f5-4218-a606-78a3ef8f129c", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 3 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T16:31:00.159129+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1485a059-158a-471d-a045-20c2dca6c897", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-listings/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T16:31:07.793608+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T16:31:07.796883+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T16:31:07.799962+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T16:31:07.803251+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T16:31:09.328444+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T16:31:09.428701+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T16:31:09.429862+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-4be7e308-3d6f-4361-96ee-c6c4064f8f92", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T16:31:09.430278+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T16:31:09.431868+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+  ✘  1 [chromium] › tests/e2e/operator-network-assisted-intake.spec.ts:237:7 › Assisted Listing Intake — Package 7 product surfaces › possible match requires a human decision and refuses an empty reason (20.2s)
+  -  2 [chromium] › tests/e2e/operator-network-assisted-intake.spec.ts:295:7 › Assisted Listing Intake — Package 7 product surfaces › identity-field correction demands a reason, then records before/after
+  -  3 [chromium] › tests/e2e/operator-network-assisted-intake.spec.ts:868:7 › Assisted Listing Intake — Package 7 product surfaces › decisions and corrections survive page reload and a fresh browser context
+
+
+  1) [chromium] › tests/e2e/operator-network-assisted-intake.spec.ts:237:7 › Assisted Listing Intake — Package 7 product surfaces › possible match requires a human decision and refuses an empty reason 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByTestId('intake-detail-dialog')
+    Expected: visible
+    Timeout: 15000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 15000ms
+      - waiting for getByTestId('intake-detail-dialog')
+
+
+      114 |   await page.getByTestId("intake-url-input").fill(url);
+      115 |   await page.getByTestId("intake-submit-button").click();
+    > 116 |   await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({
+          |                                                          ^
+      117 |     timeout: 15_000,
+      118 |   });
+      119 | }
+        at submitUrl (/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/e2e/operator-network-assisted-intake.spec.ts:116:58)
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/e2e/operator-network-assisted-intake.spec.ts:241:5
+
+    Error Context: test-results/operator-network-assisted--11ae8-and-refuses-an-empty-reason-chromium/error-context.md
+
+    Error Context: test-results/operator-network-assisted--11ae8-and-refuses-an-empty-reason-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/e2e/operator-network-assisted-intake.spec.ts:237:7 › Assisted Listing Intake — Package 7 product surfaces › possible match requires a human decision and refuses an empty reason 
+  2 did not run

@@ -1,3 +1,9 @@
+import type { NetworkFindAreasLens } from "../networkFindAreasViewModel";
+
+const FIND_AREAS_LENSES: readonly NetworkFindAreasLens[] = [
+  "demand", "fit", "competition", "cannibalization", "rent", "life", "traffic", "unmet", "confidence",
+];
+
 export const NETWORK_TAB_IDS = [
   "areas",
   "radar",
@@ -26,6 +32,29 @@ const NETWORK_TAB_ALIASES: Readonly<Record<string, NetworkTabId>> = {
   "merge-split": "composition",
   topology: "composition",
 };
+
+export function parseFindAreasUrlState(searchParams: SearchParamsLike) {
+  const requestedLens = searchParams.get("lens")?.trim() ?? "";
+  const lens = FIND_AREAS_LENSES.find((candidate) => candidate === requestedLens) ?? "demand";
+  const requestedZone = searchParams.get("hz")?.trim() ?? "";
+  // This is a navigation hint, not a grant or an authoritative HeatZone row.
+  const heatZoneId = /^[A-Za-z0-9_-]{1,128}$/.test(requestedZone) ? requestedZone : null;
+  return { lens, heatZoneId };
+}
+
+export function buildFindAreasHref(
+  pathname: string,
+  heatZoneId: string,
+  lens: NetworkFindAreasLens,
+  existingParams: SearchParamsLike,
+  hash = "",
+): string {
+  const params = new URLSearchParams(existingParams.toString());
+  params.set("hz", heatZoneId);
+  params.set("lens", lens);
+  const normalizedHash = hash ? (hash.startsWith("#") ? hash : `#${hash}`) : "";
+  return `${pathname}?${params.toString()}${normalizedHash}`;
+}
 
 export function parseNetworkTabIndex(
   searchParams: SearchParamsLike | string,

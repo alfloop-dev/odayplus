@@ -1,0 +1,44 @@
+{
+  "flow": {
+    "x": 12,
+    "y": 425.25,
+    "width": 366,
+    "height": 313.640625,
+    "scrollWidth": 364
+  },
+  "report": {
+    "x": 12,
+    "y": 1174.84375,
+    "width": 366,
+    "height": 1422.84375,
+    "scrollWidth": 364
+  },
+  "risk": {
+    "x": 26,
+    "y": 1954.890625,
+    "width": 338,
+    "height": 154.3125,
+    "scrollWidth": 338
+  },
+  "batch": {
+    "x": 12,
+    "y": 805.890625,
+    "width": 366,
+    "height": 730.78125,
+    "scrollWidth": 366
+  },
+  "table": {
+    "x": 26,
+    "y": 1313.03125,
+    "width": 680,
+    "height": 209.640625,
+    "scrollWidth": 680
+  },
+  "tableScroll": {
+    "x": 25,
+    "y": 1312.03125,
+    "width": 340,
+    "height": 211.640625,
+    "scrollWidth": 680
+  }
+}

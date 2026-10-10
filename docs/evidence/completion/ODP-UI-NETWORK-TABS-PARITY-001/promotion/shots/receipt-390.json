@@ -1,0 +1,27 @@
+{
+  "browserPostStatus": 200,
+  "writeControls": {
+    "ifMatch": "W/\"2\"",
+    "idempotencyKey": "promotion-review-0f94a3e4-64c7-4713-8d75-1cddd13d6acc-xmznzaoy2s"
+  },
+  "writePayload": {
+    "decision": "APPROVE",
+    "reason": "資料完整、來源與比對唯一，同意建立候選點並排入評分。",
+    "risk_acknowledged": true
+  },
+  "durableReadStatus": 200,
+  "receipt": {
+    "promotion_decision_id": "0f94a3e4-64c7-4713-8d75-1cddd13d6acc",
+    "intake_id": "IN-3001",
+    "listing_id": "L-2035",
+    "status": "COMPLETED",
+    "decision_type": "STANDARD",
+    "version": 7,
+    "audit_event_id": "18c970fa-6575-4d59-ac70-f5163bed829f",
+    "correlation_id": "corr-7344120a-b49f-49f1-8d95-25d9555d4acf",
+    "candidate_site_id": "8fc3c3b5-0296-46d2-ac31-205094f5067d",
+    "proposer_subject_id": "operator-expansion-manager",
+    "reviewer_subject_id": "00000000-0000-4000-8000-000000000002",
+    "site_score_job_id": "c46b8762-ca29-4fea-9afe-a50ea07f64b0"
+  }
+}

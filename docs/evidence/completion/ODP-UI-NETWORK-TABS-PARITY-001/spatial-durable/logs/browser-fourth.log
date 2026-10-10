@@ -1,0 +1,165 @@
+[WebServer] 2026/10/09 21:22:54 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 21:22:56 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 21:22:56 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] 2026/10/09 21:23:00 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 21:23:00 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [2191654]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T21:23:04.236544+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4bac49a6-f0a4-4a4a-b082-21ff9e833058", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 4 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T21:23:20.443865+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b851c36f-c863-4817-99e4-0f39f62db0f7", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/heatzones/merge-split/evaluate ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:26.562684+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:26.566688+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:26.576763+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:26.589326+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:26.592938+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791581002786", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:27.441087+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:27.495648+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:27.503336+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:27.507013+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791581007291", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:27.515867+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-fb44cc36-1ebf-44e5-bdc3-b753f5dd89d0", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:27.519163+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:28.129869+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposal-preview-c7077176-e388-4b2e-8740-5c7b77e509ba", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/heatzones/merge-split/proposals/{proposal_id}/preview ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:30.271166+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposal-approve-c7077176-e388-4b2e-8740-5c7b77e509ba", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/heatzones/merge-split/proposals/{proposal_id}/approve ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:30.334880+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791581010277", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:30.458090+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d75178ea-a59b-48b2-b0ae-be1d16d77cc3", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals/{proposal_id} ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:32.112666+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:32.196996+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:32.201877+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:32.204661+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:32.452913+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:32.494865+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:32.499980+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:32.504633+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:32.588451+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-ff926930-7e69-4a24-9a89-539c5bdc525b", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:32.659226+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791581012050", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:32.695832+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791581012050", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:34.150351+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "11a7f1cc-4557-4989-bd8d-0c080345b56e", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals/{proposal_id} ok"}
+[WebServer] /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:1033: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+[WebServer]   result = context.run(func, *args)
+[WebServer] {"timestamp": "2026-10-09T21:23:34.220277+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "142c14d9-ba7f-4ac5-91f4-af77fc98eedf", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/heatzones/merge-split/proposals/{proposal_id}/approve ok"}
+2026/10/09 21:23:38 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+2026/10/09 21:23:40 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 21:23:40 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] {"timestamp": "2026-10-09T21:23:44.826425+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "23887b96-2152-45bc-825b-6ccc6c0ab523", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/zones/{zone_id}/lineage ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:44.883625+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d20b182b-05e8-4bcc-898c-35a7478c8feb", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/heatzones/zones/{zone_id}/rollback ok"}
+  ✓  1 [chromium] › tests/visual/operator-spatial-durable-parity.spec.ts:14:9 › Spatial SQLite approve preview decision reload at 1440 (27.2s)
+[WebServer] {"timestamp": "2026-10-09T21:23:45.090559+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "bdcca1f6-876b-47d3-9b83-21d1d799f5fd", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/heatzones/merge-split/evaluate ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:46.920602+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:46.991617+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:46.998422+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:47.008540+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:47.290662+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791581026834", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:47.636163+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:47.676816+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:47.677835+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:47.683126+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:47.689665+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-ac6706dc-5390-4ae6-bde0-a8ba210ed20b", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:47.692375+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791581027537", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:48.411112+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposal-preview-33ab9513-b1a5-4014-8150-82ea2f820508", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/heatzones/merge-split/proposals/{proposal_id}/preview ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:50.551024+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposal-reject-33ab9513-b1a5-4014-8150-82ea2f820508", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/heatzones/merge-split/proposals/{proposal_id}/reject ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:50.606097+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791581030559", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:50.702960+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "92ee8285-0674-479f-bd7e-a2f7c94cc52a", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals/{proposal_id} ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:52.206229+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:52.276045+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:52.286417+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:52.290082+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:52.635359+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:52.655929+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:52.663687+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:52.697724+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:52.765743+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-cfbd1b52-62aa-43b7-be90-357966b3f6cc", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:52.936514+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791581032172", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+[WebServer] {"timestamp": "2026-10-09T21:23:53.052304+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791581032173", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+  ✘  2 [chromium] › tests/visual/operator-spatial-durable-parity.spec.ts:14:9 › Spatial SQLite reject preview decision reload at 1440 (9.7s)
+  -  3 [chromium] › tests/visual/operator-spatial-durable-parity.spec.ts:14:9 › Spatial SQLite approve preview decision reload at 390
+  -  4 [chromium] › tests/visual/operator-spatial-durable-parity.spec.ts:14:9 › Spatial SQLite reject preview decision reload at 390
+
+
+  1) [chromium] › tests/visual/operator-spatial-durable-parity.spec.ts:14:9 › Spatial SQLite reject preview decision reload at 1440 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 58
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#f1f5f9",
+    +               "contrastRatio": 4.4,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#dc2626",
+    +               "fontSize": "9.0pt (12px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.4 (foreground color: #dc2626, background color: #f1f5f9, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div style=\"margin-top: 14px; padding: 10px; background-color: rgb(241, 245, 249); border-radius: 6px; font-size: 12px;\">",
+    +                 "target": Array [
+    +                   ".spatialGovernance_detail__gQwLq > div:nth-child(4)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.4 (foreground color: #dc2626, background color: #f1f5f9, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<div style=\"color: rgb(220, 38, 38); margin-top: 4px;\">拒絕原因: 本地 SQLite reject 1440 決策；測試生成歷史，不是正式上線核准。</div>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".spatialGovernance_detail__gQwLq > div:nth-child(4) > div",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      73 |           expect(geometry.box.y + geometry.box.height).toBeLessThanOrEqual(900);
+      74 |         }
+    > 75 |         expect(axe.violations).toEqual([]);
+         |                                ^
+      76 |       }
+      77 |       await capture("preview");
+      78 |       await panel.getByTestId(`btn-open-${kind}`).click();
+        at capture (/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-spatial-durable-parity.spec.ts:75:32)
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-spatial-durable-parity.spec.ts:102:7
+
+    Error Context: test-results/operator-spatial-durable-p-92d32-iew-decision-reload-at-1440-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/visual/operator-spatial-durable-parity.spec.ts:14:9 › Spatial SQLite reject preview decision reload at 1440 
+  2 did not run
+  1 passed (1.1m)

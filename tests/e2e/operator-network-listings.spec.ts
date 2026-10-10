@@ -38,7 +38,18 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
   test("HZ-01 to L-2024 to CS-1001 completes through UI and API", async ({
     page,
   }) => {
-    await page.goto("/operator?ws=network");
+    test.setTimeout(60_000);
+    await page.addInitScript(() => {
+      window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
+    });
+    // The fixture shell renders before its API snapshot. The golden flow
+    // assertions must describe the reset backend, not that transient shell.
+    await Promise.all([
+      page.waitForResponse((response) =>
+        response.url().includes("/api/v1/operator/network-listings?") && response.ok(),
+      ),
+      page.goto("/operator?ws=network"),
+    ]);
     await expect(
       page.getByTestId("network-find-areas-workspace"),
     ).toBeVisible();
@@ -66,7 +77,9 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await expect(page.getByTestId("listing-row-L-2024")).toContainText("Clean");
 
     await page.getByTestId("convert-L-2024").click();
-    await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
+    // In the local dev-server harness the first POST proxy route compiles on
+    // demand. Wait for the actual conversion UI receipt, not a fixed delay.
+    await expect(page.getByTestId("network-panel-candidates")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("network-candidate-table")).toContainText(
       "CS-1001",
     );
@@ -492,8 +505,10 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     expect(finalMapState?.featureIds).toContain("HZ-01");
     expect(pageErrors.filter((msg) => msg.includes("Worker") || msg.includes("maplibre"))).toEqual([]);
 
-    await page.getByRole("button", { name: /Fit Brand Fit/ }).click();
+    await page.getByLabel("HeatZone lenses").getByRole("button", { name: "品牌適配", exact: true }).click();
+    await expect(page).toHaveURL(/lens=fit/);
     await page.getByRole("button", { name: /HZ-02 ·/ }).click();
+    await expect(page).toHaveURL(/hz=HZ-02/);
     await expect(page.getByTestId("heat-zone-map")).toHaveAttribute(
       "data-selected-zone",
       "HZ-02",

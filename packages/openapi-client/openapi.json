@@ -1125,6 +1125,65 @@
         "title": "AssignmentTransferRequest",
         "type": "object"
       },
+      "AssignmentTransferTarget": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "site-reviewer",
+              "executive",
+              "data-steward",
+              "expansion-staff"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role"
+        ],
+        "title": "AssignmentTransferTarget",
+        "type": "object"
+      },
+      "AssignmentTransferTargets": {
+        "properties": {
+          "assignment_id": {
+            "format": "uuid",
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "assignment_version": {
+            "minimum": 1.0,
+            "title": "Assignment Version",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssignmentTransferTarget"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "assignment_version",
+          "items"
+        ],
+        "title": "AssignmentTransferTargets",
+        "type": "object"
+      },
       "AttachmentUploadRequest": {
         "description": "Write body for POST /operator/store-ops/issues/{issue_id}/attachments.",
         "properties": {
@@ -4032,6 +4091,18 @@
             ],
             "title": "Assignment Status"
           },
+          "assignment_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Version"
+          },
           "audit": {
             "items": {
               "$ref": "#/components/schemas/AuditReference"
@@ -4182,6 +4253,18 @@
               }
             ],
             "title": "Sla State"
+          },
+          "sla_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla Version"
           },
           "source_id": {
             "anyOf": [
@@ -12400,6 +12483,79 @@
           }
         },
         "summary": "Transfer Assignment",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/assignments/{assignment_id}/transfer-targets": {
+      "get": {
+        "operationId": "listAssignmentTransferTargets",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentTransferTargets"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "List Assignment Transfer Targets",
         "tags": [
           "assisted-listing-intake"
         ]

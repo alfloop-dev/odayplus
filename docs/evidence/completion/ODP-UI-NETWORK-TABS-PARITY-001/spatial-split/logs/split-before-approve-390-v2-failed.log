@@ -1,0 +1,38 @@
+[WebServer] 2026/10/10 00:54:36 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/10 00:54:39 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/10 00:54:39 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] 2026/10/10 00:54:43 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/10 00:54:44 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [2364061]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-10T00:54:48.305613+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "64d0d178-26c0-45e8-812a-be61787b36b4", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 1 test using 1 worker
+
+[WebServer] {"timestamp": "2026-10-10T00:55:22.960450+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4089fc53-341e-4aea-9345-69ea476a7275", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/heatzones/merge-split/evaluate ok"}
+  ✘  1 [chromium] › tests/visual/operator-spatial-durable-parity.spec.ts:21:9 › Spatial SQLite split approve preview decision reload at 390 (6.7s)
+
+
+  1) [chromium] › tests/visual/operator-spatial-durable-parity.spec.ts:21:9 › Spatial SQLite split approve preview decision reload at 390 
+
+    TypeError: expect(received).toHaveLength(expected)
+
+    Matcher error: received value must have a length property whose value must be a number
+
+    Received has value: undefined
+
+      39 |       if (split) {
+      40 |         expect(proposal.child_partitions).toEqual([["cell-kaohsiung-00"], ["cell-kaohsiung-01"]]);
+    > 41 |         expect(proposal.child_zone_ids).toHaveLength(2);
+         |                                         ^
+      42 |         expect(new Set(proposal.child_zone_ids).size).toBe(2);
+      43 |         expect(proposal.parent_zone_id).toBe(proposal.zone_id);
+      44 |         expect(proposal.split_density_ratio).toBeGreaterThan(1);
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-spatial-durable-parity.spec.ts:41:41
+
+    Error Context: test-results/operator-spatial-durable-p-0847f-view-decision-reload-at-390-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/visual/operator-spatial-durable-parity.spec.ts:21:9 › Spatial SQLite split approve preview decision reload at 390 

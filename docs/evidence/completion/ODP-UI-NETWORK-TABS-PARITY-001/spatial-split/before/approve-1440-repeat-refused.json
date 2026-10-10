@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal '25c37964-49c7-42e5-83b6-76913799cc2e' is already APPROVED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal '25c37964-49c7-42e5-83b6-76913799cc2e' is already APPROVED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-10T01:05:11.824Z",
+      "details": [],
+      "correlation_id": "fa31dd46-f399-4b8c-9659-e9cbcb1e2128"
+    }
+  }
+}

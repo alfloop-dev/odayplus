@@ -867,6 +867,7 @@
   grid-template-areas:
     "lens map detail"
     "lens tray detail";
+  grid-template-rows: 426px auto;
   gap: 14px;
   align-items: flex-start;
 }
@@ -895,9 +896,27 @@
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .lensButton {
-  min-height: 40px;
+  display: block;
+  min-height: 30px;
   border-radius: 8px;
-  padding: 7px 10px;
+  padding: 6px 11px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .lensButton span {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .lensButton[aria-pressed="true"] {
+  background: #2e3a97;
+  border-color: #2e3a97;
+  color: #fff;
+}
+
+.findAreasCaption {
+  color: #59667c;
+  font-size: 10px;
+  letter-spacing: 0.04em;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .legend {
@@ -913,8 +932,25 @@
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .mapPanel {
+  position: relative;
   grid-area: map;
+  height: 426px;
   overflow: hidden;
+  border-radius: 14px;
+}
+
+.findAreasMapCaption {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  left: 12px;
+  max-width: calc(100% - 24px);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #59667c;
+  padding: 3px 8px;
+  font-size: 10px;
+  pointer-events: none;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .trayPanel {
@@ -926,21 +962,138 @@
 
 .tabPanel[data-screen-label="Network 找區域"] .detailPanel {
   grid-area: detail;
-  gap: 14px;
-  padding: 14px;
+  gap: 11px;
+  padding: 15px 16px;
+  border-radius: 12px;
+}
+
+.findAreasDetailHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.findAreasDetailHeader h3,
+.findAreasDetailHeader p {
+  margin: 0;
+}
+
+.findAreasDetailHeader h3 {
+  font-size: 14px;
+}
+
+.findAreasDetailHeader > strong {
+  color: #096a78;
+  font-family: var(--operator-font-mono, ui-monospace, monospace);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.findAreasDetailHeader p {
+  grid-column: 1 / -1;
+  color: #59667c;
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+.findAreasFacts {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  font-size: 11.5px;
+}
+
+.findAreasFacts > div {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.findAreasFacts dt {
+  color: #59667c;
+}
+
+.findAreasFacts dd {
+  margin: 0;
+  text-align: right;
+  color: #3a4362;
+  overflow-wrap: anywhere;
+}
+
+.findAreasActions {
+  display: grid;
+  gap: 6px;
+}
+
+.findAreasActions button {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #fff;
+  color: #3a4362;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.findAreasActions .findAreasPrimary {
+  border-color: #2e3a97;
+  border-radius: 9px;
+  padding: 10px 14px;
+  background: #2e3a97;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.findAreasActions button:disabled {
+  cursor: not-allowed;
+  background: #f8f9fc;
+  color: #59667c;
+}
+
+.findAreasActions small {
+  color: #59667c;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.findAreasActions button:focus-visible,
+.findAreasSearch summary:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+.findAreasSearch {
+  margin-bottom: 10px;
+  border: 1px solid #d6dce8;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.findAreasSearch summary {
+  padding: 8px 12px;
+  color: #3a4362;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map"]) {
-  grid-template-rows: minmax(430px, 1fr);
-  min-height: 430px;
+  grid-template-rows: 424px;
+  min-height: 424px;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map-canvas"]) {
-  min-height: 430px;
+  min-height: 424px;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .mapPanel .mapLoading {
-  min-height: 430px;
+  min-height: 424px;
   border: 0;
   border-radius: 0;
 }
@@ -985,7 +1138,7 @@
 .tabPanel[data-screen-label="Network 找區域"] .rank {
   grid-area: rank;
   align-self: flex-end;
-  color: #7a8496;
+  color: #59667c;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .zoneRowMain {
@@ -998,6 +1151,7 @@
 
 .tabPanel[data-screen-label="Network 找區域"] .zoneRowMain small {
   white-space: normal;
+  color: #59667c;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .zoneRowScore {
@@ -1005,7 +1159,7 @@
   align-self: flex-start;
   border-radius: 999px;
   background: #e2f4f6;
-  color: #0e7c8c;
+  color: #096a78;
   padding: 4px 8px;
 }
 
@@ -1030,6 +1184,46 @@
 
 .tabPanel[data-screen-label="Network 找區域"] .detailGrid {
   grid-template-columns: 1fr;
+  gap: 11px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailGrid > section {
+  border: 0;
+  padding: 0;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailGrid h4 {
+  font-size: 11px;
+  color: #1e7f4f;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailGrid section:nth-child(2) h4 {
+  color: #96610b;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailGrid li {
+  font-size: 11px;
+  line-height: 1.55;
+  padding: 2px 0;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .detailGrid .findAreasNextStep {
+  border: 1px solid #d9dff5;
+  border-radius: 9px;
+  background: #eef1fb;
+  padding: 8px 11px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .findAreasNextStep h4 {
+  color: #2e3a97;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .findAreasNextStep p {
+  font-size: 11.5px;
+}
+
+.tabPanel[data-screen-label="Network 找區域"] .pipelineStats {
+  color: #59667c;
 }
 
 .tabPanel[data-screen-label="Network 找區域"] .linkedRows {
@@ -1172,6 +1366,80 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
   gap: 8px;
+}
+
+/* Radar-only accessibility/density repairs; shared panel tones stay unchanged. */
+.tabPanel[data-screen-label="Network 物件雷達"] .filterTitle,
+.tabPanel[data-screen-label="Network 物件雷達"] .muted,
+.tabPanel[data-screen-label="Network 物件雷達"] .emptyState,
+.tabPanel[data-screen-label="Network 物件雷達"] .radarInboxHeader span,
+.tabPanel[data-screen-label="Network 物件雷達"] .radarEvidence small,
+.tabPanel[data-screen-label="Network 物件雷達"] .detailIdLine > span:first-child,
+.tabPanel[data-screen-label="Network 物件雷達"] .listingDetailPanel p,
+.tabPanel[data-screen-label="Network 物件雷達"] .listingPhotoPlaceholder,
+.tabPanel[data-screen-label="Network 物件雷達"] .listingDetailRows dt {
+  color: #5a6478;
+}
+
+.tabPanel[data-screen-label="Network 物件雷達"] .zoneFilterChip,
+.tabPanel[data-screen-label="Network 物件雷達"] .zoneMini {
+  color: #096775 !important;
+}
+
+.tabPanel[data-screen-label="Network 物件雷達"] .sourceCardHead .toneBadge {
+  flex: none;
+  white-space: nowrap;
+}
+
+.tabPanel[data-screen-label="Network 物件雷達"] .listingDetailPanel p {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.radarSelectionButton {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #1c2333;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.radarSelectionButton strong {
+  display: block;
+}
+
+.radarSelectionButton:focus-visible,
+.tabPanel[data-screen-label="Network 物件雷達"] button:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+.radarSecondaryActions {
+  display: grid;
+  gap: 6px;
+}
+
+.radarSecondaryActions button {
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #3a4362;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 12px;
+}
+
+.radarSecondaryActions button:disabled,
+.radarViewToggle button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .radarToolbar {
@@ -2904,7 +3172,7 @@
 .reviewQueueId {
   font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
-  color: #8a93a8;
+  color: #626d83;
 }
 
 .reviewQueueName {
@@ -2917,10 +3185,11 @@
 .reviewQueueMeta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   margin-top: 3px;
   font-size: 10px;
-  color: #8a93a8;
+  color: #626d83;
 }
 
 .reviewQueueDue {
@@ -2945,7 +3214,7 @@
 
 .reviewMetaGrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin-top: 12px;
 }
@@ -2977,7 +3246,7 @@
 
 .reviewMetricGrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin-top: 12px;
   border: 1px solid #eef1f6;
@@ -2988,11 +3257,12 @@
 
 .reviewMetaLabel {
   font-size: 9.5px;
-  color: #98a1b3;
+  color: #626d83;
   font-weight: 700;
 }
 
 .reviewMetaValue {
+  overflow-wrap: anywhere;
   font-size: 11.5px;
   color: #3a4362;
   margin-top: 2px;
@@ -3002,19 +3272,23 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  margin-top: 12px;
+  margin: 12px 0 0;
   font-size: 11px;
 }
 
 .reviewFactRow {
-  display: flex;
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
   gap: 8px;
 }
 
+.reviewFactRow dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .reviewFactKey {
-  width: 82px;
-  flex: none;
-  color: #8a93a8;
+  color: #626d83;
 }
 
 .reviewChips {
@@ -3025,9 +3299,11 @@
 }
 
 .reviewChip {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   font-size: 10.5px;
   font-weight: 600;
-  color: #0e7c8c;
+  color: #087384;
   background: #e2f4f6;
   border-radius: 6px;
   padding: 3px 9px;
@@ -3044,13 +3320,14 @@
 .reviewHistoryRow {
   display: flex;
   gap: 8px;
+  overflow-wrap: anywhere;
   font-size: 10.5px;
 }
 
 .reviewHistoryTime {
   width: 118px;
   flex: none;
-  color: #98a1b3;
+  color: #626d83;
   font-weight: 600;
 }
 
@@ -3110,6 +3387,53 @@
   cursor: pointer;
 }
 
+/* Review secondary decisions stay outlined like Package 10. Do not change
+ * the shared approval-center buttons or the business decision handlers. */
+.reviewDecisionBar .btnReturn {
+  border: 1px solid #cdd4eb;
+  background: #ffffff;
+  color: #2e3a97;
+}
+
+.reviewDecisionBar .btnReturn:hover {
+  background: #f1f4fd;
+}
+
+.reviewDecisionBar .btnReject {
+  border: 1px solid #f0b7b7;
+  background: #ffffff;
+  color: #b4232d;
+}
+
+.reviewDecisionBar .btnReject:hover {
+  background: #fff2f2;
+}
+
+.reviewQueueCard:focus-visible,
+.reviewDecisionBar button:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+.reviewSecondaryActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: #626d83;
+  font-size: 11px;
+}
+
+.reviewSecondaryActions button {
+  border: 1px solid #cdd4eb;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #ffffff;
+  color: #626d83;
+  cursor: not-allowed;
+}
+
 .btnGo {
   background: #1e7f4f;
   color: #ffffff;
@@ -3163,15 +3487,18 @@
 }
 
 .reviewDialogTitle {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 15px;
   font-weight: 700;
 }
 
 .reviewDialogClose {
+  flex: none;
   margin-left: auto;
   background: none;
   border: none;
-  color: #8a93a8;
+  color: #6e7891;
   font-size: 17px;
   cursor: pointer;
   line-height: 1;
@@ -3276,6 +3603,10 @@
   font-size: 12.5px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.reviewDialogSubmit[data-action="REJECT"] {
+  background: #b3261e;
 }
 
 .reviewDialogSubmit:disabled {
@@ -3756,6 +4087,12 @@
   align-items: start;
 }
 
+.scoreLabPickerChoices {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
 .scoreLabPicker {
   display: grid;
   gap: 8px;
@@ -3921,7 +4258,7 @@
 
 .compareWorkspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 348px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: 14px;
   align-items: start;
 }
@@ -4014,8 +4351,9 @@
   box-shadow: none;
 }
 
-.reviewDialog {
-  border: 1px solid rgba(227, 232, 240, 0.8);
+.reviewDialog button:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
 }
 
 .reviewDialogInput:focus-visible {
@@ -4263,7 +4601,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .scoreLabPicker {
+  .scoreLabPickerChoices {
     display: flex;
     overflow-x: auto;
     padding-bottom: 3px;
@@ -4293,6 +4631,23 @@
 
   .scoreReport .subScoreGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scoreIdentity {
+    flex-wrap: wrap;
+  }
+
+  .scoreIdentity .scoreNumber {
+    white-space: nowrap;
+  }
+
+  .scoreReport .riskBreakdownGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scoreReport .riskCardVal {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .reasonCols {
@@ -4353,15 +4708,15 @@
   }
 
   .reviewDialogOverlay {
-    align-items: flex-end;
-    padding: 10px;
+    align-items: center;
+    padding: 20px;
   }
 
   .reviewDialog {
     width: 100%;
     max-width: 100%;
-    max-height: 94vh;
-    border-radius: 12px;
+    max-height: 92vh;
+    border-radius: 14px;
   }
 
   .workspace > *,
@@ -4372,6 +4727,7 @@
 
   .tabPanel[data-screen-label="Network 找區域"] {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
     grid-template-areas:
       "lens"
       "map"
@@ -4389,7 +4745,13 @@
   }
 
   .tabPanel[data-screen-label="Network 找區域"] .lensButton {
-    flex: 0 0 132px;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .tabPanel[data-screen-label="Network 找區域"] .findAreasCaption {
+    flex: 0 0 auto;
+    align-self: center;
   }
 
   .tabPanel[data-screen-label="Network 找區域"] .legend {
@@ -4466,4 +4828,1113 @@
   padding: 1px 4px;
   border-radius: 3px;
   font-family: monospace;
+}
+
+/* Package 10 Design Parity — SiteScore Lab, Compare, Candidates, Mini Maps */
+.secondaryButton {
+  min-width: 0;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #3a4362;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1.5;
+  padding: 7px 13px;
+  cursor: pointer;
+}
+
+.secondaryButton:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+.secondaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.candidateDetailContent {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.candidateDetailHead h3 {
+  margin: 6px 0 4px;
+  font-size: 13px;
+  color: #1c2333;
+}
+
+.candidateSource,
+.candidateId,
+.monoId {
+  color: #6e7891;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.candidateSource {
+  margin: 0;
+}
+
+.candidateId,
+.monoId {
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+}
+
+.candidateScoreBox {
+  border: 1px solid #b9c4ee;
+  border-radius: 8px;
+  background: #eef1fb;
+  color: #2e3a97;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 9px 12px;
+}
+
+.candidateGateCard {
+  min-width: 0;
+}
+
+.candidateGateHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  color: #5a6478;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.candidateGateCount {
+  color: #2e3a97;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+}
+
+.gateWarningBox {
+  border: 1px solid #edddb5;
+  border-radius: 8px;
+  background: #fbf1dd;
+  color: #96610b;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+}
+
+.candidateKeyValueTable {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.kvRow {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.kvKey {
+  color: #6e7891;
+}
+
+.kvVal {
+  color: #3a4362;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.candidatePhotoPlaceholder {
+  display: grid;
+  place-items: center;
+  min-height: 56px;
+  border: 1px dashed #c8d2e8;
+  border-radius: 8px;
+  background: repeating-linear-gradient(45deg, #f1f3f8, #f1f3f8 8px, #e9edf4 8px, #e9edf4 16px);
+  color: #5a6478;
+  font-size: 10px;
+  padding: 10px;
+}
+
+.candidateActionSection,
+.candidateSecondaryButtons {
+  display: grid;
+  gap: 6px;
+}
+
+.candidateAuditSection {
+  border-top: 1px solid #eef1f6;
+  padding-top: 8px;
+}
+
+.auditTitle {
+  color: #6e7891;
+  font-size: 9px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.auditList {
+  display: grid;
+  gap: 6px;
+}
+
+.auditItem {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 6px;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.auditTime {
+  color: #6e7891;
+}
+
+.auditBody {
+  color: #3a4362;
+  overflow-wrap: anywhere;
+}
+
+.candidateMapPlaceholder {
+  position: relative;
+  min-height: 300px;
+  overflow: hidden;
+  border: 1px solid #dce4ec;
+  border-radius: 12px;
+}
+
+.scoreReport .scoreNumber small {
+  display: inline;
+}
+
+.scoreReport .revenueBar i b {
+  background: linear-gradient(180deg, #3d4cc4, #2e3a97);
+}
+
+.compareSummaryChips {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.compareSummaryChip {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 9px;
+  padding: 7px 13px;
+}
+
+.compareChipKey {
+  font-size: 10px;
+  color: #6e7891;
+  font-weight: 700;
+}
+
+.compareChipVal {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1c2333;
+}
+
+.compareColHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.compareColTop {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.compareColId {
+  font-size: 9.5px;
+  color: #6e7891;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+  font-weight: 500;
+}
+
+.compareRemoveBtn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #6b7590;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.compareValBest {
+  font-weight: 700;
+  color: #1e7f4f;
+}
+
+.compareValNormal {
+  font-weight: 500;
+  color: #3a4362;
+}
+
+.compareMapWrap {
+  position: relative;
+  height: 250px;
+  background: #e9eff3;
+  border: 1px solid #dce4ec;
+  border-radius: 14px;
+  overflow: hidden;
+  margin-top: 12px;
+}
+
+.compareSecondaryActions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.recCardText {
+  font-size: 11px;
+  color: #3a4362;
+  line-height: 1.6;
+  margin-top: 4px;
+}
+
+.recCardWhyList {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recCardWhyList li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  color: #2a3354;
+  line-height: 1.5;
+}
+
+.recCardWhyList li span {
+  color: #0e7c8c;
+  flex: none;
+}
+
+.scoreLabMiniMap {
+  position: relative;
+  height: 210px;
+  background: #e9eff3;
+  border: 1px solid #dce4ec;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.miniMapCanvas {
+  position: absolute;
+  inset: 0;
+  background: #e9eff3;
+}
+
+.miniMapGrid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.15;
+  background-image: linear-gradient(#2e3a97 1px, transparent 1px),
+    linear-gradient(90deg, #2e3a97 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.miniMapPin {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #ffffff;
+  border: 1px solid #12909f;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #12909f;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  white-space: nowrap;
+}
+
+.miniMapStorePin {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #ffffff;
+  border: 1px solid #dce4ec;
+  border-radius: 6px;
+  padding: 2px 5px;
+  font-size: 9px;
+  color: #5a6478;
+  white-space: nowrap;
+}
+
+.pinSquare {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: #12909f;
+  border-radius: 2px;
+}
+
+.pinSquareBest {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: #1e7f4f;
+  border-radius: 2px;
+}
+
+.pinCircle {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: #2e9e63;
+  border-radius: 50%;
+}
+
+.miniMapFooter {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.85);
+  font-size: 9.5px;
+  color: #6e7891;
+  text-align: center;
+  backdrop-filter: blur(2px);
+}
+
+.scoreLabGateBlockedBox {
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  padding: 48px 20px;
+  text-align: center;
+}
+
+.scoreLabGateBlockedBox h4 {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1c2333;
+  margin: 0 0 8px;
+}
+
+.gateAlertBadge {
+  display: inline-block;
+  margin: 8px 0 14px;
+  font-size: 11.5px;
+  color: #96610b;
+  background: #fbf1dd;
+  border: 1px solid #edddb5;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.scoreLabBatchWorkspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.scoreLabBatchSelector {
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.batchHeaderTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1c2333;
+  margin-bottom: 9px;
+}
+
+.batchRowsList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.batchRowItem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 44px;
+  min-width: 0;
+  flex-wrap: wrap;
+  text-align: left;
+  background: #fbfcfe;
+  border: 1px solid #eef1f6;
+  border-radius: 9px;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+
+.batchRowItem:hover {
+  border-color: #b9c4ee;
+}
+
+.batchCheckmark {
+  font-size: 14px;
+  color: #2e3a97;
+  flex: none;
+}
+
+.batchCandidateName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1c2333;
+}
+
+.batchRent {
+  margin-left: auto;
+  font-size: 10px;
+  color: #5a6478;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+}
+
+.batchRunButton {
+  margin-top: 10px;
+  width: 100%;
+  background: #2e3a97;
+  color: #ffffff;
+  border: none;
+  border-radius: 9px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.batchRunButton:hover {
+  background: #263080;
+}
+
+.scoreLabBatchResultsWrap {
+  min-width: 0;
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  padding: 14px 16px;
+}
+
+.scoreLabToolbar .muted,
+.scoreLabBatchWorkspace .dataTable small {
+  color: #5a6478;
+}
+
+.scoreLabBatchWorkspace .tableWrap:focus-visible,
+.batchRowItem:focus-visible,
+.batchRunButton:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+.batchRowItem:disabled {
+  cursor: not-allowed;
+  background: #f3f5f9;
+}
+
+@media (max-width: 759px) {
+  .scoreLabBatchWorkspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scoreLabBatchSelector,
+  .scoreLabBatchResultsWrap {
+    padding: 12px;
+  }
+
+  .scoreLabBatchWorkspace .dataTable {
+    min-width: 680px;
+  }
+
+  .batchRent {
+    flex-basis: 100%;
+    margin-left: 23px;
+    overflow-wrap: anywhere;
+  }
+}
+
+.scoreMonoCell {
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+  font-weight: 600;
+  color: #1c2333;
+}
+
+.batchCompareToggleBtn {
+  background: #ffffff;
+  color: #2e3a97;
+  border: 1px solid #b9c4ee;
+  border-radius: 7px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.scoreCandidateHeading {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.scoreCandidateHeading strong {
+  font-size: 13px;
+  color: #1c2333;
+}
+
+.scoreCandidateHeading small {
+  font-size: 10px;
+  color: #6e7891;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+}
+
+.scoreModelMeta {
+  font-size: 9.5px;
+  color: #6b7590;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+  text-align: right;
+  line-height: 1.4;
+}
+
+.revenueBarVal {
+  font-size: 9.5px;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+  color: #3a4362;
+  font-weight: 600;
+}
+
+.revenueBarTrack {
+  width: 100%;
+  height: 70px;
+  background: #f1f3f8;
+  border-radius: 5px 5px 0 0;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+}
+
+.revenueBarFill {
+  width: 100%;
+  background: linear-gradient(180deg, #3d4cc4, #2e3a97);
+  border-radius: 5px 5px 0 0;
+  display: block;
+}
+
+.revenueBarLabel {
+  font-size: 9.5px;
+  color: #6e7891;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+}
+
+.bandTileHighlight {
+  border-color: #b9c4ee !important;
+  background: #eef1fb !important;
+}
+
+.bandTileHighlight .bandTileLabel {
+  color: #2e3a97 !important;
+}
+
+.bandTileHighlight .bandTileValue {
+  color: #2e3a97 !important;
+}
+
+.bandTileLabel {
+  font-size: 9px;
+  color: #6b7590;
+  font-weight: 700;
+}
+
+.bandTileValue {
+  font-size: 11.5px;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+  font-weight: 600;
+  color: #3a4362;
+}
+
+.scoreMonoVal {
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+  font-weight: 700;
+  color: #1c2333;
+}
+
+.scoreDriversBlock {
+  margin-top: 6px;
+}
+
+.driversHeading {
+  font-size: 10px;
+  font-weight: 700;
+  color: #0e7c8c;
+  margin-bottom: 3px;
+}
+
+.driverItem {
+  display: flex;
+  gap: 6px;
+  font-size: 10.5px;
+  color: #3a4362;
+  padding: 1px 0;
+}
+
+.driverItem span {
+  color: #12909f;
+  flex: none;
+}
+
+.scoreAssumptionTiles {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.assumptionTile {
+  flex: 1;
+  border: 1px solid #e9edf4;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #fbfcfe;
+}
+
+.assumptionLabel {
+  font-size: 9px;
+  color: #6b7590;
+  font-weight: 700;
+  display: block;
+}
+
+.assumptionValue {
+  font-size: 11.5px;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+  font-weight: 600;
+  color: #3a4362;
+  margin-top: 2px;
+  display: block;
+}
+
+.riskBreakdownSection {
+  margin-top: 12px;
+}
+
+.riskBreakdownGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+
+.riskBreakdownCard {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid #e9edf4;
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: #fbfcfe;
+  min-width: 0;
+}
+
+.riskCardKey {
+  font-size: 9px;
+  color: #5a6478;
+  font-weight: 700;
+}
+
+.riskCardVal {
+  align-self: flex-start;
+  font-size: 10px;
+  font-weight: 700;
+  background: #eef1f5;
+  color: #3a4362;
+  border-radius: 5px;
+  margin: 0;
+  padding: 1px 7px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.riskCardVal[data-tone="good"] {
+  background: #e5f3ea;
+  color: #18663f;
+}
+
+.riskCardVal[data-tone="watch"] {
+  background: #fbf1dd;
+  color: #96610b;
+}
+
+.riskCardVal[data-tone="risk"] {
+  background: #fce8e6;
+  color: #b3261e;
+}
+
+.posHeading {
+  font-size: 11px;
+  font-weight: 700;
+  color: #1e7f4f;
+  margin: 0 0 4px;
+}
+
+.riskHeading {
+  font-size: 11px;
+  font-weight: 700;
+  color: #b3261e;
+  margin: 0 0 4px;
+}
+
+.posList,
+.riskList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.posList li,
+.riskList li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 11px;
+  color: #3a4362;
+  line-height: 1.5;
+}
+
+.greenBullet {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #2e9e63;
+  flex: none;
+  margin-top: 6px;
+}
+
+.redBullet {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #c4342c;
+  flex: none;
+  margin-top: 6px;
+}
+
+.conditionBox {
+  margin-top: 12px;
+  background: #eef1fb;
+  border: 1px solid #b9c4ee;
+  border-radius: 10px;
+  padding: 10px 13px;
+}
+
+.conditionBox[data-tone="watch"] {
+  background: #fbf1dd;
+  border-color: #edddb5;
+}
+
+.conditionBox[data-tone="risk"] {
+  background: #fbe9e7;
+  border-color: #f3cbc7;
+}
+
+.conditionTitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: #2e3a97;
+  margin-bottom: 4px;
+}
+
+.conditionBox[data-tone="watch"] .conditionTitle {
+  color: #96610b;
+}
+
+.conditionBox[data-tone="risk"] .conditionTitle {
+  color: #b3261e;
+}
+
+.conditionList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.conditionList li {
+  display: flex;
+  gap: 7px;
+  font-size: 11px;
+  color: inherit;
+  line-height: 1.5;
+}
+
+.conditionList li span {
+  flex: none;
+}
+
+.scoreLabActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.toastNotice {
+  background: #2e3a97;
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  animation: ccPop 0.18s ease;
+}
+
+/* Package 10 Rebalance: signals left, source-backed valuation/scenarios right.
+   Later-spec disclosure gates stay visible; only the detailed execution chart
+   is a native disclosure. Scoped rules do not recolor other Network tabs. */
+.tabPanel[data-screen-label="Network 低效重配"] .muted,
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceStep {
+  color: #5a6478;
+}
+
+.rebalanceIdentity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rebalanceSourceIssue {
+  font-size: 10px;
+  font-weight: 600;
+  color: #654493;
+  background: #f0ebfa;
+  border-radius: 6px;
+  padding: 2px 8px;
+  overflow-wrap: anywhere;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceDetailHeader {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceDetailHeader h4 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceDetailHeader p {
+  font-size: 11px;
+  margin-left: auto;
+  overflow-wrap: anywhere;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceStoreMeta {
+  font-size: 10.5px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceStoreMeta .rebalanceLights {
+  margin-left: auto;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceStepper::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: 10%;
+  right: 10%;
+  height: 2px;
+  background: #e7ebf3;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceStep {
+  position: relative;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceStep[data-active="true"] {
+  color: #2e3a97;
+}
+
+.rebalanceAnalysisGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+  min-width: 0;
+}
+
+.rebalanceSignals,
+.rebalanceValuation {
+  min-width: 0;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceSignalGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin: 0 0 8px;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceSignalGrid div {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceSignalGrid div:last-child {
+  margin-left: auto;
+}
+
+.rebalanceSignalGrid dt,
+.rebalanceChartTitle {
+  color: #5a6478;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.rebalanceSignalGrid dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+}
+
+.rebalanceChartTitle {
+  margin: 0 0 5px;
+  letter-spacing: 0.05em;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceAvmBlock {
+  margin: 0;
+  padding: 11px 13px;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceAvmHeader {
+  flex-wrap: wrap;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceAvmHeader span:first-child {
+  color: #116c7b;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceAvmHeader span:last-child,
+.tabPanel[data-screen-label="Network 低效重配"] .avmBands,
+.tabPanel[data-screen-label="Network 低效重配"] .avmValueP50::after,
+.tabPanel[data-screen-label="Network 低效重配"] .avmReserveNote,
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceMetadata {
+  color: #366772;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .avmBands {
+  flex-wrap: wrap;
+  gap: 5px 14px;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceNetPlanBlock {
+  margin-top: 10px;
+  gap: 6px;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceNetPlanHeader {
+  color: #5a6478;
+  font-size: 10px;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .netPlanScenarioList {
+  gap: 6px;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .netPlanScenarioCard {
+  padding: 9px 12px;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .scenarioTitleRow {
+  flex-wrap: wrap;
+  gap: 5px 7px;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .recBadge {
+  color: #16633d;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceMetadata,
+.tabPanel[data-screen-label="Network 低效重配"] .scenarioDisclosureRow,
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceSelection,
+.tabPanel[data-screen-label="Network 低效重配"] .rebalanceBoundary {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.rebalancePlanDisclosure {
+  min-width: 0;
+  margin-top: 4px;
+}
+
+.rebalancePlanDisclosure summary {
+  cursor: pointer;
+  font-weight: 700;
+  padding: 4px 0;
+}
+
+.tabPanel[data-screen-label="Network 低效重配"] button:focus-visible,
+.rebalancePlanDisclosure summary:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+@media (max-width: 759px) {
+  .rebalanceAnalysisGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tabPanel[data-screen-label="Network 低效重配"] .rebalanceDetailHeader,
+  .tabPanel[data-screen-label="Network 低效重配"] .scenarioTitleRow {
+    flex-direction: row;
+  }
+
+  .tabPanel[data-screen-label="Network 低效重配"] .rebalanceDetailHeader p {
+    margin-left: 0;
+  }
 }

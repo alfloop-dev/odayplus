@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal '5e971f6f-3a09-4320-adfa-dba71438e940' is already REJECTED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal '5e971f6f-3a09-4320-adfa-dba71438e940' is already REJECTED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-09T21:33:44.399Z",
+      "details": [],
+      "correlation_id": "7f61428a-966d-49d6-bf6d-86da4a144066"
+    }
+  }
+}

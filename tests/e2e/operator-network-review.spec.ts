@@ -25,17 +25,25 @@ const EXPANSION_HEADERS = {
 };
 
 test.describe.configure({ mode: "serial" });
+// Browser permissions must come from the selected fixture session, not the
+// runner's union-of-all-roles headers. Match the reset/read tenant explicitly.
+test.use({ extraHTTPHeaders: {} });
 
 test.describe("ODP-OC-R4-007 Network Review decision", () => {
   test.beforeEach(async ({ page }) => {
     // Canonical reviewer persona; never turn ops-lead into site_reviewer.
     await page.addInitScript(() => {
       window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
+      window.sessionStorage.setItem("oday.operator.subject", "operator-expansion-manager");
+      window.sessionStorage.setItem("oday.operator.tenant", "tenant-a");
     });
     const api = await reviewerContext();
     const reset = await api.post("/api/v1/operator/network-reviews/reset");
     expect(reset.status()).toBe(200);
     await api.dispose();
+    // Cold Next BFF compilation exceeds the typed client's bounded timeout;
+    // warm the real route so the browser doesn't select a fallback queue.
+    expect((await page.request.get("/api/v1/operator/network-reviews", { headers: REVIEWER_HEADERS })).status()).toBe(200);
   });
 
   test("Review panel opens the decision dialog and approves the golden GO flow", async ({ page }) => {
@@ -48,7 +56,8 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
     await expect(panel).toHaveAttribute("data-screen-label", "Network 選址審核");
 
     // Queue is hydrated from the API (RV-702 GO / RV-701 WAIT / RV-698 REJECT).
-    await expect(page.getByTestId("review-card-RV-702")).toContainText("信義松仁", { timeout: 15_000 });
+    await expect(page.getByTestId("review-card-RV-702")).toContainText("王若寧（拓展）", { timeout: 15_000 });
+    await expect(page.getByTestId("review-card-RV-702")).toContainText("信義松仁");
     await expect(page.getByTestId("review-card-RV-701")).toBeVisible();
     await expect(page.getByTestId("review-card-RV-698")).toBeVisible();
 
@@ -70,9 +79,14 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
     await page.getByTestId("network-tab-5").click();
     await expect(page.getByTestId("network-panel-review")).toBeVisible();
 
-    await page.getByTestId("review-card-RV-701").click({ timeout: 15_000 });
+    // Do not open a fallback card while the active-persona snapshot is still
+    // hydrating: its replacement can remount the dialog and erase local errors.
+    await expect(page.getByTestId("review-card-RV-701")).toContainText("王若寧（拓展）", { timeout: 15_000 });
+    await page.getByTestId("review-card-RV-701").click();
     await page.getByTestId("review-btn-wait-RV-701").click();
     await page.getByTestId("review-decision-reason").fill("人流佳惟站前施工需以條件管理。");
+    await expect(page.getByTestId("review-decision-conditions")).toHaveValue("");
+    await expect(page.getByTestId("review-decision-submit")).toBeEnabled();
     await page.getByTestId("review-decision-submit").click();
     await expect(page.getByTestId("review-decision-error")).toContainText("通過條件");
   });

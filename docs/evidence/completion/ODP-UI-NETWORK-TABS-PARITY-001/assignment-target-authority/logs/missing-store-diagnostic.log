@@ -1,0 +1,117 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_____ test_target_requires_fresh_identity_authority[missing-store-assign] ______
+
+resources = (<starlette.testclient.TestClient object at 0x7b7086912f00>, <apps.api.app.routes.listings.AssistedIntakeStore object ...475f0>, <shared.identity.store.InMemoryIdentityStore object at 0x7b70869130b0>, '18baff80-6bbf-4c89-b1c6-36ca303bcaa1')
+operation = 'assign', defect = 'missing-store'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+>           client.app.state.persistence_bundle.identity_store = None
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/security/test_assisted_assignment_authority.py:108: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PersistenceBundle(mode='memory', audit_log=<shared.audit.events.InMemoryAuditLog object at 0x7b7086912fc0>, evidence_s...ly cannot", rollback_policy_version=None, approved_by='architecture_owner', owner_role='network-planning-authority')]))
+name = 'identity_store', value = None
+
+>   ???
+E   dataclasses.FrozenInstanceError: cannot assign to field 'identity_store'
+
+<string>:4: FrozenInstanceError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:51:43 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:51:43 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:51:46.739962+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "e73672e7-9d60-4e16-9576-8edfcfae827f", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+____ test_target_requires_fresh_identity_authority[missing-store-transfer] _____
+
+resources = (<starlette.testclient.TestClient object at 0x7b7084fa07a0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...14350>, <shared.identity.store.InMemoryIdentityStore object at 0x7b7084fa1490>, '227aa893-506c-451e-af73-f21f5fdb525b')
+operation = 'transfer', defect = 'missing-store'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+>           client.app.state.persistence_bundle.identity_store = None
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/security/test_assisted_assignment_authority.py:108: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PersistenceBundle(mode='memory', audit_log=<shared.audit.events.InMemoryAuditLog object at 0x7b7084fa1370>, evidence_s...ly cannot", rollback_policy_version=None, approved_by='architecture_owner', owner_role='network-planning-authority')]))
+name = 'identity_store', value = None
+
+>   ???
+E   dataclasses.FrozenInstanceError: cannot assign to field 'identity_store'
+
+<string>:4: FrozenInstanceError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:51:47 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:51:47 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:51:50.959025+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "22e6f00f-e170-4bd4-bcff-eededc802b01", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:51:50.969048+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "26e27b1f-89f0-4ea0-8f98-0d25c6999248", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[missing-store-assign]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[missing-store-transfer]

@@ -1,0 +1,11 @@
+2026/10/10 00:39:52 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+2026/10/10 00:39:55 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:39:55 INFO mlflow.store.db.utils: Updating database tables
+2026/10/10 00:40:00 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:40:00 INFO mlflow.store.db.utils: Updating database tables
+[1/3] OpenAPI artifact freshness
+OK: packages/openapi-client/openapi.json matches the live schema.
+[2/3] Generated client freshness
+OK: packages/openapi-client/src/generated/types.ts matches the artifact.
+
+API contract gate: PASS

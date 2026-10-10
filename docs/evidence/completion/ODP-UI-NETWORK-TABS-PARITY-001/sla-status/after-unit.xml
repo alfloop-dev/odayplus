@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="73" failures="3" errors="0" time="5.453706648">
+    <testsuite name="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" timestamp="2026-10-10T01:31:06.215Z" hostname="oday-dev-box.c.alfaloop-data-project-2.internal" tests="34" failures="3" errors="0" skipped="0" time="0.349034616">
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; preserves authoritative ON_TRACK independently of browser time, deadlines and legacy flags" time="0.003356957">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; preserves authoritative DUE_SOON independently of browser time, deadlines and legacy flags" time="0.000427639">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; preserves authoritative OVERDUE independently of browser time, deadlines and legacy flags" time="0.000608052">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; preserves authoritative BREACHED independently of browser time, deadlines and legacy flags" time="0.000536116">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; preserves authoritative PAUSED independently of browser time, deadlines and legacy flags" time="0.000573664">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; preserves authoritative COMPLETED independently of browser time, deadlines and legacy flags" time="0.000541436">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; does not derive a state from deadlines or flags when authority is undefined" time="0.000527759">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; does not derive a state from deadlines or flags when authority is null" time="0.00051553">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; does not derive a state from deadlines or flags when authority is " time="0.00115098">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; does not derive a state from deadlines or flags when authority is UNKNOWN" time="0.000432692">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; does not derive a state from deadlines or flags when authority is toString" time="0.000301888">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; does not derive a state from deadlines or flags when authority is __proto__" time="0.00028699">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; does not derive a state from deadlines or flags when authority is on_track" time="0.000299637">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; shows an unavailable due time for undefined" time="0.047123484">
+            <failure message="expected &apos;&lt;div class=&quot;_sectionBox_eb8a11 _assig…&apos; to contain &apos;到期時間：UNAVAILABLE&apos;" type="AssertionError">
+AssertionError: expected &apos;&lt;div class=&quot;_sectionBox_eb8a11 _assig…&apos; to contain &apos;到期時間：UNAVAILABLE&apos;
+
+Expected: &quot;到期時間：UNAVAILABLE&quot;
+Received: &quot;&lt;div class=&quot;_sectionBox_eb8a11 _assignmentSummary_eb8a11 &quot; data-testid=&quot;assignment-sla-summary&quot;&gt;&lt;div class=&quot;_sectionHead_eb8a11&quot;&gt;指派與 SLA 狀態 (ASSIGNMENT &amp;amp; SLA SUMMARY)&lt;/div&gt;&lt;div class=&quot;_assignmentCards_eb8a11&quot;&gt;&lt;div class=&quot;_assignmentCard_eb8a11&quot;&gt;&lt;div style=&quot;font-size:11px;color:#64748b;font-weight:600&quot;&gt;目前 Owner / 負責人&lt;/div&gt;&lt;div style=&quot;font-size:14px;font-weight:700;margin-top:2px&quot; data-testid=&quot;asg-owner&quot;&gt;許庭瑜（展店）&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;佇列：&lt;!-- --&gt;UNAVAILABLE&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;Assignment ID：&lt;!-- --&gt;ASG-TEST-001&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;Assignment Status：&lt;!-- --&gt;ASSIGNED&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;_assignmentCard_eb8a11&quot;&gt;&lt;div style=&quot;font-size:11px;color:#64748b;font-weight:600&quot;&gt;SLA 處理狀態&lt;/div&gt;&lt;div style=&quot;font-size:14px;font-weight:700;margin-top:2px;display:flex;align-items:center;gap:6px&quot; data-testid=&quot;asg-sla-status&quot;&gt;&lt;span style=&quot;font-size:16px&quot; aria-hidden=&quot;true&quot;&gt;✓&lt;/span&gt;&lt;span&gt;正常 (On Track)&lt;/span&gt;&lt;span style=&quot;font-size:10px;padding:1px 4px;background:#e2e8f0;border-radius:3px;font-family:monospace&quot;&gt;[✓ ON TRACK]&lt;/span&gt;&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;到期時間：&lt;!-- --&gt;UNAVAILABLE&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;SLA Instance ID：&lt;!-- --&gt;SLA-TEST-001&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;_emptyState_eb8a11&quot; data-testid=&quot;assignment-resource-version-unavailable&quot; role=&quot;status&quot;&gt;RESOURCE_VERSION_UNAVAILABLE — assignment resource version 未由權威收據或 read model 提供。&lt;/div&gt;&lt;div class=&quot;_emptyState_eb8a11&quot; data-testid=&quot;sla-resource-version-unavailable&quot; role=&quot;status&quot;&gt;RESOURCE_VERSION_UNAVAILABLE — SLA resource version 未由權威收據或 read model 提供。&lt;/div&gt;&lt;div class=&quot;_assignmentActions_eb8a11&quot;&gt;&lt;/div&gt;&lt;/div&gt;&quot;
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:92:20
+            </failure>
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; shows an unavailable due time for " time="0.016077992">
+            <failure message="expected &apos;&lt;div class=&quot;_sectionBox_eb8a11 _assig…&apos; to contain &apos;到期時間：UNAVAILABLE&apos;" type="AssertionError">
+AssertionError: expected &apos;&lt;div class=&quot;_sectionBox_eb8a11 _assig…&apos; to contain &apos;到期時間：UNAVAILABLE&apos;
+
+Expected: &quot;到期時間：UNAVAILABLE&quot;
+Received: &quot;&lt;div class=&quot;_sectionBox_eb8a11 _assignmentSummary_eb8a11 &quot; data-testid=&quot;assignment-sla-summary&quot;&gt;&lt;div class=&quot;_sectionHead_eb8a11&quot;&gt;指派與 SLA 狀態 (ASSIGNMENT &amp;amp; SLA SUMMARY)&lt;/div&gt;&lt;div class=&quot;_assignmentCards_eb8a11&quot;&gt;&lt;div class=&quot;_assignmentCard_eb8a11&quot;&gt;&lt;div style=&quot;font-size:11px;color:#64748b;font-weight:600&quot;&gt;目前 Owner / 負責人&lt;/div&gt;&lt;div style=&quot;font-size:14px;font-weight:700;margin-top:2px&quot; data-testid=&quot;asg-owner&quot;&gt;許庭瑜（展店）&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;佇列：&lt;!-- --&gt;UNAVAILABLE&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;Assignment ID：&lt;!-- --&gt;ASG-TEST-001&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;Assignment Status：&lt;!-- --&gt;ASSIGNED&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;_assignmentCard_eb8a11&quot;&gt;&lt;div style=&quot;font-size:11px;color:#64748b;font-weight:600&quot;&gt;SLA 處理狀態&lt;/div&gt;&lt;div style=&quot;font-size:14px;font-weight:700;margin-top:2px;display:flex;align-items:center;gap:6px&quot; data-testid=&quot;asg-sla-status&quot;&gt;&lt;span style=&quot;font-size:16px&quot; aria-hidden=&quot;true&quot;&gt;✓&lt;/span&gt;&lt;span&gt;正常 (On Track)&lt;/span&gt;&lt;span style=&quot;font-size:10px;padding:1px 4px;background:#e2e8f0;border-radius:3px;font-family:monospace&quot;&gt;[✓ ON TRACK]&lt;/span&gt;&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;到期時間：&lt;!-- --&gt;UNAVAILABLE&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;SLA Instance ID：&lt;!-- --&gt;SLA-TEST-001&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;_emptyState_eb8a11&quot; data-testid=&quot;assignment-resource-version-unavailable&quot; role=&quot;status&quot;&gt;RESOURCE_VERSION_UNAVAILABLE — assignment resource version 未由權威收據或 read model 提供。&lt;/div&gt;&lt;div class=&quot;_emptyState_eb8a11&quot; data-testid=&quot;sla-resource-version-unavailable&quot; role=&quot;status&quot;&gt;RESOURCE_VERSION_UNAVAILABLE — SLA resource version 未由權威收據或 read model 提供。&lt;/div&gt;&lt;div class=&quot;_assignmentActions_eb8a11&quot;&gt;&lt;/div&gt;&lt;/div&gt;&quot;
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:92:20
+            </failure>
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; shows an unavailable due time for invalid" time="0.004749426">
+            <failure message="expected &apos;&lt;div class=&quot;_sectionBox_eb8a11 _assig…&apos; to contain &apos;到期時間：UNAVAILABLE&apos;" type="AssertionError">
+AssertionError: expected &apos;&lt;div class=&quot;_sectionBox_eb8a11 _assig…&apos; to contain &apos;到期時間：UNAVAILABLE&apos;
+
+Expected: &quot;到期時間：UNAVAILABLE&quot;
+Received: &quot;&lt;div class=&quot;_sectionBox_eb8a11 _assignmentSummary_eb8a11 &quot; data-testid=&quot;assignment-sla-summary&quot;&gt;&lt;div class=&quot;_sectionHead_eb8a11&quot;&gt;指派與 SLA 狀態 (ASSIGNMENT &amp;amp; SLA SUMMARY)&lt;/div&gt;&lt;div class=&quot;_assignmentCards_eb8a11&quot;&gt;&lt;div class=&quot;_assignmentCard_eb8a11&quot;&gt;&lt;div style=&quot;font-size:11px;color:#64748b;font-weight:600&quot;&gt;目前 Owner / 負責人&lt;/div&gt;&lt;div style=&quot;font-size:14px;font-weight:700;margin-top:2px&quot; data-testid=&quot;asg-owner&quot;&gt;許庭瑜（展店）&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;佇列：&lt;!-- --&gt;UNAVAILABLE&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;Assignment ID：&lt;!-- --&gt;ASG-TEST-001&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;Assignment Status：&lt;!-- --&gt;ASSIGNED&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;_assignmentCard_eb8a11&quot;&gt;&lt;div style=&quot;font-size:11px;color:#64748b;font-weight:600&quot;&gt;SLA 處理狀態&lt;/div&gt;&lt;div style=&quot;font-size:14px;font-weight:700;margin-top:2px;display:flex;align-items:center;gap:6px&quot; data-testid=&quot;asg-sla-status&quot;&gt;&lt;span style=&quot;font-size:16px&quot; aria-hidden=&quot;true&quot;&gt;✓&lt;/span&gt;&lt;span&gt;正常 (On Track)&lt;/span&gt;&lt;span style=&quot;font-size:10px;padding:1px 4px;background:#e2e8f0;border-radius:3px;font-family:monospace&quot;&gt;[✓ ON TRACK]&lt;/span&gt;&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;到期時間：&lt;!-- --&gt;UNAVAILABLE&lt;/div&gt;&lt;div style=&quot;font-size:10.5px;color:#475569&quot;&gt;SLA Instance ID：&lt;!-- --&gt;SLA-TEST-001&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;_emptyState_eb8a11&quot; data-testid=&quot;assignment-resource-version-unavailable&quot; role=&quot;status&quot;&gt;RESOURCE_VERSION_UNAVAILABLE — assignment resource version 未由權威收據或 read model 提供。&lt;/div&gt;&lt;div class=&quot;_emptyState_eb8a11&quot; data-testid=&quot;sla-resource-version-unavailable&quot; role=&quot;status&quot;&gt;RESOURCE_VERSION_UNAVAILABLE — SLA resource version 未由權威收據或 read model 提供。&lt;/div&gt;&lt;div class=&quot;_assignmentActions_eb8a11&quot;&gt;&lt;/div&gt;&lt;/div&gt;&quot;
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:92:20
+            </failure>
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; does not offer Pause for BREACHED even with a callback" time="0.002680887">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; does not offer Pause for COMPLETED even with a callback" time="0.001426536">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; does not offer Pause for UNKNOWN even with a callback" time="0.001232834">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; does not offer Pause for null even with a callback" time="0.001542776">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; verifies SLA text plus icon/pattern mapping for WCAG AA compliance" time="0.000740091">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; AssignmentSlaSummary Component &amp; SLA Logic &gt; renders assignment and SLA summary with action buttons" time="0.00203569">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; transfer displays only resource authority and disables missing tokens" time="0.020441065">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; pause displays only resource authority and disables missing tokens" time="0.012703214">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; TransferIntakeDialog (VDC-001 &amp; 409 Conflict Draft Preservation) &gt; renders target selection and handoff note ONLY per VDC-001" time="0.00668756">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; TransferIntakeDialog (VDC-001 &amp; 409 Conflict Draft Preservation) &gt; preserves transfer draft inputs across a 409 OWNER_CONFLICT refresh and exposes current owner/version upon completion" time="0.00811397">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; TransferIntakeDialog (VDC-001 &amp; 409 Conflict Draft Preservation) &gt; submits with refreshed record.version (If-Match header) after 409 conflict refresh" time="0.004420545">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; PauseSlaDialog (VDC-001 &amp; Required Editable Resume Time &amp; 409 Conflict Draft Preservation) &gt; renders reason and required editable resume time ONLY per VDC-001 with initial BLANK resume time" time="0.003856608">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; PauseSlaDialog (VDC-001 &amp; Required Editable Resume Time &amp; 409 Conflict Draft Preservation) &gt; preserves pause SLA draft inputs across a 409 OWNER_CONFLICT refresh and exposes current owner/version upon completion" time="0.003621541">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; PauseSlaDialog (VDC-001 &amp; Required Editable Resume Time &amp; 409 Conflict Draft Preservation) &gt; submits pause with refreshed record.version (If-Match header) after 409 conflict refresh" time="0.001076114">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; Durable Receipt &amp; Versioned Audit Timeline Integration &gt; renders authoritative AssignmentReceipt data in DurableReceiptPanel and versioned audit timeline UI" time="0.021856932">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; Durable Receipt &amp; Versioned Audit Timeline Integration &gt; renders authoritative SlaReceipt data in DurableReceiptPanel and versioned audit timeline UI" time="0.017025587">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; Mounted Dialog Interaction &amp; State Flow Tests &gt; proves TransferIntakeDialog retains draft state during 409 conflict refresh on a mounted component and resubmits with refreshed version" time="0.120738276">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx" name="Assignment, SLA, Transfer, Pause, Escalation &amp; Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) &gt; Mounted Dialog Interaction &amp; State Flow Tests &gt; proves PauseSlaDialog retains draft state during 409 conflict refresh on a mounted component and resubmits with refreshed version" time="0.035185546">
+        </testcase>
+    </testsuite>
+    <testsuite name="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" timestamp="2026-10-10T01:31:06.239Z" hostname="oday-dev-box.c.alfaloop-data-project-2.internal" tests="35" failures="0" errors="0" skipped="0" time="4.488243639">
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; renders the exact continuous section order with timeline and audit last" time="0.233453114">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; shows recovery only for authoritative failure states" time="0.302703675">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; renders authoritative record failure when no action error exists" time="0.114658317">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; preserves the durable submitted URL when retrieval fails before parsing" time="0.115187353">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; layers corrected field values over the durable submission context" time="0.159827299">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; builds preserved input only from values the intake record supplies" time="0.002072755">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; scopes the 390px CSS contract to POSSIBLE_MATCH and preserves typed values" time="0.141114348">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; keeps native table-cell layout for lineage and comparison columns" time="0.133725941">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; integrates target comparison, canonical signals, and truthful corrected/missing lineage" time="0.150469916">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; fails target-dependent decisions closed without exact authoritative evidence" time="0.154561777">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; wires authoritative promotion receipt and score job into receipts and audit timeline" time="0.096686878">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; renders submitted, history, job, SLA and audit evidence truthfully" time="0.077079684">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; marks stale snapshots without inventing timestamps" time="0.000508965">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; uses independent authoritative resource versions and never the intake version" time="0.002430273">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="IntakeProcessingDetail production composition &gt; uses deterministic WCAG-AA job badge colors for hydrated states" time="0.000829537">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; marks only durable intake detail contexts for the global narrow-width override" time="0.12057555">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; replaces the inbox with detail and restores filters and selection on return" time="0.251772971">
+            <system-err>
+Error loading operator shell envelope: DOMException [NetworkError]: Failed to execute &quot;fetch()&quot; on &quot;Window&quot; with URL &quot;http://localhost:3000/api/v1/operator/bootstrap&quot;: connect ECONNREFUSED 127.0.0.1:3000
+    at Fetch.onError (file:///tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/node_modules/happy-dom/lib/fetch/Fetch.js:540:21)
+    at ClientRequest.emit (node:events:519:28)
+    at emitErrorEvent (node:_http_client:108:11)
+    at Socket.socketErrorListener (node:_http_client:575:5)
+    at Socket.emit (node:events:519:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at processTicksAndRejections (node:internal/process/task_queues:89:21)
+
+            </system-err>
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; mounts a real direct pathname while unrelated shell bootstrap fails" time="0.175331736">
+            <system-err>
+Retrying operator bootstrap (1/3): RetryableBootstrapStatus: Operator bootstrap returned 503
+    at attemptBootstrap (/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/features/operator/OperatorConsole.tsx:570:19)
+    at loadShellEnvelope (/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/features/operator/OperatorConsole.tsx:590:23) {
+  status: 503
+}
+
+            </system-err>
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; keeps read-only production controls fail closed" time="0.104683745">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; claims only the authoritative assignment with its resource-specific If-Match" time="0.125245099">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; transfers with the authoritative assignment resource version" time="0.229044477">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; does not transfer to static actors when resource authority exists but no scoped target directory is provided" time="0.15827817">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; pauses with the authoritative SLA resource version" time="0.203181789">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; supersedes a cached claim receipt after a real container 409 refresh without losing the transfer draft" time="0.325471941">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; supersedes a cached resume receipt after an SLA 409 refresh and preserves editable pause inputs" time="0.306254516">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; rejects resource receipts for a different ID instead of borrowing their versions" time="0.000557418">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; resumes with the authoritative SLA resource version" time="0.107987628">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; fails assignment and SLA controls closed when resource versions are missing" time="0.088797159">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; accepts positive integer resource versions only" time="0.001074223">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; fails claim, transfer, pause and resume closed for zero resource versions" time="0.077604452">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; fails claim, transfer, pause and resume closed for negative resource versions" time="0.112855763">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; fails claim, transfer, pause and resume closed for fraction resource versions" time="0.075923773">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; fails claim, transfer, pause and resume closed for string resource versions" time="0.104883617">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; fails claim, transfer, pause and resume closed for null resource versions" time="0.135603008">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx" name="AssistedIntakeSection production container &gt; fails claim, transfer, pause and resume closed for undefined resource versions" time="0.091092188">
+        </testcase>
+    </testsuite>
+    <testsuite name="features/operator/network/intake/__tests__/Package10VisualP1.test.tsx" timestamp="2026-10-10T01:31:06.247Z" hostname="oday-dev-box.c.alfaloop-data-project-2.internal" tests="4" failures="0" errors="0" skipped="0" time="0.616428393">
+        <testcase classname="features/operator/network/intake/__tests__/Package10VisualP1.test.tsx" name="Package 10 intake visual P1 &gt; uses the exact canonical intake detail screen label" time="0.197464601">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/Package10VisualP1.test.tsx" name="Package 10 intake visual P1 &gt; renders a three-column desktop current/submitted comparison with text markers and a mobile fallback" time="0.166722738">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/Package10VisualP1.test.tsx" name="Package 10 intake visual P1 &gt; passes authoritative target fields by targetListingId and normalizes signal aliases" time="0.122030801">
+        </testcase>
+        <testcase classname="features/operator/network/intake/__tests__/Package10VisualP1.test.tsx" name="Package 10 intake visual P1 &gt; marks absent authoritative values unavailable and never matched" time="0.127135304">
+        </testcase>
+    </testsuite>
+</testsuites>

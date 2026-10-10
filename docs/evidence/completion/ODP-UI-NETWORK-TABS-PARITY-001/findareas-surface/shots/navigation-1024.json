@@ -1,0 +1,18 @@
+[
+  {
+    "action": "selected-fit",
+    "url": "http://localhost:3312/operator?ws=network&hz=HZ-02&lens=fit"
+  },
+  {
+    "action": "back",
+    "url": "http://localhost:3312/operator?ws=network&hz=HZ-02&lens=demand"
+  },
+  {
+    "action": "forward",
+    "url": "http://localhost:3312/operator?ws=network&hz=HZ-02&lens=fit"
+  },
+  {
+    "action": "reload",
+    "url": "http://localhost:3312/operator?ws=network&hz=HZ-02&lens=fit"
+  }
+]

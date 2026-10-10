@@ -26,7 +26,7 @@ import type {
   PromotionReviewInput,
 } from "./PromotionReviewPanel";
 import type { ScoreReplayInput } from "./SiteScoreJobStatus";
-import { TransferIntakeDialog } from "./TransferIntakeDialog";
+import { TransferIntakeDialog, useAssignmentTransferTargets } from "./TransferIntakeDialog";
 import { PauseSlaDialog } from "./PauseSlaDialog";
 import {
   buildIntakeClient,
@@ -360,7 +360,9 @@ export function AssistedIntakeSection({
   }, [selected, gateKey, gateSnapshots]);
 
   function closeDialog() {
-    if (durableRouteSelectedId) {
+    // A workspace detail can be reloaded without its prior local Radar tab
+    // override. Return must select the inbox explicitly, just like /intake/:id.
+    if (durableRouteSelectedId || (selectedId && dialog === "detail")) {
       router.replace(buildInboxReturnHref({
         ...urlState,
         selectedId,
@@ -640,7 +642,14 @@ export function AssistedIntakeSection({
     target_owner_role: string;
     handoff_note: string;
   }) {
-    if (!client || !selected || busy) return;
+    if (!client || !selected || busy || !canManageAssignment) return;
+    const target = transferDirectory.options.find((option) =>
+      option.id === payload.target_owner_subject_id && option.role === payload.target_owner_role,
+    );
+    if (!target) {
+      setActionError(unavailableResourceError("TRANSFER_TARGETS_UNAVAILABLE", "transfer target identity/scope"));
+      return;
+    }
     setBusy(true);
     setActionError(null);
 
@@ -934,12 +943,33 @@ export function AssistedIntakeSection({
   }
 
   async function handleConflictRefresh() {
-    if (!client || !selected) return;
-    setActionError(null);
+    if (!client || !selected || busy) return;
+    setBusy(true);
     const getResult = await intakeApi.get(client, selected.id);
     if (getResult.ok) {
+      // A successful authoritative reread supersedes local action receipts.
+      // Otherwise a previous claim/pause receipt can pin If-Match to an old
+      // version even after the operator explicitly refreshed a 409 conflict.
+      setAssignmentReceipts((previous) => {
+        const next = { ...previous };
+        delete next[selected.id];
+        return next;
+      });
+      setSlaReceipts((previous) => {
+        const next = { ...previous };
+        delete next[selected.id];
+        return next;
+      });
       applyRecord(getResult.value);
+      transferDirectory.refreshTargets();
+      setActionError(null);
+    } else {
+      // A failed read must not erase the unresolved 409 or its refresh path.
+      setActionError((previous) => previous?.status === 409
+        ? { ...previous, summary: `版本衝突未解除 · 重新整理失敗：${getResult.error.summary}`, nextAction: getResult.error.nextAction }
+        : getResult.error);
     }
+    setBusy(false);
   }
 
   const fixField = selected && fixFieldKey ? selected.parsedFields?.[fixFieldKey] : undefined;
@@ -960,6 +990,10 @@ export function AssistedIntakeSection({
   const assignmentResourceVersion = selected
     ? authoritativeAssignmentVersion(selected, assignmentReceipts[selected.id])
     : null;
+  const transferDirectory = useAssignmentTransferTargets(
+    client, selected?.assignmentId, assignmentResourceVersion,
+    dialog === "assignmentSla" && asgKind === "transfer" && canManageAssignment,
+  );
   const slaResourceVersion = selected
     ? authoritativeSlaVersion(selected, slaReceipts[selected.id])
     : null;
@@ -1166,13 +1200,18 @@ export function AssistedIntakeSection({
       {dialog === "assignmentSla" && selected && canManageAssignment && assignmentResourceVersion !== null && asgKind === "transfer" ? (
         <TransferIntakeDialog
           busy={busy}
-          error={actionError}
+          error={actionError || transferDirectory.error}
           onClose={() => {
             updateUrlState({ dialog: "detail", decisionKind: null });
             setActionError(null);
           }}
           onSubmit={handleTransferSubmit}
           record={selected}
+          resourceVersion={assignmentResourceVersion}
+          targetOptions={transferDirectory.options}
+          targetLoadState={transferDirectory.state}
+          targetLoadError={transferDirectory.error}
+          onRefreshTargets={transferDirectory.refreshTargets}
           onConflictRefresh={handleConflictRefresh}
         />
       ) : null}
@@ -1187,6 +1226,7 @@ export function AssistedIntakeSection({
           }}
           onSubmit={handlePauseSubmit}
           record={selected}
+          resourceVersion={slaResourceVersion}
           onConflictRefresh={handleConflictRefresh}
         />
       ) : null}
@@ -1214,22 +1254,18 @@ export function authoritativeAssignmentVersion(
   record: AssistedIntake,
   receipt?: AssignmentReceipt,
 ): number | null {
-  const raw = record as AssistedIntake & {
-    assignmentVersion?: unknown;
-    assignment_version?: unknown;
-  };
-  return validResourceVersion(receipt?.version ?? raw.assignmentVersion ?? raw.assignment_version);
+  const raw = record as AssistedIntake & { assignment_version?: unknown };
+  if (receipt && receipt.assignment_id !== record.assignmentId) return null;
+  return validResourceVersion(receipt ? receipt.version : raw.assignmentVersion ?? raw.assignment_version);
 }
 
 export function authoritativeSlaVersion(
   record: AssistedIntake,
   receipt?: SlaReceipt,
 ): number | null {
-  const raw = record as AssistedIntake & {
-    slaVersion?: unknown;
-    sla_version?: unknown;
-  };
-  return validResourceVersion(receipt?.version ?? raw.slaVersion ?? raw.sla_version);
+  const raw = record as AssistedIntake & { sla_version?: unknown };
+  if (receipt && receipt.sla_instance_id !== record.slaInstanceId) return null;
+  return validResourceVersion(receipt ? receipt.version : raw.slaVersion ?? raw.sla_version);
 }
 
 type ResourceAuthority =
@@ -1283,7 +1319,7 @@ function unavailableResourceError(code: string, authority: string): IntakeApiErr
  * (ADD-006 §3.3). Fractions, strings, null and undefined are equally unusable.
  */
 export function validResourceVersion(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 ? value : null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : null;
 }
 
 export function buildInboxReturnHref(

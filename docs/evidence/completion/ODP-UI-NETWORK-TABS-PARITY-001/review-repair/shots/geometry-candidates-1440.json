@@ -1,0 +1,78 @@
+{
+  "boxes": {
+    "panel": {
+      "x": 20,
+      "y": 360.703125,
+      "width": 1400,
+      "height": 944.921875,
+      "scrollWidth": 1400,
+      "columns": "1400px",
+      "overflowX": "visible",
+      "radius": "0px"
+    },
+    "pipeline": {
+      "x": 20,
+      "y": 403.203125,
+      "width": 180,
+      "height": 309.078125,
+      "scrollWidth": 178,
+      "columns": "150px",
+      "overflowX": "visible",
+      "radius": "12px"
+    },
+    "board": {
+      "x": 214,
+      "y": 403.203125,
+      "width": 844,
+      "height": 483.234375,
+      "scrollWidth": 844,
+      "columns": "274.656px 274.672px 274.656px",
+      "overflowX": "visible",
+      "radius": "0px"
+    },
+    "detail": {
+      "x": 1072,
+      "y": 403.203125,
+      "width": 348,
+      "height": 944.921875,
+      "scrollWidth": 346,
+      "columns": "314px",
+      "overflowX": "visible",
+      "radius": "12px"
+    },
+    "photo": {
+      "x": 1089,
+      "y": 1040.296875,
+      "width": 314,
+      "height": 56,
+      "scrollWidth": 312,
+      "columns": "292px",
+      "overflowX": "visible",
+      "radius": "8px"
+    },
+    "facts": {
+      "x": 1089,
+      "y": 758.84375,
+      "width": 314,
+      "height": 271.453125,
+      "scrollWidth": 314,
+      "columns": "314px",
+      "overflowX": "visible",
+      "radius": "0px"
+    }
+  },
+  "document": {
+    "width": 1440,
+    "scrollWidth": 1440
+  },
+  "design": {
+    "x": 20,
+    "y": 346.84375,
+    "width": 1400,
+    "height": 935.015625,
+    "scrollWidth": 1400,
+    "columns": "180px 844px 348px",
+    "overflowX": "visible",
+    "radius": "0px"
+  }
+}

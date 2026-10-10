@@ -1,0 +1,75 @@
+[WebServer] 2026/10/09 15:53:31 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 15:53:33 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 15:53:33 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [1931304]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T15:53:37.373096+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "88557035-36b8-4c78-8d0b-25742386e667", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 4 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T15:53:54.888096+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "39a7adf3-57a8-4140-a709-a6e07176ce6f", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:03.235524+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:03.237823+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:03.239393+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:03.247519+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:04.225742+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "5da090d7-5d52-4b84-a4c4-0fa374ac1324", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/candidates/{candidate_id}/score ok"}
+  ✓  1 [chromium] › tests/e2e/operator-network-scoring.spec.ts:25:7 › ODP-OC-R4-006 Network SiteScore scoring › Candidate gate blocks CS-1003 and exposes the golden-flow candidates (11.7s)
+[WebServer] {"timestamp": "2026-10-09T15:54:04.401783+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7c2dceae-7ea2-46f9-b7a5-05a0cbbd699d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:05.400542+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-d1117597-3d82-43dd-baf3-b185cdcc05e3", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:08.992188+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:08.992726+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:08.995303+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:08.999041+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:09.444366+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-8dbc7bd9-0f04-40c5-ab24-4319e55d788e", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+  ✓  2 [chromium] › tests/e2e/operator-network-scoring.spec.ts:60:7 › ODP-OC-R4-006 Network SiteScore scoring › SiteScore Lab renders GO/WAIT/REJECT scorecards with conditions and reasons (6.4s)
+[WebServer] {"timestamp": "2026-10-09T15:54:10.816664+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "35d30779-ffed-422c-8af4-89e375d9da4c", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:13.569807+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:13.577225+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:13.580359+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:13.625683+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:14.238373+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-7757a6fa-1d7c-47c9-bbf4-e7e8e61298ab", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+  ✓  3 [chromium] › tests/e2e/operator-network-scoring.spec.ts:91:7 › ODP-OC-R4-006 Network SiteScore scoring › Compare recommends primary / alternate / avoid consistently (3.7s)
+[WebServer] {"timestamp": "2026-10-09T15:54:14.531827+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "3572688c-19af-4777-a613-0e053cb48365", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:14.628818+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "562df5c5-c209-49bc-b78f-89f42aecee12", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/score ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:17.725283+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:17.814032+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:17.820563+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:17.821073+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:18.353769+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:18.400126+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:18.455624+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:18.458929+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T15:54:18.507769+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-75136038-96b8-4cf0-ad8b-5f74fcb6527f", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+  ✘  4 [chromium] › tests/e2e/operator-network-scoring.spec.ts:117:7 › ODP-OC-R4-006 Network SiteScore scoring › batch SiteScore job sorts persisted results and skips gated candidate (8.4s)
+
+
+  1) [chromium] › tests/e2e/operator-network-scoring.spec.ts:117:7 › ODP-OC-R4-006 Network SiteScore scoring › batch SiteScore job sorts persisted results and skips gated candidate 
+
+    Error: expect(locator).toHaveAttribute(expected) failed
+
+    Locator: getByRole('button', { name: /信義松仁候選點.*NT\$58,000/ })
+    Expected: "true"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toHaveAttribute" with timeout 5000ms
+      - waiting for getByRole('button', { name: /信義松仁候選點.*NT\$58,000/ })
+
+
+      142 |     await page.getByRole("button", { name: "批次評分", exact: true }).click();
+      143 |     const selection = page.getByRole("button", { name: /信義松仁候選點.*NT\$58,000/ });
+    > 144 |     await expect(selection).toHaveAttribute("aria-pressed", "true");
+          |                             ^
+      145 |     await expect(page.getByRole("button", { name: /中壢中原候選點.*—/ })).toBeDisabled();
+      146 |     // Leave only CS-1001 selected.
+      147 |     await page.getByRole("button", { name: /板橋府中候選點.*NT\$52,000/ }).click();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/e2e/operator-network-scoring.spec.ts:144:29
+
+    Error Context: test-results/operator-network-scoring-O-4c208-s-and-skips-gated-candidate-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/e2e/operator-network-scoring.spec.ts:117:7 › ODP-OC-R4-006 Network SiteScore scoring › batch SiteScore job sorts persisted results and skips gated candidate 
+  3 passed (56.9s)

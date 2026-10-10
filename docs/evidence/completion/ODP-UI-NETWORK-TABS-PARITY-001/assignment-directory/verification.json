@@ -1,0 +1,83 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "status": "increment_verified_full_task_incomplete",
+  "backend_anchor": "2890a31b32b1466c75710325d4d7d6657d5127c6",
+  "product_anchor": "9c29cae2ca6d1c0d129c48cf2c6c762efd8fd137",
+  "canonical_dev": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+  "checks": {
+    "directory": {
+      "exit_code": 0,
+      "tests": 41,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "writes": {
+      "exit_code": 0,
+      "tests": 102,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "contracts": {
+      "exit_code": 0,
+      "tests": 75,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "postgresql": {
+      "exit_code": 0,
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "web-final": {
+      "exit_code": 0,
+      "tests": 51,
+      "files": 2
+    },
+    "typecheck-final": {
+      "exit_code": 0
+    },
+    "lint": {
+      "exit_code": 0
+    },
+    "ruff": {
+      "exit_code": 0
+    },
+    "drift": {
+      "exit_code": 0
+    },
+    "boundaries": {
+      "exit_code": 0
+    },
+    "diff": {
+      "exit_code": 0
+    }
+  },
+  "incomplete_invocation": {
+    "name": "security",
+    "timeout_seconds": 600,
+    "exit_receipt": null,
+    "verdict": "unknown_not_passed"
+  },
+  "initial_failures": {
+    "web": 1,
+    "typecheck": 2,
+    "repaired": true
+  },
+  "ui_http": "mocked, not genuine durable UI success",
+  "sql_accounts": "explicit test identity fixtures using real SqlIdentityStore",
+  "sql_sla": "explicit seeded SLA, not provisioning acceptance",
+  "screenshots_geometry_vdc": "not run; existing modal pairs not upgraded",
+  "cloud_or_login_acceptance": false,
+  "remaining": [
+    "Operator resource provisioning and shared authoritative reads",
+    "genuine SLA creation",
+    "Transfer/Pause browser mutation/reload and design-before-after geometry",
+    "remaining Spatial and negative pairs",
+    "full-scope density and independent VDC review"
+  ]
+}

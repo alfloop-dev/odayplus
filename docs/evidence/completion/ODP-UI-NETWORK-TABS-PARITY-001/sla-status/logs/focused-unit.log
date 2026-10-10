@@ -1,0 +1,145 @@
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx (34 tests | 3 failed) 349ms
+       ✓ preserves authoritative ON_TRACK independently of browser time, deadlines and legacy flags 3ms
+       ✓ preserves authoritative DUE_SOON independently of browser time, deadlines and legacy flags 0ms
+       ✓ preserves authoritative OVERDUE independently of browser time, deadlines and legacy flags 1ms
+       ✓ preserves authoritative BREACHED independently of browser time, deadlines and legacy flags 1ms
+       ✓ preserves authoritative PAUSED independently of browser time, deadlines and legacy flags 1ms
+       ✓ preserves authoritative COMPLETED independently of browser time, deadlines and legacy flags 1ms
+       ✓ does not derive a state from deadlines or flags when authority is undefined 1ms
+       ✓ does not derive a state from deadlines or flags when authority is null 1ms
+       ✓ does not derive a state from deadlines or flags when authority is  1ms
+       ✓ does not derive a state from deadlines or flags when authority is UNKNOWN 0ms
+       ✓ does not derive a state from deadlines or flags when authority is toString 0ms
+       ✓ does not derive a state from deadlines or flags when authority is __proto__ 0ms
+       ✓ does not derive a state from deadlines or flags when authority is on_track 0ms
+       × shows an unavailable due time for undefined 47ms
+       × shows an unavailable due time for  16ms
+       × shows an unavailable due time for invalid 5ms
+       ✓ does not offer Pause for BREACHED even with a callback 3ms
+       ✓ does not offer Pause for COMPLETED even with a callback 1ms
+       ✓ does not offer Pause for UNKNOWN even with a callback 1ms
+       ✓ does not offer Pause for null even with a callback 2ms
+       ✓ verifies SLA text plus icon/pattern mapping for WCAG AA compliance 1ms
+       ✓ renders assignment and SLA summary with action buttons 2ms
+     ✓ transfer displays only resource authority and disables missing tokens 20ms
+     ✓ pause displays only resource authority and disables missing tokens 13ms
+       ✓ renders target selection and handoff note ONLY per VDC-001 7ms
+       ✓ preserves transfer draft inputs across a 409 OWNER_CONFLICT refresh and exposes current owner/version upon completion 8ms
+       ✓ submits with refreshed record.version (If-Match header) after 409 conflict refresh 4ms
+       ✓ renders reason and required editable resume time ONLY per VDC-001 with initial BLANK resume time 4ms
+       ✓ preserves pause SLA draft inputs across a 409 OWNER_CONFLICT refresh and exposes current owner/version upon completion 4ms
+       ✓ submits pause with refreshed record.version (If-Match header) after 409 conflict refresh 1ms
+       ✓ renders authoritative AssignmentReceipt data in DurableReceiptPanel and versioned audit timeline UI 22ms
+       ✓ renders authoritative SlaReceipt data in DurableReceiptPanel and versioned audit timeline UI 17ms
+       ✓ proves TransferIntakeDialog retains draft state during 409 conflict refresh on a mounted component and resubmits with refreshed version 121ms
+       ✓ proves PauseSlaDialog retains draft state during 409 conflict refresh on a mounted component and resubmits with refreshed version 35ms
+ ✓ features/operator/network/intake/__tests__/Package10VisualP1.test.tsx (4 tests) 616ms
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+stderr | features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > replaces the inbox with detail and restores filters and selection on return
+Error loading operator shell envelope: DOMException [NetworkError]: Failed to execute "fetch()" on "Window" with URL "http://localhost:3000/api/v1/operator/bootstrap": connect ECONNREFUSED 127.0.0.1:3000
+    at Fetch.onError (file:///tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/node_modules/happy-dom/lib/fetch/Fetch.js:540:21)
+    at ClientRequest.emit (node:events:519:28)
+    at emitErrorEvent (node:_http_client:108:11)
+    at Socket.socketErrorListener (node:_http_client:575:5)
+    at Socket.emit (node:events:519:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at processTicksAndRejections (node:internal/process/task_queues:89:21)
+
+stderr | features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > mounts a real direct pathname while unrelated shell bootstrap fails
+Retrying operator bootstrap (1/3): RetryableBootstrapStatus: Operator bootstrap returned 503
+    at attemptBootstrap (/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/features/operator/OperatorConsole.tsx:570:19)
+    at loadShellEnvelope (/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/features/operator/OperatorConsole.tsx:590:23) {
+  status: 503
+}
+
+ ✓ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx (35 tests) 4488ms
+     ✓ shows recovery only for authoritative failure states  303ms
+     ✓ supersedes a cached claim receipt after a real container 409 refresh without losing the transfer draft  325ms
+     ✓ supersedes a cached resume receipt after an SLA 409 refresh and preserves editable pause inputs  306ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > shows an unavailable due time for undefined
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > shows an unavailable due time for 
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > shows an unavailable due time for invalid
+AssertionError: expected '<div class="_sectionBox_eb8a11 _assig…' to contain '到期時間：UNAVAILABLE'
+
+Expected: "到期時間：UNAVAILABLE"
+Received: "<div class="_sectionBox_eb8a11 _assignmentSummary_eb8a11 " data-testid="assignment-sla-summary"><div class="_sectionHead_eb8a11">指派與 SLA 狀態 (ASSIGNMENT &amp; SLA SUMMARY)</div><div class="_assignmentCards_eb8a11"><div class="_assignmentCard_eb8a11"><div style="font-size:11px;color:#64748b;font-weight:600">目前 Owner / 負責人</div><div style="font-size:14px;font-weight:700;margin-top:2px" data-testid="asg-owner">許庭瑜（展店）</div><div style="font-size:10.5px;color:#475569">佇列：<!-- -->UNAVAILABLE</div><div style="font-size:10.5px;color:#475569">Assignment ID：<!-- -->ASG-TEST-001</div><div style="font-size:10.5px;color:#475569">Assignment Status：<!-- -->ASSIGNED</div></div><div class="_assignmentCard_eb8a11"><div style="font-size:11px;color:#64748b;font-weight:600">SLA 處理狀態</div><div style="font-size:14px;font-weight:700;margin-top:2px;display:flex;align-items:center;gap:6px" data-testid="asg-sla-status"><span style="font-size:16px" aria-hidden="true">✓</span><span>正常 (On Track)</span><span style="font-size:10px;padding:1px 4px;background:#e2e8f0;border-radius:3px;font-family:monospace">[✓ ON TRACK]</span></div><div style="font-size:10.5px;color:#475569">到期時間：<!-- -->UNAVAILABLE</div><div style="font-size:10.5px;color:#475569">SLA Instance ID：<!-- -->SLA-TEST-001</div></div></div><div class="_emptyState_eb8a11" data-testid="assignment-resource-version-unavailable" role="status">RESOURCE_VERSION_UNAVAILABLE — assignment resource version 未由權威收據或 read model 提供。</div><div class="_emptyState_eb8a11" data-testid="sla-resource-version-unavailable" role="status">RESOURCE_VERSION_UNAVAILABLE — SLA resource version 未由權威收據或 read model 提供。</div><div class="_assignmentActions_eb8a11"></div></div>"
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:92:20
+     90|     it.each([undefined, "", "invalid"])("shows an unavailable due time…
+     91|       const html = renderToString(<AssignmentSlaSummary record={{ ...s…
+     92|       expect(html).toContain("到期時間：UNAVAILABLE");
+       |                    ^
+     93|       expect(html).not.toContain("Invalid Date");
+     94|       expect(html).toContain("[✓ ON TRACK]");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  3 failed | 70 passed (73)
+   Start at  01:30:56
+   Duration  9.31s (transform 4.91s, setup 0ms, import 6.86s, tests 5.45s, environment 2.80s)
+
+JUNIT report written to /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/docs/evidence/completion/ODP-UI-NETWORK-TABS-PARITY-001/sla-status/after-unit.xml

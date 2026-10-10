@@ -1,0 +1,1177 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="35" skipped="0" tests="35" time="151.373" timestamp="2026-10-09T23:38:18.802111+00:00" hostname="oday-dev-box.c.alfaloop-data-project-2.internal"><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[missing-assign]" time="4.150"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;222a72ca-5ec1-40ed-875e-c88b6132383e&quot;,&quot;status&quot;:&quot;ASSIGNED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:2,&quot;audit_event_id&quot;:&quot;a92ff903-5333-4beb-b3d7-efe53d5c9331&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a44a309e900&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...97d40&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a44a309eab0&gt;, '8b3e141e-0ce0-4769-86f7-f115be740796')
+operation = 'assign', defect = 'missing'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"222a72ca-5ec1-40ed-875e-c88b6132383e","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"a92ff903-5333-4beb-b3d7-efe53d5c9331"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[missing-transfer]" time="4.052"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;eda67c37-c923-466d-8600-e9727d432f53&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;7dc3bebf-5251-45ac-a646-da65b6441219&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a44a0792540&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...13050&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a44a2504890&gt;, '353c5b71-8540-4ca0-a1ed-54785cb3952d')
+operation = 'transfer', defect = 'missing'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"eda67c37-c923-466d-8600-e9727d432f53","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"7dc3bebf-5251-45ac-a646-da65b6441219"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[disabled-assign]" time="4.144"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;5ca0e6f7-251a-469d-ad17-bb7d8b66d840&quot;,&quot;status&quot;:&quot;ASSIGNED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:2,&quot;audit_event_id&quot;:&quot;c9db6b51-5226-4984-8282-e17426c697c4&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a449bd070b0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...0e4b0&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a449bd04080&gt;, 'a32d7b3e-7cd6-4350-81dd-ff5b9f2999f2')
+operation = 'assign', defect = 'disabled'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"5ca0e6f7-251a-469d-ad17-bb7d8b66d840","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"c9db6b51-5226-4984-8282-e17426c697c4"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[disabled-transfer]" time="4.430"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;45606058-6fde-43ad-a720-fef85d405dee&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;87809c51-d692-48dd-8a06-8348b166bd02&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a449b6351f0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...b5940&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a44a2fb2ab0&gt;, '8a35d244-1bab-4ba9-981a-ddd203c6d6af')
+operation = 'transfer', defect = 'disabled'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"45606058-6fde-43ad-a720-fef85d405dee","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"87809c51-d692-48dd-8a06-8348b166bd02"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[locked-assign]" time="3.797"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;8d376287-e076-42a9-bb88-129a9f07e280&quot;,&quot;status&quot;:&quot;ASSIGNED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:2,&quot;audit_event_id&quot;:&quot;73357973-b99b-404c-b79b-9ed050ee0b81&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a44a083b140&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...a1d00&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a44a083b350&gt;, 'cc9402c3-1a8a-46b4-9d20-c52201f27319')
+operation = 'assign', defect = 'locked'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"8d376287-e076-42a9-bb88-129a9f07e280","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"73357973-b99b-404c-b79b-9ed050ee0b81"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[locked-transfer]" time="4.342"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;a7e13a9c-e16d-4f4b-b9c4-88f9c0b36aca&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;8058a6c8-1343-4723-bfd7-1fae344489ff&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a449a527950&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...56c30&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a449a527320&gt;, '33a883c8-48cb-434d-8553-157fa4bee5e7')
+operation = 'transfer', defect = 'locked'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"a7e13a9c-e16d-4f4b-b9c4-88f9c0b36aca","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"8058a6c8-1343-4723-bfd7-1fae344489ff"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[invited-assign]" time="3.634"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;519f1cff-15b5-4624-9cbc-3884a4d76211&quot;,&quot;status&quot;:&quot;ASSIGNED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:2,&quot;audit_event_id&quot;:&quot;bbea9a42-af2b-408f-8dcf-d18b14d07dab&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a44a055d1f0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...45160&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a44a1b41a30&gt;, '08f1e8f9-2d15-4262-865a-c153b32c80df')
+operation = 'assign', defect = 'invited'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"519f1cff-15b5-4624-9cbc-3884a4d76211","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"bbea9a42-af2b-408f-8dcf-d18b14d07dab"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[invited-transfer]" time="4.699"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;c0040dc9-edf8-4fc2-a710-eb8422b2c116&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;a2536614-96ac-4e22-a6ac-988c9c56a9a4&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a4499c172f0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...191f0&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a4499c14f80&gt;, 'fc56c512-b32d-44c6-b625-e08ec9950114')
+operation = 'transfer', defect = 'invited'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"c0040dc9-edf8-4fc2-a710-eb8422b2c116","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"a2536614-96ac-4e22-a6ac-988c9c56a9a4"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[foreign-tenant-assign]" time="4.162"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;6ceaf8b3-1477-4346-af85-692d5168bc1c&quot;,&quot;status&quot;:&quot;ASSIGNED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:2,&quot;audit_event_id&quot;:&quot;fca8d47a-37e3-4f5f-b769-1b1cc663f57d&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a4499a8a540&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...d5b50&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a449bb59a30&gt;, 'faa2b36d-b01f-4907-b2e2-8cef191279a3')
+operation = 'assign', defect = 'foreign-tenant'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"6ceaf8b3-1477-4346-af85-692d5168bc1c","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"fca8d47a-37e3-4f5f-b769-1b1cc663f57d"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[foreign-tenant-transfer]" time="3.755"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;3295279d-2ef5-43b6-9ba4-7c316146b234&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;2f0a5804-1084-4854-be43-a19461d68423&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a44a0dcc5c0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...df380&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a44a0dcf650&gt;, '0b237a7e-e855-49b2-85cb-6248882b3441')
+operation = 'transfer', defect = 'foreign-tenant'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"3295279d-2ef5-43b6-9ba4-7c316146b234","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"2f0a5804-1084-4854-be43-a19461d68423"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[foreign-scope-tenant-assign]" time="4.410"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;385fb937-7a2b-404b-b553-b4c0ce934542&quot;,&quot;status&quot;:&quot;ASSIGNED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:2,&quot;audit_event_id&quot;:&quot;936a46c5-b16e-40d3-95a0-12661d60398f&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a44991d3770&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...f1310&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a44991d12e0&gt;, '213e5ab3-5684-4512-8c38-c49f4e74927c')
+operation = 'assign', defect = 'foreign-scope-tenant'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"385fb937-7a2b-404b-b553-b4c0ce934542","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"936a46c5-b16e-40d3-95a0-12661d60398f"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[foreign-scope-tenant-transfer]" time="3.534"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;0c9a383c-a975-4573-9389-e0243fef0c20&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;21ce887c-f9f3-4c51-830d-567b8bcb3d7b&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a449a47ce00&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...09a90&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a449a47e390&gt;, '8d62f787-4d99-4501-80e0-4a177c596507')
+operation = 'transfer', defect = 'foreign-scope-tenant'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"0c9a383c-a975-4573-9389-e0243fef0c20","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"21ce887c-f9f3-4c51-830d-567b8bcb3d7b"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[no-business-role-assign]" time="4.264"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;373e2780-b2aa-48cf-be80-d90f2bc1c9b3&quot;,&quot;status&quot;:&quot;ASSIGNED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:2,&quot;audit_event_id&quot;:&quot;c99e0458-90df-41cf-ba25-7259b66a8f38&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a449a5e37d0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...5c9b0&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a449a5e02f0&gt;, '09fc783c-930a-4fbe-8d9c-c6ab96878e71')
+operation = 'assign', defect = 'no-business-role'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"373e2780-b2aa-48cf-be80-d90f2bc1c9b3","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"c99e0458-90df-41cf-ba25-7259b66a8f38"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[no-business-role-transfer]" time="3.519"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;9d252235-4183-4330-b97e-7fe29d155e1f&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;7afdec86-27b8-456c-8fe3-c6a1c28f31a0&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a44988850d0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...9a000&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a4498885e50&gt;, 'b00c3e41-c588-420f-a6e6-ca0ae7657491')
+operation = 'transfer', defect = 'no-business-role'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"9d252235-4183-4330-b97e-7fe29d155e1f","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"7afdec86-27b8-456c-8fe3-c6a1c28f31a0"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[role-mismatch-assign]" time="4.502"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;62f5a20a-3e2b-4f81-9931-062bc5ac4131&quot;,&quot;status&quot;:&quot;ASSIGNED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:2,&quot;audit_event_id&quot;:&quot;78eb2f2c-6e54-4fcf-a557-8f209936588a&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a4493c351f0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...cbd40&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a4499629d00&gt;, '8188913c-ce0d-43f9-9a2d-1515005d04d4')
+operation = 'assign', defect = 'role-mismatch'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"62f5a20a-3e2b-4f81-9931-062bc5ac4131","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"78eb2f2c-6e54-4fcf-a557-8f209936588a"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[role-mismatch-transfer]" time="3.648"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;4394ae3f-30f8-4751-a408-3555adda2ddf&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;5ba43630-3e07-441e-9aee-65fc17cb163b&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a44a031f500&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...c2300&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a449ab0a870&gt;, 'ff764c47-67d3-41d9-93ba-be0fa6623abe')
+operation = 'transfer', defect = 'role-mismatch'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"4394ae3f-30f8-4751-a408-3555adda2ddf","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"5ba43630-3e07-441e-9aee-65fc17cb163b"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[unknown-role-assign]" time="3.416"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;dc8f16c0-6bda-4a73-ab17-ce17145e43ae&quot;,&quot;status&quot;:&quot;ASSIGNED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:2,&quot;audit_event_id&quot;:&quot;0ef3ef75-7165-4143-8abf-2afaf3c15951&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a44980d68a0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...28b30&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a44980d4920&gt;, 'a081f6d7-968c-476b-bda5-a179704ae1e8')
+operation = 'assign', defect = 'unknown-role'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"dc8f16c0-6bda-4a73-ab17-ce17145e43ae","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"0ef3ef75-7165-4143-8abf-2afaf3c15951"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[unknown-role-transfer]" time="4.392"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;b4614396-efbe-4dae-93c1-b03cb5cf2c13&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;c2414c3f-40e8-4e80-8707-24b11cad42e4&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a4492cfede0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...9ecf0&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a4492cfd4f0&gt;, '75dde529-d450-481c-b824-ec7544d7f46b')
+operation = 'transfer', defect = 'unknown-role'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle.identity_store = None
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"b4614396-efbe-4dae-93c1-b03cb5cf2c13","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"c2414c3f-40e8-4e80-8707-24b11cad42e4"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[missing-store-assign]" time="3.811"><failure message="dataclasses.FrozenInstanceError: cannot assign to field 'identity_store'">resources = (&lt;starlette.testclient.TestClient object at 0x7a44a0e8de20&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...64590&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a4499efeba0&gt;, 'e401bdb2-1e01-437b-b926-0ae9022ddb5c')
+operation = 'assign', defect = 'missing-store'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+&gt;           client.app.state.persistence_bundle.identity_store = None
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/security/test_assisted_assignment_authority.py:108: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PersistenceBundle(mode='memory', audit_log=&lt;shared.audit.events.InMemoryAuditLog object at 0x7a4499effcb0&gt;, evidence_s...ly cannot", rollback_policy_version=None, approved_by='architecture_owner', owner_role='network-planning-authority')]))
+name = 'identity_store', value = None
+
+&gt;   ???
+E   dataclasses.FrozenInstanceError: cannot assign to field 'identity_store'
+
+&lt;string&gt;:4: FrozenInstanceError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[missing-store-transfer]" time="4.493"><failure message="dataclasses.FrozenInstanceError: cannot assign to field 'identity_store'">resources = (&lt;starlette.testclient.TestClient object at 0x7a44992592b0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...b61b0&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a4499259220&gt;, '73aaf24e-92d1-407f-9723-44155768c13a')
+operation = 'transfer', defect = 'missing-store'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+&gt;           client.app.state.persistence_bundle.identity_store = None
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/security/test_assisted_assignment_authority.py:108: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PersistenceBundle(mode='memory', audit_log=&lt;shared.audit.events.InMemoryAuditLog object at 0x7a4499258800&gt;, evidence_s...ly cannot", rollback_policy_version=None, approved_by='architecture_owner', owner_role='network-planning-authority')]))
+name = 'identity_store', value = None
+
+&gt;   ???
+E   dataclasses.FrozenInstanceError: cannot assign to field 'identity_store'
+
+&lt;string&gt;:4: FrozenInstanceError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_assignment_child_tenant_does_not_authorize_invalid_link[dangling-claim]" time="3.560"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;2f8e4870-a3d2-4303-9fb5-1f3f74872296&quot;,&quot;status&quot;:&quot;CLAIMED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;4ac8aa6d-9443-43f3-bcc2-c51c6005efc7&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a449a3687a0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...99430&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a449a36be30&gt;, '8f11e982-4763-4c6d-9778-08086db263be')
+action = 'claim', link = 'dangling'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"2f8e4870-a3d2-4303-9fb5-1f3f74872296","status":"CLAIMED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"4ac8aa6d-9443-43f3-bcc2-c51c6005efc7"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_assignment_child_tenant_does_not_authorize_invalid_link[dangling-transfer]" time="4.506"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;a987c24b-98e1-4543-a9d6-4de078ca8e5d&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;2c9d1141-9600-4aed-a7b2-218175450c9e&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a4492361460&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...7e0f0&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a4492361f70&gt;, '7488e61f-4e05-4cbd-b6eb-0ebfede856c9')
+action = 'transfer', link = 'dangling'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"a987c24b-98e1-4543-a9d6-4de078ca8e5d","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"2c9d1141-9600-4aed-a7b2-218175450c9e"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_assignment_child_tenant_does_not_authorize_invalid_link[dangling-complete]" time="3.784"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;cfb0248d-8431-4a82-9a33-80c036150a88&quot;,&quot;status&quot;:&quot;COMPLETED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:4,&quot;audit_event_id&quot;:&quot;08471d0e-8f79-431c-a99d-6491e4d0dd33&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a4499063020&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...698e0&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a44990625a0&gt;, '874c64ca-ed8c-4db8-9da3-65903ccfb954')
+action = 'complete', link = 'dangling'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"cfb0248d-8431-4a82-9a33-80c036150a88","status":"COMPLETED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":4,"audit_event_id":"08471d0e-8f79-431c-a99d-6491e4d0dd33"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_assignment_child_tenant_does_not_authorize_invalid_link[foreign-tenant-claim]" time="3.752"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;6a96f98c-587a-4e67-ad7c-5da3a20eef8e&quot;,&quot;status&quot;:&quot;CLAIMED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;7c9e98da-77bb-4345-a45c-9be3183aa7fe&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a449acfea20&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...b1e80&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a449acfeff0&gt;, '38cf0cad-6ce2-435a-b60f-6681f22af944')
+action = 'claim', link = 'foreign-tenant'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"6a96f98c-587a-4e67-ad7c-5da3a20eef8e","status":"CLAIMED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"7c9e98da-77bb-4345-a45c-9be3183aa7fe"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_assignment_child_tenant_does_not_authorize_invalid_link[foreign-tenant-transfer]" time="5.038"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;f9f21121-2f7f-4c44-a4a6-2b1d3da12cc7&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;8c3e9c78-7b3d-407e-be73-e324137c7282&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a4490a4d550&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...69a30&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a4490a4ecc0&gt;, 'f4c127b7-e86f-4ed2-a86b-d00cca1d1eae')
+action = 'transfer', link = 'foreign-tenant'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"f9f21121-2f7f-4c44-a4a6-2b1d3da12cc7","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"8c3e9c78-7b3d-407e-be73-e324137c7282"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_assignment_child_tenant_does_not_authorize_invalid_link[foreign-tenant-complete]" time="3.810"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;171ebb87-1780-4ae6-a697-6554618947f0&quot;,&quot;status&quot;:&quot;COMPLETED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:4,&quot;audit_event_id&quot;:&quot;e56c3f70-538f-4a56-acf5-8dd8af21e02c&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a449977d1f0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...b4980&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a4493f35220&gt;, 'bf84efac-02e0-4052-a95b-65f254ab7a88')
+action = 'complete', link = 'foreign-tenant'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"171ebb87-1780-4ae6-a697-6554618947f0","status":"COMPLETED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":4,"audit_event_id":"e56c3f70-538f-4a56-acf5-8dd8af21e02c"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_assignment_child_tenant_does_not_authorize_invalid_link[standalone-missing-axis-claim]" time="3.609"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;cdda30a1-d2b7-4f2a-ad22-28a4bbf7614b&quot;,&quot;status&quot;:&quot;CLAIMED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;01ff9220-15d2-47ac-8bc8-7199bd46d089&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a44936a51f0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...f97c0&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a4492cdb200&gt;, '195c9e1d-9ca4-4b8c-951b-b94f31168e20')
+action = 'claim', link = 'standalone-missing-axis'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"cdda30a1-d2b7-4f2a-ad22-28a4bbf7614b","status":"CLAIMED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"01ff9220-15d2-47ac-8bc8-7199bd46d089"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_assignment_child_tenant_does_not_authorize_invalid_link[standalone-missing-axis-transfer]" time="4.749"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;bbcdc837-a9c0-46c6-830b-2c03f74d2c76&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;14b7901c-50c7-42d6-b7c7-78d18815ae8f&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a449002dbe0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...6d130&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a448ffdf380&gt;, '8c3e9851-9afa-4e53-822f-e9fc3ff2248f')
+action = 'transfer', link = 'standalone-missing-axis'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"bbcdc837-a9c0-46c6-830b-2c03f74d2c76","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"14b7901c-50c7-42d6-b7c7-78d18815ae8f"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_assignment_child_tenant_does_not_authorize_invalid_link[standalone-missing-axis-complete]" time="3.588"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;f772339a-0f24-427c-b577-9cd34bac8ff4&quot;,&quot;status&quot;:&quot;COMPLETED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:4,&quot;audit_event_id&quot;:&quot;bebacb34-174d-4d0b-a623-de1346d16202&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a449358d7f0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...5a630&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a449a39ae10&gt;, '93d81a9e-269f-4752-8552-cea737f4924a')
+action = 'complete', link = 'standalone-missing-axis'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+&gt;       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"f772339a-0f24-427c-b577-9cd34bac8ff4","status":"COMPLETED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":4,"audit_event_id":"bebacb34-174d-4d0b-a623-de1346d16202"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_transfer_requires_nonblank_reason_and_handoff[   -reason]" time="3.890"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;afe51aac-05d5-4269-9a2c-6b2d9abce322&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;c22bddd3-bccb-43d4-9853-b7bee87230a2&quot;}&#10;assert 200 == 422&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a44936d6b40&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...ca690&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a44a0f356d0&gt;, '9d943dfc-bed1-4ea3-9210-334431fbef6d')
+field = 'reason', value = '   '
+
+    @pytest.mark.parametrize("field", ["reason", "handoff_note"])
+    @pytest.mark.parametrize("value", ["   ", "\n\t ", " a "])
+    def test_transfer_requires_nonblank_reason_and_handoff(resources, field, value):
+        _, store, _, _ = resources
+        created = assign(resources)
+        body = {"target_owner_subject_id": TARGET, "target_owner_role": "reviewer",
+                "reason": "Route source review", "handoff_note": "Check source evidence", field: value}
+        before = snapshot(store)
+        result = resources[0].post(
+            f"/api/v1/assignments/{created.json()['assignment_id']}/actions/transfer", json=body,
+            headers={**HEADERS, "If-Match": created.headers["ETag"], "Idempotency-Key": f"blank-transfer-{uuid4()}"},
+        )
+&gt;       assert result.status_code == 422, result.text
+E       AssertionError: {"assignment_id":"afe51aac-05d5-4269-9a2c-6b2d9abce322","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"c22bddd3-bccb-43d4-9853-b7bee87230a2"}
+E       assert 200 == 422
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:270: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_transfer_requires_nonblank_reason_and_handoff[   -handoff_note]" time="5.782"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;9c3809ce-a17c-4bdc-9320-0e0042d94140&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;87f6db92-38b2-4819-8126-f669458638e9&quot;}&#10;assert 200 == 422&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a4490f79280&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...c7860&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a448f293bf0&gt;, 'd90a582d-34a1-4515-ba19-7f31edb0bc07')
+field = 'handoff_note', value = '   '
+
+    @pytest.mark.parametrize("field", ["reason", "handoff_note"])
+    @pytest.mark.parametrize("value", ["   ", "\n\t ", " a "])
+    def test_transfer_requires_nonblank_reason_and_handoff(resources, field, value):
+        _, store, _, _ = resources
+        created = assign(resources)
+        body = {"target_owner_subject_id": TARGET, "target_owner_role": "reviewer",
+                "reason": "Route source review", "handoff_note": "Check source evidence", field: value}
+        before = snapshot(store)
+        result = resources[0].post(
+            f"/api/v1/assignments/{created.json()['assignment_id']}/actions/transfer", json=body,
+            headers={**HEADERS, "If-Match": created.headers["ETag"], "Idempotency-Key": f"blank-transfer-{uuid4()}"},
+        )
+&gt;       assert result.status_code == 422, result.text
+E       AssertionError: {"assignment_id":"9c3809ce-a17c-4bdc-9320-0e0042d94140","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"87f6db92-38b2-4819-8126-f669458638e9"}
+E       assert 200 == 422
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:270: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_transfer_requires_nonblank_reason_and_handoff[\n\t -reason]" time="4.500"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;7accba84-d2d6-4cae-b01e-d3ef6639b381&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;b0d64aae-3d49-435d-b63b-8b2f6fb46e16&quot;}&#10;assert 200 == 422&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a4491fdd1f0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...a49b0&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a449013b3b0&gt;, '29b93202-0d68-44ab-94e1-eb1b4d8da660')
+field = 'reason', value = '\n\t '
+
+    @pytest.mark.parametrize("field", ["reason", "handoff_note"])
+    @pytest.mark.parametrize("value", ["   ", "\n\t ", " a "])
+    def test_transfer_requires_nonblank_reason_and_handoff(resources, field, value):
+        _, store, _, _ = resources
+        created = assign(resources)
+        body = {"target_owner_subject_id": TARGET, "target_owner_role": "reviewer",
+                "reason": "Route source review", "handoff_note": "Check source evidence", field: value}
+        before = snapshot(store)
+        result = resources[0].post(
+            f"/api/v1/assignments/{created.json()['assignment_id']}/actions/transfer", json=body,
+            headers={**HEADERS, "If-Match": created.headers["ETag"], "Idempotency-Key": f"blank-transfer-{uuid4()}"},
+        )
+&gt;       assert result.status_code == 422, result.text
+E       AssertionError: {"assignment_id":"7accba84-d2d6-4cae-b01e-d3ef6639b381","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"b0d64aae-3d49-435d-b63b-8b2f6fb46e16"}
+E       assert 200 == 422
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:270: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_transfer_requires_nonblank_reason_and_handoff[\n\t -handoff_note]" time="3.861"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;8582ffb6-30a6-4773-b5b1-03f6f4be5ee4&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;e89cd3fd-4e5d-411b-8b48-a0158e4a99b1&quot;}&#10;assert 200 == 422&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a448fb19100&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...197f0&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a448fb18560&gt;, '123f4c4e-6c1e-45fd-9676-1f74a38f67d2')
+field = 'handoff_note', value = '\n\t '
+
+    @pytest.mark.parametrize("field", ["reason", "handoff_note"])
+    @pytest.mark.parametrize("value", ["   ", "\n\t ", " a "])
+    def test_transfer_requires_nonblank_reason_and_handoff(resources, field, value):
+        _, store, _, _ = resources
+        created = assign(resources)
+        body = {"target_owner_subject_id": TARGET, "target_owner_role": "reviewer",
+                "reason": "Route source review", "handoff_note": "Check source evidence", field: value}
+        before = snapshot(store)
+        result = resources[0].post(
+            f"/api/v1/assignments/{created.json()['assignment_id']}/actions/transfer", json=body,
+            headers={**HEADERS, "If-Match": created.headers["ETag"], "Idempotency-Key": f"blank-transfer-{uuid4()}"},
+        )
+&gt;       assert result.status_code == 422, result.text
+E       AssertionError: {"assignment_id":"8582ffb6-30a6-4773-b5b1-03f6f4be5ee4","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"e89cd3fd-4e5d-411b-8b48-a0158e4a99b1"}
+E       assert 200 == 422
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:270: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_transfer_requires_nonblank_reason_and_handoff[ a -reason]" time="5.004"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;93184a8c-e500-4e4a-9c5d-b7265484b81e&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;cd2654d6-b98f-4dbd-8542-a2d56899fb40&quot;}&#10;assert 200 == 422&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a4491b474d0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...28f50&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a448e513e90&gt;, '0a17af5e-9349-4759-ad3b-aa466ddc181f')
+field = 'reason', value = ' a '
+
+    @pytest.mark.parametrize("field", ["reason", "handoff_note"])
+    @pytest.mark.parametrize("value", ["   ", "\n\t ", " a "])
+    def test_transfer_requires_nonblank_reason_and_handoff(resources, field, value):
+        _, store, _, _ = resources
+        created = assign(resources)
+        body = {"target_owner_subject_id": TARGET, "target_owner_role": "reviewer",
+                "reason": "Route source review", "handoff_note": "Check source evidence", field: value}
+        before = snapshot(store)
+        result = resources[0].post(
+            f"/api/v1/assignments/{created.json()['assignment_id']}/actions/transfer", json=body,
+            headers={**HEADERS, "If-Match": created.headers["ETag"], "Idempotency-Key": f"blank-transfer-{uuid4()}"},
+        )
+&gt;       assert result.status_code == 422, result.text
+E       AssertionError: {"assignment_id":"93184a8c-e500-4e4a-9c5d-b7265484b81e","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"cd2654d6-b98f-4dbd-8542-a2d56899fb40"}
+E       assert 200 == 422
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:270: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_transfer_requires_nonblank_reason_and_handoff[ a -handoff_note]" time="3.631"><failure message="AssertionError: {&quot;assignment_id&quot;:&quot;cfdfde94-7038-48c2-913b-6ee625c9b8e6&quot;,&quot;status&quot;:&quot;TRANSFERRED&quot;,&quot;owner_subject_id&quot;:&quot;00000000-0000-0000-0000-000000000102&quot;,&quot;due_at&quot;:&quot;2027-01-10T12:00:00Z&quot;,&quot;version&quot;:3,&quot;audit_event_id&quot;:&quot;eae4e6e0-120c-41bb-b0dd-ed025065d308&quot;}&#10;assert 200 == 422&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">resources = (&lt;starlette.testclient.TestClient object at 0x7a449379d8b0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...ee480&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7a449379faa0&gt;, 'd8723468-1ff2-4b1d-8c9e-b872087ab105')
+field = 'handoff_note', value = ' a '
+
+    @pytest.mark.parametrize("field", ["reason", "handoff_note"])
+    @pytest.mark.parametrize("value", ["   ", "\n\t ", " a "])
+    def test_transfer_requires_nonblank_reason_and_handoff(resources, field, value):
+        _, store, _, _ = resources
+        created = assign(resources)
+        body = {"target_owner_subject_id": TARGET, "target_owner_role": "reviewer",
+                "reason": "Route source review", "handoff_note": "Check source evidence", field: value}
+        before = snapshot(store)
+        result = resources[0].post(
+            f"/api/v1/assignments/{created.json()['assignment_id']}/actions/transfer", json=body,
+            headers={**HEADERS, "If-Match": created.headers["ETag"], "Idempotency-Key": f"blank-transfer-{uuid4()}"},
+        )
+&gt;       assert result.status_code == 422, result.text
+E       AssertionError: {"assignment_id":"cfdfde94-7038-48c2-913b-6ee625c9b8e6","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"eae4e6e0-120c-41bb-b0dd-ed025065d308"}
+E       assert 200 == 422
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_assignment_authority.py:270: AssertionError</failure></testcase></testsuite></testsuites>

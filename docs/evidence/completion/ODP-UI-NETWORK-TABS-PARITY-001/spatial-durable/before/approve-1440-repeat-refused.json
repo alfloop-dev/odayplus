@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal '571a50a9-e15d-46bc-96eb-79819b386c33' is already APPROVED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal '571a50a9-e15d-46bc-96eb-79819b386c33' is already APPROVED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-09T21:25:17.417Z",
+      "details": [],
+      "correlation_id": "211bbf16-cf5a-4c71-862c-a444411fa472"
+    }
+  }
+}

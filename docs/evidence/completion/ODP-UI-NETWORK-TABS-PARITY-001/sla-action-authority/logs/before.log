@@ -1,0 +1,1094 @@
+FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF                                         [100%]
+=================================== FAILURES ===================================
+_ test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-brand_id-x-brand-ids-pause] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e42dc3de80>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42db62ba0>, '1a74fb2d-14e0-4715-87b9-02b8e3c75917', 'd17d28f4-5509-4c9a-9f80-18ac3e45b8fb')
+action = 'pause', axis = 'brand_id', header = 'x-brand-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"d17d28f4-5509-4c9a-9f80-18ac3e45b8fb","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"141e477f-6ac4-4e4b-a479-503242cfc751","correlation_id":"9f32ea1d-49dd-4260-a130-3a60e8105bed","due_soon_at":null,"active_pause_interval_id":"79ef15aa-5106-48a8-96ff-af50d7477e67"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 22:59:29 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 22:59:29 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T22:59:32.962805+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ec59226a-7a73-45f9-81e5-569f45810e0d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T22:59:32.974857+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b4ec63a4-e3bf-4324-9d4e-e768b25bcc6f", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-brand_id-x-brand-ids-resume] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e42c38c6b0>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42c175190>, '4b20c6a3-bca3-430f-90e9-3fb204e6593f', '0de55d95-b5c7-48a6-8583-2a0d84131240')
+action = 'resume', axis = 'brand_id', header = 'x-brand-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"0de55d95-b5c7-48a6-8583-2a0d84131240","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"1b5e6222-8f81-4722-8e86-82712a959d11","correlation_id":"2097103d-5aa4-4896-8809-89e65ff9b8c1","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 22:59:33 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 22:59:33 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T22:59:37.631840+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "f92ef347-82d7-45ac-86f0-776b59f1c031", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T22:59:37.641340+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "79bed300-2534-4091-b138-d86c70be6328", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T22:59:37.649350+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "c4f37835-14a8-45fe-ab59-e1ee121cbe1e", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+_ test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-region_id-x-region-ids-pause] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e426db7350>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e4268f42c0>, '8a0b856d-8362-455b-9349-3b8dce63cc2c', '0d050dfb-8c86-4841-b67c-ec205dc2be81')
+action = 'pause', axis = 'region_id', header = 'x-region-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"0d050dfb-8c86-4841-b67c-ec205dc2be81","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"aed2d400-6056-43c1-ae6c-cb1da2544d5d","correlation_id":"14731284-ea80-4f45-be08-2ba0ce607353","due_soon_at":null,"active_pause_interval_id":"4e256851-f24b-48aa-a3c8-776cacac2453"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 22:59:37 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 22:59:38 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T22:59:41.936857+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "dbe69e0d-65d3-4ad5-a5dd-ed623f27c1bf", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T22:59:41.946733+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "6f6e3713-a171-44b3-93d0-b2e06ebae24c", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-region_id-x-region-ids-resume] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e42d423170>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42d10a6c0>, '64f9b50d-ca53-49e2-abc5-f468e1bf8c53', '56f67a67-f3ad-4b50-b910-c4ab6910eeec')
+action = 'resume', axis = 'region_id', header = 'x-region-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"56f67a67-f3ad-4b50-b910-c4ab6910eeec","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"55697113-c26e-4c2c-9844-b10ef5f3470b","correlation_id":"4949b18c-059a-4c35-bfab-3e2326f003aa","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 22:59:42 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 22:59:42 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T22:59:45.661329+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ff7f79fb-8ace-44fa-ab76-d854373a2b77", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T22:59:45.671087+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "aa1c160a-f652-4881-a0d5-096f3834d5b4", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T22:59:45.679441+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "a4b0aa8f-1bee-4309-a42f-db4ea5728197", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+_ test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-store_id-x-store-ids-pause] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e4254a39b0>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e4253dea50>, 'df00652d-6609-4690-a28a-54e46494e1a1', '37c6a48e-e06e-4050-90bc-8dcbcbe1eb2e')
+action = 'pause', axis = 'store_id', header = 'x-store-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"37c6a48e-e06e-4050-90bc-8dcbcbe1eb2e","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"9adb70f4-d298-4df1-80d5-d0e46b3e7f42","correlation_id":"dcce84bb-d615-4def-8b32-af14fce7a942","due_soon_at":null,"active_pause_interval_id":"27608f48-3ad6-4c1c-a9af-286f65cc379a"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 22:59:46 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 22:59:46 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T22:59:49.915128+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "f0a11776-b29e-4cc6-9133-c963184c37cc", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T22:59:49.925272+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "697b8352-cd81-4261-81b1-6acd5295cfb9", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-store_id-x-store-ids-resume] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e42dab0530>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e4271c8f50>, '3efca8e5-b7a0-4737-beb3-4dd3e9ca2b07', '6275f67a-c610-4725-ab95-aad4394d0fab')
+action = 'resume', axis = 'store_id', header = 'x-store-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"6275f67a-c610-4725-ab95-aad4394d0fab","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"c3a21e98-99ad-4afc-8b26-17c6ba6caf2e","correlation_id":"c8521337-f370-43e0-bc52-ce90081a7b08","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 22:59:50 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 22:59:50 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T22:59:54.406676+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "f3fac304-4d2d-4b87-a9c2-17b72d585dce", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T22:59:54.417098+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2c6a0016-d6d4-4b62-b6da-cc8291e6e7e6", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T22:59:54.425351+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "c44d32df-e77f-4778-96f9-4ab502848cc6", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+_ test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-assigned_area_id-x-assigned-area-ids-pause] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e42585b680>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e425b11970>, '404b2dbc-dfd2-4198-b85c-2e0d876985d2', '20daf9e2-8e85-415d-bbe4-9aeb21810bf7')
+action = 'pause', axis = 'assigned_area_id', header = 'x-assigned-area-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"20daf9e2-8e85-415d-bbe4-9aeb21810bf7","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"a0cc9f91-a193-479d-a9cc-08d46545eeaa","correlation_id":"ffcead7f-61e9-42c0-a589-8a80032aaba8","due_soon_at":null,"active_pause_interval_id":"78042910-771a-4350-bb85-de6d248d300c"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 22:59:54 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 22:59:54 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T22:59:58.156176+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7b49d009-5af2-4eac-a93f-168f2c83ada5", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T22:59:58.165932+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "3ff4e639-f3c2-4f61-9af8-62ce9d5060d8", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-assigned_area_id-x-assigned-area-ids-resume] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e424758bc0>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e424684d10>, '29aa4ffa-fe1a-4bad-bcf4-7496757e4f57', '20d94860-14c8-4097-9e4f-0cb9b2d61f37')
+action = 'resume', axis = 'assigned_area_id', header = 'x-assigned-area-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"20d94860-14c8-4097-9e4f-0cb9b2d61f37","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"1719554d-2658-4c94-ae2e-1b97613e7f28","correlation_id":"056f0db7-f35b-40dc-900e-662d6451534a","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 22:59:58 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 22:59:58 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:02.650229+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "267a3df0-5c91-454b-b597-43a7cc0235c1", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:02.660029+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d3b6ffaf-00c2-426a-b89f-84018480e985", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T23:00:02.667847+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d6cb3579-e48a-4664-82c4-a53c77256e23", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+_ test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-heat_zone_id-x-heat-zone-ids-pause] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e42603ef30>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42d34e420>, '564e3009-4db7-4f53-bb43-9878be3ef5fb', 'd8161ecd-839f-4400-81dc-7b7d07ccadbc')
+action = 'pause', axis = 'heat_zone_id', header = 'x-heat-zone-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"d8161ecd-839f-4400-81dc-7b7d07ccadbc","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"88615de5-2323-4c5b-ab79-9012472cf28e","correlation_id":"7608c844-32dd-48c4-9ce7-91707972d1e6","due_soon_at":null,"active_pause_interval_id":"552d6833-7f77-4fff-bf68-86f90975799a"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:02 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:03 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:06.523199+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "598fb8ae-a399-40aa-91b0-376860eb32c1", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:06.532958+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2a54ef05-501d-4544-8386-d20ef626156f", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-heat_zone_id-x-heat-zone-ids-resume] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e42dacd130>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41fddaf90>, '1bc37ac0-8cfa-430f-b16f-6afe61017b89', '8ff5cd7f-a8cf-478b-8cff-78d86841d2e6')
+action = 'resume', axis = 'heat_zone_id', header = 'x-heat-zone-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"8ff5cd7f-a8cf-478b-8cff-78d86841d2e6","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"e2828fc0-3e22-400c-bf94-770e7a9a9ea2","correlation_id":"b909e412-4772-412d-b386-36743b672bcd","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:07 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:07 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:10.921480+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "8003f3bb-4c34-42fe-9399-434e3932254e", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:10.930968+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "915752ef-b599-4712-b5ab-d64ab558c156", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T23:00:10.939686+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1f4dc6de-faa7-4543-8e9e-23ff1a8cce2e", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+_ test_linked_resource_scope_denies_without_mutation[None-brand_id-x-brand-ids-pause] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e426c35340>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e426829be0>, 'e7e27ffc-ba3a-4ba2-80e3-1d24807c43c4', '463e9deb-be65-4c56-9dde-464f151cea9c')
+action = 'pause', axis = 'brand_id', header = 'x-brand-ids', metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"463e9deb-be65-4c56-9dde-464f151cea9c","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"45b8a3ab-1590-4080-bfb2-d666a42c7b25","correlation_id":"38dfc036-804c-41a1-99fa-ec922c45bcca","due_soon_at":null,"active_pause_interval_id":"871b7420-0732-48b6-a401-8d3008fe074b"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:11 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:11 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:15.462342+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b010555e-86a1-48ac-adc2-e321c4d62b35", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:15.473651+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ebc2e757-fc30-4223-871e-1504ff22504c", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_linked_resource_scope_denies_without_mutation[None-brand_id-x-brand-ids-resume] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e42db1ef90>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42d2a0ce0>, '2a8178c5-1f26-45f3-be11-307427de69e3', '066b1bd9-5b8a-43fd-bff9-f902c100b9f4')
+action = 'resume', axis = 'brand_id', header = 'x-brand-ids', metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"066b1bd9-5b8a-43fd-bff9-f902c100b9f4","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"f4baee64-2dd6-4efb-bccf-50645cd1ba6f","correlation_id":"5c67d014-ba93-4968-a1ba-ea20ede8d958","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:15 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:15 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:19.306002+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2137e2ea-defc-46e0-bcb2-a89dadd90709", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:19.318840+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "96dd01d8-3e08-4c95-a657-2037f859f903", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T23:00:19.328473+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "3c1490d1-8285-4be8-9dd6-856964a3e6c4", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+_ test_linked_resource_scope_denies_without_mutation[None-region_id-x-region-ids-pause] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41f577350>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41f088320>, '8ab9a379-61d6-4975-a619-52b56d1e0706', 'c406b3aa-7238-4b6f-9f7b-5a312d04e759')
+action = 'pause', axis = 'region_id', header = 'x-region-ids', metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"c406b3aa-7238-4b6f-9f7b-5a312d04e759","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"d49a2e41-0eb2-4c35-ac09-077c1008e359","correlation_id":"4dfd1320-cff4-434c-b8c1-3b8073359447","due_soon_at":null,"active_pause_interval_id":"ba279ec4-2c3c-49fe-ba7e-96b29457218c"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:19 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:19 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:23.977378+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "5b864256-d830-47b0-9196-808fc264c489", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:23.989852+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "740337c9-0725-4244-97da-086db3702cf2", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_linked_resource_scope_denies_without_mutation[None-region_id-x-region-ids-resume] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41e5df500>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42d0581d0>, 'bb88742b-f514-4710-80e3-686a8134241c', '51e2d3bb-d5d8-49fe-aeaf-3fa39208b859')
+action = 'resume', axis = 'region_id', header = 'x-region-ids', metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"51e2d3bb-d5d8-49fe-aeaf-3fa39208b859","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"9bbc2e6f-c3c6-4ebb-a586-2d1e219c5abd","correlation_id":"f60f44a2-eef1-45a3-b311-f1731fc5e7c6","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:24 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:24 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:27.959420+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "9e1f06f2-f39a-4851-98de-7415bfaaa7e7", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:27.968871+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "cbcdfeac-9d87-4d9c-bc05-766051cbf68d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T23:00:27.977382+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1d16f43a-34b6-44c6-8d13-0f1c42d86189", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+_ test_linked_resource_scope_denies_without_mutation[None-store_id-x-store-ids-pause] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e425589370>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42442f830>, 'ed6b06df-31a5-4a82-ba23-8aae323db636', '0630e06e-388f-42b2-82ba-d3557d88c236')
+action = 'pause', axis = 'store_id', header = 'x-store-ids', metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"0630e06e-388f-42b2-82ba-d3557d88c236","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"6df8b906-2a32-431a-8a20-52426bdae1a0","correlation_id":"e000d475-df0a-4bf2-bfeb-40cd409f5e8d","due_soon_at":null,"active_pause_interval_id":"47b2c2fd-11b4-4837-a82f-629818f03677"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:28 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:28 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:31.731234+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "c577ba42-14a8-4eac-8648-0bbad754ee77", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:31.741182+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "921d5d17-f6bf-4a6a-a103-716899513a23", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_linked_resource_scope_denies_without_mutation[None-store_id-x-store-ids-resume] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41d9a6c90>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41d8cdd60>, 'd65e82d2-f7e8-476a-aa85-de546ea7809c', '7ecc25b2-f5da-460f-8d0d-9b0da681427c')
+action = 'resume', axis = 'store_id', header = 'x-store-ids', metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"7ecc25b2-f5da-460f-8d0d-9b0da681427c","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"0443772c-f679-4c68-b7be-d1b341175f22","correlation_id":"f660c368-b6d2-471e-b10b-1a7fd2b395e5","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:32 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:32 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:36.477990+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "83ff6854-5735-495d-a117-c5c56feae2fe", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:36.487986+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ccf4e1aa-1c3f-483a-9b8c-21f27fa0610b", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T23:00:36.497797+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "816f3234-3448-470a-b395-38d2d90c7317", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+_ test_linked_resource_scope_denies_without_mutation[None-assigned_area_id-x-assigned-area-ids-pause] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e424b77830>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e4246a0f50>, 'a05c10c0-cf89-46a7-b330-69e25ff66a46', 'cf9cb441-9e4e-4022-b1cf-0720c903bbe2')
+action = 'pause', axis = 'assigned_area_id', header = 'x-assigned-area-ids'
+metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"cf9cb441-9e4e-4022-b1cf-0720c903bbe2","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"8ef7fd43-0c4e-4d8a-a3af-c114bdf24951","correlation_id":"71256ed2-48d9-4b11-a525-7a4f7273176a","due_soon_at":null,"active_pause_interval_id":"c4c652a5-c920-49d2-98e6-c5662d160c3b"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:36 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:36 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:40.201576+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ed53758e-cbfd-4a72-950b-8637d8ed3c0a", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:40.217718+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "5695c548-0ebf-4eee-89aa-35115837773b", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_linked_resource_scope_denies_without_mutation[None-assigned_area_id-x-assigned-area-ids-resume] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41ffa9670>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41f1bb2f0>, 'e4dc71cb-938e-4976-90af-3f75b00fe5a4', 'd5311ab1-1065-40ed-98c3-d30e4f2b7c97')
+action = 'resume', axis = 'assigned_area_id', header = 'x-assigned-area-ids'
+metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"d5311ab1-1065-40ed-98c3-d30e4f2b7c97","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"0ec0c6b6-92b6-45ec-853c-27ab225307b0","correlation_id":"4c0c8348-b135-4d5e-86f1-72fad18763f3","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:40 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:40 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:45.014659+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ffac759b-4651-4232-aa42-e8eb87927bd9", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:45.028692+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "51b85b24-f2e1-4f90-b7b1-519af9aecad9", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T23:00:45.045616+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "214a8263-6031-4550-aeab-545163145f50", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+_ test_linked_resource_scope_denies_without_mutation[None-heat_zone_id-x-heat-zone-ids-pause] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41f8c0530>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e424e5f950>, 'c5413847-2295-4ca8-86e7-30881d9e3772', '89118f21-092b-4405-8413-6684f15b042c')
+action = 'pause', axis = 'heat_zone_id', header = 'x-heat-zone-ids'
+metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"89118f21-092b-4405-8413-6684f15b042c","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"79824739-e563-4997-9dd8-f3803ca3a3b8","correlation_id":"7d0192fe-074c-461b-b646-da61872b70cb","due_soon_at":null,"active_pause_interval_id":"35ae4da0-d3c0-4393-acea-45829c5d58a0"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:45 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:45 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:48.747285+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b834f4a8-846f-4218-a494-0e30b9033cce", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:48.758307+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "299b9719-8f4a-4580-a8c0-8f958a2eca65", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_linked_resource_scope_denies_without_mutation[None-heat_zone_id-x-heat-zone-ids-resume] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41d408500>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41d307fe0>, '03edd4ce-8d7c-405d-a99f-909660c82839', '58c5b0b7-488c-4c85-b90a-b4f9f1d982f1')
+action = 'resume', axis = 'heat_zone_id', header = 'x-heat-zone-ids'
+metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"58c5b0b7-488c-4c85-b90a-b4f9f1d982f1","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"e802236e-6088-4bfb-a930-7a4cec8d43db","correlation_id":"ed3a9ff5-b5d6-4910-a3a9-6eb9817c6bd4","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:49 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:49 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:53.428491+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7bb565af-7e9a-467a-bf75-3f4b4756534a", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:53.440543+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "c4721bc9-5f53-4b23-8397-f9b61429f7ea", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T23:00:53.451948+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "0ad451cf-6735-4330-8967-7a5566277c4c", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+__ test_child_tenant_cannot_substitute_for_resource_authority[dangling-pause] __
+
+seeded = (<starlette.testclient.TestClient object at 0x75e4275d7dd0>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42da395e0>, '87e72a30-8a8d-4f93-a9d5-b5de704aeea3', '8b465fc8-06ba-40f9-ba67-0c9d583c7ce7')
+action = 'pause', link = 'dangling'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_child_tenant_cannot_substitute_for_resource_authority(seeded, action, link):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.slas[sla_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.slas[sla_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, store.slas[sla_id]["version"], scope=scope)
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"8b465fc8-06ba-40f9-ba67-0c9d583c7ce7","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"a64d9621-b0a6-47dc-9c0d-48d9bee7d979","correlation_id":"c7134790-25cd-465a-aa30-49598f08a2d7","due_soon_at":null,"active_pause_interval_id":"e24cfcb1-5d70-435e-8374-eac47837c14a"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:99: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:53 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:53 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:00:57.393510+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "39bcfea8-d3bd-41ea-8798-7aba7e5b70d4", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:00:57.407076+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "41e7c58e-cee3-4dc4-a17b-f6046c953fbc", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_child_tenant_cannot_substitute_for_resource_authority[dangling-resume] __
+
+seeded = (<starlette.testclient.TestClient object at 0x75e4264b4110>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41f054590>, '792d93bb-b812-41d9-8749-ae9afb6d9c08', 'd3f57810-287e-4d01-8674-4963d9f04b48')
+action = 'resume', link = 'dangling'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_child_tenant_cannot_substitute_for_resource_authority(seeded, action, link):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.slas[sla_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.slas[sla_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, store.slas[sla_id]["version"], scope=scope)
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"d3f57810-287e-4d01-8674-4963d9f04b48","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"06ae7335-eb9a-4a27-8a85-ea31b06c71f1","correlation_id":"c8b2d2ab-44fe-428d-b2f5-106d1279c89a","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:99: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:00:57 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:00:57 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:01:01.193051+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7026bf29-beba-4213-8e21-691582c967cd", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:01:01.203354+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "8c95d0f9-337e-4860-b620-07d0dae344e5", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T23:01:01.212514+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ad90c513-05c3-4520-88a7-5afe02609df1", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+_ test_child_tenant_cannot_substitute_for_resource_authority[foreign-tenant-pause] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41bcee3f0>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41ba1e990>, '1f30583b-642d-4890-a221-743fcda16a6c', 'b4dc752d-ce35-42c0-9c19-23c0e4ae92cb')
+action = 'pause', link = 'foreign-tenant'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_child_tenant_cannot_substitute_for_resource_authority(seeded, action, link):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.slas[sla_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.slas[sla_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, store.slas[sla_id]["version"], scope=scope)
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"b4dc752d-ce35-42c0-9c19-23c0e4ae92cb","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"3968cd0c-6475-4d98-b583-b95a430a8464","correlation_id":"4688e64c-22ef-47cf-a4f7-e3b12717f068","due_soon_at":null,"active_pause_interval_id":"834161d7-8884-4a99-90de-b7a2d7159d15"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:99: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:01:01 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:01:01 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:01:06.120876+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b4679cb3-174e-4229-a1a6-f3d431177f39", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:01:06.133148+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "36c4741e-f36e-497e-acdc-12f6f14e75ce", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_child_tenant_cannot_substitute_for_resource_authority[foreign-tenant-resume] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41ff2f110>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42c668950>, '2a2c27a1-7617-444a-86b0-a9c1f871e8ff', 'be0d2236-1429-4333-81ce-cb1818ed1bb0')
+action = 'resume', link = 'foreign-tenant'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_child_tenant_cannot_substitute_for_resource_authority(seeded, action, link):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.slas[sla_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.slas[sla_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, store.slas[sla_id]["version"], scope=scope)
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"be0d2236-1429-4333-81ce-cb1818ed1bb0","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"dc7023ad-d802-4850-9381-f7ffc358a219","correlation_id":"53e69e73-0a4b-4fef-b0b8-c8e4d0db9393","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:99: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:01:06 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:01:06 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:01:09.880421+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "f9b326e1-8250-4e39-84bb-91966eee90cf", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:01:09.890355+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7f9da8d7-cbcd-4637-b172-d77936fc86cc", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T23:01:09.899420+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "abeb3e63-e581-4197-9582-05dd5ca21718", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+_ test_child_tenant_cannot_substitute_for_resource_authority[standalone-missing-axis-pause] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41ca61fa0>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41c785070>, '3e540dcd-f062-4212-845a-56f70bdfa874', '8a7d5755-2df6-42db-9767-8c46473853cb')
+action = 'pause', link = 'standalone-missing-axis'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_child_tenant_cannot_substitute_for_resource_authority(seeded, action, link):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.slas[sla_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.slas[sla_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, store.slas[sla_id]["version"], scope=scope)
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"8a7d5755-2df6-42db-9767-8c46473853cb","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"85c0ed88-ec19-41d9-aeaa-3686d6c81b62","correlation_id":"6d9e3580-a991-49fe-80d4-60a6d63da59b","due_soon_at":null,"active_pause_interval_id":"0fb47652-73d2-43ae-bf9b-10fe052eb250"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:99: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:01:10 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:01:10 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:01:13.662339+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b678a1ee-71f8-45fd-bb71-4796a1381c58", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:01:13.671911+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "55956b5a-3dcb-4e94-a92a-955fd2955f3a", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_ test_child_tenant_cannot_substitute_for_resource_authority[standalone-missing-axis-resume] _
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41b319190>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41ae0e600>, '68b5f899-f002-4451-aa65-127359130e3e', 'a9e09346-9205-436d-ac32-0da5b6420bdf')
+action = 'resume', link = 'standalone-missing-axis'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_child_tenant_cannot_substitute_for_resource_authority(seeded, action, link):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.slas[sla_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.slas[sla_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, store.slas[sla_id]["version"], scope=scope)
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"a9e09346-9205-436d-ac32-0da5b6420bdf","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"b6ecdbdc-6378-402d-a836-f201b66a5a90","correlation_id":"471ce0a2-05d1-47c7-b86c-9bad8051a610","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:99: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:01:15 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:01:15 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:01:18.606792+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "77fceda6-29dd-4711-b85d-1d7b39581b1d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:01:18.616234+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "a3a3aa45-338d-40d7-b345-931b3b4db24c", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T23:01:18.625371+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "44dfc13e-ff7f-405f-b578-44b7850e6d07", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+______________ test_replay_rechecks_current_resource_scope[pause] ______________
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41d716390>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41f015a90>, '2334b238-1a5c-4330-93d2-cfd1d08a9bef', '64c570d6-ce37-40e2-b7fa-cee818a25339')
+action = 'pause'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    def test_replay_rechecks_current_resource_scope(seeded, action):
+        client, store, intake_id, sla_id = seeded
+        store.intakes[intake_id]["scope"]["brand_id"] = ALLOWED
+        scope = {"x-brand-ids": ALLOWED}
+        version = 23
+        if action == "resume":
+            assert command(client, sla_id, "pause", scope=scope).status_code == 200
+            version = 24
+        key = f"sla-scope-replay-{uuid4()}"
+        original = command(client, sla_id, action, version, scope=scope, key=key)
+        assert original.status_code == 200, original.text
+        store.intakes[intake_id]["scope"]["brand_id"] = OUTSIDE
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, version, scope=scope, key=key)
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"64c570d6-ce37-40e2-b7fa-cee818a25339","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"fdead4be-194c-4f7f-9df6-3fe253d0fec7","correlation_id":"8fc94157-8b43-4e7b-b81f-1359228ce9c3","due_soon_at":null,"active_pause_interval_id":"fc799f69-4b51-4174-aed6-4510378f23a1"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:118: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:01:18 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:01:18 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:01:22.253542+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "0ec5b008-a33a-42fd-a234-9e83f9b1cd09", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:01:22.263155+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d0d5465f-f53a-4b11-95f9-fc34513063a3", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T23:01:22.270255+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "8ed3ae93-23ec-4ec4-8441-0486908186af", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+_____________ test_replay_rechecks_current_resource_scope[resume] ______________
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41c160c20>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41f4e9940>, '3c68beb1-3e1b-43b5-82f7-294a075aa276', '804b801d-085f-43f4-9471-79c7b6bd14df')
+action = 'resume'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    def test_replay_rechecks_current_resource_scope(seeded, action):
+        client, store, intake_id, sla_id = seeded
+        store.intakes[intake_id]["scope"]["brand_id"] = ALLOWED
+        scope = {"x-brand-ids": ALLOWED}
+        version = 23
+        if action == "resume":
+            assert command(client, sla_id, "pause", scope=scope).status_code == 200
+            version = 24
+        key = f"sla-scope-replay-{uuid4()}"
+        original = command(client, sla_id, action, version, scope=scope, key=key)
+        assert original.status_code == 200, original.text
+        store.intakes[intake_id]["scope"]["brand_id"] = OUTSIDE
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, version, scope=scope, key=key)
+>       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"804b801d-085f-43f4-9471-79c7b6bd14df","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"2dc99d43-6f50-40fe-a622-df283265fc02","correlation_id":"a1caa1ff-6b1b-4c0b-9a8f-ea43f664a2da","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:118: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:01:22 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:01:22 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:01:25.982981+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d3419611-9f98-4f03-81d5-677f9529a4ee", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:01:25.992895+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "c299e123-66c0-437f-bf49-966e68a16cc4", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+{"timestamp": "2026-10-09T23:01:26.000161+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "62c6c00d-167e-4464-8a64-f8d36bb743b6", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+{"timestamp": "2026-10-09T23:01:26.007164+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "8ddc2f0d-b34d-4cc0-948f-e3ade98f1e60", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/resume ok"}
+_____ test_pause_interval_retains_disclosure_inputs_and_elapsed_time_once ______
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41a24dfd0>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e426649be0>, 'a84a1364-4b69-4cd9-b024-5b41698161fd', '98a4ef60-c4ce-4c9f-9b24-23916b79d3c6')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x75e41c162ab0>
+
+    def test_pause_interval_retains_disclosure_inputs_and_elapsed_time_once(seeded, monkeypatch):
+        client, store, intake_id, sla_id = seeded
+    
+        class Clock(datetime):
+            current = datetime(2026, 10, 9, 12, tzinfo=UTC)
+    
+            @classmethod
+            def now(cls, tz=None):
+                return cls.current if tz else cls.current.replace(tzinfo=None)
+    
+        monkeypatch.setattr(listings, "datetime", Clock)
+        store.intakes[intake_id]["scope"].update({axis: ALLOWED for axis, _ in AXES})
+        scope = {header: ALLOWED for _, header in AXES}
+        intake_before = copy.deepcopy(store.intakes[intake_id])
+        pause_key, resume_key = f"sla-pause-{uuid4()}", f"sla-resume-{uuid4()}"
+        paused = command(client, sla_id, "pause", scope=scope, key=pause_key)
+        assert paused.status_code == 200, paused.text
+>       interval = store.slas[sla_id]["pause_intervals"][0]
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'pause_intervals'
+
+tests/security/test_assisted_sla_resource_scope.py:144: KeyError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:01:27 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:01:27 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:01:30.851528+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "3223ec56-25c6-4c03-9901-b49b294f133d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:01:30.860605+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "e0e3dc6d-9677-419e-a75a-0053ccacbf9d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+____________ test_pause_rejects_blank_or_short_trimmed_reason[   ] _____________
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41f4819a0>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41caeb920>, '0cbddc69-a089-4419-9c2f-7567883d9d10', 'aca1b9a5-b95a-417a-88de-8b3e33fd5474')
+reason = '   '
+
+    @pytest.mark.parametrize("reason", ["   ", "\n\t ", " a "])
+    def test_pause_rejects_blank_or_short_trimmed_reason(seeded, reason):
+        client, store, _, sla_id = seeded
+        before = copy.deepcopy((store.slas, store.replays))
+        response = client.post(
+            f"/api/v1/sla-instances/{sla_id}/actions/pause", json={**PAUSE, "reason": reason},
+            headers={**HEADERS, "If-Match": 'W/"23"', "Idempotency-Key": f"sla-empty-{uuid4()}"},
+        )
+>       assert response.status_code == 422
+E       assert 200 == 422
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:190: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:01:31 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:01:31 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:01:34.583746+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4f9df062-ab5b-419e-b588-8747d967a1c1", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:01:34.593454+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2667b3f0-2a8a-48a1-9340-8c2c07980dca", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+___________ test_pause_rejects_blank_or_short_trimmed_reason[\n\t ] ____________
+
+seeded = (<starlette.testclient.TestClient object at 0x75e41ca628a0>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41b2571a0>, '26c72582-2b4c-4a3a-83af-d8df6c87f277', '19171eae-d483-48e3-9b5e-ba685dee381f')
+reason = '\n\t '
+
+    @pytest.mark.parametrize("reason", ["   ", "\n\t ", " a "])
+    def test_pause_rejects_blank_or_short_trimmed_reason(seeded, reason):
+        client, store, _, sla_id = seeded
+        before = copy.deepcopy((store.slas, store.replays))
+        response = client.post(
+            f"/api/v1/sla-instances/{sla_id}/actions/pause", json={**PAUSE, "reason": reason},
+            headers={**HEADERS, "If-Match": 'W/"23"', "Idempotency-Key": f"sla-empty-{uuid4()}"},
+        )
+>       assert response.status_code == 422
+E       assert 200 == 422
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:190: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:01:34 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:01:34 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:01:38.309037+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d96e96a0-5be9-4a70-aba0-c3dc47c1d2ca", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:01:38.319360+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4ec403c3-448c-49c6-bb63-4e23579a05f9", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+____________ test_pause_rejects_blank_or_short_trimmed_reason[ a ] _____________
+
+seeded = (<starlette.testclient.TestClient object at 0x75e419a50590>, <apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41ca86c30>, '37502142-3842-49d4-a215-5bcc0897bb11', '78cad91d-9be8-4577-a060-d73b16e73963')
+reason = ' a '
+
+    @pytest.mark.parametrize("reason", ["   ", "\n\t ", " a "])
+    def test_pause_rejects_blank_or_short_trimmed_reason(seeded, reason):
+        client, store, _, sla_id = seeded
+        before = copy.deepcopy((store.slas, store.replays))
+        response = client.post(
+            f"/api/v1/sla-instances/{sla_id}/actions/pause", json={**PAUSE, "reason": reason},
+            headers={**HEADERS, "If-Match": 'W/"23"', "Idempotency-Key": f"sla-empty-{uuid4()}"},
+        )
+>       assert response.status_code == 422
+E       assert 200 == 422
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:190: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/09 23:01:39 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/09 23:01:39 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-09T23:01:43.295474+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b0b5e2c1-0746-4c27-b756-485775d2e17d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-09T23:01:43.305834+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "582fe9da-13a1-4429-b768-b167fce1b3f9", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/sla-instances/{sla_instance_id}/actions/pause ok"}
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-brand_id-x-brand-ids-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-brand_id-x-brand-ids-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-region_id-x-region-ids-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-region_id-x-region-ids-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-store_id-x-store-ids-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-store_id-x-store-ids-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-assigned_area_id-x-assigned-area-ids-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-assigned_area_id-x-assigned-area-ids-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-heat_zone_id-x-heat-zone-ids-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-heat_zone_id-x-heat-zone-ids-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[None-brand_id-x-brand-ids-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[None-brand_id-x-brand-ids-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[None-region_id-x-region-ids-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[None-region_id-x-region-ids-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[None-store_id-x-store-ids-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[None-store_id-x-store-ids-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[None-assigned_area_id-x-assigned-area-ids-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[None-assigned_area_id-x-assigned-area-ids-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[None-heat_zone_id-x-heat-zone-ids-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_linked_resource_scope_denies_without_mutation[None-heat_zone_id-x-heat-zone-ids-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_child_tenant_cannot_substitute_for_resource_authority[dangling-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_child_tenant_cannot_substitute_for_resource_authority[dangling-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_child_tenant_cannot_substitute_for_resource_authority[foreign-tenant-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_child_tenant_cannot_substitute_for_resource_authority[foreign-tenant-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_child_tenant_cannot_substitute_for_resource_authority[standalone-missing-axis-pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_child_tenant_cannot_substitute_for_resource_authority[standalone-missing-axis-resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_replay_rechecks_current_resource_scope[pause]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_replay_rechecks_current_resource_scope[resume]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_pause_interval_retains_disclosure_inputs_and_elapsed_time_once
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_pause_rejects_blank_or_short_trimmed_reason[   ]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_pause_rejects_blank_or_short_trimmed_reason[\n\t ]
+FAILED tests/security/test_assisted_sla_resource_scope.py::test_pause_rejects_blank_or_short_trimmed_reason[ a ]

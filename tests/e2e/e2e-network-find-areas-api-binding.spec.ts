@@ -32,16 +32,18 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     ).toBeVisible();
   });
 
-  test("Network Find Areas workspace renders with HeatZone summary stats", async ({
+  test("Network Find Areas workspace renders with Package 10 summary stats", async ({
     page,
   }) => {
     const workspace = page.getByTestId("network-find-areas-workspace");
     await expect(workspace).toBeVisible();
 
     // The header should show summary counts.
-    await expect(workspace.getByText(/^\d+ HeatZones$/i)).toBeVisible();
-    await expect(workspace.getByText(/^\d+ listings$/i)).toBeVisible();
-    await expect(workspace.getByText(/^\d+ candidates$/i)).toBeVisible();
+    const stats = workspace.getByLabel("Network Find Areas state");
+    await expect(stats.getByText(/^\d+ 今日新物件$/)).toBeVisible();
+    await expect(stats.getByText(/^\d+ 進行中候選$/)).toBeVisible();
+    await expect(stats.getByText(/^\d+ 待審 Review$/)).toBeVisible();
+    await expect(stats.getByText(/^\d+ 重配候選$/)).toBeVisible();
   });
 
   test("Network workspace shows fixture data indicator when API is unavailable", async ({
@@ -107,6 +109,9 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     const findAreasPanel = page.getByTestId("network-panel-find-areas");
     await expect(findAreasPanel).toBeVisible();
     // Zone markers should exist in the map canvas.
+    // The map is a lazy client chunk. Await its declared loading boundary
+    // before asserting the canvas, as other API snapshot checks do.
+    await expect(findAreasPanel.getByTestId("heat-zone-map-loading")).toHaveCount(0, { timeout: 15_000 });
     const mapCanvas = findAreasPanel.getByTestId("heat-zone-map");
     await expect(mapCanvas).toBeVisible();
   });

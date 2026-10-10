@@ -1,0 +1,13 @@
+
+> @oday-plus/web@0.1.0 test
+> vitest run features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx features/operator/network/intake/__tests__/PromotionSagaIntegration.test.tsx
+
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+
+
+ Test Files  2 passed (2)
+      Tests  37 passed (37)
+   Start at  18:00:20
+   Duration  4.03s (transform 1.61s, setup 0ms, import 2.62s, tests 2.63s, environment 1.11s)
+

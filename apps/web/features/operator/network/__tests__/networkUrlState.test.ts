@@ -1,11 +1,27 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildFindAreasHref,
   buildNetworkTabHref,
+  parseFindAreasUrlState,
   parseNetworkTabIndex,
   serializeNetworkTab,
 } from "../networkUrlState";
 
 describe("Network URL state", () => {
+  it("restores validated Find Areas selection and lens with fail-safe defaults", () => {
+    expect(parseFindAreasUrlState(new URLSearchParams("hz=HZ-02&lens=fit"))).toEqual({ heatZoneId: "HZ-02", lens: "fit" });
+    expect(parseFindAreasUrlState(new URLSearchParams("hz=%3Cscript%3E&lens=unknown"))).toEqual({ heatZoneId: null, lens: "demand" });
+    expect(parseFindAreasUrlState(new URLSearchParams())).toEqual({ heatZoneId: null, lens: "demand" });
+  });
+
+  it("changes only Find Areas hints, retaining tabs, repeated query and hash", () => {
+    const existing = new URLSearchParams("ws=network&tab=areas&hz=HZ-01&lens=demand&flag=a&flag=b");
+    expect(buildFindAreasHref("/operator", "HZ-02", "fit", existing, "#context")).toBe(
+      "/operator?ws=network&tab=areas&hz=HZ-02&lens=fit&flag=a&flag=b#context",
+    );
+    expect(existing.get("hz")).toBe("HZ-01");
+  });
+
   it("cold-opens Listing Radar from its canonical tab slug", () => {
     expect(
       parseNetworkTabIndex("ws=network&tab=radar"),

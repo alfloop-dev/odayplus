@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal 'cdf71e7b-a7c9-4da9-9f1e-4b64086b3089' is already APPROVED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal 'cdf71e7b-a7c9-4da9-9f1e-4b64086b3089' is already APPROVED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-09T21:33:59.546Z",
+      "details": [],
+      "correlation_id": "9c71c277-aab4-4ac5-adc8-372b2c55cb8f"
+    }
+  }
+}

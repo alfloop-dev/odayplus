@@ -1,0 +1,13 @@
+
+> @oday-plus/web@0.1.0 test
+> vitest run features/operator/network/__tests__/networkUrlState.test.ts features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx
+
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+
+
+ Test Files  2 passed (2)
+      Tests  32 passed (32)
+   Start at  22:38:36
+   Duration  6.98s (transform 2.39s, setup 0ms, import 2.99s, tests 2.00s, environment 3.67s)
+

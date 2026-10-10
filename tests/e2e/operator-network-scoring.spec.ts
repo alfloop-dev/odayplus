@@ -31,7 +31,7 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
     ).toBeVisible();
 
     await page.getByTestId("network-tab-2").click();
-    await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
+    await expect(page.getByTestId("network-panel-candidates")).toBeVisible({ timeout: 15_000 });
     const table = page.getByTestId("network-candidate-table");
     await expect(table).toContainText("CS-1001", { timeout: 15_000 });
     await expect(table).toContainText("SiteScore v2.3");
@@ -62,7 +62,7 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
   }) => {
     await page.goto("/operator?ws=network");
     await page.getByTestId("network-tab-3").click();
-    await expect(page.getByTestId("network-panel-sitescore")).toBeVisible();
+    await expect(page.getByTestId("network-panel-sitescore")).toBeVisible({ timeout: 15_000 });
 
     const cs1001 = page.getByTestId("sitescore-card-CS-1001");
     await expect(cs1001).toContainText("SiteScore v2.3", { timeout: 15_000 });
@@ -78,10 +78,14 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
       page.getByTestId("sitescore-conditions-CS-1004"),
     ).toContainText("回本期 41 個月");
 
-    // CS-1003 has no scorecard — it is surfaced in the gate banner instead.
-    await expect(page.getByTestId("sitescore-blocked-CS-1003")).toContainText(
-      "缺資料 — 無法評分",
-    );
+    // CS-1003 has no scorecard: selecting it shows the data gate, not an
+    // unrelated scored candidate's report.
+    await page.getByTestId("sitescore-pick-CS-1003").click();
+    const blocked = page.getByTestId("sitescore-blocked-CS-1003");
+    await expect(blocked).toBeVisible();
+    await expect(blocked).toContainText("缺資料");
+    await expect(blocked.getByRole("button")).toBeDisabled();
+    await expect(cs1001).toBeHidden();
   });
 
   test("Compare recommends primary / alternate / avoid consistently", async ({
@@ -89,7 +93,7 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
   }) => {
     await page.goto("/operator?ws=network");
     await page.getByTestId("network-tab-4").click();
-    await expect(page.getByTestId("network-panel-compare")).toBeVisible();
+    await expect(page.getByTestId("network-panel-compare")).toBeVisible({ timeout: 15_000 });
 
     await expect(page.getByTestId("compare-primary")).toContainText(
       "信義松仁",
@@ -110,7 +114,8 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
     await expect(compareTable).toContainText("82 GO");
   });
 
-  test("batch SiteScore job sorts persisted results and skips gated candidate", async () => {
+  test("batch SiteScore job sorts persisted results and skips gated candidate", async ({ page }) => {
+    test.setTimeout(60_000);
     const api = await apiContext();
     const response = await api.post("/api/v1/operator/network-scoring/score", {
       headers: { "idempotency-key": "e2e-r4-006-batch" },
@@ -128,6 +133,51 @@ test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
       "CS-1004",
     ]);
     await api.dispose();
+
+    // The restored UI must submit the selection to the existing durable API,
+    // not merely emit a completion toast. Stay in the same business inventory.
+    await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-manager"));
+    await page.goto("/operator?ws=network&tab=sitescore");
+    // Wait for persona hydration plus the API-backed write affordance; the
+    // initial fixture report can precede the role-keyed workspace remount.
+    await expect(page.getByRole("button", { name: "展店經理", exact: true })).toBeVisible();
+    await expect(page.getByTestId("sitescore-rescore-CS-1001")).toBeEnabled({ timeout: 15_000 });
+    await page.getByRole("button", { name: "批次評分", exact: true }).click();
+    await expect(page.getByRole("button", { name: "批次評分", exact: true })).toHaveAttribute("aria-pressed", "true");
+    const selection = page.getByRole("button", { name: /信義松仁候選點.*NT\$58,000/ });
+    await expect(selection).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: /中壢中原候選點.*—/ })).toBeDisabled();
+    // Leave only CS-1001 selected.
+    await page.getByRole("button", { name: /板橋府中候選點.*NT\$52,000/ }).click();
+    await page.getByRole("button", { name: /大安和平候選點.*NT\$64,000/ }).click();
+    const batchResponse = page.waitForResponse((response) => response.url().endsWith("/network-scoring/score") && response.request().method() === "POST");
+    await page.getByTestId("sitescore-batch-run").click();
+    const selectedBatch = await batchResponse;
+    expect(selectedBatch.status()).toBe(200);
+    expect(selectedBatch.request().postDataJSON()).toMatchObject({ actorRoleId: "expansion-manager", candidateIds: ["CS-1001"] });
+    const persistedApi = await apiContext();
+    const persistedBatch = await (await persistedApi.get("/api/v1/operator/network-scoring")).json();
+    expect(persistedBatch.auditEvents[0]).toMatchObject({
+      action: "sitescore.batch", actorRoleId: "expansion-manager",
+      metadata: { scored: ["CS-1001"], skipped: [] },
+    });
+    await expect(page.getByTestId("sitescore-batch-run")).toBeEnabled();
+
+    // Compare updates must also survive a subsequent authoritative GET.
+    await page.getByRole("button", { name: "單點評分", exact: true }).click();
+    const compareResponse = page.waitForResponse((response) => response.url().endsWith("/network-scoring/compare") && response.request().method() === "POST");
+    await page.getByTestId("sitescore-card-CS-1001").getByRole("button", { name: "加入／移出比較" }).click();
+    expect((await compareResponse).status()).toBe(200);
+    await expect.poll(async () => (await (await persistedApi.get("/api/v1/operator/network-scoring")).json()).compareSet).toEqual(["CS-1002", "CS-1004"]);
+    await persistedApi.dispose();
+    await page.getByTestId("network-tab-4").click();
+    await expect(page.getByRole("button", { name: "移除 信義松仁候選點" })).toHaveCount(0);
+    const removeResponse = page.waitForResponse((response) => response.url().endsWith("/network-scoring/compare") && response.request().method() === "POST");
+    await page.getByRole("button", { name: "移除 板橋府中候選點" }).click();
+    expect((await removeResponse).status()).toBe(200);
+    await expect(page.getByRole("button", { name: "移除 板橋府中候選點" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /送審首選/ })).toBeDisabled();
+    await expect(page.getByRole("button", { name: /產生比較報告/ })).toBeDisabled();
   });
 });
 

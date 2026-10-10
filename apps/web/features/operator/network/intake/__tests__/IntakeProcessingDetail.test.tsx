@@ -17,6 +17,11 @@ import { IntakeProcessingDetail, buildPreservedInput } from "../IntakeProcessing
 import { jobStatusBadgeColors } from "../IntakeStageTimeline";
 import { isSnapshotStale } from "../intakeFreshness";
 
+// Injected component fixtures, not directory/provisioning evidence.
+const transferTargets = [
+  { id: "00000000-0000-0000-0000-000000000102", name: "Fixture reviewer", role: "site-reviewer" },
+];
+
 const nav = vi.hoisted(() => {
   const state = { search: "", pathname: "/operator", pushCalls: [] as string[], replaceCalls: [] as string[], listeners: new Set<() => void>() };
   const navigate = (url: string) => {
@@ -491,6 +496,8 @@ describe("AssistedIntakeSection production container", () => {
     expect(nav.state.search).toContain(`selected=${record.id}`);
     expect(nav.state.search).not.toContain("dialog=detail");
     expect(nav.state.replaceCalls.at(-1)).toContain("selected=");
+    expect(new URLSearchParams(nav.state.search).get("ws")).toBe("network");
+    expect(new URLSearchParams(nav.state.search).get("tab")).toBe("radar");
     expect(nav.state.pushCalls).toHaveLength(1);
   });
 
@@ -587,16 +594,35 @@ describe("AssistedIntakeSection production container", () => {
       version: 71, assignmentVersion: 14, slaInstanceId: "SLA-101", slaState: "ON_TRACK", slaVersion: 24,
     } as Partial<AssistedIntake> & { assignmentVersion: number; slaVersion: number });
     const requests: Array<{ path: string; headers: Headers }> = [];
-    stubActionFetch(record, requests);
+    stubActionFetch(record, requests, transferTargets);
     nav.reset(`selected=${record.id}&dialog=detail`);
     render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
     fireEvent.click(await screen.findByTestId("asg-btn-transfer"));
+    expect(await screen.findByTestId("transfer-record-version")).toHaveTextContent("v14");
+    expect(screen.getByTestId("transfer-record-version")).not.toHaveTextContent("v71");
+    await screen.findByRole("option", { name: transferTargets[0].name });
+    fireEvent.change(screen.getByTestId("transfer-target-select"), { target: { value: transferTargets[0].id } });
     fireEvent.change(await screen.findByTestId("transfer-handoff-note"), { target: { value: "authoritative transfer" } });
     fireEvent.click(screen.getByTestId("transfer-risk-ack"));
     fireEvent.click(screen.getByTestId("transfer-submit-btn"));
     const path = `/api/v1/assignments/${record.assignmentId}/actions/transfer`;
     await waitFor(() => expect(requests.some((request) => request.path === path)).toBe(true));
     expect(requests.find((request) => request.path === path)!.headers.get("if-match")).toBe('W/"14"');
+  });
+
+  it("does not transfer to static actors when resource authority exists but no scoped target directory is provided", async () => {
+    const record = intake({ owner: "reviewer-2", assignmentId: "ASG-TARGETS-MISSING", assignmentStatus: "CLAIMED", assignmentVersion: 14 });
+    const requests: Array<{ path: string; headers: Headers }> = [];
+    stubActionFetch(record, requests);
+    nav.reset(`selected=${record.id}&dialog=detail`);
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
+    fireEvent.click(await screen.findByTestId("asg-btn-transfer"));
+    expect(await screen.findByTestId("transfer-record-version")).toHaveTextContent("v14");
+    expect(screen.getByTestId("transfer-targets-unavailable")).toBeInTheDocument();
+    expect(screen.getByTestId("transfer-submit-btn")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("transfer-handoff-note"), { target: { value: "must not fabricate identity" } });
+    fireEvent.click(screen.getByTestId("transfer-submit-btn"));
+    expect(requests.some((request) => request.path.endsWith("/actions/transfer"))).toBe(false);
   });
 
   it("pauses with the authoritative SLA resource version", async () => {
@@ -609,6 +635,8 @@ describe("AssistedIntakeSection production container", () => {
     nav.reset(`selected=${record.id}&dialog=detail`);
     render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
     fireEvent.click(await screen.findByTestId("asg-btn-pause"));
+    expect(await screen.findByTestId("pause-record-version")).toHaveTextContent("v25");
+    expect(screen.getByTestId("pause-record-version")).not.toHaveTextContent("v72");
     fireEvent.change(await screen.findByTestId("pause-reason-input"), { target: { value: "waiting for evidence" } });
     fireEvent.change(screen.getByTestId("pause-resume-time-input"), { target: { value: "2026-07-27T10:00" } });
     fireEvent.click(screen.getByTestId("pause-risk-ack"));
@@ -616,6 +644,134 @@ describe("AssistedIntakeSection production container", () => {
     const path = `/api/v1/sla-instances/${record.slaInstanceId}/actions/pause`;
     await waitFor(() => expect(requests.some((request) => request.path === path)).toBe(true));
     expect(requests.find((request) => request.path === path)!.headers.get("if-match")).toBe('W/"25"');
+  });
+
+  it("supersedes a cached claim receipt after a real container 409 refresh without losing the transfer draft", async () => {
+    let record = intake({
+      owner: "reviewer-2", assignmentId: "ASG-REFRESH-101", assignmentStatus: "ASSIGNED",
+      version: 71, assignmentVersion: 3,
+    } as Partial<AssistedIntake> & { assignmentVersion: number });
+    const transferHeaders: Headers[] = [];
+    let failNextRefresh = false;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/operator/network-listings/intake") return json({
+        items: [record], total: 1, page: 1, pageSize: 10,
+        counts: { needsReview: 1, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 }, evidenceState: "complete",
+      });
+      if (path === `/api/v1/operator/network-listings/intake/${record.id}`) {
+        if (failNextRefresh) {
+          failNextRefresh = false;
+          return json({ code: "READ_UNAVAILABLE", detail: "read unavailable" }, 503);
+        }
+        return json(record);
+      }
+      if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
+      if (path.endsWith("/transfer-targets")) return json({
+        assignment_id: record.assignmentId, assignment_version: record.assignmentVersion, items: transferTargets,
+      });
+      if (path.endsWith("/actions/claim")) {
+        record = { ...record, owner: "subject-1", assignmentStatus: "CLAIMED", assignmentVersion: 8 } as typeof record;
+        return json({ assignment_id: record.assignmentId, status: "CLAIMED", owner_subject_id: "subject-1", version: 8, audit_event_id: "AUD-CLAIM" });
+      }
+      if (path.endsWith("/actions/transfer")) {
+        transferHeaders.push(new Headers(init?.headers));
+        if (transferHeaders.length === 1) {
+          record = { ...record, owner: "reviewer-3", assignmentVersion: 9 } as typeof record;
+          failNextRefresh = true;
+          return json({ code: "OWNER_CONFLICT", detail: "owner changed" }, 409);
+        }
+        return json({ assignment_id: record.assignmentId, status: "TRANSFERRED", owner_subject_id: transferTargets[0].id, version: 10, audit_event_id: "AUD-TRANSFER" });
+      }
+      return json({ code: "NOT_FOUND" }, 404);
+    }));
+    nav.reset(`selected=${record.id}&dialog=detail`);
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
+    fireEvent.click(await screen.findByTestId("asg-btn-claim"));
+    await waitFor(() => expect(screen.getByTestId("asg-owner")).toHaveTextContent("subject-1"));
+    fireEvent.click(screen.getByTestId("asg-btn-transfer"));
+    expect(await screen.findByTestId("transfer-record-version")).toHaveTextContent("v8");
+    await screen.findByRole("option", { name: transferTargets[0].name });
+    fireEvent.change(screen.getByTestId("transfer-target-select"), { target: { value: transferTargets[0].id } });
+    fireEvent.change(screen.getByTestId("transfer-handoff-note"), { target: { value: "preserve this handoff" } });
+    fireEvent.click(screen.getByTestId("transfer-risk-ack"));
+    fireEvent.click(screen.getByTestId("transfer-submit-btn"));
+    expect(await screen.findByTestId("transfer-conflict-panel")).toBeInTheDocument();
+    expect(transferHeaders[0]!.get("if-match")).toBe('W/"8"');
+    expect(screen.getByTestId("transfer-submit-btn")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("transfer-conflict-refresh-btn"));
+    await waitFor(() => expect(screen.getByTestId("transfer-conflict-panel")).toHaveTextContent("重新整理失敗"));
+    expect(screen.getByTestId("transfer-record-version")).toHaveTextContent("v8");
+    expect(screen.getByTestId("transfer-submit-btn")).toBeDisabled();
+    expect(transferHeaders).toHaveLength(1);
+    fireEvent.click(screen.getByTestId("transfer-conflict-refresh-btn"));
+    await waitFor(() => expect(screen.getByTestId("transfer-record-version")).toHaveTextContent("v9"));
+    expect(screen.getByTestId("transfer-record-owner")).toHaveTextContent("reviewer-3");
+    expect(screen.getByTestId("transfer-handoff-note")).toHaveValue("preserve this handoff");
+    await screen.findByRole("option", { name: transferTargets[0].name });
+    expect(screen.getByTestId("transfer-risk-ack")).not.toBeChecked();
+    fireEvent.click(screen.getByTestId("transfer-risk-ack"));
+    fireEvent.click(screen.getByTestId("transfer-submit-btn"));
+    await waitFor(() => expect(transferHeaders).toHaveLength(2));
+    expect(transferHeaders[1]!.get("if-match")).toBe('W/"9"');
+  });
+
+  it("supersedes a cached resume receipt after an SLA 409 refresh and preserves editable pause inputs", async () => {
+    let record = intake({
+      owner: "reviewer-2", slaInstanceId: "SLA-REFRESH-101", slaState: "PAUSED",
+      version: 72, slaVersion: 4,
+    } as Partial<AssistedIntake> & { slaVersion: number });
+    const pauseHeaders: Headers[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/operator/network-listings/intake") return json({
+        items: [record], total: 1, page: 1, pageSize: 10,
+        counts: { needsReview: 1, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 }, evidenceState: "complete",
+      });
+      if (path === `/api/v1/operator/network-listings/intake/${record.id}`) return json(record);
+      if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
+      if (path.endsWith("/actions/resume")) {
+        record = { ...record, slaState: "ON_TRACK", slaVersion: 8 } as typeof record;
+        return json({ sla_instance_id: record.slaInstanceId, state: "ON_TRACK", version: 8, paused_duration_seconds: 0, audit_event_id: "AUD-RESUME", correlation_id: "corr-resume" });
+      }
+      if (path.endsWith("/actions/pause")) {
+        pauseHeaders.push(new Headers(init?.headers));
+        if (pauseHeaders.length === 1) {
+          record = { ...record, slaVersion: 9 } as typeof record;
+          return json({ code: "VERSION_CONFLICT", detail: "SLA changed" }, 409);
+        }
+        return json({ sla_instance_id: record.slaInstanceId, state: "PAUSED", version: 10, paused_duration_seconds: 0, audit_event_id: "AUD-PAUSE", correlation_id: "corr-pause" });
+      }
+      return json({ code: "NOT_FOUND" }, 404);
+    }));
+    nav.reset(`selected=${record.id}&dialog=detail`);
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
+    fireEvent.click(await screen.findByTestId("asg-btn-resume"));
+    fireEvent.click(await screen.findByTestId("asg-btn-pause"));
+    expect(await screen.findByTestId("pause-record-version")).toHaveTextContent("v8");
+    fireEvent.change(screen.getByTestId("pause-reason-input"), { target: { value: "waiting for evidence" } });
+    fireEvent.change(screen.getByTestId("pause-resume-time-input"), { target: { value: "2026-07-27T10:00" } });
+    fireEvent.click(screen.getByTestId("pause-risk-ack"));
+    fireEvent.click(screen.getByTestId("pause-submit-btn"));
+    expect(await screen.findByTestId("pause-conflict-panel")).toBeInTheDocument();
+    expect(pauseHeaders[0]!.get("if-match")).toBe('W/"8"');
+    expect(screen.getByTestId("pause-submit-btn")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("pause-conflict-refresh-btn"));
+    await waitFor(() => expect(screen.getByTestId("pause-record-version")).toHaveTextContent("v9"));
+    expect(screen.getByTestId("pause-reason-input")).toHaveValue("waiting for evidence");
+    expect(screen.getByTestId("pause-resume-time-input")).toHaveValue("2026-07-27T10:00");
+    expect(screen.getByTestId("pause-risk-ack")).toBeChecked();
+    fireEvent.click(screen.getByTestId("pause-submit-btn"));
+    await waitFor(() => expect(pauseHeaders).toHaveLength(2));
+    expect(pauseHeaders[1]!.get("if-match")).toBe('W/"9"');
+  });
+
+  it("rejects resource receipts for a different ID instead of borrowing their versions", () => {
+    const record = intake({ assignmentId: "ASG-NEW", slaInstanceId: "SLA-NEW", assignmentVersion: 3, slaVersion: 5 } as Partial<AssistedIntake>);
+    expect(authoritativeAssignmentVersion(record, { assignment_id: "ASG-OLD", version: 9 } as any)).toBeNull();
+    expect(authoritativeSlaVersion(record, { sla_instance_id: "SLA-OLD", version: 11 } as any)).toBeNull();
+    expect(authoritativeAssignmentVersion(record, { assignment_id: "ASG-NEW", version: 9 } as any)).toBe(9);
+    expect(authoritativeSlaVersion(record, { sla_instance_id: "SLA-NEW", version: 11 } as any)).toBe(11);
   });
 
   it("resumes with the authoritative SLA resource version", async () => {
@@ -674,7 +830,7 @@ describe("AssistedIntakeSection production container", () => {
   // zero is not a usable concurrency token and must fail closed alongside
   // negatives, fractions, strings, null and undefined.
   it("accepts positive integer resource versions only", () => {
-    for (const rejected of [0, -1, -12, 1.5, 0.5, "1", "0", "", true, null, undefined, NaN, Infinity, {}, [3]]) {
+    for (const rejected of [0, -1, -12, 1.5, 0.5, Number.MAX_SAFE_INTEGER + 1, "1", "0", "", true, null, undefined, NaN, Infinity, {}, [3]]) {
       expect(validResourceVersion(rejected)).toBeNull();
     }
     for (const accepted of [1, 2, 12, 34, Number.MAX_SAFE_INTEGER]) {
@@ -748,6 +904,7 @@ function json(body: unknown, status = 200): Response {
 function stubActionFetch(
   record: AssistedIntake,
   requests: Array<{ path: string; headers: Headers }>,
+  directoryItems = [] as typeof transferTargets,
 ) {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), "http://localhost").pathname;
@@ -757,8 +914,11 @@ function stubActionFetch(
       counts: { needsReview: 1, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 },
       evidenceState: "complete",
     });
-    if (path === `/api/v1/intakes/${record.id}`) return json(record);
+    if (path === `/api/v1/operator/network-listings/intake/${record.id}`) return json(record);
     if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
+    if (path.endsWith("/transfer-targets")) return json({
+      assignment_id: record.assignmentId, assignment_version: record.assignmentVersion, items: directoryItems,
+    });
     if (path.includes("/assignments/")) return json({
       assignment_id: record.assignmentId, status: "CLAIMED", owner_subject_id: "subject-1",
       version: 99, audit_event_id: "AUD-ASG-101",

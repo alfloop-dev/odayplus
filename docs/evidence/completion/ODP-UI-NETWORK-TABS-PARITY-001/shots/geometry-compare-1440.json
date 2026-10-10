@@ -1,0 +1,58 @@
+{
+  "boxes": {
+    "panel": {
+      "x": 20,
+      "y": 403.203125,
+      "width": 1400,
+      "height": 846.8125,
+      "scrollWidth": 1400,
+      "columns": "1400px",
+      "overflowX": "visible",
+      "radius": "0px"
+    },
+    "tableScroll": {
+      "x": 20,
+      "y": 461.796875,
+      "width": 1086,
+      "height": 325.71875,
+      "scrollWidth": 1084,
+      "columns": "none",
+      "overflowX": "auto",
+      "radius": "10px"
+    },
+    "map": {
+      "x": 20,
+      "y": 799.515625,
+      "width": 1086,
+      "height": 250,
+      "scrollWidth": 1084,
+      "columns": "none",
+      "overflowX": "hidden",
+      "radius": "14px"
+    },
+    "recommendation": {
+      "x": 1120,
+      "y": 461.796875,
+      "width": 300,
+      "height": 788.21875,
+      "scrollWidth": 298,
+      "columns": "266px",
+      "overflowX": "visible",
+      "radius": "12px"
+    }
+  },
+  "document": {
+    "width": 1440,
+    "scrollWidth": 1440
+  },
+  "design": {
+    "x": 20,
+    "y": 346.84375,
+    "width": 1400,
+    "height": 844.84375,
+    "scrollWidth": 1400,
+    "columns": "none",
+    "overflowX": "visible",
+    "radius": "0px"
+  }
+}

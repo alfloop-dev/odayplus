@@ -1,0 +1,654 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="32" skipped="0" tests="32" time="139.813" timestamp="2026-10-09T22:59:23.521898+00:00" hostname="oday-dev-box.c.alfaloop-data-project-2.internal"><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-brand_id-x-brand-ids-pause]" time="4.102"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;d17d28f4-5509-4c9a-9f80-18ac3e45b8fb&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;141e477f-6ac4-4e4b-a479-503242cfc751&quot;,&quot;correlation_id&quot;:&quot;9f32ea1d-49dd-4260-a130-3a60e8105bed&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;79ef15aa-5106-48a8-96ff-af50d7477e67&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e42dc3de80&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42db62ba0&gt;, '1a74fb2d-14e0-4715-87b9-02b8e3c75917', 'd17d28f4-5509-4c9a-9f80-18ac3e45b8fb')
+action = 'pause', axis = 'brand_id', header = 'x-brand-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"d17d28f4-5509-4c9a-9f80-18ac3e45b8fb","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"141e477f-6ac4-4e4b-a479-503242cfc751","correlation_id":"9f32ea1d-49dd-4260-a130-3a60e8105bed","due_soon_at":null,"active_pause_interval_id":"79ef15aa-5106-48a8-96ff-af50d7477e67"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-brand_id-x-brand-ids-resume]" time="4.326"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;0de55d95-b5c7-48a6-8583-2a0d84131240&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;1b5e6222-8f81-4722-8e86-82712a959d11&quot;,&quot;correlation_id&quot;:&quot;2097103d-5aa4-4896-8809-89e65ff9b8c1&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e42c38c6b0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42c175190&gt;, '4b20c6a3-bca3-430f-90e9-3fb204e6593f', '0de55d95-b5c7-48a6-8583-2a0d84131240')
+action = 'resume', axis = 'brand_id', header = 'x-brand-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"0de55d95-b5c7-48a6-8583-2a0d84131240","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"1b5e6222-8f81-4722-8e86-82712a959d11","correlation_id":"2097103d-5aa4-4896-8809-89e65ff9b8c1","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-region_id-x-region-ids-pause]" time="4.280"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;0d050dfb-8c86-4841-b67c-ec205dc2be81&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;aed2d400-6056-43c1-ae6c-cb1da2544d5d&quot;,&quot;correlation_id&quot;:&quot;14731284-ea80-4f45-be08-2ba0ce607353&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;4e256851-f24b-48aa-a3c8-776cacac2453&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e426db7350&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e4268f42c0&gt;, '8a0b856d-8362-455b-9349-3b8dce63cc2c', '0d050dfb-8c86-4841-b67c-ec205dc2be81')
+action = 'pause', axis = 'region_id', header = 'x-region-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"0d050dfb-8c86-4841-b67c-ec205dc2be81","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"aed2d400-6056-43c1-ae6c-cb1da2544d5d","correlation_id":"14731284-ea80-4f45-be08-2ba0ce607353","due_soon_at":null,"active_pause_interval_id":"4e256851-f24b-48aa-a3c8-776cacac2453"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-region_id-x-region-ids-resume]" time="3.717"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;56f67a67-f3ad-4b50-b910-c4ab6910eeec&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;55697113-c26e-4c2c-9844-b10ef5f3470b&quot;,&quot;correlation_id&quot;:&quot;4949b18c-059a-4c35-bfab-3e2326f003aa&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e42d423170&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42d10a6c0&gt;, '64f9b50d-ca53-49e2-abc5-f468e1bf8c53', '56f67a67-f3ad-4b50-b910-c4ab6910eeec')
+action = 'resume', axis = 'region_id', header = 'x-region-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"56f67a67-f3ad-4b50-b910-c4ab6910eeec","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"55697113-c26e-4c2c-9844-b10ef5f3470b","correlation_id":"4949b18c-059a-4c35-bfab-3e2326f003aa","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-store_id-x-store-ids-pause]" time="4.228"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;37c6a48e-e06e-4050-90bc-8dcbcbe1eb2e&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;9adb70f4-d298-4df1-80d5-d0e46b3e7f42&quot;,&quot;correlation_id&quot;:&quot;dcce84bb-d615-4def-8b32-af14fce7a942&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;27608f48-3ad6-4c1c-a9af-286f65cc379a&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e4254a39b0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e4253dea50&gt;, 'df00652d-6609-4690-a28a-54e46494e1a1', '37c6a48e-e06e-4050-90bc-8dcbcbe1eb2e')
+action = 'pause', axis = 'store_id', header = 'x-store-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"37c6a48e-e06e-4050-90bc-8dcbcbe1eb2e","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"9adb70f4-d298-4df1-80d5-d0e46b3e7f42","correlation_id":"dcce84bb-d615-4def-8b32-af14fce7a942","due_soon_at":null,"active_pause_interval_id":"27608f48-3ad6-4c1c-a9af-286f65cc379a"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-store_id-x-store-ids-resume]" time="4.484"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;6275f67a-c610-4725-ab95-aad4394d0fab&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;c3a21e98-99ad-4afc-8b26-17c6ba6caf2e&quot;,&quot;correlation_id&quot;:&quot;c8521337-f370-43e0-bc52-ce90081a7b08&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e42dab0530&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e4271c8f50&gt;, '3efca8e5-b7a0-4737-beb3-4dd3e9ca2b07', '6275f67a-c610-4725-ab95-aad4394d0fab')
+action = 'resume', axis = 'store_id', header = 'x-store-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"6275f67a-c610-4725-ab95-aad4394d0fab","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"c3a21e98-99ad-4afc-8b26-17c6ba6caf2e","correlation_id":"c8521337-f370-43e0-bc52-ce90081a7b08","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-assigned_area_id-x-assigned-area-ids-pause]" time="3.713"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;20daf9e2-8e85-415d-bbe4-9aeb21810bf7&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;a0cc9f91-a193-479d-a9cc-08d46545eeaa&quot;,&quot;correlation_id&quot;:&quot;ffcead7f-61e9-42c0-a589-8a80032aaba8&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;78042910-771a-4350-bb85-de6d248d300c&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e42585b680&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e425b11970&gt;, '404b2dbc-dfd2-4198-b85c-2e0d876985d2', '20daf9e2-8e85-415d-bbe4-9aeb21810bf7')
+action = 'pause', axis = 'assigned_area_id', header = 'x-assigned-area-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"20daf9e2-8e85-415d-bbe4-9aeb21810bf7","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"a0cc9f91-a193-479d-a9cc-08d46545eeaa","correlation_id":"ffcead7f-61e9-42c0-a589-8a80032aaba8","due_soon_at":null,"active_pause_interval_id":"78042910-771a-4350-bb85-de6d248d300c"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-assigned_area_id-x-assigned-area-ids-resume]" time="4.486"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;20d94860-14c8-4097-9e4f-0cb9b2d61f37&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;1719554d-2658-4c94-ae2e-1b97613e7f28&quot;,&quot;correlation_id&quot;:&quot;056f0db7-f35b-40dc-900e-662d6451534a&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e424758bc0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e424684d10&gt;, '29aa4ffa-fe1a-4bad-bcf4-7496757e4f57', '20d94860-14c8-4097-9e4f-0cb9b2d61f37')
+action = 'resume', axis = 'assigned_area_id', header = 'x-assigned-area-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"20d94860-14c8-4097-9e4f-0cb9b2d61f37","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"1719554d-2658-4c94-ae2e-1b97613e7f28","correlation_id":"056f0db7-f35b-40dc-900e-662d6451534a","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-heat_zone_id-x-heat-zone-ids-pause]" time="3.849"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;d8161ecd-839f-4400-81dc-7b7d07ccadbc&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;88615de5-2323-4c5b-ab79-9012472cf28e&quot;,&quot;correlation_id&quot;:&quot;7608c844-32dd-48c4-9ce7-91707972d1e6&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;552d6833-7f77-4fff-bf68-86f90975799a&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e42603ef30&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42d34e420&gt;, '564e3009-4db7-4f53-bb43-9878be3ef5fb', 'd8161ecd-839f-4400-81dc-7b7d07ccadbc')
+action = 'pause', axis = 'heat_zone_id', header = 'x-heat-zone-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"d8161ecd-839f-4400-81dc-7b7d07ccadbc","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"88615de5-2323-4c5b-ab79-9012472cf28e","correlation_id":"7608c844-32dd-48c4-9ce7-91707972d1e6","due_soon_at":null,"active_pause_interval_id":"552d6833-7f77-4fff-bf68-86f90975799a"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[00000000-0000-0000-0000-000000000202-heat_zone_id-x-heat-zone-ids-resume]" time="4.391"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;8ff5cd7f-a8cf-478b-8cff-78d86841d2e6&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;e2828fc0-3e22-400c-bf94-770e7a9a9ea2&quot;,&quot;correlation_id&quot;:&quot;b909e412-4772-412d-b386-36743b672bcd&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e42dacd130&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41fddaf90&gt;, '1bc37ac0-8cfa-430f-b16f-6afe61017b89', '8ff5cd7f-a8cf-478b-8cff-78d86841d2e6')
+action = 'resume', axis = 'heat_zone_id', header = 'x-heat-zone-ids'
+metadata = '00000000-0000-0000-0000-000000000202'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"8ff5cd7f-a8cf-478b-8cff-78d86841d2e6","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"e2828fc0-3e22-400c-bf94-770e7a9a9ea2","correlation_id":"b909e412-4772-412d-b386-36743b672bcd","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[None-brand_id-x-brand-ids-pause]" time="4.507"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;463e9deb-be65-4c56-9dde-464f151cea9c&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;45b8a3ab-1590-4080-bfb2-d666a42c7b25&quot;,&quot;correlation_id&quot;:&quot;38dfc036-804c-41a1-99fa-ec922c45bcca&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;871b7420-0732-48b6-a401-8d3008fe074b&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e426c35340&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e426829be0&gt;, 'e7e27ffc-ba3a-4ba2-80e3-1d24807c43c4', '463e9deb-be65-4c56-9dde-464f151cea9c')
+action = 'pause', axis = 'brand_id', header = 'x-brand-ids', metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"463e9deb-be65-4c56-9dde-464f151cea9c","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"45b8a3ab-1590-4080-bfb2-d666a42c7b25","correlation_id":"38dfc036-804c-41a1-99fa-ec922c45bcca","due_soon_at":null,"active_pause_interval_id":"871b7420-0732-48b6-a401-8d3008fe074b"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[None-brand_id-x-brand-ids-resume]" time="3.839"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;066b1bd9-5b8a-43fd-bff9-f902c100b9f4&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;f4baee64-2dd6-4efb-bccf-50645cd1ba6f&quot;,&quot;correlation_id&quot;:&quot;5c67d014-ba93-4968-a1ba-ea20ede8d958&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e42db1ef90&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42d2a0ce0&gt;, '2a8178c5-1f26-45f3-be11-307427de69e3', '066b1bd9-5b8a-43fd-bff9-f902c100b9f4')
+action = 'resume', axis = 'brand_id', header = 'x-brand-ids', metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"066b1bd9-5b8a-43fd-bff9-f902c100b9f4","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"f4baee64-2dd6-4efb-bccf-50645cd1ba6f","correlation_id":"5c67d014-ba93-4968-a1ba-ea20ede8d958","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[None-region_id-x-region-ids-pause]" time="4.637"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;c406b3aa-7238-4b6f-9f7b-5a312d04e759&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;d49a2e41-0eb2-4c35-ac09-077c1008e359&quot;,&quot;correlation_id&quot;:&quot;4dfd1320-cff4-434c-b8c1-3b8073359447&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;ba279ec4-2c3c-49fe-ba7e-96b29457218c&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41f577350&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41f088320&gt;, '8ab9a379-61d6-4975-a619-52b56d1e0706', 'c406b3aa-7238-4b6f-9f7b-5a312d04e759')
+action = 'pause', axis = 'region_id', header = 'x-region-ids', metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"c406b3aa-7238-4b6f-9f7b-5a312d04e759","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"d49a2e41-0eb2-4c35-ac09-077c1008e359","correlation_id":"4dfd1320-cff4-434c-b8c1-3b8073359447","due_soon_at":null,"active_pause_interval_id":"ba279ec4-2c3c-49fe-ba7e-96b29457218c"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[None-region_id-x-region-ids-resume]" time="3.969"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;51e2d3bb-d5d8-49fe-aeaf-3fa39208b859&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;9bbc2e6f-c3c6-4ebb-a586-2d1e219c5abd&quot;,&quot;correlation_id&quot;:&quot;f60f44a2-eef1-45a3-b311-f1731fc5e7c6&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41e5df500&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42d0581d0&gt;, 'bb88742b-f514-4710-80e3-686a8134241c', '51e2d3bb-d5d8-49fe-aeaf-3fa39208b859')
+action = 'resume', axis = 'region_id', header = 'x-region-ids', metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"51e2d3bb-d5d8-49fe-aeaf-3fa39208b859","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"9bbc2e6f-c3c6-4ebb-a586-2d1e219c5abd","correlation_id":"f60f44a2-eef1-45a3-b311-f1731fc5e7c6","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[None-store_id-x-store-ids-pause]" time="3.747"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;0630e06e-388f-42b2-82ba-d3557d88c236&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;6df8b906-2a32-431a-8a20-52426bdae1a0&quot;,&quot;correlation_id&quot;:&quot;e000d475-df0a-4bf2-bfeb-40cd409f5e8d&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;47b2c2fd-11b4-4837-a82f-629818f03677&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e425589370&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42442f830&gt;, 'ed6b06df-31a5-4a82-ba23-8aae323db636', '0630e06e-388f-42b2-82ba-d3557d88c236')
+action = 'pause', axis = 'store_id', header = 'x-store-ids', metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"0630e06e-388f-42b2-82ba-d3557d88c236","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"6df8b906-2a32-431a-8a20-52426bdae1a0","correlation_id":"e000d475-df0a-4bf2-bfeb-40cd409f5e8d","due_soon_at":null,"active_pause_interval_id":"47b2c2fd-11b4-4837-a82f-629818f03677"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[None-store_id-x-store-ids-resume]" time="4.740"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;7ecc25b2-f5da-460f-8d0d-9b0da681427c&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;0443772c-f679-4c68-b7be-d1b341175f22&quot;,&quot;correlation_id&quot;:&quot;f660c368-b6d2-471e-b10b-1a7fd2b395e5&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41d9a6c90&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41d8cdd60&gt;, 'd65e82d2-f7e8-476a-aa85-de546ea7809c', '7ecc25b2-f5da-460f-8d0d-9b0da681427c')
+action = 'resume', axis = 'store_id', header = 'x-store-ids', metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"7ecc25b2-f5da-460f-8d0d-9b0da681427c","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"0443772c-f679-4c68-b7be-d1b341175f22","correlation_id":"f660c368-b6d2-471e-b10b-1a7fd2b395e5","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[None-assigned_area_id-x-assigned-area-ids-pause]" time="3.708"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;cf9cb441-9e4e-4022-b1cf-0720c903bbe2&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;8ef7fd43-0c4e-4d8a-a3af-c114bdf24951&quot;,&quot;correlation_id&quot;:&quot;71256ed2-48d9-4b11-a525-7a4f7273176a&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;c4c652a5-c920-49d2-98e6-c5662d160c3b&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e424b77830&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e4246a0f50&gt;, 'a05c10c0-cf89-46a7-b330-69e25ff66a46', 'cf9cb441-9e4e-4022-b1cf-0720c903bbe2')
+action = 'pause', axis = 'assigned_area_id', header = 'x-assigned-area-ids'
+metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"cf9cb441-9e4e-4022-b1cf-0720c903bbe2","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"8ef7fd43-0c4e-4d8a-a3af-c114bdf24951","correlation_id":"71256ed2-48d9-4b11-a525-7a4f7273176a","due_soon_at":null,"active_pause_interval_id":"c4c652a5-c920-49d2-98e6-c5662d160c3b"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[None-assigned_area_id-x-assigned-area-ids-resume]" time="4.797"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;d5311ab1-1065-40ed-98c3-d30e4f2b7c97&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;0ec0c6b6-92b6-45ec-853c-27ab225307b0&quot;,&quot;correlation_id&quot;:&quot;4c0c8348-b135-4d5e-86f1-72fad18763f3&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41ffa9670&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41f1bb2f0&gt;, 'e4dc71cb-938e-4976-90af-3f75b00fe5a4', 'd5311ab1-1065-40ed-98c3-d30e4f2b7c97')
+action = 'resume', axis = 'assigned_area_id', header = 'x-assigned-area-ids'
+metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"d5311ab1-1065-40ed-98c3-d30e4f2b7c97","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"0ec0c6b6-92b6-45ec-853c-27ab225307b0","correlation_id":"4c0c8348-b135-4d5e-86f1-72fad18763f3","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[None-heat_zone_id-x-heat-zone-ids-pause]" time="3.691"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;89118f21-092b-4405-8413-6684f15b042c&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;79824739-e563-4997-9dd8-f3803ca3a3b8&quot;,&quot;correlation_id&quot;:&quot;7d0192fe-074c-461b-b646-da61872b70cb&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;35ae4da0-d3c0-4393-acea-45829c5d58a0&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41f8c0530&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e424e5f950&gt;, 'c5413847-2295-4ca8-86e7-30881d9e3772', '89118f21-092b-4405-8413-6684f15b042c')
+action = 'pause', axis = 'heat_zone_id', header = 'x-heat-zone-ids'
+metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"89118f21-092b-4405-8413-6684f15b042c","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"79824739-e563-4997-9dd8-f3803ca3a3b8","correlation_id":"7d0192fe-074c-461b-b646-da61872b70cb","due_soon_at":null,"active_pause_interval_id":"35ae4da0-d3c0-4393-acea-45829c5d58a0"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_linked_resource_scope_denies_without_mutation[None-heat_zone_id-x-heat-zone-ids-resume]" time="4.677"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;58c5b0b7-488c-4c85-b90a-b4f9f1d982f1&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;e802236e-6088-4bfb-a930-7a4cec8d43db&quot;,&quot;correlation_id&quot;:&quot;ed3a9ff5-b5d6-4910-a3a9-6eb9817c6bd4&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41d408500&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41d307fe0&gt;, '03edd4ce-8d7c-405d-a99f-909660c82839', '58c5b0b7-488c-4c85-b90a-b4f9f1d982f1')
+action = 'resume', axis = 'heat_zone_id', header = 'x-heat-zone-ids'
+metadata = None
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("axis,header", AXES)
+    @pytest.mark.parametrize("metadata", [OUTSIDE, None])
+    def test_linked_resource_scope_denies_without_mutation(seeded, action, axis, header, metadata):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        store.intakes[intake_id]["scope"][axis] = metadata
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        version = store.slas[sla_id]["version"]
+        denied = command(client, sla_id, action, version, scope={header: ALLOWED})
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"58c5b0b7-488c-4c85-b90a-b4f9f1d982f1","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"e802236e-6088-4bfb-a930-7a4cec8d43db","correlation_id":"ed3a9ff5-b5d6-4910-a3a9-6eb9817c6bd4","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:78: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_child_tenant_cannot_substitute_for_resource_authority[dangling-pause]" time="3.939"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;8b465fc8-06ba-40f9-ba67-0c9d583c7ce7&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;a64d9621-b0a6-47dc-9c0d-48d9bee7d979&quot;,&quot;correlation_id&quot;:&quot;c7134790-25cd-465a-aa30-49598f08a2d7&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;e24cfcb1-5d70-435e-8374-eac47837c14a&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e4275d7dd0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42da395e0&gt;, '87e72a30-8a8d-4f93-a9d5-b5de704aeea3', '8b465fc8-06ba-40f9-ba67-0c9d583c7ce7')
+action = 'pause', link = 'dangling'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_child_tenant_cannot_substitute_for_resource_authority(seeded, action, link):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.slas[sla_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.slas[sla_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, store.slas[sla_id]["version"], scope=scope)
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"8b465fc8-06ba-40f9-ba67-0c9d583c7ce7","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"a64d9621-b0a6-47dc-9c0d-48d9bee7d979","correlation_id":"c7134790-25cd-465a-aa30-49598f08a2d7","due_soon_at":null,"active_pause_interval_id":"e24cfcb1-5d70-435e-8374-eac47837c14a"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:99: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_child_tenant_cannot_substitute_for_resource_authority[dangling-resume]" time="3.777"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;d3f57810-287e-4d01-8674-4963d9f04b48&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;06ae7335-eb9a-4a27-8a85-ea31b06c71f1&quot;,&quot;correlation_id&quot;:&quot;c8b2d2ab-44fe-428d-b2f5-106d1279c89a&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e4264b4110&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41f054590&gt;, '792d93bb-b812-41d9-8749-ae9afb6d9c08', 'd3f57810-287e-4d01-8674-4963d9f04b48')
+action = 'resume', link = 'dangling'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_child_tenant_cannot_substitute_for_resource_authority(seeded, action, link):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.slas[sla_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.slas[sla_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, store.slas[sla_id]["version"], scope=scope)
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"d3f57810-287e-4d01-8674-4963d9f04b48","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"06ae7335-eb9a-4a27-8a85-ea31b06c71f1","correlation_id":"c8b2d2ab-44fe-428d-b2f5-106d1279c89a","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:99: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_child_tenant_cannot_substitute_for_resource_authority[foreign-tenant-pause]" time="4.896"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;b4dc752d-ce35-42c0-9c19-23c0e4ae92cb&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;3968cd0c-6475-4d98-b583-b95a430a8464&quot;,&quot;correlation_id&quot;:&quot;4688e64c-22ef-47cf-a4f7-e3b12717f068&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;834161d7-8884-4a99-90de-b7a2d7159d15&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41bcee3f0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41ba1e990&gt;, '1f30583b-642d-4890-a221-743fcda16a6c', 'b4dc752d-ce35-42c0-9c19-23c0e4ae92cb')
+action = 'pause', link = 'foreign-tenant'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_child_tenant_cannot_substitute_for_resource_authority(seeded, action, link):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.slas[sla_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.slas[sla_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, store.slas[sla_id]["version"], scope=scope)
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"b4dc752d-ce35-42c0-9c19-23c0e4ae92cb","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"3968cd0c-6475-4d98-b583-b95a430a8464","correlation_id":"4688e64c-22ef-47cf-a4f7-e3b12717f068","due_soon_at":null,"active_pause_interval_id":"834161d7-8884-4a99-90de-b7a2d7159d15"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:99: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_child_tenant_cannot_substitute_for_resource_authority[foreign-tenant-resume]" time="3.736"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;be0d2236-1429-4333-81ce-cb1818ed1bb0&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;dc7023ad-d802-4850-9381-f7ffc358a219&quot;,&quot;correlation_id&quot;:&quot;53e69e73-0a4b-4fef-b0b8-c8e4d0db9393&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41ff2f110&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e42c668950&gt;, '2a2c27a1-7617-444a-86b0-a9c1f871e8ff', 'be0d2236-1429-4333-81ce-cb1818ed1bb0')
+action = 'resume', link = 'foreign-tenant'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_child_tenant_cannot_substitute_for_resource_authority(seeded, action, link):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.slas[sla_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.slas[sla_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, store.slas[sla_id]["version"], scope=scope)
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"be0d2236-1429-4333-81ce-cb1818ed1bb0","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"dc7023ad-d802-4850-9381-f7ffc358a219","correlation_id":"53e69e73-0a4b-4fef-b0b8-c8e4d0db9393","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:99: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_child_tenant_cannot_substitute_for_resource_authority[standalone-missing-axis-pause]" time="3.755"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;8a7d5755-2df6-42db-9767-8c46473853cb&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;85c0ed88-ec19-41d9-aeaa-3686d6c81b62&quot;,&quot;correlation_id&quot;:&quot;6d9e3580-a991-49fe-80d4-60a6d63da59b&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;0fb47652-73d2-43ae-bf9b-10fe052eb250&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41ca61fa0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41c785070&gt;, '3e540dcd-f062-4212-845a-56f70bdfa874', '8a7d5755-2df6-42db-9767-8c46473853cb')
+action = 'pause', link = 'standalone-missing-axis'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_child_tenant_cannot_substitute_for_resource_authority(seeded, action, link):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.slas[sla_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.slas[sla_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, store.slas[sla_id]["version"], scope=scope)
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"8a7d5755-2df6-42db-9767-8c46473853cb","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"85c0ed88-ec19-41d9-aeaa-3686d6c81b62","correlation_id":"6d9e3580-a991-49fe-80d4-60a6d63da59b","due_soon_at":null,"active_pause_interval_id":"0fb47652-73d2-43ae-bf9b-10fe052eb250"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:99: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_child_tenant_cannot_substitute_for_resource_authority[standalone-missing-axis-resume]" time="4.936"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;a9e09346-9205-436d-ac32-0da5b6420bdf&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;b6ecdbdc-6378-402d-a836-f201b66a5a90&quot;,&quot;correlation_id&quot;:&quot;471ce0a2-05d1-47c7-b86c-9bad8051a610&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41b319190&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41ae0e600&gt;, '68b5f899-f002-4451-aa65-127359130e3e', 'a9e09346-9205-436d-ac32-0da5b6420bdf')
+action = 'resume', link = 'standalone-missing-axis'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_child_tenant_cannot_substitute_for_resource_authority(seeded, action, link):
+        client, store, intake_id, sla_id = seeded
+        if action == "resume":
+            assert command(client, sla_id, "pause").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.slas[sla_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.slas[sla_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, store.slas[sla_id]["version"], scope=scope)
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"a9e09346-9205-436d-ac32-0da5b6420bdf","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"b6ecdbdc-6378-402d-a836-f201b66a5a90","correlation_id":"471ce0a2-05d1-47c7-b86c-9bad8051a610","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:99: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_replay_rechecks_current_resource_scope[pause]" time="3.629"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;64c570d6-ce37-40e2-b7fa-cee818a25339&quot;,&quot;state&quot;:&quot;PAUSED&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:24,&quot;audit_event_id&quot;:&quot;fdead4be-194c-4f7f-9df6-3fe253d0fec7&quot;,&quot;correlation_id&quot;:&quot;8fc94157-8b43-4e7b-b81f-1359228ce9c3&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:&quot;fc799f69-4b51-4174-aed6-4510378f23a1&quot;}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41d716390&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41f015a90&gt;, '2334b238-1a5c-4330-93d2-cfd1d08a9bef', '64c570d6-ce37-40e2-b7fa-cee818a25339')
+action = 'pause'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    def test_replay_rechecks_current_resource_scope(seeded, action):
+        client, store, intake_id, sla_id = seeded
+        store.intakes[intake_id]["scope"]["brand_id"] = ALLOWED
+        scope = {"x-brand-ids": ALLOWED}
+        version = 23
+        if action == "resume":
+            assert command(client, sla_id, "pause", scope=scope).status_code == 200
+            version = 24
+        key = f"sla-scope-replay-{uuid4()}"
+        original = command(client, sla_id, action, version, scope=scope, key=key)
+        assert original.status_code == 200, original.text
+        store.intakes[intake_id]["scope"]["brand_id"] = OUTSIDE
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, version, scope=scope, key=key)
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"64c570d6-ce37-40e2-b7fa-cee818a25339","state":"PAUSED","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":24,"audit_event_id":"fdead4be-194c-4f7f-9df6-3fe253d0fec7","correlation_id":"8fc94157-8b43-4e7b-b81f-1359228ce9c3","due_soon_at":null,"active_pause_interval_id":"fc799f69-4b51-4174-aed6-4510378f23a1"}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:118: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_replay_rechecks_current_resource_scope[resume]" time="3.720"><failure message="AssertionError: {&quot;sla_instance_id&quot;:&quot;804b801d-085f-43f4-9471-79c7b6bd14df&quot;,&quot;state&quot;:&quot;ON_TRACK&quot;,&quot;due_at&quot;:&quot;2027-01-09T12:00:00Z&quot;,&quot;paused_duration_seconds&quot;:19,&quot;version&quot;:25,&quot;audit_event_id&quot;:&quot;2dc99d43-6f50-40fe-a622-df283265fc02&quot;,&quot;correlation_id&quot;:&quot;a1caa1ff-6b1b-4c0b-9a8f-ea43f664a2da&quot;,&quot;due_soon_at&quot;:null,&quot;active_pause_interval_id&quot;:null}&#10;assert 200 == 403&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41c160c20&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41f4e9940&gt;, '3c68beb1-3e1b-43b5-82f7-294a075aa276', '804b801d-085f-43f4-9471-79c7b6bd14df')
+action = 'resume'
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    def test_replay_rechecks_current_resource_scope(seeded, action):
+        client, store, intake_id, sla_id = seeded
+        store.intakes[intake_id]["scope"]["brand_id"] = ALLOWED
+        scope = {"x-brand-ids": ALLOWED}
+        version = 23
+        if action == "resume":
+            assert command(client, sla_id, "pause", scope=scope).status_code == 200
+            version = 24
+        key = f"sla-scope-replay-{uuid4()}"
+        original = command(client, sla_id, action, version, scope=scope, key=key)
+        assert original.status_code == 200, original.text
+        store.intakes[intake_id]["scope"]["brand_id"] = OUTSIDE
+        before = copy.deepcopy((store.intakes, store.slas, store.replays))
+        denied = command(client, sla_id, action, version, scope=scope, key=key)
+&gt;       assert denied.status_code == 403, denied.text
+E       AssertionError: {"sla_instance_id":"804b801d-085f-43f4-9471-79c7b6bd14df","state":"ON_TRACK","due_at":"2027-01-09T12:00:00Z","paused_duration_seconds":19,"version":25,"audit_event_id":"2dc99d43-6f50-40fe-a622-df283265fc02","correlation_id":"a1caa1ff-6b1b-4c0b-9a8f-ea43f664a2da","due_soon_at":null,"active_pause_interval_id":null}
+E       assert 200 == 403
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:118: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_pause_interval_retains_disclosure_inputs_and_elapsed_time_once" time="4.836"><failure message="KeyError: 'pause_intervals'">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41a24dfd0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e426649be0&gt;, 'a84a1364-4b69-4cd9-b024-5b41698161fd', '98a4ef60-c4ce-4c9f-9b24-23916b79d3c6')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x75e41c162ab0&gt;
+
+    def test_pause_interval_retains_disclosure_inputs_and_elapsed_time_once(seeded, monkeypatch):
+        client, store, intake_id, sla_id = seeded
+    
+        class Clock(datetime):
+            current = datetime(2026, 10, 9, 12, tzinfo=UTC)
+    
+            @classmethod
+            def now(cls, tz=None):
+                return cls.current if tz else cls.current.replace(tzinfo=None)
+    
+        monkeypatch.setattr(listings, "datetime", Clock)
+        store.intakes[intake_id]["scope"].update({axis: ALLOWED for axis, _ in AXES})
+        scope = {header: ALLOWED for _, header in AXES}
+        intake_before = copy.deepcopy(store.intakes[intake_id])
+        pause_key, resume_key = f"sla-pause-{uuid4()}", f"sla-resume-{uuid4()}"
+        paused = command(client, sla_id, "pause", scope=scope, key=pause_key)
+        assert paused.status_code == 200, paused.text
+&gt;       interval = store.slas[sla_id]["pause_intervals"][0]
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'pause_intervals'
+
+tests/security/test_assisted_sla_resource_scope.py:144: KeyError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_pause_rejects_blank_or_short_trimmed_reason[   ]" time="3.717"><failure message="assert 200 == 422&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41f4819a0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41caeb920&gt;, '0cbddc69-a089-4419-9c2f-7567883d9d10', 'aca1b9a5-b95a-417a-88de-8b3e33fd5474')
+reason = '   '
+
+    @pytest.mark.parametrize("reason", ["   ", "\n\t ", " a "])
+    def test_pause_rejects_blank_or_short_trimmed_reason(seeded, reason):
+        client, store, _, sla_id = seeded
+        before = copy.deepcopy((store.slas, store.replays))
+        response = client.post(
+            f"/api/v1/sla-instances/{sla_id}/actions/pause", json={**PAUSE, "reason": reason},
+            headers={**HEADERS, "If-Match": 'W/"23"', "Idempotency-Key": f"sla-empty-{uuid4()}"},
+        )
+&gt;       assert response.status_code == 422
+E       assert 200 == 422
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:190: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_pause_rejects_blank_or_short_trimmed_reason[\n\t ]" time="3.710"><failure message="assert 200 == 422&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e41ca628a0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41b2571a0&gt;, '26c72582-2b4c-4a3a-83af-d8df6c87f277', '19171eae-d483-48e3-9b5e-ba685dee381f')
+reason = '\n\t '
+
+    @pytest.mark.parametrize("reason", ["   ", "\n\t ", " a "])
+    def test_pause_rejects_blank_or_short_trimmed_reason(seeded, reason):
+        client, store, _, sla_id = seeded
+        before = copy.deepcopy((store.slas, store.replays))
+        response = client.post(
+            f"/api/v1/sla-instances/{sla_id}/actions/pause", json={**PAUSE, "reason": reason},
+            headers={**HEADERS, "If-Match": 'W/"23"', "Idempotency-Key": f"sla-empty-{uuid4()}"},
+        )
+&gt;       assert response.status_code == 422
+E       assert 200 == 422
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:190: AssertionError</failure></testcase><testcase classname="tests.security.test_assisted_sla_resource_scope" name="test_pause_rejects_blank_or_short_trimmed_reason[ a ]" time="4.963"><failure message="assert 200 == 422&#10; +  where 200 = &lt;Response [200 OK]&gt;.status_code">seeded = (&lt;starlette.testclient.TestClient object at 0x75e419a50590&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object at 0x75e41ca86c30&gt;, '37502142-3842-49d4-a215-5bcc0897bb11', '78cad91d-9be8-4577-a060-d73b16e73963')
+reason = ' a '
+
+    @pytest.mark.parametrize("reason", ["   ", "\n\t ", " a "])
+    def test_pause_rejects_blank_or_short_trimmed_reason(seeded, reason):
+        client, store, _, sla_id = seeded
+        before = copy.deepcopy((store.slas, store.replays))
+        response = client.post(
+            f"/api/v1/sla-instances/{sla_id}/actions/pause", json={**PAUSE, "reason": reason},
+            headers={**HEADERS, "If-Match": 'W/"23"', "Idempotency-Key": f"sla-empty-{uuid4()}"},
+        )
+&gt;       assert response.status_code == 422
+E       assert 200 == 422
+E        +  where 200 = &lt;Response [200 OK]&gt;.status_code
+
+tests/security/test_assisted_sla_resource_scope.py:190: AssertionError</failure></testcase></testsuite></testsuites>

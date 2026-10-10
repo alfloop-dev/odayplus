@@ -1,0 +1,53 @@
+{
+  "boxes": {
+    "panel": {
+      "x": 20,
+      "y": 403.203125,
+      "width": 1400,
+      "height": 804.46875,
+      "scrollWidth": 1400,
+      "columns": "1400px",
+      "overflowX": "visible"
+    },
+    "tableScroll": {
+      "x": 20,
+      "y": 461.796875,
+      "width": 1038,
+      "height": 325.71875,
+      "scrollWidth": 1036,
+      "columns": "none",
+      "overflowX": "auto"
+    },
+    "map": {
+      "x": 20,
+      "y": 799.515625,
+      "width": 1038,
+      "height": 250,
+      "scrollWidth": 1036,
+      "columns": "none",
+      "overflowX": "hidden"
+    },
+    "recommendation": {
+      "x": 1072,
+      "y": 461.796875,
+      "width": 348,
+      "height": 745.875,
+      "scrollWidth": 346,
+      "columns": "314px",
+      "overflowX": "visible"
+    }
+  },
+  "document": {
+    "width": 1440,
+    "scrollWidth": 1440
+  },
+  "design": {
+    "x": 20,
+    "y": 189.84375,
+    "width": 1400,
+    "height": 844.84375,
+    "scrollWidth": 1400,
+    "columns": "none",
+    "overflowX": "visible"
+  }
+}

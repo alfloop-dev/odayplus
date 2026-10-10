@@ -1,0 +1,4 @@
+
+> @oday-plus/openapi-client@0.1.0 typecheck
+> tsc --noEmit
+

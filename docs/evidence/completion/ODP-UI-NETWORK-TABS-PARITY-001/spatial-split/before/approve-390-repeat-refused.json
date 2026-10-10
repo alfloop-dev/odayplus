@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal '87e28552-90c9-45cf-af58-da1780a50cb2' is already APPROVED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal '87e28552-90c9-45cf-af58-da1780a50cb2' is already APPROVED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-10T01:03:08.530Z",
+      "details": [],
+      "correlation_id": "16de9e37-85be-409c-b202-205be13cb04a"
+    }
+  }
+}

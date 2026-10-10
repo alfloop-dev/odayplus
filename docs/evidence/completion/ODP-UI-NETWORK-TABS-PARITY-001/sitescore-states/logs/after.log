@@ -1,0 +1,682 @@
+[WebServer] 2026/10/09 18:22:52 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 18:22:54 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 18:22:54 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [2056767]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T18:22:58.264080+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "62a18f24-7742-40e2-aa46-9ea391af2be4", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 2 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T18:23:21.259958+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d0c4f3b1-e17e-475f-8e46-d44e70e85e7e", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:21.285810+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d63731da-3c32-4756-8169-14e0c46d07a8", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:26.881476+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:26.882370+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:26.884997+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:28.695332+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:28.748012+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:28.761499+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:28.769697+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-93984c0a-637e-43d2-ba03-44e587be216a", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+  ✘  1 [chromium] › tests/visual/operator-sitescore-states-parity.spec.ts:30:7 › SiteScore risk / batch / scoped flow at 1440 (10.9s)
+[WebServer] {"timestamp": "2026-10-09T18:23:30.185900+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "e01b7730-ad23-4ef1-aa7e-7f298a5ae7b9", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:30.206720+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "78f59dd9-e9b4-4475-90d7-e90fd5837887", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:32.389946+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:32.446568+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:32.448557+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:33.789669+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:33.827719+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:33.874377+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T18:23:33.879425+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-fcb44901-a440-479f-a5d3-1346f1e8d6df", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+  ✘  2 [chromium] › tests/visual/operator-sitescore-states-parity.spec.ts:30:7 › SiteScore risk / batch / scoped flow at 390 (5.7s)
+
+
+  1) [chromium] › tests/visual/operator-sitescore-states-parity.spec.ts:30:7 › SiteScore risk / batch / scoped flow at 1440 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -   1
+    + Received  + 303
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.47,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7590",
+    +               "fontSize": "6.8pt (9px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_riskBreakdownCard__RGxcA\"><dt class=\"networkFindAreas_riskCardKey__o8X8V\">租金合理性</dt><dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"watch\">偏高（區間 P70）</dd></div>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(1)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dt class=\"networkFindAreas_riskCardKey__o8X8V\">租金合理性</dt>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(1) > .networkFindAreas_riskCardKey__o8X8V",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.47,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7590",
+    +               "fontSize": "6.8pt (9px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_riskBreakdownCard__RGxcA\"><dt class=\"networkFindAreas_riskCardKey__o8X8V\">自家稀釋</dt><dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"watch\">11%（中）</dd></div>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(2)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dt class=\"networkFindAreas_riskCardKey__o8X8V\">自家稀釋</dt>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(2) > .networkFindAreas_riskCardKey__o8X8V",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.47,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7590",
+    +               "fontSize": "6.8pt (9px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_riskBreakdownCard__RGxcA\"><dt class=\"networkFindAreas_riskCardKey__o8X8V\">競店壓力</dt><dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"risk\">高（150m 強競店）</dd></div>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(3)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dt class=\"networkFindAreas_riskCardKey__o8X8V\">競店壓力</dt>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(3) > .networkFindAreas_riskCardKey__o8X8V",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.47,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7590",
+    +               "fontSize": "6.8pt (9px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_riskBreakdownCard__RGxcA\"><dt class=\"networkFindAreas_riskCardKey__o8X8V\">需求強度</dt><dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"good\">中高（通勤指數 82）</dd></div>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(4)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dt class=\"networkFindAreas_riskCardKey__o8X8V\">需求強度</dt>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(4) > .networkFindAreas_riskCardKey__o8X8V",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#e5f3ea",
+    +               "contrastRatio": 4.36,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#1e7f4f",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.36 (foreground color: #1e7f4f, background color: #e5f3ea, font size: 7.5pt (10px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"good\">中高（通勤指數 82）</dd>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(4) > .networkFindAreas_riskCardVal__IiMqm[data-tone=\"good\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.36 (foreground color: #1e7f4f, background color: #e5f3ea, font size: 7.5pt (10px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"good\">中高（通勤指數 82）</dd>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(4) > .networkFindAreas_riskCardVal__IiMqm[data-tone=\"good\"]",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.47,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7590",
+    +               "fontSize": "6.8pt (9px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_riskBreakdownCard__RGxcA\"><dt class=\"networkFindAreas_riskCardKey__o8X8V\">POI 適配</dt><dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"good\">高（捷運＋學校＋超商 5）</dd></div>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(5)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dt class=\"networkFindAreas_riskCardKey__o8X8V\">POI 適配</dt>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(5) > .networkFindAreas_riskCardKey__o8X8V",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#e5f3ea",
+    +               "contrastRatio": 4.36,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#1e7f4f",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.36 (foreground color: #1e7f4f, background color: #e5f3ea, font size: 7.5pt (10px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"good\">高（捷運＋學校＋超商 5）</dd>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(5) > .networkFindAreas_riskCardVal__IiMqm[data-tone=\"good\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.36 (foreground color: #1e7f4f, background color: #e5f3ea, font size: 7.5pt (10px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"good\">高（捷運＋學校＋超商 5）</dd>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(5) > .networkFindAreas_riskCardVal__IiMqm[data-tone=\"good\"]",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.47,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7590",
+    +               "fontSize": "6.8pt (9px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_riskBreakdownCard__RGxcA\"><dt class=\"networkFindAreas_riskCardKey__o8X8V\">可及性／停車</dt><dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"watch\">中（站前施工圍籬）</dd></div>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(6)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dt class=\"networkFindAreas_riskCardKey__o8X8V\">可及性／停車</dt>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(6) > .networkFindAreas_riskCardKey__o8X8V",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      67 |       const axe = await new AxeBuilder({ page }).include('[aria-label="Risk breakdown"]').withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+      68 |       await save(info, `axe-risk-${width}.json`, axe);
+    > 69 |       expect(axe.violations).toEqual([]);
+         |                              ^
+      70 |     }
+      71 |     await panel.getByRole("button", { name: "批次評分", exact: true }).click();
+      72 |     const table = panel.getByTestId("sitescore-batch-table");
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-sitescore-states-parity.spec.ts:69:30
+
+    Error Context: test-results/operator-sitescore-states--7098d-k-batch-scoped-flow-at-1440-chromium/error-context.md
+
+  2) [chromium] › tests/visual/operator-sitescore-states-parity.spec.ts:30:7 › SiteScore risk / batch / scoped flow at 390 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -   1
+    + Received  + 303
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.47,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7590",
+    +               "fontSize": "6.8pt (9px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_riskBreakdownCard__RGxcA\"><dt class=\"networkFindAreas_riskCardKey__o8X8V\">租金合理性</dt><dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"watch\">偏高（區間 P70）</dd></div>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(1)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dt class=\"networkFindAreas_riskCardKey__o8X8V\">租金合理性</dt>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(1) > .networkFindAreas_riskCardKey__o8X8V",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.47,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7590",
+    +               "fontSize": "6.8pt (9px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_riskBreakdownCard__RGxcA\"><dt class=\"networkFindAreas_riskCardKey__o8X8V\">自家稀釋</dt><dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"watch\">11%（中）</dd></div>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(2)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dt class=\"networkFindAreas_riskCardKey__o8X8V\">自家稀釋</dt>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(2) > .networkFindAreas_riskCardKey__o8X8V",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.47,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7590",
+    +               "fontSize": "6.8pt (9px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_riskBreakdownCard__RGxcA\"><dt class=\"networkFindAreas_riskCardKey__o8X8V\">競店壓力</dt><dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"risk\">高（150m 強競店）</dd></div>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(3)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dt class=\"networkFindAreas_riskCardKey__o8X8V\">競店壓力</dt>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(3) > .networkFindAreas_riskCardKey__o8X8V",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.47,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7590",
+    +               "fontSize": "6.8pt (9px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_riskBreakdownCard__RGxcA\"><dt class=\"networkFindAreas_riskCardKey__o8X8V\">需求強度</dt><dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"good\">中高（通勤指數 82）</dd></div>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(4)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dt class=\"networkFindAreas_riskCardKey__o8X8V\">需求強度</dt>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(4) > .networkFindAreas_riskCardKey__o8X8V",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#e5f3ea",
+    +               "contrastRatio": 4.36,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#1e7f4f",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.36 (foreground color: #1e7f4f, background color: #e5f3ea, font size: 7.5pt (10px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"good\">中高（通勤指數 82）</dd>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(4) > .networkFindAreas_riskCardVal__IiMqm[data-tone=\"good\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.36 (foreground color: #1e7f4f, background color: #e5f3ea, font size: 7.5pt (10px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"good\">中高（通勤指數 82）</dd>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(4) > .networkFindAreas_riskCardVal__IiMqm[data-tone=\"good\"]",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.47,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7590",
+    +               "fontSize": "6.8pt (9px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_riskBreakdownCard__RGxcA\"><dt class=\"networkFindAreas_riskCardKey__o8X8V\">POI 適配</dt><dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"good\">高（捷運＋學校＋超商 5）</dd></div>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(5)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dt class=\"networkFindAreas_riskCardKey__o8X8V\">POI 適配</dt>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(5) > .networkFindAreas_riskCardKey__o8X8V",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#e5f3ea",
+    +               "contrastRatio": 4.36,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#1e7f4f",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.36 (foreground color: #1e7f4f, background color: #e5f3ea, font size: 7.5pt (10px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"good\">高（捷運＋學校＋超商 5）</dd>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(5) > .networkFindAreas_riskCardVal__IiMqm[data-tone=\"good\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.36 (foreground color: #1e7f4f, background color: #e5f3ea, font size: 7.5pt (10px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"good\">高（捷運＋學校＋超商 5）</dd>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(5) > .networkFindAreas_riskCardVal__IiMqm[data-tone=\"good\"]",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.47,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7590",
+    +               "fontSize": "6.8pt (9px)",
+    +               "fontWeight": "bold",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"networkFindAreas_riskBreakdownCard__RGxcA\"><dt class=\"networkFindAreas_riskCardKey__o8X8V\">可及性／停車</dt><dd class=\"networkFindAreas_riskCardVal__IiMqm\" data-tone=\"watch\">中（站前施工圍籬）</dd></div>",
+    +                 "target": Array [
+    +                   "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(6)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.47 (foreground color: #6b7590, background color: #fbfcfe, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1",
+    +         "html": "<dt class=\"networkFindAreas_riskCardKey__o8X8V\">可及性／停車</dt>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "article[data-testid=\"sitescore-card-CS-1002\"] > .networkFindAreas_riskBreakdownSection__anTfk > .networkFindAreas_riskBreakdownGrid__TmeoM[aria-label=\"Risk breakdown\"] > .networkFindAreas_riskBreakdownCard__RGxcA:nth-child(6) > .networkFindAreas_riskCardKey__o8X8V",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      67 |       const axe = await new AxeBuilder({ page }).include('[aria-label="Risk breakdown"]').withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+      68 |       await save(info, `axe-risk-${width}.json`, axe);
+    > 69 |       expect(axe.violations).toEqual([]);
+         |                              ^
+      70 |     }
+      71 |     await panel.getByRole("button", { name: "批次評分", exact: true }).click();
+      72 |     const table = panel.getByTestId("sitescore-batch-table");
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-sitescore-states-parity.spec.ts:69:30
+
+    Error Context: test-results/operator-sitescore-states--5b637-sk-batch-scoped-flow-at-390-chromium/error-context.md
+
+  2 failed
+    [chromium] › tests/visual/operator-sitescore-states-parity.spec.ts:30:7 › SiteScore risk / batch / scoped flow at 1440 
+    [chromium] › tests/visual/operator-sitescore-states-parity.spec.ts:30:7 › SiteScore risk / batch / scoped flow at 390 

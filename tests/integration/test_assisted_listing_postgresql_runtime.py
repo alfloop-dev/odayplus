@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import copy
 import re
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from shared.auth import Role, Scope
+from shared.identity.store import Account
 from shared.infrastructure.persistence.assisted_listing_intake import (
     ALL_TABLES,
     AssistedIntakePersistenceConflict,
@@ -290,6 +294,15 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
     app = create_app(
         external_provider_validation=_live_provider_validation(),
     )
+    # Use the actual identity schema/store for assignment recipients. Explicit
+    # test accounts, not production/Operator provisioning or login acceptance.
+    with intake_blank_db.connect(autocommit=True) as connection:
+        connection.execute((REPO_ROOT / "infra/db/migrations/000011_identity_schema.sql").read_text())
+    identities = app.state.persistence_bundle.identity_store
+    for subject, role in ((OWNER_ID, Role.DATA_OWNER), (REVIEWER_ID, Role.SITE_REVIEWER)):
+        identities.save_account(Account(UUID(subject), UUID(TENANT_ID), subject, f"{subject}@example.invalid"))
+        identities.set_account_roles(subject, [role])
+        identities.set_account_scope(subject, Scope(tenant_id=TENANT_ID))
     client = TestClient(app)
     submit_key = f"production-submit-{uuid4()}"
     submitted = client.post(
@@ -321,7 +334,35 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
     state = app.state.assisted_intake_store
     state.refresh(TENANT_ID)
     state.intakes[receipt["intake_id"]]["state"] = "NEEDS_REVIEW"
+    # Explicit SLA provisioning fixture: the API still has no approved SLA
+    # creation endpoint. The actions below, persistence and restart are real;
+    # this does not prove Operator provisioning or its shared read-model.
+    sla_id = str(uuid4())
+    state.slas[sla_id] = {
+        "sla_instance_id": sla_id,
+        "intake_id": receipt["intake_id"],
+        "tenant_id": TENANT_ID,
+        "state": "ON_TRACK",
+        "due_at": "2026-07-30T12:00:00Z",
+        "paused_duration_seconds": 17,
+        "version": 23,
+        "audit_event_id": str(uuid4()),
+        "correlation_id": str(uuid4()),
+    }
     state.flush()
+    pause_body = {
+        "reason": "Awaiting independent source feedback",
+        "expected_resume_at": "2027-01-10T12:00:00Z",
+    }
+    pause_headers = {
+        **_headers(ACTOR_ID, key=f"production-sla-pause-{uuid4()}"),
+        "If-Match": 'W/"23"',
+    }
+    paused = client.post(
+        f"/api/v1/sla-instances/{sla_id}/actions/pause",
+        json=pause_body, headers=pause_headers,
+    )
+    assert paused.status_code == 200, paused.text
     corrected = client.post(
         f"/api/v1/intakes/{receipt['intake_id']}/corrections",
         json={
@@ -337,6 +378,32 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
     )
     assert corrected.status_code == 201, corrected.text
     correction = corrected.json()
+    transfer_path = f"/api/v1/assignments/{assigned.json()['assignment_id']}/actions/transfer"
+    transfer_body = {
+        "target_owner_subject_id": REVIEWER_ID, "target_owner_role": "reviewer",
+        "reason": "Route to the independent reviewer",
+        "handoff_note": "Check the original source correction evidence",
+    }
+    transfer_headers = {
+        **_headers(ACTOR_ID, key=f"production-transfer-{uuid4()}"),
+        "If-Match": assigned.headers["ETag"],
+    }
+    directory_path = f"/api/v1/assignments/{assigned.json()['assignment_id']}/transfer-targets"
+    directory = client.get(directory_path, headers=_headers(ACTOR_ID))
+    assert directory.status_code == 200, directory.text
+    assert directory.headers["Cache-Control"] == "no-store"
+    assert directory.json() == {
+        "assignment_id": assigned.json()["assignment_id"], "assignment_version": assigned.json()["version"],
+        "items": [{"id": REVIEWER_ID, "name": REVIEWER_ID, "role": "site-reviewer"}],
+    }
+    target_account = identities.find_account_by_id(REVIEWER_ID)
+    identities.save_account(replace(target_account, status="disabled"))
+    assert client.get(directory_path, headers=_headers(ACTOR_ID)).json()["items"] == []
+    identities.save_account(target_account)
+    assert client.get(directory_path, headers=_headers(ACTOR_ID)).json() == directory.json()
+    transferred = client.post(transfer_path, json=transfer_body, headers=transfer_headers)
+    assert transferred.status_code == 200, transferred.text
+    assert transferred.json()["owner_subject_id"] == REVIEWER_ID
     app.state.persistence_bundle.engine.close()
 
     restarted = create_app(
@@ -350,6 +417,72 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
         )
         assert detail.status_code == 200, detail.text
         assert detail.json()["assignment_id"] == assigned.json()["assignment_id"]
+        assert detail.json()["assignment_version"] == transferred.json()["version"]
+        assert detail.json()["assignment_status"] == "TRANSFERRED"
+        assert detail.json()["assigned_to"] == REVIEWER_ID
+        # Read fresh SQL identity state on retries, not the original recipient
+        # cache or the UUID payload. Revocation denies without business mutation.
+        identities = restarted.state.persistence_bundle.identity_store
+        target_account = identities.find_account_by_id(REVIEWER_ID)
+        identities.save_account(replace(target_account, status="disabled"))
+        state = restarted.state.assisted_intake_store
+        state.refresh(TENANT_ID)
+        before = copy.deepcopy((state.intakes, state.assignments, state.replays))
+        denied = restarted_client.post(transfer_path, json=transfer_body, headers=transfer_headers)
+        assert denied.status_code == 403, denied.text
+        assert denied.json()["code"] == "ASSIGNMENT_SCOPE_DENIED"
+        state.refresh(TENANT_ID)
+        assert (state.intakes, state.assignments, state.replays) == before
+        identities.save_account(target_account)
+        transfer_replay = restarted_client.post(transfer_path, json=transfer_body, headers=transfer_headers)
+        assert transfer_replay.status_code == 200, transfer_replay.text
+        assert transfer_replay.json() == transferred.json()
+        assert transfer_replay.headers["ETag"] == transferred.headers["ETag"]
+        assert detail.json()["sla_instance_id"] == sla_id
+        assert detail.json()["sla_state"] == "PAUSED"
+        assert detail.json()["sla_version"] == paused.json()["version"] == 24
+        # Lost-response replay must retain the same interval and receipt after
+        # restart; it must not reopen the pause or count elapsed time twice.
+        pause_replay = restarted_client.post(
+            f"/api/v1/sla-instances/{sla_id}/actions/pause",
+            json=pause_body, headers=pause_headers,
+        )
+        assert pause_replay.status_code == 200, pause_replay.text
+        assert pause_replay.json() == paused.json()
+        resumed = restarted_client.post(
+            f"/api/v1/sla-instances/{sla_id}/actions/resume",
+            json={"reason": "Independent feedback received"},
+            headers={
+                **_headers(ACTOR_ID, key=f"production-sla-resume-{uuid4()}"),
+                "If-Match": 'W/"24"',
+            },
+        )
+        assert resumed.status_code == 200, resumed.text
+        assert resumed.json()["state"] == "ON_TRACK"
+        assert resumed.json()["version"] == 25
+        restarted.state.assisted_intake_store.refresh(TENANT_ID)
+        sla = restarted.state.assisted_intake_store.slas[sla_id]
+        assert len(sla["pause_intervals"]) == 1
+        interval = sla["pause_intervals"][0]
+        assert interval["reason"] == pause_body["reason"]
+        assert interval["expected_resume_at"] == pause_body["expected_resume_at"]
+        assert interval["pause_interval_id"] == paused.json()["active_pause_interval_id"]
+        assert interval["resume_reason"] == "Independent feedback received"
+        assert interval["resumed_by_subject_id"] == ACTOR_ID
+        assert interval["ended_at"] is not None
+        assert sla["paused_duration_seconds"] >= 17
+        # Independently reload the completed interval using another DB-backed
+        # store, not the API replica's already-mutated in-memory snapshot.
+        reloaded = build_persistence(mode="postgresql")
+        try:
+            reloaded.assisted_intake_store.refresh(TENANT_ID)
+            assert reloaded.assisted_intake_store.slas[sla_id] == sla
+            assignment_id = assigned.json()["assignment_id"]
+            assert reloaded.assisted_intake_store.assignments[assignment_id]["owner_subject_id"] == REVIEWER_ID
+            assert reloaded.assisted_intake_store.assignments[assignment_id]["version"] == transferred.json()["version"]
+            assert reloaded.assisted_intake_store.intakes[receipt["intake_id"]]["assigned_to"] == REVIEWER_ID
+        finally:
+            reloaded.engine.close()
 
         job = restarted_client.get(
             f"/api/v1/jobs/{receipt['job_id']}/receipt",

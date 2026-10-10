@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal 'ac4b4f0f-c4e7-40db-9b32-13d9a954ad52' is already APPROVED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal 'ac4b4f0f-c4e7-40db-9b32-13d9a954ad52' is already APPROVED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-10T01:13:11.246Z",
+      "details": [],
+      "correlation_id": "794c0921-0fc0-4b0c-83ed-7be0224e4670"
+    }
+  }
+}

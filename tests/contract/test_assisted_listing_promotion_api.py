@@ -157,6 +157,17 @@ def test_promotion_api_contract_flow() -> None:
     assert reviewed_data["reviewer_subject_id"] == ACTOR_A_REVIEWER
     assert reviewed_data["candidate_site_id"] is not None
     assert reviewed_data["site_score_job_id"] is not None
+    # Independent GET and intake hydration must retain the committed reviewer,
+    # not just the POST response's transient decoration.
+    for read_path in (
+        f"/api/v1/promotion-decisions/{promo_decision_id}",
+        f"/api/v1/intakes/{intake_id}/promotion-decision",
+    ):
+        durable = client.get(read_path, headers=HEADERS_A_REVIEWER)
+        assert durable.status_code == 200, durable.text
+        assert durable.json()["reviewer_subject_id"] == ACTOR_A_REVIEWER
+        assert durable.json()["candidate_site_id"] == reviewed_data["candidate_site_id"]
+        assert durable.json()["version"] == reviewed_data["version"]
     candidate = repository.list_candidates()[0]
     assert candidate.dataset_snapshot_id == "FS-SN-99"
     job = store.jobs[reviewed_data["site_score_job_id"]]
@@ -290,6 +301,20 @@ def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> No
         },
     )
     assert reviewed.status_code == 200, reviewed.text
+    persisted_promotion = app.state.operator_intake_repository.get_promotion(decision["promotion_decision_id"])
+    assert persisted_promotion["reviewer_subject_id"] == ACTOR_A_REVIEWER
+    for read_path in (
+        f"/api/v1/promotion-decisions/{decision['promotion_decision_id']}",
+        f"/api/v1/intakes/{intake['id']}/promotion-decision",
+    ):
+        durable = client.get(read_path, headers={
+            "x-subject-id": ACTOR_A_REVIEWER,
+            "x-tenant-id": OPERATOR_TENANT,
+            "x-roles": "site_reviewer,data_owner,expansion_user",
+        })
+        assert durable.status_code == 200, durable.text
+        assert durable.json()["reviewer_subject_id"] == ACTOR_A_REVIEWER
+        assert durable.json()["version"] == reviewed.json()["version"]
     job_id = reviewed.json()["site_score_job_id"]
     receipt = client.get(
         f"/api/v1/jobs/{job_id}/receipt",

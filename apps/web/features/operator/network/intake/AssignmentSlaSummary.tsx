@@ -1,7 +1,7 @@
 import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 
-export type SlaStatusState = "ON_TRACK" | "DUE_SOON" | "OVERDUE" | "BREACHED" | "PAUSED" | "UNAVAILABLE";
+export type SlaStatusState = "ON_TRACK" | "DUE_SOON" | "OVERDUE" | "BREACHED" | "PAUSED" | "COMPLETED" | "UNAVAILABLE";
 
 export interface AssignmentSlaSummaryProps {
   record: AssistedIntake;
@@ -19,26 +19,19 @@ export interface AssignmentSlaSummaryProps {
   className?: string;
 }
 
+/** Present the read model, never a browser-clock approximation of SLA policy. */
 export function computeSlaState(record: AssistedIntake): SlaStatusState {
-  if ((record as any).isSlaPaused || (record as any).slaState === "PAUSED") {
-    return "PAUSED";
+  switch (record.slaState) {
+    case "ON_TRACK":
+    case "DUE_SOON":
+    case "OVERDUE":
+    case "BREACHED":
+    case "PAUSED":
+    case "COMPLETED":
+      return record.slaState;
+    default:
+      return "UNAVAILABLE";
   }
-  if ((record as any).slaState === "BREACHED" || (record as any).isBreached) {
-    return "BREACHED";
-  }
-
-  const dueAt = (record as any).dueAt || (record as any).slaDueAt;
-  if (!dueAt) {
-    return (record as any).slaState === "ON_TRACK" ? "ON_TRACK" : "UNAVAILABLE";
-  }
-
-  const dueTime = new Date(dueAt).getTime();
-  const now = Date.now();
-  const diffMinutes = Math.floor((dueTime - now) / (1000 * 60));
-
-  if (diffMinutes < 0) return "OVERDUE";
-  if (diffMinutes <= 60) return "DUE_SOON";
-  return "ON_TRACK";
 }
 
 /** SLA status display details with text AND icon/pattern for WCAG compliance */
@@ -75,6 +68,12 @@ export const SLA_STATE_MAP: Record<
     icon: "⏸",
     pattern: "[⏸ PAUSED]",
     toneClass: "info",
+  },
+  COMPLETED: {
+    label: "已完成 (Completed)",
+    icon: "✓",
+    pattern: "[✓ COMPLETED]",
+    toneClass: "neutral",
   },
   UNAVAILABLE: {
     label: "UNAVAILABLE",
@@ -116,24 +115,27 @@ export function AssignmentSlaSummary({
     "UNASSIGNED", "ASSIGNED", "TRANSFERRED", "ESCALATED", "CLAIMED", "COMPLETED",
   ].includes(assignmentStatus);
   const slaInstanceId = record.slaInstanceId || "UNAVAILABLE";
-  const dueAtString = (record as any).dueAt || (record as any).slaDueAt || null;
-  const formattedDueAt = dueAtString ? new Date(dueAtString).toLocaleString("zh-TW") : "UNAVAILABLE";
+  const raw = record as AssistedIntake & { dueAt?: unknown; slaDueAt?: unknown };
+  const dueAtString = raw.dueAt ?? raw.slaDueAt;
+  const dueTime = typeof dueAtString === "string" && dueAtString.trim() ? Date.parse(dueAtString) : NaN;
+  const formattedDueAt = Number.isFinite(dueTime) ? new Date(dueTime).toLocaleString("zh-TW") : "UNAVAILABLE";
 
   const isPaused = slaState === "PAUSED";
+  const canPauseState = slaState === "ON_TRACK" || slaState === "DUE_SOON" || slaState === "OVERDUE";
   const historyItems: any[] = (record as any).assignmentHistory || (record as any).slaHistory || [];
 
   return (
     <div
-      className={`${styles.sectionBox} ${className || ""}`}
+      className={`${styles.sectionBox} ${styles.assignmentSummary} ${className || ""}`}
       data-testid="assignment-sla-summary"
     >
       <div className={styles.sectionHead}>
         指派與 SLA 狀態 (ASSIGNMENT & SLA SUMMARY)
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", margin: "10px 0" }}>
+      <div className={styles.assignmentCards}>
         {/* Owner Card */}
-        <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+        <div className={styles.assignmentCard}>
           <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 600 }}>目前 Owner / 負責人</div>
           <div style={{ fontSize: "14px", fontWeight: 700, marginTop: "2px" }} data-testid="asg-owner">
             {currentOwner}
@@ -144,7 +146,7 @@ export function AssignmentSlaSummary({
         </div>
 
         {/* SLA Status Card with Text + Icon/Pattern */}
-        <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+        <div className={styles.assignmentCard}>
           <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 600 }}>SLA 處理狀態</div>
           <div
             style={{ fontSize: "14px", fontWeight: 700, marginTop: "2px", display: "flex", alignItems: "center", gap: "6px" }}
@@ -199,7 +201,7 @@ export function AssignmentSlaSummary({
       )}
 
       {/* Action Buttons */}
-      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "12px" }}>
+      <div className={styles.assignmentActions}>
         {onClaim && (
           <button
             className={styles.primaryButton}
@@ -224,7 +226,7 @@ export function AssignmentSlaSummary({
           </button>
         )}
 
-        {!isPaused && onOpenPause && (
+        {canPauseState && onOpenPause && (
           <button
             className={styles.secondaryButton}
             data-testid="asg-btn-pause"

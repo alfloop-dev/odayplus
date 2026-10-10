@@ -1,0 +1,54 @@
+[WebServer] 2026/10/09 17:32:27 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 17:32:29 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 17:32:30 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [2020598]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T17:32:34.396327+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b6d97f77-ac29-476a-814c-798bb6c4b30b", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 8 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T17:32:50.396617+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "a9cbd531-f04e-4e60-8cf5-b12f32a398d1", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-reviews/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T17:32:55.989967+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T17:32:55.993105+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T17:32:55.995033+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T17:32:55.996911+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+  ✘  1 [chromium] › tests/e2e/operator-network-review.spec.ts:45:7 › ODP-OC-R4-007 Network Review decision › Review panel opens the decision dialog and approves the golden GO flow (9.3s)
+  -  2 [chromium] › tests/e2e/operator-network-review.spec.ts:72:7 › ODP-OC-R4-007 Network Review decision › WAIT decision requires pass conditions before it can submit
+  -  3 [chromium] › tests/e2e/operator-network-review.spec.ts:89:7 › ODP-OC-R4-007 Network Review decision › GO decision syncs five records and survives reload
+  -  4 [chromium] › tests/e2e/operator-network-review.spec.ts:111:7 › ODP-OC-R4-007 Network Review decision › Decision mapping covers WAIT / Return / Reject
+  -  5 [chromium] › tests/e2e/operator-network-review.spec.ts:138:7 › ODP-OC-R4-007 Network Review decision › Failed transaction leaves all five records unchanged
+  -  6 [chromium] › tests/e2e/operator-network-review.spec.ts:152:7 › ODP-OC-R4-007 Network Review decision › Idempotent replay creates no duplicate records
+  -  7 [chromium] › tests/e2e/operator-network-review.spec.ts:169:7 › ODP-OC-R4-007 Network Review decision › Operations lead sees read-only review actions (no decision bar)
+  -  8 [chromium] › tests/e2e/operator-network-review.spec.ts:194:7 › ODP-OC-R4-007 Network Review decision › Expansion may read but not decide; reviewer may decide
+
+
+  1) [chromium] › tests/e2e/operator-network-review.spec.ts:45:7 › ODP-OC-R4-007 Network Review decision › Review panel opens the decision dialog and approves the golden GO flow 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByTestId('review-card-RV-698')
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 5000ms
+      - waiting for getByTestId('review-card-RV-698')
+
+
+      55 |     await expect(page.getByTestId("review-card-RV-702")).toContainText("信義松仁", { timeout: 15_000 });
+      56 |     await expect(page.getByTestId("review-card-RV-701")).toBeVisible();
+    > 57 |     await expect(page.getByTestId("review-card-RV-698")).toBeVisible();
+         |                                                          ^
+      58 |
+      59 |     // Open the GO decision dialog and confirm — reason is written to the log.
+      60 |     await page.getByTestId("review-card-RV-702").click();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/e2e/operator-network-review.spec.ts:57:58
+
+    Error Context: test-results/operator-network-review-OD-a5cdd-approves-the-golden-GO-flow-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/e2e/operator-network-review.spec.ts:45:7 › ODP-OC-R4-007 Network Review decision › Review panel opens the decision dialog and approves the golden GO flow 
+  7 did not run

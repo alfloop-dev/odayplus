@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal 'a0785f67-a2b9-40ba-ba69-1a558d1d509f' is already REJECTED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal 'a0785f67-a2b9-40ba-ba69-1a558d1d509f' is already REJECTED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-09T21:26:20.440Z",
+      "details": [],
+      "correlation_id": "12991055-df96-4160-8595-faa0f8a72284"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "analysis": {
+    "x": 26,
+    "y": 1098.234375,
+    "width": 338,
+    "height": 330.15625,
+    "scrollWidth": 338,
+    "columns": "338px",
+    "overflowX": "visible"
+  },
+  "signals": {
+    "x": 26,
+    "y": 1098.234375,
+    "width": 338,
+    "height": 131.140625,
+    "scrollWidth": 338,
+    "columns": "none",
+    "overflowX": "visible"
+  },
+  "valuation": {
+    "x": 26,
+    "y": 1243.375,
+    "width": 338,
+    "height": 185.015625,
+    "scrollWidth": 338,
+    "columns": "none",
+    "overflowX": "visible"
+  }
+}

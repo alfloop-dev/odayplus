@@ -1,0 +1,233 @@
+{
+  "source": "api",
+  "heatZones": [
+    {
+      "id": "HZ-01",
+      "label": "信義松仁生活圈",
+      "rank": 1,
+      "centroid": [
+        121.5668,
+        25.033
+      ],
+      "demandGap": 0.86,
+      "competitionIndex": 0.34,
+      "cannibalizationRisk": "medium",
+      "rentBand": "NT$52k-88k/month",
+      "confidence": 0.93,
+      "recommendedLens": "demand",
+      "reasons": [
+        "Office-lunch and late-night demand gap remains high.",
+        "Transit and residential POI mix supports ODAY_G2 format.",
+        "L-2024 has clean geocode, floor, area, and source evidence."
+      ],
+      "risks": [
+        "Rent negotiation pressure",
+        "Nearby competitor 220m away"
+      ],
+      "nextStep": "Convert L-2024 into CS-1001 and continue SiteScore evidence review."
+    },
+    {
+      "id": "HZ-02",
+      "label": "板橋府中生活圈",
+      "rank": 2,
+      "centroid": [
+        121.4575,
+        25.01
+      ],
+      "demandGap": 0.78,
+      "competitionIndex": 0.43,
+      "cannibalizationRisk": "medium",
+      "rentBand": "NT$48k-72k/month",
+      "confidence": 0.88,
+      "recommendedLens": "fit",
+      "reasons": [
+        "Weekend service demand is under-realized.",
+        "L-2025 has duplicate-source coverage after merge."
+      ],
+      "risks": [
+        "Duplicate broker postings require evidence merge before review"
+      ],
+      "nextStep": "Keep L-2025 active after merging L-2029 duplicate source evidence."
+    }
+  ],
+  "listingSources": [
+    {
+      "id": "SRC-591",
+      "name": "591 licensed broker intake",
+      "status": "connected",
+      "complianceNote": "R4 proof uses licensed/manual intake fields and preserves source evidence refs.",
+      "lastSyncedAt": "2026-07-14T06:10:00Z"
+    },
+    {
+      "id": "SRC-BROKER",
+      "name": "Broker confirmation",
+      "status": "manualOnly",
+      "complianceNote": "Broker notes are retained as source evidence before any merge/archive action.",
+      "lastSyncedAt": "2026-07-14T06:12:00Z"
+    }
+  ],
+  "listings": [
+    {
+      "id": "L-2024",
+      "tenantId": "tenant-a",
+      "sourceId": "SRC-591",
+      "sourceListingId": "s591-2024",
+      "heatZoneId": "HZ-01",
+      "address": "台北市信義區松仁路 96 號 1F",
+      "status": "new",
+      "rentPerMonth": 58000,
+      "areaPing": 18,
+      "floor": "1F 臨路",
+      "frontageMeters": 6,
+      "geocodeConfidence": 0.94,
+      "hardRuleFailures": [],
+      "hardRuleSummary": "3/3 pass: area, floor, permitted use",
+      "sourceEvidence": [
+        "EV-L-2024-RAW-591",
+        "EV-L-2024-GEOCODE",
+        "EV-L-2024-BROKER-CALL"
+      ],
+      "fitScore": 72,
+      "firstSeenAt": "2026-07-14T06:10:00Z",
+      "sourceUrl": "https://example.invalid/listings/L-2024"
+    },
+    {
+      "id": "L-2025",
+      "tenantId": "tenant-a",
+      "sourceId": "SRC-BROKER",
+      "sourceListingId": "broker-2025",
+      "heatZoneId": "HZ-02",
+      "address": "新北市板橋區府中路 52 號 1F",
+      "status": "watching",
+      "rentPerMonth": 53000,
+      "areaPing": 22,
+      "floor": "1F",
+      "frontageMeters": 5,
+      "geocodeConfidence": 0.93,
+      "hardRuleFailures": [],
+      "hardRuleSummary": "3/3 pass: area, floor, permitted use",
+      "sourceEvidence": [
+        "EV-L-2025-BROKER",
+        "EV-L-2025-GEOCODE"
+      ],
+      "fitScore": 70,
+      "firstSeenAt": "2026-07-13T09:25:00Z",
+      "sourceUrl": "https://example.invalid/listings/L-2025"
+    },
+    {
+      "id": "L-2029",
+      "tenantId": "tenant-a",
+      "sourceId": "SRC-591",
+      "sourceListingId": "s591-2029",
+      "heatZoneId": "HZ-02",
+      "address": "新北市板橋區府中路 52 號 1F",
+      "status": "duplicate",
+      "rentPerMonth": 53000,
+      "areaPing": 22,
+      "floor": "1F",
+      "frontageMeters": 5,
+      "geocodeConfidence": 0.93,
+      "duplicateOfId": "L-2025",
+      "hardRuleFailures": [],
+      "hardRuleSummary": "3/3 pass, duplicate same-address source",
+      "sourceEvidence": [
+        "EV-L-2029-RAW-591",
+        "EV-L-2029-ADDRESS-MATCH",
+        "EV-L-2029-RENT-MATCH"
+      ],
+      "fitScore": 70,
+      "firstSeenAt": "2026-07-14T06:10:00Z",
+      "sourceUrl": "https://example.invalid/listings/L-2029"
+    },
+    {
+      "id": "L-2030",
+      "tenantId": "tenant-a",
+      "sourceId": "SRC-591",
+      "sourceListingId": "s591-2030",
+      "heatZoneId": "HZ-01",
+      "address": "台北市信義區松仁路 110 號 1-2F",
+      "status": "hardfail",
+      "rentPerMonth": 128000,
+      "areaPing": 40,
+      "floor": "1-2F",
+      "frontageMeters": 8,
+      "geocodeConfidence": 0.95,
+      "hardRuleFailures": [
+        "area_above_format_maximum",
+        "floor_not_ground_level"
+      ],
+      "hardRuleSummary": "2/3 blocked: area above 30 ping and second-floor operations required",
+      "sourceEvidence": [
+        "EV-L-2030-RAW-591",
+        "EV-L-2030-HARD-RULES"
+      ],
+      "fitScore": 44,
+      "firstSeenAt": "2026-07-14T06:10:00Z",
+      "sourceUrl": "https://example.invalid/listings/L-2030"
+    }
+  ],
+  "candidates": [],
+  "siteReviews": [],
+  "assistedIntakes": [],
+  "expansionSteps": [
+    {
+      "id": "find",
+      "label": "Find Area",
+      "tabIndex": 0,
+      "state": "completed",
+      "entityId": "HZ-01",
+      "summary": "HZ-01 selected and synchronized to the map."
+    },
+    {
+      "id": "radar",
+      "label": "Listing Radar",
+      "tabIndex": 1,
+      "state": "current",
+      "entityId": "L-2024",
+      "summary": "L-2024 clean; duplicate and hard-rule rows visible."
+    },
+    {
+      "id": "candidate",
+      "label": "Candidate",
+      "tabIndex": 2,
+      "state": "next",
+      "entityId": "L-2024",
+      "summary": "Convert L-2024 to create CS-1001."
+    },
+    {
+      "id": "sitescore",
+      "label": "SiteScore",
+      "tabIndex": 3,
+      "state": "blocked",
+      "entityId": "CS-1001",
+      "summary": "Blocked until candidate exists."
+    },
+    {
+      "id": "compare",
+      "label": "Compare",
+      "tabIndex": 4,
+      "state": "blocked",
+      "entityId": "CS-1001",
+      "summary": "Blocked by missing candidate."
+    },
+    {
+      "id": "review",
+      "label": "Review",
+      "tabIndex": 5,
+      "state": "blocked",
+      "entityId": null,
+      "summary": "No candidate review packet yet."
+    }
+  ],
+  "selectedHeatZoneId": "HZ-01",
+  "selectedLens": "demand",
+  "auditEvents": [],
+  "correlationId": null,
+  "counts": {
+    "heatZones": 2,
+    "listings": 4,
+    "candidates": 0,
+    "siteReviews": 0,
+    "assistedIntakes": 0
+  }
+}

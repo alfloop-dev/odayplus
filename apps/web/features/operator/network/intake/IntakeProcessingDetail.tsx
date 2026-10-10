@@ -97,7 +97,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
   const submittedAt = rawRecord.submittedAt ?? rawRecord.submitted_at ?? "UNAVAILABLE";
 
   return (
-    <main className={styles.intakeFullPage} data-screen-label="Intake 收件處理詳情頁" data-testid={testId}>
+    <section aria-label="收件處理詳情" className={styles.intakeFullPage} data-screen-label="Intake 收件處理詳情頁" data-testid={testId}>
       <header className={styles.intakeFullPageHeader} data-testid="intake-detail-header">
         <button className={styles.secondaryButton} onClick={onClose} type="button" data-testid="intake-return-button">← 返回收件匣</button>
         <div>
@@ -237,7 +237,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
           )) : <div className={styles.emptyState} data-testid="audit-references-unavailable">AUDIT REFERENCES: UNAVAILABLE</div>}
         </div>
       </section>
-    </main>
+    </section>
   );
 }
 

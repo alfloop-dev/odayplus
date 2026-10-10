@@ -1,0 +1,37 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "owner": "Pi",
+  "reviewer": "Codex2",
+  "verified_source_head": "153d3702e52825545671dfa0e6d52819676a678b",
+  "before_source_head": "b0b88e97d900",
+  "origin_dev": "2fe3ef933794d0bb293449b74dffe9602d53f767",
+  "scope": "bounded Spatial genuine API and local SQLite persistence plus rejected-reason contrast repair",
+  "evidence_mode": "local-generated-history-and-test-matured-inventory-not-live",
+  "full_task_ready": false,
+  "production_maturity_certified": false,
+  "postgresql_verified": false,
+  "live_auth_verified": false,
+  "cloud_worm_verified": false,
+  "server_restart_verified": false,
+  "independent_vdc_approval": false,
+  "terminal_receipt_mode": "original synchronous shell exit saved immediately",
+  "checks": [
+    { "name": "baseline", "exit": 0, "passed": 4, "receipt": "logs/before.exit", "log": "logs/before.log", "aa_assertion": "record violations, do not assert absence" },
+    { "name": "final isolated SQL browser", "exit": 0, "passed": 4, "receipt": "logs/after-isolated-final.exit", "log": "logs/after-isolated-final.log", "aa_assertion": "all 12 scoped scans zero violations" },
+    { "name": "controlled Spatial regression", "exit": 0, "passed": 9, "receipt": "logs/render-regression.exit", "log": "logs/render-regression.log" },
+    { "name": "focused Vitest", "exit": 0, "passed": 50, "files": 3, "receipt": "logs/focused.exit", "log": "logs/focused.log" },
+    { "name": "full web Vitest", "exit": 0, "passed": 785, "files": 72, "receipt": "logs/unit.exit", "log": "logs/unit.log" },
+    { "name": "typecheck", "exit": 0, "receipt": "logs/typecheck.exit", "log": "logs/typecheck.log" },
+    { "name": "web lint", "exit": 0, "receipt": "logs/lint.exit", "log": "logs/lint.log" },
+    { "name": "Python harness ruff via existing project interpreter", "exit": 0, "receipt": "logs/ruff-final.exit", "log": "logs/ruff-final.log" },
+    { "name": "boundaries", "exit": 0, "receipt": "logs/boundaries-final.exit", "log": "logs/boundaries-final.log" },
+    { "name": "business inventory", "exit": 0, "tests": 125, "files": 18, "receipt": "logs/inventory.exit", "log": "logs/inventory.log" },
+    { "name": "diff", "exit": 0, "receipt": "logs/diff-final.exit", "log": "logs/diff-final.log" }
+  ],
+  "missing_tool_receipts": [
+    { "name": "API pytest via uv", "exit": 127, "result": "not run; uv missing", "receipt": "logs/api.exit", "log": "logs/api.log" },
+    { "name": "ruff via uv", "exit": 127, "result": "not run; uv missing; existing interpreter ruff completed separately", "receipt": "logs/ruff.exit", "log": "logs/ruff.log" }
+  ],
+  "retained_failures": ["browser-first", "browser-second", "browser-third", "browser-fourth", "after-isolated", "boundaries"],
+  "remaining": ["Transfer/Pause authoritative resources", "Spatial split and permission/negative-state pairs", "Find Areas reload-before-back and density", "other tab negative states", "full scope CI and PR explanation", "independent VDC outcomes"]
+}

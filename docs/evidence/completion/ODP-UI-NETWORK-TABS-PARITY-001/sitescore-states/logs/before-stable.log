@@ -1,0 +1,19 @@
+[WebServer] 2026/10/09 18:32:20 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261009T181546Z-feb1edf4/sitescore-baseline-796a9fc8/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 18:32:23 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 18:32:23 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [2064802]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8311 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T18:32:27.424498+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "a04a5dd9-a79a-4122-8519-0d9a71dc6b9d", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+[WebServer] [sync-maplibre-worker] Warning: maplibre-gl/dist not found in node_modules.
+[WebServer] sh: 1: next: not found
+[WebServer] npm error Lifecycle script `dev` failed with error:
+[WebServer] npm error code 127
+[WebServer] npm error path /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261009T181546Z-feb1edf4/sitescore-baseline-796a9fc8/apps/web
+[WebServer] npm error workspace @oday-plus/web@0.1.0
+[WebServer] npm error location /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261009T181546Z-feb1edf4/sitescore-baseline-796a9fc8/apps/web
+[WebServer] npm error command failed
+[WebServer] npm error command sh -c node scripts/sync-maplibre-worker.mjs && next dev -p 3311
+Error: Process from config.webServer was not able to start. Exit code: 127
+

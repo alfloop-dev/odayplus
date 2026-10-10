@@ -1,0 +1,212 @@
+{
+  "denials": [
+    {
+      "action": "approve",
+      "status": 403,
+      "response": {
+        "detail": "role does not permit override on heatzone",
+        "error": {
+          "code": "forbidden",
+          "message": "role does not permit override on heatzone",
+          "next_action": "Request access for this role or tenant; do not retry as-is.",
+          "occurred_at": "2026-10-10T01:02:51.193Z",
+          "details": [],
+          "correlation_id": "83ca5d36-1bde-4e2f-bef9-b5530e1e27b2"
+        }
+      }
+    },
+    {
+      "action": "reject",
+      "status": 403,
+      "response": {
+        "detail": "role does not permit override on heatzone",
+        "error": {
+          "code": "forbidden",
+          "message": "role does not permit override on heatzone",
+          "next_action": "Request access for this role or tenant; do not retry as-is.",
+          "occurred_at": "2026-10-10T01:02:51.267Z",
+          "details": [],
+          "correlation_id": "f158f59e-a178-47f1-b1af-1fa3450fc64a"
+        }
+      }
+    }
+  ],
+  "before": {
+    "audit_chain": {
+      "issues": [],
+      "ok": true
+    },
+    "compositions": [],
+    "events": [],
+    "evidence_mode": "local-sqlite-generated-history-not-live",
+    "fresh_process": true,
+    "parent_compositions": [
+      {
+        "composition_id": "c0a8c6a7-af60-4cca-af48-95c0b97078f9",
+        "composition_kind": "MERGED",
+        "created_at": "2026-10-10T01:02:05.856571+00:00",
+        "decided_at": "2026-10-10T01:02:05.856563+00:00",
+        "decided_by": "explicit-split-parent-fixture",
+        "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+        "is_active": true,
+        "member_cell_id": "cell-kaohsiung-01",
+        "model_version": "heatzone-composition-v1",
+        "override_reason": "Synthetic isolated browser-test parent, not a production decision",
+        "parent_zone_id": null,
+        "reverted_at": null,
+        "tenant_id": "tenant-a",
+        "zone_id": "MZ-ff2c42c991842808"
+      },
+      {
+        "composition_id": "b6832b25-5bc6-4901-8606-21ee6d45acc5",
+        "composition_kind": "MERGED",
+        "created_at": "2026-10-10T01:02:05.853780+00:00",
+        "decided_at": "2026-10-10T01:02:05.853772+00:00",
+        "decided_by": "explicit-split-parent-fixture",
+        "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+        "is_active": true,
+        "member_cell_id": "cell-kaohsiung-00",
+        "model_version": "heatzone-composition-v1",
+        "override_reason": "Synthetic isolated browser-test parent, not a production decision",
+        "parent_zone_id": null,
+        "reverted_at": null,
+        "tenant_id": "tenant-a",
+        "zone_id": "MZ-ff2c42c991842808"
+      }
+    ],
+    "proposal": {
+      "approved_at": null,
+      "approved_by": null,
+      "cannibalization_variance_reduction": 0,
+      "child_partitions": [
+        [
+          "cell-kaohsiung-00"
+        ],
+        [
+          "cell-kaohsiung-01"
+        ]
+      ],
+      "child_zone_ids": [
+        "MZ-19b6c703125aa407",
+        "MZ-8be7a210cca47b48"
+      ],
+      "composition_kind": "SPLIT_CHILD",
+      "confidence": 0.8533,
+      "correlation_rho": 1,
+      "created_at": "2026-10-10T01:02:31.776116+00:00",
+      "disconnect_index": 0.7656,
+      "member_cell_ids": [
+        "cell-kaohsiung-00",
+        "cell-kaohsiung-01"
+      ],
+      "member_count": 2,
+      "model_version": "heatzone-composition-v1",
+      "ndcg_gain": 0,
+      "parent_zone_id": "MZ-ff2c42c991842808",
+      "policy_version_id": "heatzone-merge-v1:tenant-a",
+      "proposal_id": "87e28552-90c9-45cf-af58-da1780a50cb2",
+      "reasons": [
+        "side_labelled_absorption_density_ratio_4.27",
+        "measured_over_8_shared_periods",
+        "barrier:Provincial Highway 17 embankment",
+        "divides_into_2_children_sides_A_B",
+        "source_snapshot:pg16-production-model-inventory-2027-04-01-v1"
+      ],
+      "rejection_reason": null,
+      "split_density_ratio": 4.27,
+      "status": "PROPOSED",
+      "tenant_id": "tenant-a",
+      "warnings": [],
+      "zone_id": "MZ-ff2c42c991842808"
+    }
+  },
+  "after": {
+    "audit_chain": {
+      "issues": [],
+      "ok": true
+    },
+    "compositions": [],
+    "events": [],
+    "evidence_mode": "local-sqlite-generated-history-not-live",
+    "fresh_process": true,
+    "parent_compositions": [
+      {
+        "composition_id": "c0a8c6a7-af60-4cca-af48-95c0b97078f9",
+        "composition_kind": "MERGED",
+        "created_at": "2026-10-10T01:02:05.856571+00:00",
+        "decided_at": "2026-10-10T01:02:05.856563+00:00",
+        "decided_by": "explicit-split-parent-fixture",
+        "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+        "is_active": true,
+        "member_cell_id": "cell-kaohsiung-01",
+        "model_version": "heatzone-composition-v1",
+        "override_reason": "Synthetic isolated browser-test parent, not a production decision",
+        "parent_zone_id": null,
+        "reverted_at": null,
+        "tenant_id": "tenant-a",
+        "zone_id": "MZ-ff2c42c991842808"
+      },
+      {
+        "composition_id": "b6832b25-5bc6-4901-8606-21ee6d45acc5",
+        "composition_kind": "MERGED",
+        "created_at": "2026-10-10T01:02:05.853780+00:00",
+        "decided_at": "2026-10-10T01:02:05.853772+00:00",
+        "decided_by": "explicit-split-parent-fixture",
+        "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+        "is_active": true,
+        "member_cell_id": "cell-kaohsiung-00",
+        "model_version": "heatzone-composition-v1",
+        "override_reason": "Synthetic isolated browser-test parent, not a production decision",
+        "parent_zone_id": null,
+        "reverted_at": null,
+        "tenant_id": "tenant-a",
+        "zone_id": "MZ-ff2c42c991842808"
+      }
+    ],
+    "proposal": {
+      "approved_at": null,
+      "approved_by": null,
+      "cannibalization_variance_reduction": 0,
+      "child_partitions": [
+        [
+          "cell-kaohsiung-00"
+        ],
+        [
+          "cell-kaohsiung-01"
+        ]
+      ],
+      "child_zone_ids": [
+        "MZ-19b6c703125aa407",
+        "MZ-8be7a210cca47b48"
+      ],
+      "composition_kind": "SPLIT_CHILD",
+      "confidence": 0.8533,
+      "correlation_rho": 1,
+      "created_at": "2026-10-10T01:02:31.776116+00:00",
+      "disconnect_index": 0.7656,
+      "member_cell_ids": [
+        "cell-kaohsiung-00",
+        "cell-kaohsiung-01"
+      ],
+      "member_count": 2,
+      "model_version": "heatzone-composition-v1",
+      "ndcg_gain": 0,
+      "parent_zone_id": "MZ-ff2c42c991842808",
+      "policy_version_id": "heatzone-merge-v1:tenant-a",
+      "proposal_id": "87e28552-90c9-45cf-af58-da1780a50cb2",
+      "reasons": [
+        "side_labelled_absorption_density_ratio_4.27",
+        "measured_over_8_shared_periods",
+        "barrier:Provincial Highway 17 embankment",
+        "divides_into_2_children_sides_A_B",
+        "source_snapshot:pg16-production-model-inventory-2027-04-01-v1"
+      ],
+      "rejection_reason": null,
+      "split_density_ratio": 4.27,
+      "status": "PROPOSED",
+      "tenant_id": "tenant-a",
+      "warnings": [],
+      "zone_id": "MZ-ff2c42c991842808"
+    }
+  }
+}

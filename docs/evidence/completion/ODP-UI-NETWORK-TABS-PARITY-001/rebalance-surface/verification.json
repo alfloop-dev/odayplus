@@ -1,0 +1,53 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "scope": "bounded Rebalance only; NOT full task acceptance",
+  "render_source_head": "d1ef18fb41f3",
+  "verified_head": "dac44607e34fbdccd82c096bf434c94854a43429",
+  "origin_dev": "2fe3ef933794d0bb293449b74dffe9602d53f767",
+  "receipt_basis": "original synchronous tool terminal exit codes; per-log EXIT_CODE markers recorded by same shell",
+  "log_exit_codes": {
+    "typecheck.log": 0,
+    "geometry.log": 0,
+    "boundaries.log": 0,
+    "after-initial.log": 0,
+    "geometry-before-final.log": 0,
+    "before.log": 0,
+    "focused-initial.log": 1,
+    "workflows-cold-load.log": 1,
+    "inventory.log": 0,
+    "focused-css-reader.log": 1,
+    "diff.log": 0,
+    "lint.log": 0,
+    "workflows.log": 0,
+    "unit.log": 0,
+    "focused.log": 0,
+    "typecheck-final.log": 0,
+    "unit-css-reader.log": 1,
+    "typecheck-fixture.log": 2
+  },
+  "diff_check_exit_code": 0,
+  "source_sha256": {
+    "apps/web/features/operator/network/RebalancePanel.tsx": "72721fbfa1e316f0b9c1b2a96606ea69cbb49317c128b834e0be12ec5b78b7bc",
+    "apps/web/features/operator/networkFindAreas.module.css": "4ccc19fd2337df46c974c8964c09ff46cabe19bc06d8f34797094c92595f47f9",
+    "apps/web/features/operator/network/__tests__/RebalanceSurface.test.tsx": "9a926ff077128b4292283a051257c1e344fd160da1bb89a6fb49bdc9f5e03884",
+    "tests/visual/operator-rebalance-surface-parity.spec.ts": "426e94645ac3c9a589d46232d93d028bf0fa529aa101168b308dcffdcf3e4475",
+    "tests/visual/operator-network-tabs-parity.config.ts": "34c8415d905844b3bd507b604f16025345a726cfbcd32aa07009bfb7bdd03720",
+    "tests/e2e/operator-network-rebalance.spec.ts": "b1fd61f9971f49a28a0c8d0e1896b6b6ce7d8e7260ab1d87d51089e8f1c947a2"
+  },
+  "after_scoped_axe_violation_counts": {
+    "after-netplan-axe-1024.json": 0,
+    "after-rebalance-axe-1440.json": 0,
+    "after-netplan-expanded-axe-390.json": 0,
+    "after-netplan-expanded-axe-1024.json": 0,
+    "after-avm-axe-1440.json": 0,
+    "after-avm-axe-390.json": 0,
+    "after-avm-axe-1024.json": 0,
+    "after-netplan-axe-390.json": 0,
+    "after-rebalance-axe-390.json": 0,
+    "after-netplan-expanded-axe-1440.json": 0,
+    "after-rebalance-axe-1024.json": 0,
+    "after-netplan-axe-1440.json": 0
+  },
+  "independent_vdc_approvals": "not claimed",
+  "required_ci": "pending full-scope resubmission"
+}

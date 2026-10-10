@@ -1,0 +1,310 @@
+[WebServer] 2026/10/09 18:24:00 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 18:24:02 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 18:24:02 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [2057439]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T18:24:06.478556+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "a6141a40-2557-4036-80aa-8ac52af6a4ca", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 2 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T18:24:26.052458+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "f3b9ebc7-f226-4219-98cf-d7437d16f724", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T18:24:26.073325+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1c00025f-e372-4ab2-809f-06981dc04f59", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+  ✘  1 [chromium] › tests/visual/operator-sitescore-states-parity.spec.ts:30:7 › SiteScore risk / batch / scoped flow at 1440 (9.9s)
+[WebServer] {"timestamp": "2026-10-09T18:24:35.043988+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T18:24:35.050210+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T18:24:35.095335+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:24:35.862238+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "cc6976c9-9c70-4b0e-b5db-7e71a1b13aef", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T18:24:35.890500+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "5062a297-dca3-456f-9d0f-92001c9a3b10", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T18:24:39.580250+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:24:39.662862+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T18:24:39.666666+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T18:24:40.816368+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T18:24:40.850448+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T18:24:40.869480+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T18:24:40.959900+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-339192bf-7774-4508-894c-f286a2b5a376", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+  ✘  2 [chromium] › tests/visual/operator-sitescore-states-parity.spec.ts:30:7 › SiteScore risk / batch / scoped flow at 390 (8.2s)
+
+
+  1) [chromium] › tests/visual/operator-sitescore-states-parity.spec.ts:30:7 › SiteScore risk / batch / scoped flow at 1440 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByTestId('network-panel-sitescore')
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 5000ms
+      - waiting for getByTestId('network-panel-sitescore')
+
+
+      43 |     await page.getByTestId("network-tab-3").click();
+      44 |     const panel = page.getByTestId("network-panel-sitescore");
+    > 45 |     await expect(panel).toBeVisible();
+         |                         ^
+      46 |     await panel.getByTestId("sitescore-pick-CS-1002").click();
+      47 |     const report = panel.getByTestId("sitescore-card-CS-1002");
+      48 |     await expect(report).toBeVisible();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-sitescore-states-parity.spec.ts:45:25
+
+    Error Context: test-results/operator-sitescore-states--7098d-k-batch-scoped-flow-at-1440-chromium/error-context.md
+
+  2) [chromium] › tests/visual/operator-sitescore-states-parity.spec.ts:30:7 › SiteScore risk / batch / scoped flow at 390 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -   1
+    + Received  + 233
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#f2f4f8",
+    +               "contrastRatio": 4.17,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7688",
+    +               "fontSize": "7.9pt (10.5px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.17 (foreground color: #6b7688, background color: #f2f4f8, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<div class=\"operator_console__Qx98Y\" data-testid=\"operator-console\">",
+    +                 "target": Array [
+    +                   ".operator_console__Qx98Y",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.17 (foreground color: #6b7688, background color: #f2f4f8, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_muted__zcdbq\" data-testid=\"sitescore-model-meta\">SiteScore v2.3 · 特徵快照每日 06:00</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_muted__zcdbq",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.29,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6e7891",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.29 (foreground color: #6e7891, background color: #fbfcfe, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_batchRowItem__WI5Us\" aria-pressed=\"false\" type=\"button\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_batchRowItem__WI5Us[type=\"button\"]:nth-child(1)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.29 (foreground color: #6e7891, background color: #fbfcfe, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_batchRent__xPcZr\">月租 NT$58,000（區間 P45）</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_batchRowItem__WI5Us[type=\"button\"]:nth-child(1) > .networkFindAreas_batchRent__xPcZr",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.29,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6e7891",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.29 (foreground color: #6e7891, background color: #fbfcfe, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_batchRowItem__WI5Us\" aria-pressed=\"false\" type=\"button\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_batchRowItem__WI5Us[type=\"button\"]:nth-child(2)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.29 (foreground color: #6e7891, background color: #fbfcfe, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_batchRent__xPcZr\">月租 NT$52,000（區間 P70）</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_batchRowItem__WI5Us[type=\"button\"]:nth-child(2) > .networkFindAreas_batchRent__xPcZr",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fbfcfe",
+    +               "contrastRatio": 4.29,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6e7891",
+    +               "fontSize": "7.5pt (10px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.29 (foreground color: #6e7891, background color: #fbfcfe, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button class=\"networkFindAreas_batchRowItem__WI5Us\" aria-pressed=\"false\" type=\"button\">",
+    +                 "target": Array [
+    +                   ".networkFindAreas_batchRowItem__WI5Us[type=\"button\"]:nth-child(4)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.29 (foreground color: #6e7891, background color: #fbfcfe, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<span class=\"networkFindAreas_batchRent__xPcZr\">月租 NT$64,000（區間 P90）</span>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".networkFindAreas_batchRowItem__WI5Us[type=\"button\"]:nth-child(4) > .networkFindAreas_batchRent__xPcZr",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fffbeb",
+    +               "contrastRatio": 4.42,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7688",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.42 (foreground color: #6b7688, background color: #fffbeb, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<tr data-tone=\"watch\">",
+    +                 "target": Array [
+    +                   "tr:nth-child(2)",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.42 (foreground color: #6b7688, background color: #fffbeb, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<small>CS-1002</small>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "tr:nth-child(2) > td:nth-child(2) > small",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#fef2f2",
+    +               "contrastRatio": 4.19,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#6b7688",
+    +               "fontSize": "8.3pt (11px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 4.19 (foreground color: #6b7688, background color: #fef2f2, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<tr data-tone=\"risk\">",
+    +                 "target": Array [
+    +                   "tr[data-tone=\"risk\"]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.19 (foreground color: #6b7688, background color: #fef2f2, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<small>CS-1004</small>",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           "tr[data-tone=\"risk\"] > td:nth-child(2) > small",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      103 |       const axe = await new AxeBuilder({ page }).include('[data-testid="network-panel-sitescore"]').withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+      104 |       await save(info, `axe-batch-${width}.json`, axe);
+    > 105 |       expect(axe.violations).toEqual([]);
+          |                              ^
+      106 |     }
+      107 |     if (process.env.NETWORK_PARITY_DESIGN === "1") {
+      108 |       const design = await page.context().newPage();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-sitescore-states-parity.spec.ts:105:30
+
+    Error Context: test-results/operator-sitescore-states--5b637-sk-batch-scoped-flow-at-390-chromium/error-context.md
+
+  2 failed
+    [chromium] › tests/visual/operator-sitescore-states-parity.spec.ts:30:7 › SiteScore risk / batch / scoped flow at 1440 
+    [chromium] › tests/visual/operator-sitescore-states-parity.spec.ts:30:7 › SiteScore risk / batch / scoped flow at 390 

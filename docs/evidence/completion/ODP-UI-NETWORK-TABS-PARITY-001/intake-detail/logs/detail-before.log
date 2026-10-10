@@ -1,0 +1,59 @@
+[WebServer] 2026/10/09 16:49:06 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 16:49:09 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 16:49:09 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [1985522]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T16:49:12.906668+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "373a3d9a-877b-45ac-bef0-8a3f93a08a78", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 2 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T16:49:30.807461+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "fba94e0a-29ec-4958-b418-d37a354eb547", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-listings/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:33.851897+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "a7d663f9-9d62-4051-8aea-d96140215500", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:36.590085+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:36.861095+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:36.861756+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:36.862798+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:39.114673+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:39.115584+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:39.117678+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:40.304781+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:40.427502+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-68882039-bad4-46d1-9779-baf6d05a2337", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:40.715117+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7399364e-2f8b-4dce-a6a0-92e110890d62", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:40.862678+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "e76efd2a-af02-4637-9b5d-c001957ab260", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+[WebServer] {"timestamp": "2026-10-09T16:49:41.108271+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "af4fff22-bf84-489c-b70c-492ebcbe9b88", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings/intake ok"}
+  ✘  1 [chromium] › tests/visual/operator-intake-detail-parity.spec.ts:36:7 › continuous detail geometry and unavailable authority at 1440 (14.1s)
+  -  2 [chromium] › tests/visual/operator-intake-detail-parity.spec.ts:36:7 › continuous detail geometry and unavailable authority at 390
+
+
+  1) [chromium] › tests/visual/operator-intake-detail-parity.spec.ts:36:7 › continuous detail geometry and unavailable authority at 1440 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByTestId('intake-inbox-empty')
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 5000ms
+      - waiting for getByTestId('intake-inbox-empty')
+
+
+      47 |     await expect(page.getByRole("button", { name: "展店經理", exact: true })).toBeVisible();
+      48 |     await page.getByTestId("network-tab-1").click();
+    > 49 |     await expect(page.getByTestId("intake-inbox-empty")).toBeVisible();
+         |                                                          ^
+      50 |     await page.getByTestId("intake-add-button").click();
+      51 |     await page.getByTestId("intake-url-input").fill("https://www.synthetic.example/detail-77120345.html");
+      52 |     await page.getByTestId("intake-submit-button").click();
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-intake-detail-parity.spec.ts:49:58
+
+    Error Context: test-results/operator-intake-detail-par-29582-available-authority-at-1440-chromium/error-context.md
+
+    Error Context: test-results/operator-intake-detail-par-29582-available-authority-at-1440-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/visual/operator-intake-detail-parity.spec.ts:36:7 › continuous detail geometry and unavailable authority at 1440 
+  1 did not run

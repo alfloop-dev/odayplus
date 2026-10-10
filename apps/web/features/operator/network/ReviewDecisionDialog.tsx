@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
+import { useModalDialogBehavior } from "./useModalDialogBehavior";
 import styles from "../networkFindAreas.module.css";
 import {
   DECISION_BUTTON_LABEL,
@@ -41,6 +42,8 @@ export function ReviewDecisionDialog({
   const [ack, setAck] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
+  const panelRef = useModalDialogBehavior({ dismissible: !submitting, onClose });
+  const fieldId = useId();
   const override = isOverride(action, review.recommendation);
   const finalLabel = DECISION_FINAL_LABEL[action];
 
@@ -49,6 +52,7 @@ export function ReviewDecisionDialog({
     `${review.candidateId} → ${finalLabel}，並寫入 Decision Log 與稽核軌跡。`;
 
   function handleSubmit() {
+    if (submitting) return;
     if (reason.trim().length < MIN_REASON_LEN) {
       setLocalError("決策原因必填（至少 10 字）。");
       return;
@@ -76,11 +80,19 @@ export function ReviewDecisionDialog({
       className={styles.reviewDialogOverlay}
       data-screen-label="Dialog Review Decision"
       data-testid="review-decision-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${DECISION_BUTTON_LABEL[action]} — ${review.candidateTitle}`}
+      onMouseDown={(event) => {
+        if (!submitting && event.target === event.currentTarget) onClose();
+      }}
     >
-      <div className={styles.reviewDialog}>
+      <div
+        className={styles.reviewDialog}
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${DECISION_BUTTON_LABEL[action]} — ${review.candidateTitle}`}
+        aria-describedby={`${fieldId}-sync`}
+        aria-busy={submitting || undefined}
+      >
         <div className={styles.reviewDialogHead}>
           <div className={styles.reviewDialogTitle} data-testid="review-decision-title">
             {DECISION_BUTTON_LABEL[action]} · {review.candidateTitle}
@@ -88,6 +100,7 @@ export function ReviewDecisionDialog({
           <button
             className={styles.reviewDialogClose}
             data-testid="review-decision-close"
+            disabled={submitting}
             onClick={onClose}
             type="button"
             aria-label="關閉"
@@ -108,10 +121,14 @@ export function ReviewDecisionDialog({
           ) : null}
 
           <div className={styles.reviewDialogField}>
-            <span className={styles.reviewDialogFieldLabel}>決策原因（必填 — 寫入 Decision Log）</span>
+            <label className={styles.reviewDialogFieldLabel} htmlFor={`${fieldId}-reason`}>決策原因（必填 — 寫入 Decision Log）</label>
             <textarea
               className={styles.reviewDialogInput}
               data-testid="review-decision-reason"
+              id={`${fieldId}-reason`}
+              data-autofocus
+              disabled={submitting}
+              aria-required="true"
               rows={3}
               value={reason}
               onChange={(event) => setReason(event.target.value)}
@@ -121,12 +138,15 @@ export function ReviewDecisionDialog({
 
           {action === "WAIT" ? (
             <div className={styles.reviewDialogField}>
-              <span className={`${styles.reviewDialogFieldLabel} ${styles.reviewDialogFieldLabelWarn}`}>
+              <label className={`${styles.reviewDialogFieldLabel} ${styles.reviewDialogFieldLabelWarn}`} htmlFor={`${fieldId}-conditions`}>
                 通過條件（必填 — 條件達成後可重評為 GO）
-              </span>
+              </label>
               <textarea
                 className={styles.reviewDialogInput}
                 data-testid="review-decision-conditions"
+                id={`${fieldId}-conditions`}
+                disabled={submitting}
+                aria-required="true"
                 rows={3}
                 value={conditions}
                 onChange={(event) => setConditions(event.target.value)}
@@ -137,12 +157,15 @@ export function ReviewDecisionDialog({
 
           {action === "RETURN" ? (
             <div className={styles.reviewDialogField}>
-              <span className={styles.reviewDialogFieldLabel}>
+              <label className={styles.reviewDialogFieldLabel} htmlFor={`${fieldId}-required`}>
                 需補資料（必填 — 以「、」分隔，會同步至 Candidate 缺資料清單）
-              </span>
+              </label>
               <input
                 className={styles.reviewDialogInput}
                 data-testid="review-decision-required"
+                id={`${fieldId}-required`}
+                disabled={submitting}
+                aria-required="true"
                 value={requiredData}
                 onChange={(event) => setRequiredData(event.target.value)}
                 placeholder="例：現勘紀錄、晚間人流樣本"
@@ -155,6 +178,8 @@ export function ReviewDecisionDialog({
               className={styles.reviewAckButton}
               data-checked={ack ? "true" : "false"}
               data-testid="review-decision-ack"
+              aria-pressed={ack}
+              disabled={submitting}
               onClick={() => setAck((value) => !value)}
               type="button"
             >
@@ -168,23 +193,24 @@ export function ReviewDecisionDialog({
           ) : null}
 
           {shownError ? (
-            <div className={styles.errorText} data-testid="review-decision-error">
+            <div className={styles.errorText} data-testid="review-decision-error" role="alert">
               {shownError}
             </div>
           ) : null}
 
-          <div className={styles.reviewSyncNote} data-testid="review-decision-sync-note">
+          <div className={styles.reviewSyncNote} data-testid="review-decision-sync-note" id={`${fieldId}-sync`}>
             {syncNote}
           </div>
         </div>
 
         <div className={styles.reviewDialogActions}>
-          <button className={styles.reviewDialogCancel} onClick={onClose} type="button">
+          <button className={styles.reviewDialogCancel} disabled={submitting} onClick={onClose} type="button">
             取消
           </button>
           <button
             className={styles.reviewDialogSubmit}
             data-testid="review-decision-submit"
+            data-action={action}
             disabled={submitting}
             onClick={handleSubmit}
             type="button"

@@ -1,0 +1,40 @@
+{
+  "box": {
+    "x": 20,
+    "y": 360.703125,
+    "width": 1400,
+    "height": 454.09375,
+    "scrollWidth": 1400
+  },
+  "controls": [
+    {
+      "x": 1241,
+      "y": 379.296875,
+      "width": 167,
+      "height": 35,
+      "scrollWidth": 165
+    },
+    {
+      "x": 21,
+      "y": 446.890625,
+      "width": 298,
+      "height": 93.234375,
+      "scrollWidth": 294
+    },
+    {
+      "x": 21,
+      "y": 540.125,
+      "width": 298,
+      "height": 93.234375,
+      "scrollWidth": 294
+    },
+    {
+      "x": 1301,
+      "y": 462.890625,
+      "width": 102,
+      "height": 31,
+      "scrollWidth": 100
+    }
+  ],
+  "documentWidth": 1440
+}

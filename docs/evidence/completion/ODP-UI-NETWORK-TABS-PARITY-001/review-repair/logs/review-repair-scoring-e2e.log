@@ -1,0 +1,51 @@
+[WebServer] 2026/10/09 15:52:16 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 15:52:19 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 15:52:19 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [1928556]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T15:52:22.841492+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ebed7274-b512-4678-8ece-f40a4c2e6ec2", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 4 tests using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T15:52:47.262979+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "69575e20-48d3-4e41-9212-908c4e9fd42f", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-scoring/reset ok"}
+[WebServer] {"timestamp": "2026-10-09T15:52:55.513331+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-09T15:52:55.516691+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-09T15:52:55.517180+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-09T15:52:55.518754+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-09T15:52:56.268790+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-681c270f-ea57-4f81-af36-1f89283b7f2c", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+  ✘  1 [chromium] › tests/e2e/operator-network-scoring.spec.ts:25:7 › ODP-OC-R4-006 Network SiteScore scoring › Candidate gate blocks CS-1003 and exposes the golden-flow candidates (12.9s)
+  -  2 [chromium] › tests/e2e/operator-network-scoring.spec.ts:60:7 › ODP-OC-R4-006 Network SiteScore scoring › SiteScore Lab renders GO/WAIT/REJECT scorecards with conditions and reasons
+  -  3 [chromium] › tests/e2e/operator-network-scoring.spec.ts:91:7 › ODP-OC-R4-006 Network SiteScore scoring › Compare recommends primary / alternate / avoid consistently
+  -  4 [chromium] › tests/e2e/operator-network-scoring.spec.ts:117:7 › ODP-OC-R4-006 Network SiteScore scoring › batch SiteScore job sorts persisted results and skips gated candidate
+
+
+  1) [chromium] › tests/e2e/operator-network-scoring.spec.ts:25:7 › ODP-OC-R4-006 Network SiteScore scoring › Candidate gate blocks CS-1003 and exposes the golden-flow candidates 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByTestId('network-panel-candidates')
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 5000ms
+      - waiting for getByTestId('network-panel-candidates')
+
+
+      32 |
+      33 |     await page.getByTestId("network-tab-2").click();
+    > 34 |     await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
+         |                                                                ^
+      35 |     const table = page.getByTestId("network-candidate-table");
+      36 |     await expect(table).toContainText("CS-1001", { timeout: 15_000 });
+      37 |     await expect(table).toContainText("SiteScore v2.3");
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/e2e/operator-network-scoring.spec.ts:34:64
+
+    Error Context: test-results/operator-network-scoring-O-d7d5b--the-golden-flow-candidates-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/e2e/operator-network-scoring.spec.ts:25:7 › ODP-OC-R4-006 Network SiteScore scoring › Candidate gate blocks CS-1003 and exposes the golden-flow candidates 
+  3 did not run

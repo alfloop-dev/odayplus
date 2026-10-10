@@ -447,8 +447,10 @@ else:
         audit: list[AuditReference]
         assignment_id: UuidString | None = None
         assignment_status: str | None = None
+        assignment_version: int | None = Field(default=None, ge=1)
         sla_instance_id: UuidString | None = None
         sla_state: str | None = None
+        sla_version: int | None = Field(default=None, ge=1)
         sla_receipt: str | None = None
 
     class IntakePage(BaseModel):
@@ -491,6 +493,16 @@ else:
         version: int
         audit_event_id: UuidString
 
+    class AssignmentTransferTarget(BaseModel):
+        id: UuidString
+        name: str = Field(..., min_length=1)
+        role: Literal["site-reviewer", "executive", "data-steward", "expansion-staff"]
+
+    class AssignmentTransferTargets(BaseModel):
+        assignment_id: UuidString
+        assignment_version: int = Field(..., ge=1)
+        items: list[AssignmentTransferTarget]
+
     class AssignmentTransferRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
         target_owner_subject_id: UuidString
@@ -499,10 +511,24 @@ else:
         handoff_note: str = Field(..., min_length=3, max_length=4000)
         due_at: DateTimeString | None = None
 
+        @field_validator("reason", "handoff_note")
+        @classmethod
+        def nonblank_handoff_text(cls, value: str) -> str:
+            if len(value.strip()) < 3:
+                raise ValueError("transfer reason and handoff note require 3 nonblank characters")
+            return value.strip()
+
     class SlaPauseRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
         reason: str = Field(..., min_length=3, max_length=4000)
         expected_resume_at: DateTimeString
+
+        @field_validator("reason")
+        @classmethod
+        def nonblank_reason(cls, value: str) -> str:
+            if len(value.strip()) < 3:
+                raise ValueError("pause reason must contain at least 3 nonblank characters")
+            return value.strip()
 
     class SlaReceipt(BaseModel):
         sla_instance_id: UuidString
@@ -1288,14 +1314,20 @@ else:
                 val = self.op_repo.get_promotion(promotion_decision_id)
                 if val:
                     val.setdefault("proposer_subject_id", val.get("proposer"))
+                    val["reviewer_subject_id"] = val.get("reviewer") or val.get("reviewer_subject_id")
                     return val
             val = self.active_store.promotions.get(promotion_decision_id)
             if val:
                 val.setdefault("proposer_subject_id", val.get("proposer"))
+                val["reviewer_subject_id"] = val.get("reviewer") or val.get("reviewer_subject_id")
             return val
 
         def save_promotion(self, promo: dict[str, Any]) -> None:
             promo.setdefault("proposer_subject_id", promo.get("proposer"))
+            # The saga stores the committed actor as `reviewer`. Persist the
+            # contract projection too, not just the POST response decoration:
+            # reload/lost-response GET must describe the same second actor.
+            promo["reviewer_subject_id"] = promo.get("reviewer") or promo.get("reviewer_subject_id")
             if self.op_repo:
                 self.op_repo.save_promotion(promo)
             self.active_store.promotions[promo["promotion_decision_id"]] = promo
@@ -1330,6 +1362,7 @@ else:
                 values = list(self.active_store.promotions.values())
             for value in values:
                 value.setdefault("proposer_subject_id", value.get("proposer"))
+                value["reviewer_subject_id"] = value.get("reviewer") or value.get("reviewer_subject_id")
             return values
 
         def get_promotion_for_intake(self, intake_id: str) -> dict[str, Any] | None:
@@ -1709,6 +1742,72 @@ else:
         def linked_intake(value: dict[str, Any]) -> dict[str, Any] | None:
             intake_id = value.get("intake_id")
             return active.intakes.get(intake_id) if intake_id else None
+
+        def require_sla_scope(principal: Principal, value: dict[str, Any]) -> None:
+            # Child tenant metadata alone must not authorize a linked Intake
+            # outside the actor's brand/region/store/area/heat-zone scope.
+            # A dangling link cannot fall back to the less-specific child row.
+            if value.get("intake_id"):
+                intake = linked_intake(value)
+                if intake is None:
+                    raise HTTPException(403, "SCOPE_DENIED")
+                if intake.get("scope", {}).get("tenant_id") != principal.tenant_id:
+                    raise HTTPException(403, "TENANT_SCOPE_DENIED")
+                require_intake_scope(principal, intake)
+            else:
+                # Historical standalone SLAs retain their own scope envelope.
+                # Missing axes fail closed for restricted principals.
+                require_intake_scope(principal, value)
+
+        def require_assignment_scope(principal: Principal, value: dict[str, Any]) -> None:
+            # Assignment and SLA share the same linked-resource scope boundary.
+            require_sla_scope(principal, value)
+
+        def assignment_target_principal(request: Request, subject_id: str) -> Principal:
+            # Shared directory/write resolver. Fresh identity grants, never a
+            # directory receipt or the requested role, authorize a recipient.
+            bundle = getattr(request.app.state, "persistence_bundle", None)
+            identities = getattr(bundle, "identity_store", None)
+            if identities is None:
+                raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
+            account = identities.find_account_by_id(subject_id)
+            tenant_id = get_principal(request).tenant_id
+            if account is None or not account.is_active or str(account.tenant_id) != tenant_id:
+                raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
+            target = Principal(
+                subject_id=subject_id,
+                roles=identities.get_account_roles(subject_id),
+                scope=identities.get_account_scope(subject_id),
+            )
+            if target.tenant_id != tenant_id:
+                raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
+            return target
+
+        def require_assignment_target(
+            request: Request, subject_id: str, role_id: str, resource: dict[str, Any],
+        ) -> None:
+            target = assignment_target_principal(request, subject_id)
+            role_grants = {
+                "reviewer": (Role.SITE_REVIEWER,),
+                "site-reviewer": (Role.SITE_REVIEWER,),
+                "siteReviewer": (Role.SITE_REVIEWER,),
+                "site_reviewer": (Role.SITE_REVIEWER,),
+                "expansion-manager": (Role.SITE_REVIEWER, Role.EXECUTIVE),
+                "expansionManager": (Role.SITE_REVIEWER, Role.EXECUTIVE),
+                "executive": (Role.EXECUTIVE,),
+                "steward": (Role.DATA_OWNER,),
+                "data-steward": (Role.DATA_OWNER,),
+                "dataSteward": (Role.DATA_OWNER,),
+                "data_owner": (Role.DATA_OWNER,),
+                "expansion-staff": (Role.EXPANSION_USER,),
+                "expansionStaff": (Role.EXPANSION_USER,),
+                "expansion_user": (Role.EXPANSION_USER,),
+            }
+            if (
+                not target.has_role(*role_grants.get(role_id, ()))
+                or not intake_resource_in_scope(target, resource)
+            ):
+                raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
 
         def require_actor(request: Request) -> str:
             principal = get_principal(request)
@@ -2593,16 +2692,25 @@ else:
                 correlation_id=correlation_id,
             )
 
-            # Lookup assignment if assigned_to is set but no assignment exists
+            # Project the resource's own concurrency token, never the Intake
+            # ETag. Keep the join tenant-bound even with a process-local store
+            # or historical rows that lack scope metadata.
             active_assignment = next(
-                (a for a in active.assignments.values() if a.get("intake_id") == intake_id and a.get("status") != "COMPLETED"),
-                None
+                (
+                    a for a in active.assignments.values()
+                    if a.get("intake_id") == intake_id
+                    and a.get("tenant_id") == tenant_id
+                    and a.get("status") != "COMPLETED"
+                ),
+                None,
             )
-
-            # Lookup SLA if exists
             active_sla = next(
-                (s for s in active.slas.values() if s.get("intake_id") == intake_id),
-                None
+                (
+                    s for s in active.slas.values()
+                    if s.get("intake_id") == intake_id
+                    and s.get("tenant_id") == tenant_id
+                ),
+                None,
             )
 
             response.headers["ETag"] = f'W/"{value["version"]}"'
@@ -2633,8 +2741,10 @@ else:
                 audit=masked_val.get("audit") or [],
                 assignment_id=active_assignment.get("assignment_id") if active_assignment else None,
                 assignment_status=active_assignment.get("status") if active_assignment else None,
+                assignment_version=active_assignment.get("version") if active_assignment else None,
                 sla_instance_id=active_sla.get("sla_instance_id") if active_sla else None,
                 sla_state=active_sla.get("state") if active_sla else None,
+                sla_version=active_sla.get("version") if active_sla else None,
                 sla_receipt=active_sla.get("receipt") if active_sla else None,
             )
             return detail
@@ -2831,6 +2941,7 @@ else:
                     raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
 
             actor_id = principal.subject_id
+            require_assignment_target(request, body.owner_subject_id, body.owner_role, current)
 
             def make() -> tuple[dict[str, Any], int]:
                 require_version(if_match, current["version"])
@@ -3350,12 +3461,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> PromotionDecisionReceipt:
-            op_repo = getattr(request.app.state, "operator_intake_repository", None)
-            val = None
-            if op_repo:
-                val = op_repo.get_promotion(promotion_decision_id)
-            if val is None:
-                val = active.promotions.get(promotion_decision_id)
+            val = V1PromotionRepositoryAdapter(active, request.app.state).get_promotion(promotion_decision_id)
             if val is None:
                 raise HTTPException(404, "promotion decision not found")
 
@@ -3962,6 +4068,72 @@ else:
             response.headers["ETag"] = f'W/"{val["version_after"]}"'
             return TransitionReceipt(**val)
 
+        @router.get(
+            "/assignments/{assignment_id}/transfer-targets",
+            operation_id="listAssignmentTransferTargets",
+            response_model=AssignmentTransferTargets,
+            responses=api_error_responses(403, 404, 409, 503),
+        )
+        def list_assignment_transfer_targets(
+            assignment_id: UuidString,
+            request: Request,
+            response: Response,
+            tenant_id: str = Depends(require_actor),
+        ) -> AssignmentTransferTargets:
+            # Not a general identity directory: disclose minimal recipient
+            # labels only to an actor allowed to transfer this exact resource.
+            response.headers["Cache-Control"] = "no-store"
+            current = active.assignments.get(assignment_id)
+            if current is None:
+                raise HTTPException(404, "assignment not found")
+            intake = linked_intake(current)
+            assignment_tenant = current.get("tenant_id") or (
+                intake.get("scope", {}).get("tenant_id") if intake else None
+            )
+            if assignment_tenant != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+            principal = get_principal(request)
+            require_assignment_scope(principal, current)
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE)
+            is_staff = principal.has_role(Role.EXPANSION_USER) and not is_manager
+            if not (is_manager or is_staff or principal.has_role(Role.DATA_OWNER)):
+                raise HTTPException(403, "ROLE_DENIED")
+            if is_staff and current.get("owner_subject_id") != principal.subject_id:
+                raise HTTPException(403, "OWNERSHIP_REQUIRED")
+            if current.get("status") not in {"ASSIGNED", "CLAIMED"}:
+                raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+            identities = getattr(getattr(request.app.state, "persistence_bundle", None), "identity_store", None)
+            if identities is None:
+                raise HTTPException(503, "identity directory unavailable")
+            resource = intake or current
+            targets = []
+            canonical_roles = (
+                (Role.SITE_REVIEWER, "site-reviewer"),
+                (Role.EXECUTIVE, "executive"),
+                (Role.DATA_OWNER, "data-steward"),
+                (Role.EXPANSION_USER, "expansion-staff"),
+            )
+            for account in identities.list_active_accounts(tenant_id):
+                subject_id = str(account.account_id)
+                # A transfer to the current owner is not a recipient change.
+                if subject_id == current.get("owner_subject_id"):
+                    continue
+                try:
+                    target = assignment_target_principal(request, subject_id)
+                except HTTPException as exc:
+                    if exc.status_code != 403:
+                        raise
+                    continue
+                if not intake_resource_in_scope(target, resource):
+                    continue
+                role_id = next((label for role, label in canonical_roles if target.has_role(role)), None)
+                name = account.display_name.strip() or account.username.strip()
+                if role_id and name:
+                    targets.append(AssignmentTransferTarget(id=subject_id, name=name, role=role_id))
+            return AssignmentTransferTargets(
+                assignment_id=assignment_id, assignment_version=current["version"], items=targets,
+            )
+
         @router.post(
             "/assignments/{assignment_id}/actions/claim",
             operation_id="claimAssignment",
@@ -4000,9 +4172,7 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
-            intake = linked_intake(current)
-            if intake is not None:
-                require_intake_scope(principal, intake)
+            require_assignment_scope(principal, current)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -4094,9 +4264,7 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
-            intake = linked_intake(current)
-            if intake is not None:
-                require_intake_scope(principal, intake)
+            require_assignment_scope(principal, current)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -4109,6 +4277,10 @@ else:
             if not (is_manager or is_staff or is_steward):
                 raise HTTPException(403, "ROLE_DENIED")
 
+            require_assignment_target(
+                request, body.target_owner_subject_id, body.target_owner_role,
+                linked_intake(current) or current,
+            )
             prior = load_replay(
                 key,
                 body.model_dump(),
@@ -4195,9 +4367,7 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
-            intake = linked_intake(current)
-            if intake is not None:
-                require_intake_scope(principal, intake)
+            require_assignment_scope(principal, current)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -4263,6 +4433,7 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
+            require_sla_scope(principal, current)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
@@ -4284,8 +4455,21 @@ else:
                 updated["audit_event_id"] = str(uuid4())
                 updated["correlation_id"] = correlation_id or str(uuid4())
                 updated["receipt"] = f"RCPT-SLA-PAUSE-{str(uuid4())[:8].upper()}"
-
-
+                updated["pause_intervals"] = [
+                    *updated.get("pause_intervals", []),
+                    {
+                        "pause_interval_id": updated["active_pause_interval_id"],
+                        "started_at": updated["updated_at"],
+                        "expected_resume_at": body.expected_resume_at,
+                        "reason": body.reason,
+                        "actor_subject_id": actor_id,
+                        "state_before_pause": updated["state_before_pause"],
+                        "version_after_pause": updated["version"],
+                        "audit_event_id": updated["audit_event_id"],
+                        "correlation_id": updated["correlation_id"],
+                        "ended_at": None,
+                    },
+                ]
                 return updated, 200
 
             val, code, was_replayed = replay(
@@ -4331,6 +4515,7 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
+            require_sla_scope(principal, current)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
@@ -4347,12 +4532,26 @@ else:
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
                 resume_state = current.pop("state_before_pause", "ON_TRACK")
+                interval_id = current.get("active_pause_interval_id")
                 updated = generic_mutate(active.slas, sla_instance_id, resume_state, actor_id)
                 updated["active_pause_interval_id"] = None
                 updated["audit_event_id"] = str(uuid4())
                 updated["correlation_id"] = correlation_id or str(uuid4())
-
-
+                for interval in updated.get("pause_intervals", []):
+                    if interval.get("pause_interval_id") == interval_id and interval.get("ended_at") is None:
+                        interval.update({
+                            "ended_at": updated["updated_at"],
+                            "resume_reason": body.reason,
+                            "resumed_by_subject_id": actor_id,
+                            "version_after_resume": updated["version"],
+                            "resume_audit_event_id": updated["audit_event_id"],
+                            "resume_correlation_id": updated["correlation_id"],
+                        })
+                        elapsed = datetime.fromisoformat(updated["updated_at"].replace("Z", "+00:00")) - datetime.fromisoformat(interval["started_at"].replace("Z", "+00:00"))
+                        updated["paused_duration_seconds"] += max(0, int(elapsed.total_seconds()))
+                        break
+                # Legacy rows without an interval retain the existing total;
+                # never fabricate a start time or elapsed duration for them.
                 return updated, 200
 
             val, code, was_replayed = replay(

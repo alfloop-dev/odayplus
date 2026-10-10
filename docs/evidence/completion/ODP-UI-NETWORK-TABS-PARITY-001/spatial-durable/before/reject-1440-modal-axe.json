@@ -1,0 +1,21 @@
+{
+  "violations": [],
+  "incomplete": [],
+  "passes": [
+    "aria-allowed-attr",
+    "aria-conditional-attr",
+    "aria-deprecated-role",
+    "aria-prohibited-attr",
+    "aria-required-attr",
+    "aria-roles",
+    "aria-valid-attr-value",
+    "aria-valid-attr",
+    "button-name",
+    "color-contrast",
+    "duplicate-id-aria",
+    "form-field-multiple-labels",
+    "label",
+    "nested-interactive",
+    "target-size"
+  ]
+}

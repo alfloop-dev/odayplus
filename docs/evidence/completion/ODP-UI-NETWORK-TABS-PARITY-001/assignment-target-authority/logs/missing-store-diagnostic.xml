@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="17.731" timestamp="2026-10-09T23:51:33.269055+00:00" hostname="oday-dev-box.c.alfaloop-data-project-2.internal"><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[missing-store-assign]" time="3.949"><failure message="dataclasses.FrozenInstanceError: cannot assign to field 'identity_store'">resources = (&lt;starlette.testclient.TestClient object at 0x7b7086912f00&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...475f0&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7b70869130b0&gt;, '18baff80-6bbf-4c89-b1c6-36ca303bcaa1')
+operation = 'assign', defect = 'missing-store'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+&gt;           client.app.state.persistence_bundle.identity_store = None
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/security/test_assisted_assignment_authority.py:108: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PersistenceBundle(mode='memory', audit_log=&lt;shared.audit.events.InMemoryAuditLog object at 0x7b7086912fc0&gt;, evidence_s...ly cannot", rollback_policy_version=None, approved_by='architecture_owner', owner_role='network-planning-authority')]))
+name = 'identity_store', value = None
+
+&gt;   ???
+E   dataclasses.FrozenInstanceError: cannot assign to field 'identity_store'
+
+&lt;string&gt;:4: FrozenInstanceError</failure></testcase><testcase classname="tests.security.test_assisted_assignment_authority" name="test_target_requires_fresh_identity_authority[missing-store-transfer]" time="3.988"><failure message="dataclasses.FrozenInstanceError: cannot assign to field 'identity_store'">resources = (&lt;starlette.testclient.TestClient object at 0x7b7084fa07a0&gt;, &lt;apps.api.app.routes.listings.AssistedIntakeStore object ...14350&gt;, &lt;shared.identity.store.InMemoryIdentityStore object at 0x7b7084fa1490&gt;, '227aa893-506c-451e-af73-f21f5fdb525b')
+operation = 'transfer', defect = 'missing-store'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+&gt;           client.app.state.persistence_bundle.identity_store = None
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/security/test_assisted_assignment_authority.py:108: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PersistenceBundle(mode='memory', audit_log=&lt;shared.audit.events.InMemoryAuditLog object at 0x7b7084fa1370&gt;, evidence_s...ly cannot", rollback_policy_version=None, approved_by='architecture_owner', owner_role='network-planning-authority')]))
+name = 'identity_store', value = None
+
+&gt;   ???
+E   dataclasses.FrozenInstanceError: cannot assign to field 'identity_store'
+
+&lt;string&gt;:4: FrozenInstanceError</failure></testcase></testsuite></testsuites>

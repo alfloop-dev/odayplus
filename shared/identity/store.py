@@ -102,6 +102,10 @@ class IdentityStore(Protocol):
         """以 account_id 查找帳號。"""
         ...
 
+    def list_active_accounts(self, tenant_id: UUID | str) -> list[Account]:
+        """List same-tenant active accounts; callers must filter roles/resource scope."""
+        ...
+
     def find_account_by_username(self, tenant_id: UUID | str, username: str) -> Account | None:
         """以 tenant_id 與 username 查找帳號（case-insensitive）。"""
         ...
@@ -176,6 +180,14 @@ class InMemoryIdentityStore:
     def find_account_by_id(self, account_id: UUID | str) -> Account | None:
         aid = _parse_uuid(account_id)
         return self._accounts.get(aid)
+
+    def list_active_accounts(self, tenant_id: UUID | str) -> list[Account]:
+        tid = _parse_uuid(tenant_id)
+        return sorted(
+            (account for account in self._accounts.values()
+             if account.tenant_id == tid and account.is_active),
+            key=lambda account: str(account.account_id),
+        )
 
     def find_account_by_username(self, tenant_id: UUID | str, username: str) -> Account | None:
         tid = _parse_uuid(tenant_id)
@@ -269,6 +281,24 @@ class SqlIdentityStore:
                 if not row:
                     return None
                 return _row_to_account(row)
+
+    def list_active_accounts(self, tenant_id: UUID | str) -> list[Account]:
+        tid = _parse_uuid(tenant_id)
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
+                raise RuntimeError("identity directory connection unavailable")
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT account_id, tenant_id, username, email, display_name, status,
+                           created_at, created_by, updated_at, disabled_at, disabled_reason
+                    FROM identity.accounts
+                    WHERE tenant_id = %s AND status = 'active'
+                    ORDER BY account_id
+                    """,
+                    (str(tid),),
+                )
+                return [_row_to_account(row) for row in cur.fetchall()]
 
     def find_account_by_username(self, tenant_id: UUID | str, username: str) -> Account | None:
         tid = _parse_uuid(tenant_id)

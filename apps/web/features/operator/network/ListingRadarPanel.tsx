@@ -85,10 +85,7 @@ export function ListingRadarPanel({
     sourceFilter === "all" ? visibleRows : visibleRows.filter((row) => row.sourceId === sourceFilter);
   const selectedRow =
     sourceFilteredRows.find((row) => row.id === selectedListingId) ??
-    sourceFilteredRows[0] ??
-    visibleRows.find((row) => row.id === selectedListingId) ??
-    visibleRows[0] ??
-    rows[0];
+    sourceFilteredRows[0];
   const selectedListing = selectedRow ? listingById.get(selectedRow.id) : undefined;
   // `mergedIntoId` is the durable terminal marker: a merged source keeps
   // isDuplicate/status "duplicate", so only this field distinguishes "can still
@@ -107,6 +104,11 @@ export function ListingRadarPanel({
       selectedRow.status !== "candidate" &&
       !canMergeListing(activeRoleId),
   );
+  const detailAction = selectedRow ? listingAction(selectedRow, selectedListing, activeRoleId) : null;
+  const detailActionAvailable =
+    detailAction === "convert" ? Boolean(onConvert) :
+    detailAction === "merge" ? Boolean(onMerge) :
+    detailAction === "archive" ? Boolean(onArchive) : false;
   const visibleListingCount = rows.filter((row) => row.status !== "archived").length;
   const sourceFilterOptions = [
     { id: "all", label: `全部來源 ${visibleListingCount}` },
@@ -194,7 +196,7 @@ export function ListingRadarPanel({
             </div>
             <div className={styles.radarViewToggle} aria-label="Radar view">
               <button aria-pressed type="button">清單</button>
-              <button aria-pressed={false} type="button">地圖</button>
+              <button disabled title="尚未提供物件地圖檢視" type="button">地圖</button>
             </div>
           </div>
           {sourceFilteredRows.length ? (
@@ -204,26 +206,12 @@ export function ListingRadarPanel({
                 const evidence = listing?.sourceEvidence ?? [];
                 const isBusy = busyListingId === row.id;
                 const mergeTarget = listing?.duplicateOfId ?? row.duplicateOfId;
-                const canConvert =
-                  row.id === "L-2024" &&
-                  !row.candidateId &&
-                  !row.isDuplicate &&
-                  row.hardRuleFailures.length === 0 &&
-                  row.status !== "archived";
-                // Merge needs listing:UPDATE plus the service's actor allowlist;
-                // hiding it for roles that cannot clear both keeps the console
-                // from offering a button that is guaranteed to 403/422. Once
-                // `mergedIntoId` is set the merge is terminal, so the entry
-                // point must retire rather than mint a second request.
-                const canMerge =
-                  row.id === "L-2029" &&
-                  Boolean(mergeTarget) &&
-                  !listing?.mergedIntoId &&
-                  canMergeListing(activeRoleId);
-                const canArchive =
-                  row.id === "L-2030" &&
-                  row.status !== "archived" &&
-                  (row.status === "hardfail" || row.hardRuleFailures.length > 0);
+                // Row and detail share the same terminal/permission/hard-rule
+                // gates, and never advertise a write without its real handler.
+                const action = listingAction(row, listing, activeRoleId);
+                const canConvert = action === "convert" && Boolean(onConvert);
+                const canMerge = action === "merge" && Boolean(onMerge);
+                const canArchive = action === "archive" && Boolean(onArchive);
 
                 return (
                   <article
@@ -236,7 +224,15 @@ export function ListingRadarPanel({
                   >
                     <div className={styles.radarRowHead}>
                       <span>{sourceShortLabel(row.sourceName)}</span>
-                      <strong>{row.id} · {listingTitle(row)}</strong>
+                      <button
+                        aria-label={`查看 ${row.id} 物件詳情`}
+                        aria-pressed={selectedRow?.id === row.id}
+                        className={styles.radarSelectionButton}
+                        onClick={() => setSelectedListingId(row.id)}
+                        type="button"
+                      >
+                        <strong>{row.id} · {listingTitle(row)}</strong>
+                      </button>
                       <ToneBadge tone={row.tone}>{row.statusLabel}</ToneBadge>
                     </div>
                     <div className={styles.radarRowMeta}>
@@ -307,7 +303,7 @@ export function ListingRadarPanel({
               })}
             </div>
           ) : (
-            <div className={styles.emptyState}>No listings match the selected filter</div>
+            <div className={styles.emptyState}>此篩選下沒有物件。</div>
           )}
         </section>
 
@@ -326,11 +322,11 @@ export function ListingRadarPanel({
               <dl className={styles.listingDetailRows}>
                 <DetailRow label="正規化地址">{selectedRow.address}</DetailRow>
                 <DetailRow label="租金／坪數">{selectedRow.rentLabel} · {selectedRow.areaPing} ping</DetailRow>
-                <DetailRow label="樓層／面寬">{selectedListing?.floor ?? "—"} · {selectedListing?.frontageMeters ? `${selectedListing.frontageMeters}m` : "—"}</DetailRow>
+                <DetailRow label="樓層／面寬">{selectedListing?.floor ?? "—"} · {selectedListing?.frontageMeters != null ? `${selectedListing.frontageMeters}m` : "—"}</DetailRow>
                 <DetailRow label="首見">{selectedListing?.firstSeenAt ?? "—"}</DetailRow>
                 <DetailRow label="Geocode">{selectedRow.geocodeConfidenceLabel}</DetailRow>
                 <DetailRow label="重複檢查">{selectedRow.isDuplicate ? `重複 ${selectedRow.duplicateOfId ?? ""}` : "唯一物件"}</DetailRow>
-                <DetailRow label="硬規則">{selectedListing?.hardRuleSummary ?? (selectedRow.hardRuleFailures.length ? selectedRow.hardRuleFailures.join("; ") : "3/3 通過")}</DetailRow>
+                <DetailRow label="硬規則">{selectedListing?.hardRuleSummary ?? (selectedRow.hardRuleFailures.length ? selectedRow.hardRuleFailures.join("; ") : "未提供檢查結果")}</DetailRow>
                 <DetailRow label="HeatZone">{selectedRow.zoneLabel} · 適配 {selectedListing?.fitScore ?? "—"}</DetailRow>
                 <DetailRow label="候選點">{selectedRow.candidateId ?? "—"}</DetailRow>
                 <DetailRow label="Evidence">{(selectedListing?.sourceEvidence ?? []).join(", ") || "—"}</DetailRow>
@@ -339,26 +335,33 @@ export function ListingRadarPanel({
                 className={styles.detailPrimaryButton}
                 data-testid="listing-detail-primary"
                 disabled={
-                  !selectedRow ||
-                  selectedRow.status === "archived" ||
-                  Boolean(detailMergedIntoId) ||
-                  detailMergeDenied
+                  !detailActionAvailable || busyListingId === selectedRow.id
                 }
                 onClick={() => {
-                  if (!selectedRow || detailMergedIntoId || detailMergeDenied) return;
+                  if (!detailActionAvailable || busyListingId === selectedRow.id) return;
                   const mergeTarget = selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId;
-                  if (selectedRow.id === "L-2024" && !selectedRow.candidateId && !selectedRow.isDuplicate) {
-                    onConvert?.(selectedRow.id);
-                  } else if (selectedRow.id === "L-2029" && mergeTarget) {
-                    onMerge?.(selectedRow.id, mergeTarget);
-                  } else if (selectedRow.id === "L-2030") {
-                    onArchive?.(selectedRow.id);
-                  }
+                  if (detailAction === "convert") onConvert?.(selectedRow.id);
+                  else if (detailAction === "merge" && mergeTarget) onMerge?.(selectedRow.id, mergeTarget);
+                  else if (detailAction === "archive") onArchive?.(selectedRow.id);
                 }}
                 type="button"
               >
                 {detailPrimaryLabel(selectedRow, canMergeListing(activeRoleId), detailMergedIntoId)}
               </button>
+              <div className={styles.radarSecondaryActions} aria-label="物件次要操作">
+                <button disabled type="button">加入 Watchlist</button>
+                <button disabled type="button">聯絡仲介</button>
+                <button disabled type="button">直接送 SiteScore（資料足夠）</button>
+                <button
+                  disabled={detailAction !== "archive" || !onArchive || busyListingId === selectedRow.id}
+                  onClick={() => onArchive?.(selectedRow.id)}
+                  type="button"
+                >標記不適合／封存</button>
+                <p>地圖、Watchlist、仲介聯絡與直接評分尚未提供；封存須符合硬規則與服務條件。</p>
+              </div>
+              {!detailActionAvailable && !detailMergeDenied ? (
+                <p className={styles.muted}>此物件目前沒有可執行操作；候選點請至候選點分頁查看。</p>
+              ) : null}
               {detailMergeDenied ? (
                 <p className={styles.muted} data-testid="listing-detail-merge-denied">
                   {MERGE_DENIED_NOTE}
@@ -366,12 +369,22 @@ export function ListingRadarPanel({
               ) : null}
             </>
           ) : (
-            <div className={styles.emptyState}>No listing selected</div>
+            <div className={styles.emptyState}>此篩選下沒有物件，請調整來源或區域。</div>
           )}
         </aside>
       </div>
     </div>
   );
+}
+
+// Preserve the service's existing bounded demo action IDs and role gates.
+// An absence of failures is not a fabricated hard-rule success receipt.
+function listingAction(row: ListingRadarRow, listing: NetworkListingDetail | undefined, role: OperatorRoleId) {
+  if (row.status === "archived" || row.status === "candidate" || row.candidateId || listing?.mergedIntoId) return null;
+  if (row.id === "L-2024" && !row.isDuplicate && row.hardRuleFailures.length === 0) return "convert";
+  if (row.id === "L-2029" && (listing?.duplicateOfId ?? row.duplicateOfId) && canMergeListing(role)) return "merge";
+  if (row.id === "L-2030" && (row.status === "hardfail" || row.hardRuleFailures.length > 0)) return "archive";
+  return null;
 }
 
 function ToneBadge({ children, tone }: { children: ReactNode; tone: "good" | "watch" | "risk" }) {

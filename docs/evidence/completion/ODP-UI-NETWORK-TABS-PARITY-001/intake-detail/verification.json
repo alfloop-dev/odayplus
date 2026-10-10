@@ -1,0 +1,22 @@
+{
+  "render_head": "51d10dcaf0eb18da2859173219a541e4cda048ed",
+  "base": "7869551a58e8e13b6967dc4583d7a22ced77216b",
+  "completion": "increment only; not ready for review",
+  "original_synchronous_terminal_exit_receipts": {
+    "before": 1,
+    "boundaries": 0,
+    "detail-after-keyboard": 0,
+    "detail-after-return": 1,
+    "detail-after": 1,
+    "detail-before-landmarks": 1,
+    "detail-before-ready": 1,
+    "detail-before-stable": 0,
+    "detail-before-tenant": 1,
+    "detail-before": 1,
+    "durable-e2e": 0,
+    "inventory": 0,
+    "lint": 0,
+    "typecheck": 0,
+    "unit": 0
+  }
+}

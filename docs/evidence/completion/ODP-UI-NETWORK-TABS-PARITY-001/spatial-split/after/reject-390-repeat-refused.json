@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal '477b1ed0-c67d-471c-a395-7defc8329203' is already REJECTED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal '477b1ed0-c67d-471c-a395-7defc8329203' is already REJECTED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-10T01:16:14.753Z",
+      "details": [],
+      "correlation_id": "e384dc55-e1e4-4a00-bb08-e1848d6e87e8"
+    }
+  }
+}

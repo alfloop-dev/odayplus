@@ -2412,6 +2412,14 @@
                   "null"
                 ]
               },
+              "assignment_version": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1,
+                "description": "Current version of the linked active Assignment, not the Intake ETag. Null when the resource or its version is unavailable."
+              },
               "sla_instance_id": {
                 "type": [
                   "string",
@@ -2424,6 +2432,14 @@
                   "string",
                   "null"
                 ]
+              },
+              "sla_version": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1,
+                "description": "Current version of the linked SLA instance, not the Intake ETag. Null when the resource or its version is unavailable."
               },
               "sla_receipt": {
                 "type": [

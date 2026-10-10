@@ -205,6 +205,7 @@
 
 /* --- dialogs --- */
 .overlay {
+  box-sizing: border-box;
   position: fixed;
   inset: 0;
   z-index: 100;
@@ -223,8 +224,10 @@
   background: #ffffff;
   border-radius: 14px;
   box-shadow: 0 24px 64px rgba(12, 18, 44, 0.3);
-  max-height: 92vh;
+  box-sizing: border-box;
+  max-height: min(92vh, calc(100dvh - 40px));
   overflow-y: auto;
+  overflow-wrap: anywhere;
   width: 560px;
   max-width: 94vw;
   color: #1c2333;
@@ -240,11 +243,11 @@
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   margin: 0 auto;
   max-width: 1160px;
   min-width: 0;
-  padding: 18px 20px 40px;
+  padding: 14px 20px 46px;
   width: 100%;
 }
 
@@ -261,11 +264,11 @@
   align-items: flex-start;
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border-radius: 14px;
   display: grid;
-  gap: 14px;
+  gap: 10px;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  padding: 16px;
+  padding: 12px 18px;
 }
 
 .intakeHeaderChips,
@@ -316,6 +319,27 @@
   flex-wrap: wrap;
 }
 
+.panelNarrow .dialogHead,
+.panelDecide .dialogHead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.panelNarrow .dialogTitle {
+  font-size: 14.5px;
+}
+
+.dialogHead .dialogTitle {
+  min-width: 0;
+}
+
+/* Keep keyboard focus visible without changing the Package 10 button shape. */
+.panel button:focus-visible,
+.panel input[type="checkbox"]:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
 .dialogTitle {
   font-size: 15px;
   font-weight: 700;
@@ -356,10 +380,10 @@
 }
 
 .dialogBody {
-  padding: 13px 18px 4px;
+  padding: 12px 18px 4px;
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 10px;
 }
 
 .timelineHeader {
@@ -383,11 +407,17 @@
   font-size: 10.5px;
 }
 
+.timelineScroll:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
 .dialogFooter {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 14px 18px 16px;
+  padding: 12px 18px 16px;
+  flex-wrap: wrap;
 }
 
 .fieldLabel {
@@ -401,6 +431,8 @@
 .input,
 .textarea,
 .select {
+  box-sizing: border-box;
+  min-width: 0;
   width: 100%;
   border: 1px solid #d6dce8;
   border-radius: 8px;
@@ -555,8 +587,60 @@
 /* --- detail dialog --- */
 .metaGrid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
+}
+
+.intakeFullPage > [data-testid="intake-submission-summary"] .metaGrid > div {
+  border: 1px solid #e9edf4;
+  border-radius: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+}
+
+.intakeFullPage > [data-testid="intake-submission-summary"] .metaGrid {
+  padding: 8px 12px;
+}
+
+.assignmentCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: 8px;
+  padding: 7px 12px;
+}
+
+.assignmentCard {
+  background: #ffffff;
+  border: 1px solid #e9edf4;
+  border-radius: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  overflow-wrap: anywhere;
+}
+
+/* Later-spec unavailable authority remains explicit, but not four oversized
+ * empty-state panels ahead of the operator's evidence and decision workflow. */
+.assignmentSummary .emptyState {
+  font-size: 10.5px;
+  line-height: 1.6;
+  padding: 4px 12px;
+  text-align: left;
+}
+
+.assignmentActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+}
+
+.assignmentActions:empty {
+  display: none;
+}
+
+.assignmentActions button {
+  font-size: 10.5px;
+  padding: 4px 11px;
 }
 
 .metaCaption {
@@ -567,8 +651,9 @@
 }
 
 .metaValue {
-  font-size: 11.5px;
+  font-size: 11px;
   color: #1c2333;
+  overflow-wrap: anywhere;
 }
 
 .metaSub {
@@ -961,27 +1046,29 @@
 
 .summaryRow {
   display: flex;
-  gap: 8px;
-  padding: 5px 10px;
-  font-size: 10.5px;
-  border-top: 1px solid #f4f6fa;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 11px;
+  border-top: 1px solid #f1f3f8;
 }
 
 .summaryKey {
   width: 70px;
   flex: none;
   color: #5a6478;
+  font-weight: 600;
 }
 
 .summaryValue {
-  word-break: break-all;
-  color: #3a4362;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #1c2333;
 }
 
 .riskSummaryText {
-  padding: 9px 10px;
-  font-size: 11px;
-  line-height: 1.7;
+  padding: 8px 11px;
+  font-size: 10.5px;
+  line-height: 1.55;
   color: #3a4362;
 }
 
@@ -1136,9 +1223,10 @@
 
 /* --- Package 10 promotion review confirmation --- */
 .promotionConfirmDialog {
+  box-sizing: border-box;
   width: 520px;
-  max-width: 94vw;
-  max-height: 92vh;
+  max-width: 100%;
+  max-height: min(92vh, calc(100dvh - 40px));
   overflow-y: auto;
   background: #ffffff;
   border-radius: 14px;
@@ -1148,13 +1236,80 @@
 
 .promotionConfirmHeader {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
   padding: 16px 18px 0;
 }
 
 .promotionConfirmHeader .dialogClose {
   margin-left: auto;
+  flex-shrink: 0;
+}
+
+.promotionContext {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #5a6478;
+  overflow-wrap: anywhere;
+}
+
+.promotionRiskAck {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  background: #ffffff;
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #3a4362;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.promotionRiskAck[aria-pressed="true"] {
+  background: #eceffb;
+}
+
+.promotionRiskAck > span:first-child {
+  flex: none;
+  font-size: 14px;
+  line-height: 1.2;
+  color: #2e3a97;
+}
+
+.promotionRiskAck:focus-visible,
+.promotionAuditDetails > summary:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+.promotionRiskAck:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.promotionAuditDetails {
+  color: #5a6478;
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+.promotionAuditDetails > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.promotionAuditDetails code {
+  display: block;
+  margin-top: 4px;
+}
+
+.promotionAuditDetails .reviewSummary {
+  margin-top: 6px;
 }
 
 .promotionConfirmBody {
@@ -1233,7 +1388,7 @@
  */
 @media (max-width: 1024px) {
   .metaGrid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .fieldsGrid {
@@ -1260,7 +1415,7 @@
     display: none;
   }
   .metaGrid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .grid2 {
@@ -1352,14 +1507,12 @@
     grid-template-columns: 1fr;
   }
 
-  .matrixHeader,
-  .promotionConfirmHeader {
+  .matrixHeader {
     padding-left: 14px;
     padding-right: 14px;
   }
 
-  .matrixBody,
-  .promotionConfirmBody {
+  .matrixBody {
     padding-left: 14px;
     padding-right: 14px;
   }
@@ -1370,6 +1523,6 @@
   }
 
   .panel {
-    max-height: 96vh;
+    max-height: min(96vh, calc(100dvh - 40px));
   }
 }

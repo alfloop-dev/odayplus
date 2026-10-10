@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -33,10 +33,6 @@ import {
   newMergeIdempotencyKey,
   type ListingApiError,
 } from "./network/listingsClient";
-import { canMergeListing } from "./network/listingPermissions";
-import { CandidatePanel } from "./network/CandidatePanel";
-import { SiteScorePanel } from "./network/SiteScorePanel";
-import { ComparePanel } from "./network/ComparePanel";
 import { ReviewPanel } from "./network/ReviewPanel";
 import { NetworkShell } from "./network/NetworkShell";
 import type { RebalancePanelProps } from "./network/RebalancePanel";
@@ -46,7 +42,9 @@ import type {
   ProposalPreviewData,
 } from "./network/HeatZoneMergeSplitPanel";
 import {
+  buildFindAreasHref,
   buildNetworkTabHref,
+  parseFindAreasUrlState,
   parseNetworkTabIndex,
 } from "./network/networkUrlState";
 import type { ExpansionStep } from "./network/ExpansionStepper";
@@ -149,6 +147,60 @@ const HeatZoneMergeSplitPanel = dynamic<HeatZoneMergeSplitPanelProps>(
           role="status"
         >
           熱區重組提案載入中…
+        </div>
+      );
+    },
+  },
+);
+
+const CandidatePanel = dynamic(
+  () => import("./network/CandidatePanel").then((mod) => mod.CandidatePanel),
+  {
+    loading: function CandidatePanelLoading() {
+      return (
+        <div
+          aria-live="polite"
+          className={styles.mapLoading}
+          data-testid="candidate-panel-loading"
+          role="status"
+        >
+          候選點面板載入中…
+        </div>
+      );
+    },
+  },
+);
+
+const SiteScorePanel = dynamic(
+  () => import("./network/SiteScorePanel").then((mod) => mod.SiteScorePanel),
+  {
+    loading: function SiteScorePanelLoading() {
+      return (
+        <div
+          aria-live="polite"
+          className={styles.mapLoading}
+          data-testid="sitescore-panel-loading"
+          role="status"
+        >
+          SiteScore 面板載入中…
+        </div>
+      );
+    },
+  },
+);
+
+const ComparePanel = dynamic(
+  () => import("./network/ComparePanel").then((mod) => mod.ComparePanel),
+  {
+    loading: function ComparePanelLoading() {
+      return (
+        <div
+          aria-live="polite"
+          className={styles.mapLoading}
+          data-testid="compare-panel-loading"
+          role="status"
+        >
+          比較面板載入中…
         </div>
       );
     },
@@ -301,7 +353,12 @@ export function resolveNetworkTabGateState({
     return resolveNetworkDataUnavailableState([rebalanceLoadState]);
   }
   if (activeTab === 7) {
-    return proposalsLoadState ? resolveNetworkDataUnavailableState([proposalsLoadState]) : null;
+    // Spatial owns loading, empty and retryable read failure in its panel.
+    // Keep the production seed-data guard, but do not replace these states
+    // with the generic gate (which has no proposal retry control).
+    return proposalsLoadState === "seed" || proposalsLoadState === "fixture"
+      ? "seed"
+      : null;
   }
   return null;
 }
@@ -501,48 +558,48 @@ function buildFallbackExpansionSteps(selectedHeatZoneId: string, hasCandidate: b
       label: "Find Area",
       state: "completed",
       tabIndex: 0,
-      entityId: selectedHeatZoneId,
-      summary: `${selectedHeatZoneId} selected.`,
+      entityId: selectedHeatZoneId || "HZ-01",
+      summary: "區域已選定",
     },
     {
       id: "radar",
       label: "Listing Radar",
-      state: hasCandidate ? "completed" : "current",
+      state: "completed",
       tabIndex: 1,
       entityId: "L-2024",
-      summary: "Review clean, duplicate, and hard-rule listings.",
+      summary: "確認物件",
     },
     {
       id: "candidate",
       label: "Candidate",
-      state: hasCandidate ? "current" : "next",
+      state: "current",
       tabIndex: 2,
-      entityId: hasCandidate ? "CS-1001" : "L-2024",
-      summary: "Convert listing into a candidate site.",
+      entityId: "CS-1001",
+      summary: "候選點評估中",
     },
     {
       id: "sitescore",
       label: "SiteScore",
-      state: hasCandidate ? "next" : "blocked",
+      state: "next",
       tabIndex: 3,
       entityId: "CS-1001",
-      summary: "Score candidate after conversion.",
+      summary: "執行 SiteScore",
     },
     {
       id: "compare",
       label: "Compare",
-      state: hasCandidate ? "next" : "blocked",
+      state: "next",
       tabIndex: 4,
       entityId: "CS-1001",
-      summary: "Compare candidate alternatives.",
+      summary: "加入比較",
     },
     {
       id: "review",
       label: "Review",
-      state: "blocked",
+      state: "next",
       tabIndex: 5,
-      entityId: null,
-      summary: "Review opens after scoring gate.",
+      entityId: "RV-701",
+      summary: "送審並完成審核決策",
     },
   ];
 }
@@ -589,8 +646,12 @@ export function NetworkFindAreasWorkspace({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const urlAreasState = parseFindAreasUrlState(searchParams);
   const fixturesAllowed = operatorFixturesAllowed();
   const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId]);
+  // Presentation gate mirrors sitescore:EXECUTE for console personas. The API
+  // still derives durable grants; never substitute an expansion persona.
+  const canExecuteScoring = activeRoleId === "expansion-manager";
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
   const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
@@ -599,9 +660,15 @@ export function NetworkFindAreasWorkspace({
   const siteReviews = siteReviewsInput ?? (fixturesAllowed ? SITE_REVIEW_FIXTURES : EMPTY_SITE_REVIEWS);
   const reviewIdentity = useMemo(() => resolveNetworkReviewIdentity(activeRoleId), [activeRoleId]);
   const [localSelectedId, setLocalSelectedId] = useState(
-    selectedHeatZoneId ?? (fixturesAllowed ? "HZ-01" : ""),
+    selectedHeatZoneId ?? urlAreasState.heatZoneId ?? (fixturesAllowed ? "HZ-01" : ""),
   );
-  const [localLens, setLocalLens] = useState<NetworkFindAreasLens>(activeLens ?? "demand");
+  const [localLens, setLocalLens] = useState<NetworkFindAreasLens>(activeLens ?? urlAreasState.lens);
+  useEffect(() => {
+    // Deep links and history restoration must not depend on component/session state.
+    // Controlled props remain authoritative; URL hints never widen API read grants.
+    setLocalSelectedId(selectedHeatZoneId ?? urlAreasState.heatZoneId ?? (fixturesAllowed ? "HZ-01" : ""));
+    setLocalLens(activeLens ?? urlAreasState.lens);
+  }, [activeLens, fixturesAllowed, selectedHeatZoneId, urlAreasState.heatZoneId, urlAreasState.lens]);
   const [localTrackedIds, setLocalTrackedIds] = useState(
     () => new Set(trackedHeatZoneIds ?? (fixturesAllowed ? ["HZ-01"] : [])),
   );
@@ -652,10 +719,9 @@ export function NetworkFindAreasWorkspace({
   const [reviewError, setReviewError] = useState<string | null>(null);
 
   const [proposals, setProposals] = useState<HeatZoneProposal[]>([]);
-  const [proposalsLoadState, setProposalsLoadState] = useState<OperatorDataAvailability>(
-    fixturesAllowed ? "fixture" : "loading",
-  );
+  const [proposalsLoadState, setProposalsLoadState] = useState<OperatorDataAvailability>("loading");
   const [proposalsApiError, setProposalsApiError] = useState<string | null>(null);
+  const proposalsReadGeneration = useRef(0);
 
   const getCompositionClient = useCallback(async () => {
     const { buildHeatZoneCompositionClient } = await import(
@@ -665,75 +731,66 @@ export function NetworkFindAreasWorkspace({
   }, [activeRoleId]);
 
   const reloadProposals = useCallback(async () => {
+    const generation = ++proposalsReadGeneration.current;
+    setProposalsLoadState("loading");
+    setProposalsApiError(null);
     try {
       const client = await getCompositionClient();
       const items = await client.fetchProposals();
-      if (items.length > 0 || !fixturesAllowed) {
-        setProposals(items);
-        setProposalsLoadState("ready");
-      } else {
-        setProposals([]);
-        setProposalsLoadState(fixturesAllowed ? "fixture" : "empty");
-      }
-      setProposalsApiError(null);
-    } catch {
-      setProposalsLoadState(fixturesAllowed ? "fixture" : "error");
-      setProposalsApiError("Failed to load merge/split proposals");
+      if (generation !== proposalsReadGeneration.current) return null;
+      setProposals(items);
+      setProposalsLoadState(items.length > 0 ? "ready" : "empty");
+      return items;
+    } catch (error) {
+      if (generation !== proposalsReadGeneration.current) return null;
+      // Never present stale decision controls, or a fixture/empty success,
+      // when this read scope cannot confirm the current proposal list.
+      setProposals([]);
+      setProposalsLoadState("error");
+      setProposalsApiError(error instanceof Error ? error.message : "提案清單讀取失敗");
+      return null;
     }
-  }, [fixturesAllowed, getCompositionClient]);
+  }, [getCompositionClient]);
 
   useEffect(() => {
-    if (activeTab !== 7) {
-      return;
-    }
-    let cancelled = false;
-    async function load() {
-      try {
-        const client = await getCompositionClient();
-        const items = await client.fetchProposals();
-        if (!cancelled) {
-          if (items.length > 0 || !fixturesAllowed) {
-            setProposals(items);
-            setProposalsLoadState("ready");
-          } else {
-            setProposals([]);
-            setProposalsLoadState(fixturesAllowed ? "fixture" : "empty");
-          }
-          setProposalsApiError(null);
-        }
-      } catch {
-        if (!cancelled) {
-          setProposalsLoadState(fixturesAllowed ? "fixture" : "error");
-          setProposalsApiError("Failed to load merge/split proposals");
-        }
-      }
-    }
-    load();
+    if (activeTab !== 7) return;
+    void reloadProposals();
     return () => {
-      cancelled = true;
+      // Ignore late results after changing tab/persona or starting a newer read.
+      proposalsReadGeneration.current += 1;
     };
-  }, [activeTab, fixturesAllowed, getCompositionClient]);
+  }, [activeTab, reloadProposals]);
 
   const handleApproveProposal = useCallback(
     async (proposalId: string, notes?: string) => {
+      const generation = proposalsReadGeneration.current;
       const client = await getCompositionClient();
+      if (generation !== proposalsReadGeneration.current) throw new Error("提案讀取範圍已變更");
       const ok = await client.approveProposal(proposalId, notes);
       if (!ok) {
-        throw new Error("Failed to approve proposal");
+        throw new Error("核准請求未成功");
       }
-      await reloadProposals();
+      if (generation !== proposalsReadGeneration.current) return { readbackConfirmed: false };
+      // POST acknowledgement and readback are separate facts. Never report a
+      // failed GET as a failed write, inviting a duplicate high-impact decision.
+      const items = await reloadProposals();
+      return { readbackConfirmed: !!items?.some((item) => item.proposal_id === proposalId && (item.status === "APPROVED" || item.status === "APPLIED")) };
     },
     [getCompositionClient, reloadProposals],
   );
 
   const handleRejectProposal = useCallback(
     async (proposalId: string, reason: string) => {
+      const generation = proposalsReadGeneration.current;
       const client = await getCompositionClient();
+      if (generation !== proposalsReadGeneration.current) throw new Error("提案讀取範圍已變更");
       const ok = await client.rejectProposal(proposalId, reason);
       if (!ok) {
-        throw new Error("Failed to reject proposal");
+        throw new Error("拒絕請求未成功");
       }
-      await reloadProposals();
+      if (generation !== proposalsReadGeneration.current) return { readbackConfirmed: false };
+      const items = await reloadProposals();
+      return { readbackConfirmed: !!items?.some((item) => item.proposal_id === proposalId && item.status === "REJECTED") };
     },
     [getCompositionClient, reloadProposals],
   );
@@ -777,11 +834,35 @@ export function NetworkFindAreasWorkspace({
     : fixturesAllowed
       ? listingSources
       : networkSnapshot?.listingSources ?? [];
-  const candidates =
-    networkSnapshot?.candidates ??
-    (liveCandidates?.source === "api" && liveCandidates.items.length > 0
-      ? liveCandidates.items
-      : candidatesProp);
+  const candidates = useMemo<Candidate[]>(() =>
+    scoringSnapshot
+      ? scoringSnapshot.candidates.map((c) => ({
+          id: c.id,
+          listingId: c.listingId ?? undefined,
+          heatZoneId: c.heatZoneId,
+          title: c.title,
+          address: c.address,
+          status: (c.scored
+            ? c.recommendation === "GO"
+              ? "go"
+              : c.recommendation === "REJECT"
+                ? "rejected"
+                : "wait"
+            : c.gate.passed
+              ? "scoring"
+              : "wait") as Candidate["status"],
+          score: c.score ?? 0,
+          recommendation: (c.recommendation ?? "WAIT") as Candidate["recommendation"],
+          modelVersion: c.modelVersion,
+          datasetSnapshotId: c.datasetSnapshotId,
+          missingData: c.gate.missing,
+        }))
+      : networkSnapshot?.candidates ??
+        (liveCandidates?.source === "api" && liveCandidates.items.length > 0
+          ? liveCandidates.items
+          : candidatesProp),
+    [scoringSnapshot, networkSnapshot?.candidates, liveCandidates, candidatesProp],
+  );
   const siteReviewsEffective = networkSnapshot?.siteReviews ?? siteReviews;
   const rebalanceStoresEffective = rebalanceSnapshot?.stores?.length
     ? rebalanceSnapshot.stores
@@ -1019,7 +1100,9 @@ export function NetworkFindAreasWorkspace({
     busyId: string | null,
     idempotencyKey?: string,
   ) {
+    if (!canExecuteScoring || busyCandidateId || !scoringSnapshot) return false;
     setBusyCandidateId(busyId);
+    setNetworkApiError(null);
     try {
       const response = await fetch(`/api/v1/operator/network-scoring/${path}`, {
         method: "POST",
@@ -1029,7 +1112,7 @@ export function NetworkFindAreasWorkspace({
           ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
           ...NETWORK_OPERATOR_HEADERS,
         },
-        body: JSON.stringify({ ...NETWORK_ACTOR, ...body }),
+        body: JSON.stringify({ actorRoleId: activeRoleId, ...body }),
       });
       if (!response.ok) {
         setNetworkApiError(`network-scoring ${path} failed (${response.status})`);
@@ -1046,24 +1129,29 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function runSiteScore(candidateId: string) {
+    if (!scoringSnapshot?.candidates.some((candidate) => candidate.id === candidateId && candidate.gate.passed)) return;
     await postScoringAction(
       `candidates/${candidateId}/score`,
       {},
       candidateId,
-      `r4-006-score-${candidateId}`,
+      `network-score-${crypto.randomUUID()}`,
     );
   }
 
-  async function scoreAllCandidates() {
-    await postScoringAction("score", {}, "batch", "r4-006-score-batch");
+  async function scoreAllCandidates(candidateIds: string[]) {
+    const eligible = new Set(scoringSnapshot?.candidates.filter((candidate) => candidate.gate.passed).map((candidate) => candidate.id));
+    const selected = [...new Set(candidateIds)].filter((id) => eligible.has(id));
+    if (!selected.length) return;
+    await postScoringAction("score", { candidateIds: selected }, "batch", `network-batch-${crypto.randomUUID()}`);
   }
 
   async function toggleCompareCandidate(candidateId: string) {
-    const current = scoringSnapshot?.compareSet ?? [];
+    if (!scoringSnapshot?.candidates.some((candidate) => candidate.id === candidateId && candidate.scored)) return;
+    const current = scoringSnapshot.compareSet;
     const next = current.includes(candidateId)
       ? current.filter((id) => id !== candidateId)
       : [...current, candidateId];
-    await postScoringAction("compare", { candidateIds: next }, candidateId, `r4-006-compare-${candidateId}`);
+    await postScoringAction("compare", { candidateIds: next }, candidateId);
   }
 
   async function reloadRebalanceSnapshot() {
@@ -1207,13 +1295,22 @@ export function NetworkFindAreasWorkspace({
   const selectedZone = viewModel.selectedZone;
   const isSelectedTracked = selectedZone ? trackedSet.has(selectedZone.id) : false;
 
+  function pushFindAreasState(zoneId: string, lens: NetworkFindAreasLens) {
+    router.push(buildFindAreasHref(
+      pathname, zoneId, lens, searchParams,
+      typeof window === "undefined" ? "" : window.location.hash,
+    ), { scroll: false });
+  }
+
   function selectHeatZone(zone: NetworkFindAreasZoneViewModel) {
     setLocalSelectedId(zone.id);
+    pushFindAreasState(zone.id, effectiveLens);
     callbacks?.onSelectHeatZone?.(zone.zone);
   }
 
   function changeLens(lens: NetworkFindAreasLens) {
     setLocalLens(lens);
+    pushFindAreasState(effectiveSelectedId, lens);
     callbacks?.onChangeLens?.(lens);
   }
 
@@ -1245,13 +1342,9 @@ export function NetworkFindAreasWorkspace({
 
   function scoreCandidate() {
     if (selectedZone?.bestCandidate) {
+      // Navigation is not a scoring write or a review receipt.
+      changeActiveTab(3);
       callbacks?.onScoreCandidate?.(selectedZone.bestCandidate, selectedZone.zone);
-    }
-  }
-
-  function submitReview() {
-    if (selectedZone) {
-      callbacks?.onSubmitReview?.(selectedZone.zone);
     }
   }
 
@@ -1460,21 +1553,59 @@ export function NetworkFindAreasWorkspace({
     );
   }
 
+  const newListingsCount =
+    listingsEffective.filter((l) => l.status === "new").length;
+  const activeCandidatesCount = localCandidates.length;
+  const pendingReviewsCount =
+    reviewsSnapshot?.reviews.filter((r) => r.status === "pending").length ??
+    localSiteReviews.filter((r) => r.status === "pending").length;
+  const rebalanceCandidatesCount = rebalanceStoresEffective.length;
+  const compareCount = scoringSnapshot?.compare?.columns?.length ?? (fixturesAllowed ? 2 : 0);
+
+  const dynamicNetworkTabs = [
+      { label: "找區域", englishLabel: "Find Areas" },
+      {
+        label: "物件雷達",
+        englishLabel: "Listing Radar",
+        badgeCount: newListingsCount > 0 ? String(newListingsCount) : undefined,
+      },
+      {
+        label: "候選點",
+        englishLabel: "Candidates",
+        badgeCount: activeCandidatesCount > 0 ? String(activeCandidatesCount) : undefined,
+      },
+      { label: "SiteScore", englishLabel: "Score Lab" },
+      {
+        label: "比較",
+        englishLabel: "Compare",
+        badgeCount: compareCount > 0 ? String(compareCount) : undefined,
+      },
+      {
+        label: "審核",
+        englishLabel: "Review",
+        badgeCount: pendingReviewsCount > 0 ? String(pendingReviewsCount) : undefined,
+      },
+      {
+        label: "低效重配",
+        englishLabel: "Rebalance",
+        badgeCount:
+          rebalanceCandidatesCount > 0 ? String(rebalanceCandidatesCount) : undefined,
+      },
+      { label: "空間治理", englishLabel: "Merge & Split" },
+    ];
+
   return (
     <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
       <header className={styles.header}>
-        <div>
-          <p className={styles.kicker}>Network</p>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
           <h2>展店與店網</h2>
-          <p className={styles.headerSummary}>找區域 → 掃物件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配</p>
+          <p className={styles.headerSummary}>找區域 → 物件收件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配</p>
         </div>
         <div className={styles.headerStats} aria-label="Network Find Areas state">
-          <span><strong>{viewModel.totals.heatZones}</strong> HeatZones</span>
-          <span><strong>{viewModel.totals.listings}</strong> listings</span>
-          <span><strong>{viewModel.totals.candidates}</strong> candidates</span>
-          <span><strong>{viewModel.totals.reviews}</strong> reviews</span>
-          <span><strong>{viewModel.totals.rebalances}</strong> rebalances</span>
-          <span><strong>{viewModel.totals.averageConfidence}</strong> avg confidence</span>
+          <span><strong>{newListingsCount}</strong> 今日新物件</span>
+          <span><strong>{activeCandidatesCount}</strong> 進行中候選</span>
+          <span><strong>{pendingReviewsCount}</strong> 待審 Review</span>
+          <span><strong>{rebalanceCandidatesCount}</strong> 重配候選</span>
           {isFixtureFallback && (
             <span className={styles.muted} aria-label="Data source: fixtures" title="API unavailable — showing bundled fixture data">
               fixture data
@@ -1484,7 +1615,7 @@ export function NetworkFindAreasWorkspace({
         </div>
       </header>
 
-      <NetworkShell activeTab={activeTab} onTabChange={changeActiveTab} steps={expansionSteps} tabs={networkTabs}>
+      <NetworkShell activeTab={activeTab} onTabChange={changeActiveTab} steps={expansionSteps} tabs={dynamicNetworkTabs}>
         {activeTabGateState ? (
           <OperatorDataUnavailableGate
             detail={activeTabGateDetail}
@@ -1498,9 +1629,9 @@ export function NetworkFindAreasWorkspace({
             busyCandidateId={busyCandidateId}
             candidates={scoringSnapshot?.candidates ?? []}
             fallbackRows={fixturesAllowed ? viewModel.candidatePipeline : []}
-            onScore={runSiteScore}
-            onScoreAll={scoreAllCandidates}
-            onToggleCompare={toggleCompareCandidate}
+            onScore={canExecuteScoring && scoringSnapshot ? runSiteScore : undefined}
+            onScoreAll={canExecuteScoring && scoringSnapshot ? scoreAllCandidates : undefined}
+            onToggleCompare={canExecuteScoring && scoringSnapshot ? toggleCompareCandidate : undefined}
           />
         ) : activeTab === 3 ? (
           <SiteScorePanel
@@ -1508,13 +1639,17 @@ export function NetworkFindAreasWorkspace({
             candidates={scoringSnapshot?.candidates ?? []}
             fallbackRows={fixturesAllowed ? viewModel.siteScoreLab : []}
             modelVersion={scoringSnapshot?.modelVersion}
-            onRescore={runSiteScore}
+            onRescore={canExecuteScoring && scoringSnapshot ? runSiteScore : undefined}
+            onScoreAll={canExecuteScoring && scoringSnapshot ? scoreAllCandidates : undefined}
+            onToggleCompare={canExecuteScoring && scoringSnapshot ? toggleCompareCandidate : undefined}
             scorecards={scoringSnapshot?.scorecards ?? []}
           />
         ) : activeTab === 4 ? (
           <ComparePanel
+            busyCandidateId={busyCandidateId}
             compare={scoringSnapshot?.compare ?? null}
             fallback={fixturesAllowed ? viewModel.compare : { columns: [], metrics: [] }}
+            onRemoveCandidate={canExecuteScoring && scoringSnapshot ? toggleCompareCandidate : undefined}
           />
         ) : activeTab === 5 ? (
           <ReviewPanel
@@ -1540,6 +1675,8 @@ export function NetworkFindAreasWorkspace({
           <HeatZoneMergeSplitPanel
             activeRoleId={activeRoleId}
             isLoading={proposalsLoadState === "loading"}
+            apiError={proposalsApiError}
+            onReloadProposals={reloadProposals}
             onApproveProposal={handleApproveProposal}
             onPreviewProposal={handlePreviewProposal}
             onRejectProposal={handleRejectProposal}
@@ -1561,7 +1698,6 @@ export function NetworkFindAreasWorkspace({
             onToggleTracked={toggleTracked}
             onSourceListings={sourceListings}
             onScoreCandidate={scoreCandidate}
-            onSubmitReview={submitReview}
           />
         )}
       </NetworkShell>
@@ -1586,7 +1722,6 @@ type FindAreasPanelProps = {
   onToggleTracked: () => void;
   onSourceListings: () => void;
   onScoreCandidate: () => void;
-  onSubmitReview: () => void;
 };
 
 function FindAreasPanel({
@@ -1601,7 +1736,6 @@ function FindAreasPanel({
   onScoreCandidate,
   onSelectZone,
   onSourceListings,
-  onSubmitReview,
   onToggleTracked,
   selectedZone,
   viewModel,
@@ -1625,10 +1759,17 @@ function FindAreasPanel({
   // §5, UX-SCR-EXP-001), so this surface shows what WOULD be persisted, with
   // its audit fields, instead of silently dropping the operator's decision.
   const [geocodeReceipt, setGeocodeReceipt] = useState<GeocodeAuditEvent | null>(null);
+  const lensLabels: Record<NetworkFindAreasLens, string> = {
+    demand: "需求熱度", fit: "品牌適配", competition: "競店壓力",
+    cannibalization: "自家稀釋", rent: "租金可行性", life: "住宅／學區／商圈",
+    traffic: "交通／人流", unmet: "未滿足需求", confidence: "資料信心",
+  };
+  const activeLensLabel = lensLabels[effectiveLens];
   return (
     <div className={styles.tabPanel} data-screen-label="Network 找區域" data-testid="network-panel-find-areas" role="tabpanel">
       <section className={styles.lensBar} aria-label="HeatZone lenses">
         <div className={styles.lensSelector}>
+          <strong className={styles.findAreasCaption}>LENS · 分數越高越有利</strong>
           {viewModel.lenses.map((lens) => (
             <button
               aria-pressed={effectiveLens === lens.id}
@@ -1638,32 +1779,31 @@ function FindAreasPanel({
               title={lens.description}
               type="button"
             >
-              <span>{lens.shortLabel}</span>
-              <small>{lens.label}</small>
+              <span>{lensLabels[lens.id]}</span>
             </button>
           ))}
         </div>
         <div className={styles.legend} aria-label="Map legend">
+          <strong className={styles.findAreasCaption}>圖例</strong>
           <span className={styles.legendItem}>
-            <i className={styles.legendGood} aria-hidden="true" /> High lens fit
+            <i className={styles.legendGood} aria-hidden="true" /> 高適配
           </span>
           <span className={styles.legendItem}>
-            <i className={styles.legendWatch} aria-hidden="true" /> Watch tradeoff
+            <i className={styles.legendWatch} aria-hidden="true" /> 需留意
           </span>
           <span className={styles.legendItem}>
-            <i className={styles.legendRisk} aria-hidden="true" /> Risk pressure
+            <i className={styles.legendRisk} aria-hidden="true" /> 風險壓力
           </span>
           <span className={styles.legendItem}>
-            <i className={styles.legendCandidate} aria-hidden="true" /> Candidate
+            <i className={styles.legendCandidate} aria-hidden="true" /> 候選點
           </span>
         </div>
       </section>
 
       <section className={styles.mainGrid} aria-label="Find Areas workbench">
         <div className={styles.mapPanel}>
-          <div className={styles.panelHeader}>
-            <h3>HeatZone Lens Map</h3>
-            <span>{viewModel.activeLens}</span>
+          <div className={styles.findAreasMapCaption}>
+            HeatZone Lens：{activeLensLabel} · {fixturesAllowed ? "本機示範座標" : "API 區域資料"}
           </div>
           <HeatZoneMap
             dataSource={fixturesAllowed ? "fixture" : "api"}
@@ -1677,11 +1817,9 @@ function FindAreasPanel({
         </div>
 
         <aside className={styles.trayPanel} aria-label="Recommended find area tray">
-          {/*
-            Address search sits in the tray rather than in .mapPanel: that panel
-            is a fixed-height grid area with overflow:hidden on this screen, so
-            anything stacked above the canvas is clipped.
-          */}
+          {/* Later-spec search stays reachable, outside the bounded map canvas. */}
+          <details className={styles.findAreasSearch}>
+          <summary>地址定位搜尋</summary>
           <GeocoderSearchPanel
             actorRoleId={activeRoleId}
             canSearch={canSearchAddress(activeRoleId)}
@@ -1715,9 +1853,10 @@ function FindAreasPanel({
               </span>
             </div>
           ) : null}
+          </details>
           <div className={styles.panelHeader}>
-            <h3>Recommended Areas</h3>
-            <span>{viewModel.rankedZones.length} ranked</span>
+            <h3>推薦找點區域</h3>
+            <span>依「{activeLensLabel}」排序 · {viewModel.rankedZones.length} 區</span>
           </div>
           <div className={styles.zoneList}>
             {viewModel.rankedZones.map((zone, index) => (
@@ -1734,7 +1873,7 @@ function FindAreasPanel({
                     {zone.id} · {zone.label}
                   </strong>
                   <small>
-                    demand {zone.demandLabel} · fit {zone.fitLabel} · comp {zone.competitionLabel}
+                    需求 {zone.demandLabel} · 適配 {zone.fitLabel} · 競店 {zone.competitionLabel}
                   </small>
                 </span>
                 <span className={styles.zoneRowScore}>{zone.lensLabel}</span>
@@ -1746,44 +1885,25 @@ function FindAreasPanel({
         <article className={styles.detailPanel} aria-label="Selected HeatZone detail">
           {selectedZone ? (
             <>
-              <div className={styles.detailTopline}>
-                <div>
-                  <span className={styles.kicker}>{selectedZone.id}</span>
-                  <h3>{selectedZone.label}</h3>
-                  <p>{selectedZone.centroidLabel}</p>
-                </div>
-                <div className={styles.detailActions}>
-                  <button aria-pressed={isSelectedTracked} onClick={onToggleTracked} type="button">
-                    {isSelectedTracked ? "Tracked" : "Track"}
-                  </button>
-                  <button onClick={onSourceListings} type="button">
-                    Source Listings
-                  </button>
-                  <button disabled={!selectedZone.bestCandidate} onClick={onScoreCandidate} type="button">
-                    Score Candidate
-                  </button>
-                  <button onClick={onSubmitReview} type="button">
-                    Submit Review
-                  </button>
-                </div>
-              </div>
+              <header className={styles.findAreasDetailHeader}>
+                <h3>{selectedZone.label}</h3>
+                <strong aria-label={`${activeLensLabel}分數`}>{selectedZone.lensLabel}</strong>
+                <p>{selectedZone.id} · Lens：{activeLensLabel} · {selectedZone.centroidLabel}</p>
+              </header>
 
-              <div className={styles.metricGrid}>
-                <Metric label="Demand" value={selectedZone.demandLabel} meter={selectedZone.demandGap} />
-                <Metric label="Fit" value={selectedZone.fitLabel} meter={selectedZone.fitScore} />
-                <Metric label="Competition" value={selectedZone.competitionLabel} meter={selectedZone.competitionIndex} />
-                <Metric
-                  label="Cannibalization"
-                  value={selectedZone.cannibalizationLabel}
-                  meter={1 - selectedZone.cannibalizationScore}
-                />
-                <Metric label="Rent" value={selectedZone.rentBand} meter={selectedZone.rentScore} />
-                <Metric label="Confidence" value={selectedZone.confidenceLabel} meter={selectedZone.confidence} />
-              </div>
+              <dl className={styles.findAreasFacts} data-testid="find-areas-facts">
+                <div><dt>需求缺口</dt><dd>{selectedZone.demandLabel}</dd></div>
+                <div><dt>品牌適配</dt><dd>{selectedZone.fitLabel}</dd></div>
+                <div><dt>競店壓力</dt><dd>{selectedZone.competitionLabel}</dd></div>
+                <div><dt>自家稀釋</dt><dd>{selectedZone.cannibalizationLabel}</dd></div>
+                <div><dt>租金帶</dt><dd>{selectedZone.rentBand}</dd></div>
+                <div><dt>可用物件</dt><dd>{selectedZone.listingCount} 筆</dd></div>
+                <div><dt>資料信心</dt><dd>{selectedZone.confidenceLabel}</dd></div>
+              </dl>
 
               <div className={styles.detailGrid}>
                 <section>
-                  <h4>Reasons</h4>
+                  <h4>為什麼是這一區</h4>
                   <ul>
                     {selectedZone.reasons.map((reason) => (
                       <li key={reason}>{reason}</li>
@@ -1791,34 +1911,50 @@ function FindAreasPanel({
                   </ul>
                 </section>
                 <section>
-                  <h4>Risks</h4>
+                  <h4>主要風險</h4>
                   <ul>
                     {selectedZone.risks.map((risk) => (
                       <li key={risk}>{risk}</li>
                     ))}
                   </ul>
                 </section>
-                <section>
-                  <h4>Next Step</h4>
+                <section className={styles.findAreasNextStep}>
+                  <h4>下一步</h4>
                   <p>{selectedZone.nextStep}</p>
                 </section>
                 <section>
-                  <h4>Pipeline</h4>
+                  <h4>候選流程</h4>
                   <dl className={styles.pipelineStats}>
                     <div>
-                      <dt>Listings</dt>
+                      <dt>物件</dt>
                       <dd>{selectedZone.listingCount}</dd>
                     </div>
                     <div>
-                      <dt>Candidates</dt>
+                      <dt>候選點</dt>
                       <dd>{selectedZone.candidateCount}</dd>
                     </div>
                     <div>
-                      <dt>Best</dt>
+                      <dt>最高分</dt>
                       <dd>{selectedZone.candidateSummary}</dd>
                     </div>
                   </dl>
                 </section>
+              </div>
+
+              <div className={styles.findAreasActions}>
+                <button className={styles.findAreasPrimary} data-testid="find-areas-primary" onClick={onSourceListings} type="button">
+                  查看本區物件（{selectedZone.listingCount}）
+                </button>
+                <button disabled type="button">＋ 從網址新增物件（帶入本區）</button>
+                <button aria-pressed={isSelectedTracked} onClick={onToggleTracked} type="button">
+                  {isSelectedTracked ? "✓ 本次工作階段已追蹤（點擊移除）" : "加入本次工作階段追蹤"}
+                </button>
+                <button disabled type="button">指派找點任務</button>
+                <button disabled type="button">建立物件搜尋條件</button>
+                <button disabled type="button">加入季度展店計畫</button>
+                <small>追蹤僅保留於本次工作階段；網址帶區、任務、搜尋條件及季度計畫尚未接上服務，請至物件雷達收件。</small>
+                <button disabled={!selectedZone.bestCandidate} onClick={onScoreCandidate} type="button">開啟 SiteScore</button>
+                <small>開啟評分頁不會執行評分或送審；送審須走候選點的正式流程。</small>
               </div>
 
               <div className={styles.linkedRows} aria-label="Linked listings and candidates">
@@ -1837,29 +1973,10 @@ function FindAreasPanel({
               </div>
             </>
           ) : (
-            <div className={styles.emptyState}>No HeatZones</div>
+            <div className={styles.emptyState}>目前沒有可讀取的區域</div>
           )}
         </article>
       </section>
-    </div>
-  );
-}
-
-function Metric({ label, meter, value }: { label: string; meter?: number | null; value: string }) {
-  return (
-    <div className={styles.metric}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <i aria-hidden="true">
-        <b
-          style={{
-            width:
-              meter == null
-                ? "0%"
-                : `${Math.max(4, Math.min(100, Math.round(meter * 100)))}%`,
-          }}
-        />
-      </i>
     </div>
   );
 }

@@ -1,0 +1,53 @@
+[WebServer] 2026/10/10 00:54:10 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/10 00:54:13 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/10 00:54:13 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] Traceback (most recent call last):
+[WebServer]   File "<frozen runpy>", line 198, in _run_module_as_main
+[WebServer]   File "<frozen runpy>", line 88, in _run_code
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/uvicorn/__main__.py", line 4, in <module>
+[WebServer]     uvicorn.main()
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/click/core.py", line 1569, in __call__
+[WebServer]     return self.main(*args, **kwargs)
+[WebServer]            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/click/core.py", line 1490, in main
+[WebServer]     rv = self.invoke(ctx)
+[WebServer]          ^^^^^^^^^^^^^^^^
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/click/core.py", line 1353, in invoke
+[WebServer]     return ctx.invoke(self.callback, **ctx.params)
+[WebServer]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/click/core.py", line 907, in invoke
+[WebServer]     return callback(*args, **kwargs)
+[WebServer]            ^^^^^^^^^^^^^^^^^^^^^^^^^
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/uvicorn/main.py", line 440, in main
+[WebServer]     run(
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/uvicorn/main.py", line 621, in run
+[WebServer]     server.run()
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/uvicorn/server.py", line 74, in run
+[WebServer]     return asyncio_run(self.serve(sockets=sockets), loop_factory=self.config.get_loop_factory())
+[WebServer]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[WebServer]   File "/home/lupin/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/runners.py", line 195, in run
+[WebServer]     return runner.run(main)
+[WebServer]            ^^^^^^^^^^^^^^^^
+[WebServer]   File "/home/lupin/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/runners.py", line 118, in run
+[WebServer]     return self._loop.run_until_complete(task)
+[WebServer]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[WebServer]   File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/uvicorn/server.py", line 78, in serve
+[WebServer]     await self._serve(sockets)
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/uvicorn/server.py", line 85, in _serve
+[WebServer]     config.load()
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/uvicorn/config.py", line 496, in load
+[WebServer]     self.loaded_app = self.loaded_app()
+[WebServer]                       ^^^^^^^^^^^^^^^^^
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/spatial_durable_backend.py", line 112, in create_test_app
+[WebServer]     seed_generated_history(bundle)
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/spatial_durable_backend.py", line 66, in seed_generated_history
+[WebServer]     HeatZoneCompositionRecord(
+[WebServer]   File "<string>", line 16, in __init__
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/modules/heatzone/domain/composition.py", line 80, in __post_init__
+[WebServer]     validate_composition_record(self)
+[WebServer]   File "/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/modules/heatzone/domain/composition.py", line 146, in validate_composition_record
+[WebServer]     raise CompositionValidationError(
+[WebServer] modules.heatzone.domain.composition.CompositionValidationError: Human decision by 'explicit-split-parent-fixture' requires a non-empty override_reason
+Error: Process from config.webServer was not able to start. Exit code: 1
+

@@ -35,6 +35,8 @@ export function ExpansionStepper({
     return null;
   }
 
+  const activeStep = steps.find((step) => activeTab === step.tabIndex);
+
   return (
     <section
       className={styles.expansionStepper}
@@ -44,8 +46,14 @@ export function ExpansionStepper({
     >
       <div className={styles.flowHeader}>
         <span>EXPANSION FLOW · 找點流程</span>
-        <strong>{steps.find((step) => activeTab === step.tabIndex)?.summary ?? steps[0]?.summary}</strong>
-        <em>{nextActionLabel(steps)}</em>
+        <strong title={activeStep ? flowSummary(activeStep.summary) : undefined}>
+          目前步驟：{activeStep ? stepLabels[activeStep.id]?.zh ?? activeStep.label : "店網管理"}
+        </strong>
+        <em role={activeStep?.state === "blocked" ? "status" : undefined}>
+          {activeStep?.state === "blocked"
+            ? `此流程受阻：${flowSummary(activeStep.summary)}`
+            : nextActionLabel(steps, activeTab)}
+        </em>
       </div>
       <div className={styles.expansionStepGrid}>
         {steps.map((step, index) => {
@@ -60,7 +68,7 @@ export function ExpansionStepper({
               disabled={isBlocked}
               key={step.id}
               onClick={() => onStepSelect(step.tabIndex)}
-              title={step.summary}
+              title={flowSummary(step.summary)}
               type="button"
             >
               <span className={styles.expansionStepIndex} aria-hidden="true">
@@ -93,24 +101,33 @@ export function ExpansionStepper({
           </button>
         ))}
       </div>
-      {steps.some((step) => step.state === "blocked") ? (
-        <div className={styles.flowBlockNotice} role="status">
-          <span aria-hidden="true">!</span>
-          {steps.find((step) => step.state === "blocked")?.summary}
-        </div>
-      ) : null}
     </section>
   );
 }
 
-function nextActionLabel(steps: ExpansionStep[]) {
-  const currentIndex = steps.findIndex((step) => step.state === "current");
+// The listings journey is scoped to its own entity, not the scoring tab's
+// aggregate candidate count. Preserve its authoritative states/disabled steps.
+function flowSummary(summary: string) {
+  const labels: Record<string, string> = {
+    "Blocked until candidate exists.": "須先建立此流程候選點",
+    "Blocked by missing candidate.": "此流程尚缺候選點",
+    "Requires a production model binding.": "須綁定正式模型",
+    "Requires live scored candidates.": "須有正式候選點評分",
+    "No live review packet is available.": "此流程尚無正式審核資料",
+    "No candidate review packet yet.": "此流程尚無候選點審核資料",
+  };
+  return labels[summary] ?? summary;
+}
+
+function nextActionLabel(steps: ExpansionStep[], activeTab: number) {
+  const activeIndex = steps.findIndex((step) => step.tabIndex === activeTab);
+  const currentIndex = activeIndex >= 0 ? activeIndex : steps.findIndex((step) => step.state === "current");
   const next = currentIndex >= 0 ? steps[currentIndex + 1] : steps.find((step) => step.state === "next");
   if (next && next.state !== "blocked") {
-    return `下一步：${next.summary}`;
+    return `下一步：${flowSummary(next.summary)}`;
   }
   if (next?.state === "blocked") {
-    return `下一步受阻：${next.summary}`;
+    return `此流程下一步受阻：${flowSummary(next.summary)}`;
   }
   return "流程資料同步中";
 }

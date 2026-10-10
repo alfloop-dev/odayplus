@@ -57,7 +57,6 @@ export function ReviewPanel({
   }, [seeded]);
 
   const selected = items.find((item) => item.id === selectedId) ?? items[0];
-  const pendingCount = items.filter((item) => item.status === "pending").length;
 
   async function submitDecision(form: ReviewDecisionForm) {
     if (!selected || !dialogAction) return;
@@ -108,16 +107,12 @@ export function ReviewPanel({
       data-testid="network-panel-review"
       role="tabpanel"
     >
-      <div className={styles.panelHeader}>
-        <h3>選址審核 / Review</h3>
-        <span className={styles.muted}>{pendingCount} 待審核 · 決策同步 Candidate／Approval／Decision／Audit</span>
-      </div>
-
       {items.length ? (
         <div className={styles.reviewLayout}>
           <div className={styles.reviewQueue} data-testid="review-queue">
             {items.map((item) => (
               <button
+                aria-pressed={selected?.id === item.id}
                 className={styles.reviewQueueCard}
                 data-active={selected?.id === item.id ? "true" : undefined}
                 data-testid={`review-card-${item.id}`}
@@ -217,7 +212,7 @@ function ReviewDetail({
         <Meta label="自家稀釋" value={review.cannibalization || "—"} />
       </div>
 
-      <div className={styles.reviewFacts}>
+      <dl className={styles.reviewFacts} aria-label="審核候選點資料">
         <Fact label="來源物件" value={review.sourceListingId} />
         <Fact label="現勘" value={review.fieldVisit} />
         <Fact label="仲介聯絡" value={review.brokerContact} />
@@ -225,7 +220,7 @@ function ReviewDetail({
         <Fact label="模型／快照" value={`${review.modelVersion} · ${review.datasetSnapshotId}`} />
         <Fact label="比較結果" value={review.compareText} />
         <Fact label="Candidate 狀態" value={review.candidateStatusLabel ?? review.statusLabel} />
-      </div>
+      </dl>
 
       {review.eventChips.length ? (
         <div className={styles.reviewChips}>
@@ -262,6 +257,9 @@ function ReviewDetail({
 
       {isPending ? (
         <div className={styles.reviewPending}>
+          <div className={styles.reviewOverrideHint} data-testid={`review-recommendation-note-${review.id}`}>
+            系統建議為 {review.recommendation}；核決與建議不一致時，須填寫覆寫理由並確認風險。退回補件不屬於覆寫建議。
+          </div>
           <div className={styles.reviewSyncNote} data-testid={`review-sync-note-${review.id}`}>
             每個審核決策都會開啟確認視窗：<b>決策原因必填</b>；核准 WAIT 須填通過條件；退回修改須填需補資料；覆寫系統建議須勾選風險確認。決策後 Candidate 狀態自動同步並寫入 Decision Log。
           </div>
@@ -305,6 +303,12 @@ function ReviewDetail({
               目前角色可準備／送審，但不能決策。請切換至授權審核角色（Site Reviewer）後再進行核決。
             </div>
           )}
+          <div className={styles.reviewSecondaryActions}>
+            <button disabled title="尚未提供現勘補件寫入服務；請使用已授權的退回修改流程。" type="button">
+              要求現勘（審核前補件）
+            </button>
+            <span>現勘補件服務尚未提供；此操作不可執行。</span>
+          </div>
         </div>
       ) : null}
     </>
@@ -323,8 +327,8 @@ function Meta({ label, value }: { label: string; value: string }) {
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className={styles.reviewFactRow}>
-      <span className={styles.reviewFactKey}>{label}</span>
-      <span>{value || "—"}</span>
+      <dt className={styles.reviewFactKey}>{label}</dt>
+      <dd>{value || "—"}</dd>
     </div>
   );
 }

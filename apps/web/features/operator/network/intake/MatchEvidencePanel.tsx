@@ -45,7 +45,7 @@ export function MatchEvidencePanel({
       </div>
 
       {/* Screen reader readable summary */}
-      <div className={styles.srSummary} data-testid="match-evidence-sr-summary" role="region" aria-live="polite">
+      <div className={styles.srSummary} data-testid="match-evidence-sr-summary" role="region" aria-label="比對結果摘要" aria-live="polite">
         比對結果 canonical code：{outcome}（{matchLabel(outcome)}），對應既有物件 ID：{targetId}，信心度 {match.confidence.toFixed(2)}。
         變更與差異摘要：{match.summary}
       </div>

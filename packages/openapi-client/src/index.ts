@@ -53,6 +53,7 @@ import type {
   ErrorEnvelope,
   ReasonCommand,
   AssignmentTransferRequest,
+  AssignmentTransferTargets,
   AssignmentReceipt,
   AssignmentRequest,
   SlaPauseRequest,
@@ -1554,6 +1555,10 @@ export class OdpApiClient {
     });
   }
 
+  listAssignmentTransferTargets(assignmentId: string): Promise<AssignmentTransferTargets> {
+    return this.request<AssignmentTransferTargets>(`/api/v1/assignments/${assignmentId}/transfer-targets`);
+  }
+
   transferAssignment(
     assignmentId: string,
     payload: AssignmentTransferRequest,
@@ -1938,8 +1943,12 @@ export type AssistedIntake = {
   version: number;
   assignmentId?: string | null;
   assignmentStatus?: string | null;
+  /** Linked Assignment token; never fall back to the Intake version. */
+  assignmentVersion?: number | null;
   slaInstanceId?: string | null;
   slaState?: string | null;
+  /** Linked SLA token; never fall back to the Intake version. */
+  slaVersion?: number | null;
   slaReceipt?: string | null;
   dueAt?: string | null;
 };

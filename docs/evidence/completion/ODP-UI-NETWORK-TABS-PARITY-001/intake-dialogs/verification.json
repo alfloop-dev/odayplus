@@ -1,0 +1,31 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "owner": "Pi",
+  "source_head": "b0dd088744ea",
+  "render_head": "bcdc8a2f736f",
+  "evidence_mode": "local_fixture_bounded_increment",
+  "full_acceptance": false,
+  "review_resubmitted": false,
+  "completion_receipt": "Original synchronous tool terminal returned each invocation with observed exit code; no summary polling.",
+  "checks": [
+    {"receipt": "logs/before-stable.log", "exit_code": 0, "passed": 4},
+    {"receipt": "logs/after.log", "exit_code": 0, "passed": 4, "scoped_axe_serious_critical": 0},
+    {"receipt": "logs/unit.log", "exit_code": 0, "passed": 113, "files": 10},
+    {"receipt": "logs/typecheck.log", "exit_code": 0},
+    {"receipt": "logs/lint.log", "exit_code": 0},
+    {"receipt": "logs/boundaries.log", "exit_code": 0},
+    {"receipt": "logs/durable-e2e-ready.log", "exit_code": 0, "passed": 3},
+    {"receipt": "logs/inventory.log", "exit_code": 0, "tests": 125, "files": 18}
+  ],
+  "failed_diagnostic_receipts": [
+    "logs/before.log", "logs/before-direct.log", "logs/before-warm.log",
+    "logs/before-navigation.log", "logs/before-reference-diagnostic.log",
+    "logs/before-capture.log", "logs/durable-e2e.log"
+  ],
+  "not_verified": [
+    "continuous intake detail pairs", "Transfer/Pause/Promotion/Review Decision pairs",
+    "all permission/conflict visual states", "other Network tabs and batch-state pairs",
+    "selected-flow blocked banner reconciliation", "full risk-tone and accessibility acceptance",
+    "independent VDC-005 approval", "final full-scope production build and verification"
+  ]
+}

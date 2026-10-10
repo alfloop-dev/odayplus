@@ -1,0 +1,61 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "owner": "Pi",
+  "reviewer": "Codex2",
+  "completion": false,
+  "baseline_render": "62005332c0baf4ece1895f0f36ed4e776123f823",
+  "after_render": "2e252b634588f5698454ead79c842af1c4028a4e",
+  "base": "2fe3ef933794d0bb293449b74dffe9602d53f767",
+  "receipt_kind": "original synchronous terminal exit codes saved immediately",
+  "exit_codes": {
+    "after-final": 0,
+    "after-tablet-aa": 0,
+    "after": 0,
+    "before": 0,
+    "boundaries": 0,
+    "diagnostic": 1,
+    "diff-check": 0,
+    "durable-e2e": 0,
+    "focused-unit": 0,
+    "inventory-missing-tool": 2,
+    "inventory": 0,
+    "lint": 0,
+    "typecheck": 0,
+    "unit": 0
+  },
+  "accepted_runs": [
+    "before",
+    "after-tablet-aa",
+    "focused-unit",
+    "unit",
+    "durable-e2e",
+    "typecheck",
+    "lint",
+    "boundaries",
+    "inventory",
+    "diff-check"
+  ],
+  "geometry_widths": [
+    1440,
+    1024,
+    390
+  ],
+  "paired_widths": [
+    1440,
+    390
+  ],
+  "final_axe_rule_tags": [
+    "wcag2a",
+    "wcag2aa",
+    "wcag21aa",
+    "wcag22aa"
+  ],
+  "not_claimed": [
+    "full task acceptance",
+    "live/production data",
+    "build",
+    "remote CI",
+    "independent VDC approval",
+    "review resubmission"
+  ]
+}
