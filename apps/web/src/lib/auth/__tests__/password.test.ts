@@ -9,14 +9,82 @@ import {
   type WebSession,
 } from "../session";
 import { validatePasswordPolicy } from "../localAuth";
-import { MockIdentityStore, setIdentityStoreForTests } from "../identityStore";
-import { MockSessionStore, setSessionStoreForTests } from "../sessionStore";
+import { MockIdentityStore, PostgresIdentityStore, setIdentityStoreForTests } from "../identityStore";
+import { MockSessionStore, PostgresSessionStore, setSessionStoreForTests } from "../sessionStore";
+import { authenticateLocalCredentials } from "../localAuth";
+import { LoginThrottle, PostgresLoginThrottleStore, setLoginThrottleForTests } from "../loginThrottle";
+import { POST as loginPost } from "../../../app/login/route";
 
 const SECRET = "test-session-secret-with-at-least-32-bytes";
+
+// Invoked by the existing Python PostgreSQL identity fixture against its
+// disposable database, never against a live deployment. Ordinary Node checks
+// do not configure this fixture and cannot silently substitute mock auth.
+it.skipIf(!process.env.ODP_INVITATION_TEST_DB_URL)("PostgreSQL invitation recipient production path", async () => {
+  vi.stubEnv("ODP_IDENTITY_DATABASE_URL", process.env.ODP_INVITATION_TEST_DB_URL!);
+  vi.stubEnv("NODE_ENV", "production");
+  vi.stubEnv("ODP_PRODUCT_MODE", "production");
+  vi.stubEnv("ODP_AUTH_MODE", "local");
+  vi.stubEnv("ODP_AUTH_OIDC_ENABLED", "false");
+  vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+  vi.stubEnv("ODP_WEB_BASE_URL", "https://ops.oday.plus");
+  const identity = new PostgresIdentityStore();
+  const sessions = new PostgresSessionStore();
+  const attempts = new PostgresLoginThrottleStore();
+  setIdentityStoreForTests(identity);
+  setSessionStoreForTests(sessions);
+  setLoginThrottleForTests(new LoginThrottle(attempts, undefined, "offline-invitation-throttle-pepper"));
+  const phase = process.env.ODP_INVITATION_TEST_PHASE;
+  const username = "ops.director";
+  const password = "Independent-Smoke-Credential-7319";
+  const request = (path: string, body: Record<string, string>, cookie?: string) => {
+    const req = new NextRequest(`https://ops.oday.plus${path}`, { method: "POST", body: JSON.stringify(body) });
+    // Set explicitly as in the existing route fixtures (happy-dom Request).
+    req.headers.set("origin", "https://ops.oday.plus");
+    req.headers.set("content-type", "application/json");
+    if (cookie) req.cookies.set(webSessionCookieName, cookie.split("=").slice(1).join("="));
+    return req;
+  };
+  try {
+    const response = await loginPost(request("/login", { username, password }));
+    if (phase === "pending") {
+      expect(response.status).toBe(401);
+      expect(response.headers.get("set-cookie")).toBeNull();
+      const refusedChange = await POST(request("/auth/password", {
+        currentPassword: password, newPassword: "Rotated-Independent-Credential-8526",
+      }));
+      expect(refusedChange.status).toBe(401);
+      return;
+    }
+    expect(response.status).toBe(200);
+    const cookieValue = response.cookies.get(webSessionCookieName)!.value;
+    const session = await readWebSession(cookieValue);
+    expect(session?.accountId).toBeTruthy();
+    const auth = await authenticateLocalCredentials(username, password);
+    expect(auth).toMatchObject({ ok: true, mustChangePassword: true });
+    if (phase === "rotate") {
+      const rotated = await POST(request("/auth/password", {
+        currentPassword: password, newPassword: "Rotated-Independent-Credential-8526",
+      }, `${webSessionCookieName}=${cookieValue}`));
+      expect(rotated.status).toBe(200);
+      expect(await readWebSession(cookieValue)).toBeNull();
+      expect(await authenticateLocalCredentials(username, password)).toMatchObject({ ok: false });
+      expect(await authenticateLocalCredentials(username, "Rotated-Independent-Credential-8526"))
+        .toMatchObject({ ok: true, mustChangePassword: false });
+      expect(await readWebSession(rotated.cookies.get(webSessionCookieName)!.value)).not.toBeNull();
+    } else {
+      expect(phase).toBe("login");
+    }
+  } finally {
+    // Close only the fixture's real pools; do not leave a background process.
+    for (const store of [identity, sessions, attempts]) await (store as any)._pool?.end();
+  }
+}, 30_000);
 
 afterEach(() => {
   setIdentityStoreForTests(undefined);
   setSessionStoreForTests(undefined);
+  setLoginThrottleForTests(undefined);
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { POST } from "../route";
+import { GET, POST } from "../route";
 import { config, middleware } from "../../../../middleware";
 import { resolveGoogleMetadataIdentityToken } from "../../../../lib/auth/cloudRunIdentity";
 
@@ -38,6 +38,26 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
 describe("bounded invitation capability acceptance BFF (no login or credential output)", () => {
+  it("serves private manual entry with no-store, CSP, no cookies and no URL prefill", async () => {
+    const response = await GET(new NextRequest(`${ORIGIN}/auth/invitations`));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("content-security-policy")).toContain("script-src 'sha256-");
+    expect(response.headers.has("set-cookie")).toBe(false);
+    const html = await response.text();
+    for (const field of ["invitation_id", "token", "username", "password"]) expect(html).toContain(`name="${field}"`);
+    expect(html).toContain("form.reset()");
+    expect(html).not.toContain("localStorage");
+    expect(html).not.toContain("sessionStorage");
+    expect(html).not.toContain(BODY.token);
+  });
+
+  it("refuses GET capability query strings without reflecting secrets", async () => {
+    const response = await GET(new NextRequest(`${ORIGIN}/auth/invitations?token=private-secret`));
+    expect(response.status).toBe(422);
+    expect(await response.text()).not.toContain("private-secret");
+  });
   const middlewareApplies = (path: string) => config.matcher.some(
     (pattern) => new RegExp(`^${pattern}$`).test(path),
   );
@@ -137,7 +157,7 @@ describe("bounded invitation capability acceptance BFF (no login or credential o
   });
 
   it.each([
-    [409, "INVITATION_UNAVAILABLE"], [409, "INVITATION_ACCOUNT_EXISTS"],
+    [409, "INVITATION_UNAVAILABLE"], [409, "INVITATION_ACCOUNT_EXISTS"], [409, "INVITATION_PENDING_EXISTS"],
     [422, "INVITATION_PASSWORD_REJECTED"], [429, "INVITATION_RATE_LIMITED"],
     [503, "IDENTITY_PERSISTENCE_UNAVAILABLE"],
   ])("projects only safe expected upstream error %s %s", async (status, code) => {

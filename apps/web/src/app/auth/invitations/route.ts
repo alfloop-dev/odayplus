@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { isProductionWebRuntime, verifyCsrfOrigin } from "../../../lib/auth/runtime";
@@ -11,6 +12,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SAFE_ERRORS: Record<string, number> = {
   INVITATION_UNAVAILABLE: 409,
   INVITATION_ACCOUNT_EXISTS: 409,
+  INVITATION_PENDING_EXISTS: 409,
   INVITATION_ACCOUNT_INPUT_INVALID: 422,
   INVITATION_INPUT_INVALID: 422,
   INVITATION_PASSWORD_REJECTED: 422,
@@ -49,6 +51,57 @@ async function boundedJson(body: ReadableStream<Uint8Array> | null): Promise<unk
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
+}
+
+const ACCEPT_SCRIPT = `
+const form = document.getElementById("accept-invitation");
+const result = document.getElementById("result");
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = form.querySelector("button");
+  button.disabled = true;
+  result.textContent = "接受邀請中…";
+  try {
+    const data = new FormData(form);
+    const payload = Object.fromEntries(data.entries());
+    const response = await fetch("/auth/invitations", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload), cache: "no-store", redirect: "error",
+    });
+    if (response.status === 201) {
+      form.reset();
+      form.hidden = true;
+      result.textContent = "帳號已建立。請前往登入；營運邀請首次登入需再次改密碼。";
+    } else {
+      result.textContent = "無法接受邀請。請檢查憑證、登入名稱與密碼政策，或聯絡邀請管理員確認到期與撤銷狀態。";
+    }
+  } catch {
+    result.textContent = "服務暫時無法連線；請確認邀請是否已接受後再嘗試。";
+  } finally {
+    button.disabled = false;
+  }
+});
+`;
+
+/** Manual private capability entry: nothing in URLs or browser storage. */
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  if (request.nextUrl.search) return failure(422, "INVITATION_INPUT_INVALID");
+  const hash = createHash("sha256").update(ACCEPT_SCRIPT).digest("base64");
+  return new NextResponse(`<!doctype html><html lang="zh-Hant"><meta charset="utf-8">
+<title>接受帳號邀請</title><h1>接受帳號邀請</h1>
+<p>使用管理員私下交付的憑證；請勿將 token 放入網址。密碼至少 12 字元，不得包含登入名稱或 email。</p>
+<form id="accept-invitation" autocomplete="off">
+<label>邀請 ID <input name="invitation_id" required maxlength="36"></label><br>
+<label>邀請 token <input name="token" type="password" required maxlength="43" autocomplete="off"></label><br>
+<label>登入名稱 <input name="username" required minlength="3" maxlength="64"></label><br>
+<label>密碼 <input name="password" type="password" required minlength="12" maxlength="1024" autocomplete="new-password"></label><br>
+<button type="submit">接受邀請並建立帳號</button></form>
+<p id="result" role="status"></p><a href="/login">前往登入</a>
+<script>${ACCEPT_SCRIPT}</script></html>`, { headers: {
+    "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
+    "referrer-policy": "no-referrer", "x-content-type-options": "nosniff",
+    "content-security-policy": `default-src 'none'; script-src 'sha256-${hash}'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`,
+  } });
 }
 
 /** No session is created/rotated/read here; capability acceptance is not login.
