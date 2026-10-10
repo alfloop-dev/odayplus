@@ -440,7 +440,20 @@ async function readNetworkSnapshot<T>(
     if (!response.ok) {
       return { ok: false, failure: await operatorLoadFailureFromResponse(response, label, correlationId) };
     }
-    return { ok: true, snapshot: (await response.json()) as T };
+    const body: unknown = await response.json();
+    if (typeof body !== "object" || body === null) {
+      return {
+        ok: false,
+        failure: {
+          correlationId: response.headers?.get?.("x-correlation-id") ?? correlationId,
+          httpStatus: response.status,
+          kind: "unknown",
+          occurredAt: new Date().toISOString(),
+          technicalDetail: `${label} returned ${response.status} without a snapshot body`,
+        },
+      };
+    }
+    return { ok: true, snapshot: body as T };
   } catch (error) {
     return { ok: false, failure: operatorLoadFailureFromError(error, label, correlationId) };
   }

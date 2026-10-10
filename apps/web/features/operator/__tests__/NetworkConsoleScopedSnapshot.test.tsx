@@ -10,7 +10,7 @@
  * but empty scoped snapshot is reported as empty, not as an error or fixtures.
  */
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole } from "../OperatorConsole";
 
@@ -142,6 +142,27 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+// The canonical envelope (shared/api/errors.py) of a guarded read refusal.
+function forbiddenResponse(correlationId: string, resource: string) {
+  const message = `role does not permit view on ${resource}`;
+  return new Response(
+    JSON.stringify({
+      detail: message,
+      error: {
+        code: "forbidden",
+        message,
+        next_action: "Request access for this role or tenant; do not retry as-is.",
+        occurred_at: "2026-10-10T12:17:00.000Z",
+        details: [],
+        correlation_id: correlationId,
+      },
+    }),
+    { status: 403, headers: { "Content-Type": "application/json", "X-Correlation-Id": correlationId } },
+  );
+}
+
+const DENIED = Symbol("denied");
+
 function stubProductionFetch(snapshot: unknown) {
   const networkListingUrls: URL[] = [];
   const legacyDomainPaths: string[] = [];
@@ -150,7 +171,13 @@ function stubProductionFetch(snapshot: unknown) {
     if (url.pathname === "/api/v1/operator/bootstrap") return jsonResponse(liveEnvelope);
     if (url.pathname === "/api/v1/operator/network-listings") {
       networkListingUrls.push(url);
-      return jsonResponse(snapshot);
+      return snapshot === DENIED ? forbiddenResponse("corr-listings-403", "operator_network") : jsonResponse(snapshot);
+    }
+    if (snapshot === DENIED && /\/operator\/network-(scoring|reviews)$/.test(url.pathname)) {
+      return forbiddenResponse("corr-scoring-403", "sitescore");
+    }
+    if (url.pathname === "/api/v1/operator/network-rebalance") {
+      return jsonResponse({ source: "api", stores: [] });
     }
     if (/\/(heatzones|listings\/candidates|sitescore)/.test(url.pathname)) {
       legacyDomainPaths.push(url.pathname);
@@ -247,5 +274,63 @@ describe("Network Find Areas in the production Operator Console composition", ()
     expect(networkListingUrls.every((url) => !url.searchParams.has("selectedHeatZoneId"))).toBe(true);
     expect(screen.queryByTestId("network-panel-find-areas")).toBeNull();
     expect(screen.queryByText("fixture data")).toBeNull();
+  });
+
+  it("presents the deployed auditor+platform_admin 403 reads as a denial, not a network failure or zero", async () => {
+    const { legacyDomainPaths } = stubProductionFetch(DENIED);
+
+    const { unmount } = render(<OperatorConsole searchParams={{ ws: "network" }} />);
+
+    // The shell's own loading gate shows first; wait for the Find Areas gate.
+    await waitFor(
+      () => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "forbidden"),
+      { timeout: 5000 },
+    );
+    const gate = screen.getByTestId("operator-data-unavailable");
+    expect(gate).toHaveAttribute("data-status", "error");
+    expect(gate).not.toHaveTextContent("連線失敗");
+    expect(gate).not.toHaveTextContent("瀏覽器無法連到營運資料服務");
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-listings-403");
+
+    const state = screen.getByLabelText("Network Find Areas state");
+    for (const label of ["HeatZones", "listings", "candidates", "reviews"]) {
+      expect(state).toHaveTextContent(`— ${label}（未授權）`);
+      expect(state).not.toHaveTextContent(`0 ${label}`);
+    }
+    await waitFor(() => expect(state).toHaveTextContent("0 rebalances"));
+    // The denial is presented as received: no write, no grant request and no
+    // retry into broader domain reads than the console already makes.
+    for (const [, init] of vi.mocked(fetch).mock.calls) {
+      expect((init as RequestInit | undefined)?.method ?? "GET").toBe("GET");
+    }
+    expect(new Set(legacyDomainPaths).size).toBeLessThanOrEqual(3);
+    unmount();
+
+    nav.search = "ws=network&tab=radar";
+    render(<OperatorConsole searchParams={{ ws: "network", tab: "radar" }} />);
+    const radar = await screen.findByTestId("network-panel-listings", {}, { timeout: 5000 });
+    await waitFor(() =>
+      expect(within(radar).getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "forbidden"),
+      { timeout: 5000 },
+    );
+    expect(radar).not.toHaveTextContent("No listings match the selected filter");
+    expect(radar).not.toHaveTextContent("0 筆");
+    expect(within(radar).queryByTestId("network-listing-table")).toBeNull();
+  }, 20000);
+
+  it("keeps a genuine authorized empty 200 as an authoritative zero", async () => {
+    stubProductionFetch(emptyScopedSnapshot);
+
+    render(<OperatorConsole searchParams={{ ws: "network" }} />);
+
+    const state = await screen.findByLabelText("Network Find Areas state", {}, { timeout: 5000 });
+    await waitFor(() =>
+      expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty"),
+      { timeout: 5000 },
+    );
+    expect(state).toHaveTextContent("0 listings");
+    expect(state).toHaveTextContent("0 HeatZones");
+    expect(state).not.toHaveTextContent("未授權");
+    expect(screen.getByTestId("operator-data-unavailable")).not.toHaveAttribute("data-failure-kind");
   });
 });
