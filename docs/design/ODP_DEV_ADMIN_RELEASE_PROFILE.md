@@ -399,10 +399,27 @@ An uncertain issue/accept/readback/logout quarantines the root; lost replies do
 not permit automatic retry, reset, delete or replacement. Successful output
 says `credential_binding_verified=false`, `live_gate_passed=false` and
 `deployment_success=false`: it is **not** end-to-end activation authority.
-No CLI or workflow is wired. Encrypted matched dev credential binding/recovery
-and promoted-before-unchanged-gate orchestration remain the exact unfinished
-execution boundary; independent review is required before use. The background
-worker creates no live account or secrets.
+No CLI or workflow is wired. `DevCredentialBundleExecutor` now composes that
+actual lifecycle with the **same** new password and stages a single encrypted
+JSON `ODP_DEV_ADMIN_CREDENTIAL_BUNDLE` secret in the pinned repository's dev
+environment, using PyNaCl/libsodium sealed-box encryption and memory-only HTTP.
+It refuses an existing bundle and never touches the standing username variable,
+password/initial-password secrets or IAM. A durable binding intent precedes the
+single PUT; a crash, lost reply, replacement response or audit failure requires
+explicit recovery, never automatic retry/delete/reset/rollback. Receipt says
+`binding_write_acknowledged=true` only after HTTP201 and durable acknowledgement;
+`credential_binding_verified=false` remains truthful because GitHub cannot read
+back decrypted secret values. The trusted custodian must exclude external secret
+writers (GitHub has no create-only conditional PUT). Neither custody, source
+review nor admission is authenticated by this library.
+
+The workflow **does not consume this bundle yet**. An atomic matched-pair reader
+that refuses malformed bundles and suppresses the old optional bootstrap secret,
+approved-foreground promoted-before-unchanged-gate orchestration, and actual
+unchanged live-gate proof remain unfinished. Existing default workflows/bindings,
+PR1445 deployment/inventory and finite-role gates remain unchanged. Independent
+review is required before use; the background worker creates no live account or
+secrets. Staging an encrypted bundle is not standing-binding activation proof.
 
 ## 6. Operator / coordinator handoff
 

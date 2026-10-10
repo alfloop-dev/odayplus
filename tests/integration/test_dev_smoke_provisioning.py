@@ -1,7 +1,8 @@
 """Incremental real-router/PG invitation proof, NOT live provisioning evidence.
 
 The acceptance factory and full runtime composition are exercised offline.
-Foreground binding and deploy/gate orchestration remain to be implemented.
+Encrypted bundle staging is covered offline; foreground approval, activation
+and deploy/gate orchestration remain to be implemented.
 No fake principal or permission dependency override:
 all issuer/revoker requests use the existing production auth/session stack.
 """
@@ -886,3 +887,164 @@ def test_web_executor_lost_reply_after_durable_commit_never_retries(web_lifecycl
         executor.execute(plan, **args)
     assert web.calls.count(("POST", path)) == 1
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(count,)]
+
+
+@pytest.fixture
+def encrypted_binding(web_lifecycle: Any) -> Any:
+    """Actual sealed-box encryption/decryption + mocked GitHub, never a live token."""
+    import base64
+    import httpx
+    from nacl.public import PrivateKey
+    from delivery_toolchain.release.provision_dev_smoke import DevCredentialBundleExecutor, GitHubDevSecretStore
+
+    s, web, lifecycle, journal, plan, args = web_lifecycle
+    private_key = PrivateKey.generate()
+
+    class OfflineGitHub:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+            self.uploads: list[dict[str, Any]] = []
+            self.fault = ""
+
+        def request(self, request: Any) -> Any:
+            path = request.url.path
+            self.calls.append((request.method, path))
+            assert request.url.scheme == "https" and request.url.host == "api.github.com"
+            assert request.headers["authorization"] == "Bearer offline-token"
+            if request.method == "PUT":
+                # Durable binding intent MUST already exist before a remote PUT.
+                events = s.audit.list_events(correlation_id=binding._CORRELATION)
+                assert len(events) == 1 and events[0].metadata["stage"] == "binding-intent"
+                value = json.loads(request.content)
+                assert set(value) == {"encrypted_value", "key_id"}
+                for secret in (PASSWORD, args["admin_password"], plan["email"], plan["username"]):
+                    assert secret not in request.content.decode()
+                if self.fault == "refused":
+                    return httpx.Response(403, json={"message": "private-error-payload"})
+                self.uploads.append(value)
+                if self.fault == "lost-reply":
+                    raise httpx.ReadTimeout("private-error-password", request=request)
+                return httpx.Response(204 if self.fault == "replaced" else 201)
+            if path == "/repos/alfloop-dev/odayplus":
+                return httpx.Response(200, json={"id": 123, "full_name":
+                    "foreign/repository" if self.fault == "repository" else "alfloop-dev/odayplus"})
+            if path.endswith("/public-key"):
+                return httpx.Response(200, json={"key_id": "offline-key-id", "key":
+                    "bad-private-key" if self.fault == "key" else
+                    base64.b64encode(bytes(private_key.public_key)).decode()})
+            assert path == "/repositories/123/environments/dev/secrets/ODP_DEV_ADMIN_CREDENTIAL_BUNDLE"
+            return httpx.Response(200 if self.fault == "exists" else 302 if self.fault == "redirect" else 404)
+
+    remote = OfflineGitHub()
+    store = GitHubDevSecretStore(token="offline-token", transport=httpx.MockTransport(remote.request))
+    binding = DevCredentialBundleExecutor(lifecycle=lifecycle, store=store)
+    try:
+        yield s, web, journal, binding, remote, private_key, plan, args
+    finally:
+        store.close()
+
+
+def test_binding_encrypts_one_matched_pair_without_bootstrap_fallback(encrypted_binding: Any, monkeypatch: Any) -> None:
+    import base64
+    import subprocess
+    from nacl.public import SealedBox
+    from delivery_toolchain.release.provision_dev_smoke import DevCredentialBundleExecutor, ProvisioningRefused
+    s, web, journal, binding, remote, private_key, plan, args = encrypted_binding
+    before = _snapshot(s)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("binding launched a process"))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("binding launched a process"))
+    assert binding.inspect() is None
+    receipt = binding.execute(plan, **args)
+    assert len(remote.uploads) == 1
+    bundle = json.loads(SealedBox(private_key).decrypt(base64.b64decode(remote.uploads[0]["encrypted_value"])))
+    assert bundle == {
+        "schema_version": 1, "authorization_id": receipt["authorization_id"],
+        "execution_id": plan["execution_id"], "repository": "alfloop-dev/odayplus",
+        "environment": "dev", "tenant_id": TENANT, "account_id": receipt["account_id"],
+        "username": plan["username"], "password": PASSWORD,
+    }
+    assert receipt["binding_write_acknowledged"] is True
+    assert receipt["credential_binding_verified"] is False
+    assert not receipt["live_gate_passed"] and not receipt["deployment_success"]
+    assert binding.inspect()["stage"] == "binding-acknowledged"
+    after = _snapshot(s)
+    for key in before.keys() - {"sessions"}:
+        assert after[key] == before[key]
+    for session in before["sessions"]:
+        assert session in after["sessions"]
+    output = json.dumps(receipt) + json.dumps([e.metadata for e in s.audit.list_events()])
+    for secret in (PASSWORD, args["admin_password"], plan["email"], "offline-token", remote.uploads[0]["encrypted_value"]):
+        assert secret not in output
+    # Restart sees the exact same durable result, never repeats lifecycle or PUT.
+    restarted = DevCredentialBundleExecutor(lifecycle=binding._lifecycle, store=binding._store)
+    calls = list(web.calls), list(remote.calls)
+    with pytest.raises(ProvisioningRefused):
+        restarted.execute(plan, **args)
+    assert (web.calls, remote.calls) == calls
+    assert journal.inspect().stage == "reserved" and s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("fault", ["repository", "key", "exists", "redirect"])
+def test_binding_preflight_failure_never_logs_in_or_creates(encrypted_binding: Any, fault: str) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, journal, binding, remote, _, plan, args = encrypted_binding
+    remote.fault = fault
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_BINDING_REFUSED"):
+        binding.execute(plan, **args)
+    assert not web.calls and not remote.uploads
+    assert journal.inspect() is None and binding.inspect() is None
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+
+
+@pytest.mark.parametrize("fault", ["refused", "lost-reply", "replaced"])
+def test_binding_uncertain_or_partial_remote_result_never_retries(encrypted_binding: Any, fault: str) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import DevCredentialBundleExecutor, ProvisioningRefused
+    s, web, journal, binding, remote, _, plan, args = encrypted_binding
+    before = _snapshot(s)
+    remote.fault = fault
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_BINDING_RECOVERY_REQUIRED") as error:
+        binding.execute(plan, **args)
+    assert error.value.__cause__ is None and "private" not in str(error.value)
+    assert binding.inspect()["stage"] == journal.inspect().stage == "recovery-required"
+    assert len([c for c in remote.calls if c[0] == "PUT"]) == 1
+    assert len(remote.uploads) == (0 if fault == "refused" else 1)
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(2,)]
+    assert _snapshot(s)["password_credentials"] == before["password_credentials"]
+    restarted = DevCredentialBundleExecutor(lifecycle=binding._lifecycle, store=binding._store)
+    calls = list(web.calls), list(remote.calls)
+    remote.fault = ""
+    with pytest.raises(ProvisioningRefused):
+        restarted.execute(plan, **args)
+    assert (web.calls, remote.calls) == calls
+    assert not any(method == "DELETE" for method, _ in remote.calls)
+
+
+@pytest.mark.parametrize("failure", ["binding-intent", "binding-acknowledged", "all"])
+def test_binding_audit_commit_failure_never_claims_ack_or_retries(
+    encrypted_binding: Any, monkeypatch: Any, failure: str,
+) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, journal, binding, remote, _, plan, args = encrypted_binding
+    original = s.audit.record
+
+    def append_then_fail(event: Any) -> Any:
+        written = original(event)
+        if event.event_type == binding._TYPE and (failure == "all" or event.metadata["stage"] == failure):
+            raise RuntimeError("private-password-write-failure")
+        return written
+
+    monkeypatch.setattr(s.audit, "record", append_then_fail)
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_BINDING_RECOVERY_REQUIRED"):
+        binding.execute(plan, **args)
+    state = binding.inspect()
+    assert state is None if failure in {"binding-intent", "all"} else state["stage"] == "recovery-required"
+    assert journal.inspect().stage == "recovery-required"
+    assert len(remote.uploads) == (1 if failure == "binding-acknowledged" else 0)
+    monkeypatch.setattr(s.audit, "record", original)
+    calls = list(web.calls)
+    with pytest.raises(ProvisioningRefused):
+        binding.execute(plan, **args)
+    # If no intent survived, root collision/reservation still prevents creation/PUT.
+    assert web.calls.count(("POST", PATH)) == calls.count(("POST", PATH))
+    assert len(remote.uploads) == (1 if failure == "binding-acknowledged" else 0)
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(2,)]

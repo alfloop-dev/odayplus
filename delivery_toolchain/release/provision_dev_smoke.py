@@ -6,12 +6,14 @@ it after an uncertain result. Neither authenticates the custodian, verifies
 release admission/human approval, proves mailbox ownership, or authorizes a cloud
 mutation. The Web lifecycle below is callable only by the trusted foreground
 coordinator after source approval and exact release admission; it does not
-implement those control-plane checks or credential binding. Default workflows
+implement those control-plane checks. The optional encrypted bundle writer below
+composes the same lifecycle/password in one call, but is not yet consumed by the
+release workflow and cannot prove the stored secret value. Default workflows
 do not invoke this module, and there is intentionally no anonymous CLI.
 
 Account input must come from the existing authenticated identity readback, not
 caller headers or an offline receipt. Credentials/capabilities are not accepted
-in a plan and remain exclusively in the Web executor's memory.
+in a plan and remain exclusively in executor/encryption memory.
 """
 
 from __future__ import annotations
@@ -499,3 +501,212 @@ class WebInvitationExecutor:
             raise ProvisioningRefused("PROVISIONING_LIFECYCLE_RECOVERY_REQUIRED" if reservation
                                      else "PROVISIONING_LIFECYCLE_REFUSED") from None
         return result
+
+
+class GitHubDevSecretStore:
+    """Pinned GitHub HTTPS API, no CLI, redirects, retries or plaintext uploads.
+
+    Only the trusted foreground custodian supplies the token. The coordinator
+    must exclude concurrent external secret writers: GitHub has no create-only
+    conditional PUT. No secret value can be read back through this API.
+    """
+
+    NAME = "ODP_DEV_ADMIN_CREDENTIAL_BUNDLE"
+
+    def __init__(self, *, token: str, transport: Any = None) -> None:
+        import httpx
+
+        if not isinstance(token, str) or not token or any(c in token for c in "\r\n"):
+            raise ProvisioningRefused("PROVISIONING_GITHUB_CONFIG_INVALID")
+        self._client = httpx.Client(
+            base_url="https://api.github.com", transport=transport, timeout=20,
+            follow_redirects=False, headers={
+                "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+
+    def close(self) -> None:
+        self._client.close()
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        try:
+            return self._client.request(method, path, **kwargs)
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_GITHUB_UNCERTAIN") from None
+
+    def prepare(self) -> tuple[str, str, str]:
+        """Read non-secret repository identity, secret absence and encryption key."""
+        import base64
+
+        try:
+            response = self._request("GET", f"/repos/{REPOSITORY}")
+            repo = response.json()
+            if (response.status_code != 200 or repo.get("full_name") != REPOSITORY
+                    or type(repo.get("id")) is not int or repo["id"] <= 0):
+                raise ValueError("repository mismatch")
+            path = f"/repositories/{repo['id']}/environments/dev/secrets"
+            existing = self._request("GET", f"{path}/{self.NAME}")
+            if existing.status_code != 404:
+                raise ValueError("binding exists or absence unproven")
+            response = self._request("GET", f"{path}/public-key")
+            key = response.json()
+            if (response.status_code != 200 or not isinstance(key.get("key_id"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", key["key_id"])
+                    or not isinstance(key.get("key"), str)
+                    or len(base64.b64decode(key["key"], validate=True)) != 32):
+                raise ValueError("invalid key")
+            return path, key["key_id"], key["key"]
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_GITHUB_PREFLIGHT_REFUSED") from None
+
+    def write(self, prepared: tuple[str, str, str], bundle: dict[str, Any]) -> None:
+        import base64
+        from nacl.public import PublicKey, SealedBox
+
+        try:
+            path, key_id, public_key = prepared
+            clear = json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode()
+            encrypted = SealedBox(PublicKey(base64.b64decode(public_key, validate=True))).encrypt(clear)
+            response = self._request("PUT", f"{path}/{self.NAME}", json={
+                "key_id": key_id, "encrypted_value": base64.b64encode(encrypted).decode(),
+            })
+            # 204 would mean an existing secret was replaced (external writer race).
+            # A timeout/204/error is never inferred to be an acknowledged creation.
+            if response.status_code != 201:
+                raise ValueError("creation not acknowledged")
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_GITHUB_UNCERTAIN") from None
+
+
+class DevCredentialBundleExecutor:
+    """Foreground lifecycle + same-pair encrypted staging, NOT rollout authority.
+
+    A SINGLE encrypted JSON secret contains the matched username/password plus
+    tuple/account identifiers. It cannot mix the preserved account's password or
+    optional bootstrap credential. Existing vars/secrets are untouched. The
+    workflow does not consume the bundle yet; acknowledged PUT is NOT proof of
+    secret value, deployment or gate success. The approved coordinator must own
+    source/admission/custody checks before calling this library.
+
+    Durable intent precedes PUT. Crash/lost reply/readback/journal failures leave
+    intent or quarantine as a no-retry boundary. No password reset, secret delete,
+    value retrieval, rollback, replacement or automatically repeated PUT exists.
+    """
+
+    _CORRELATION = f"dev-smoke-binding:{AUTHORIZATION_ID}"
+    _ACTOR = "system:dev-smoke-credential-binding"
+    _TYPE = "release.dev_smoke.binding"
+    _KEYS = frozenset({
+        "authorization_id", "execution_id", "plan_digest", "release_sha", "manifest_digest",
+        "tenant_id", "account_id", "secret_name", "stage", "execution_authorized",
+        "credential_binding_verified", "secret_values_redacted",
+    })
+
+    def __init__(self, *, lifecycle: WebInvitationExecutor, store: GitHubDevSecretStore) -> None:
+        if not isinstance(lifecycle, WebInvitationExecutor) or not isinstance(store, GitHubDevSecretStore):
+            raise ProvisioningRefused("PROVISIONING_BINDING_CONFIG_INVALID")
+        self._lifecycle = lifecycle
+        self._journal = lifecycle._journal
+        self._store = store
+
+    def _events(self) -> list[AuditEvent]:
+        events = self._journal._audit.list_events(correlation_id=self._CORRELATION)
+        if len(events) > 2:
+            raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID")
+        for index, event in enumerate(events):
+            m = event.metadata
+            if (event.event_type != self._TYPE or event.actor != self._ACTOR
+                    or event.resource != self._CORRELATION or event.action != "DEV_SMOKE_BINDING"
+                    or event.outcome != "success" or set(m) != self._KEYS
+                    or m["authorization_id"] != AUTHORIZATION_ID or m["tenant_id"] != TENANT_ID
+                    or m["secret_name"] != self._store.NAME
+                    or m["execution_authorized"] is not False
+                    or m["credential_binding_verified"] is not False
+                    or m["secret_values_redacted"] is not True
+                    or m["stage"] not in (("binding-intent",) if index == 0 else
+                                          ("binding-acknowledged", "recovery-required"))):
+                raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID")
+            if index and {k: v for k, v in m.items() if k != "stage"} != {
+                k: v for k, v in events[0].metadata.items() if k != "stage"
+            }:
+                raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID")
+        return events
+
+    def inspect(self) -> dict[str, Any] | None:
+        """Restart diagnosis only; a pending intent MUST NOT be retried."""
+        try:
+            with self._journal._engine.lock:
+                self._journal._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (self._CORRELATION,))
+                events = self._events()
+                return {**events[-1].metadata, "audit_event_id": events[-1].event_id} if events else None
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_UNAVAILABLE") from None
+
+    def _append(self, metadata: dict[str, Any], stage: str) -> AuditEvent:
+        with self._journal._engine.lock:
+            self._journal._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (self._CORRELATION,))
+            events = self._events()
+            if ((stage == "binding-intent" and events)
+                    or (stage != "binding-intent" and (len(events) != 1
+                        or metadata != events[0].metadata))):
+                raise ProvisioningRefused("PROVISIONING_BINDING_ALREADY_ATTEMPTED")
+            event = self._journal._audit.record(AuditEvent(
+                event_type=self._TYPE, actor=self._ACTOR, action="DEV_SMOKE_BINDING",
+                resource=self._CORRELATION, correlation_id=self._CORRELATION, outcome="success",
+                occurred_at=self._journal._now(), metadata={**metadata, "stage": stage},
+            ))
+        return event
+
+    def execute(self, plan: Any, **credentials: Any) -> dict[str, Any]:
+        """Same password goes to acceptance/fresh-login AND encrypted bundle.
+
+        No caller-provided lifecycle receipt is accepted as a creation proof.
+        API acknowledgement cannot verify the decrypted GitHub secret: only a
+        future normally admitted consumer's unchanged live gate can do that.
+        """
+        reservation = None
+        metadata = None
+        try:
+            # Fail before account mutation if a staged binding already exists,
+            # journal is unavailable, repository/key is wrong, or auth is refused.
+            if self.inspect() is not None:
+                raise ProvisioningRefused("PROVISIONING_BINDING_ALREADY_ATTEMPTED")
+            prepared = self._store.prepare()
+            lifecycle = self._lifecycle.execute(plan, **credentials)
+            reservation = self._journal.inspect()
+            if reservation is None or reservation.stage != "reserved":
+                raise ProvisioningRefused("PROVISIONING_RESERVATION_MISMATCH")
+            metadata = {
+                "authorization_id": AUTHORIZATION_ID, "execution_id": reservation.execution_id,
+                "plan_digest": reservation.plan_digest, "release_sha": lifecycle["release_sha"],
+                "manifest_digest": lifecycle["manifest_digest"], "tenant_id": TENANT_ID,
+                "account_id": lifecycle["account_id"], "secret_name": self._store.NAME,
+                "stage": "binding-intent", "execution_authorized": False,
+                "credential_binding_verified": False, "secret_values_redacted": True,
+            }
+            self._append(metadata, "binding-intent")
+            # Contains no initial-password fallback, token, email or admin password.
+            bundle = {"schema_version": 1, "authorization_id": AUTHORIZATION_ID,
+                      "execution_id": reservation.execution_id, "repository": REPOSITORY,
+                      "environment": "dev", "tenant_id": TENANT_ID,
+                      "account_id": lifecycle["account_id"], "username": plan["username"],
+                      "password": credentials["new_password"]}
+            self._store.write(prepared, bundle)
+            event = self._append(metadata, "binding-acknowledged")
+            return {**lifecycle, "stage": "binding-acknowledged", "binding_audit_event_id": event.event_id,
+                    "binding_write_acknowledged": True, "credential_binding_verified": False,
+                    "live_gate_passed": False, "deployment_success": False}
+        except Exception:
+            if reservation is not None:
+                if metadata is not None:
+                    try:
+                        self._append(metadata, "recovery-required")
+                    except Exception:
+                        pass  # Committed intent still forbids retry even if quarantine is unavailable.
+                try:
+                    self._journal.require_recovery(reservation)
+                except Exception:
+                    pass  # Root reservation still forbids account recreation.
+            raise ProvisioningRefused("PROVISIONING_BINDING_RECOVERY_REQUIRED" if reservation
+                                     else "PROVISIONING_BINDING_REFUSED") from None
