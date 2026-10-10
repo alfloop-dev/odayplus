@@ -434,6 +434,18 @@ Operator shared provisioning/read-model, genuine SLA creation or cloud acceptanc
 These gaps and actual Transfer/Pause browser success pairs remain next;
 **not ready for full-scope review resubmission**.
 
+## Resource provisioning blocker / decision request
+
+[`resource-provisioning-blocker/README.md`](resource-provisioning-blocker/README.md)
+records fresh read-only canonical `10eb6224fa31` and task `5ef2378861dd`
+inspection, pinned source/negative-receipt hashes and actionable Product/Platform
+decisions needed for shared Operator-to-UUID resource identity, authorized
+initialization and versioned SLA policy. Human/Ops must route this prerequisite;
+no policy, child ID, deadline, tests or new success screenshots were invented.
+Existing action/directory/token repairs remain intact. The missing prerequisite
+is now an explicit blocker, not another mock-only acceptance increment.
+**Do not resubmit PR #1440 until genuine flows and the remaining scope pass.**
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped

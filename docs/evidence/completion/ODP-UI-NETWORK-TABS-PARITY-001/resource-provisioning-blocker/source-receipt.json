@@ -1,0 +1,155 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "inspection_mode": "read-only canonical and resumed task; no tests or mutations",
+  "canonical_sha": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+  "resumed_task_sha": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+  "sources": [
+    {
+      "commit": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+      "path": "modules/opsboard/application/network_listings.py",
+      "blob": "81eba790613899607bbd38eccd56bd7b84d96a61",
+      "sha256": "e652c9dbc47446ac2946816578d233e83d7fc2611ad1ac8aba52f067868b75a9"
+    },
+    {
+      "commit": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+      "path": "apps/api/app/routes/operator_modules/network_listings.py",
+      "blob": "bbdaf68161bc92e1349b0d6de10980b4a0d12863",
+      "sha256": "d25cefcf5e2b44695d40512bc74d94ed53f47430f1ae76c9a9bb9ab8b0e4c69c"
+    },
+    {
+      "commit": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+      "path": "shared/infrastructure/persistence/operator_network_listings.py",
+      "blob": "882d68cdfd90655255bbb768a466e796797f72ee",
+      "sha256": "5a8819d5895d3292f1edad96cd394d9fca52073b40ea0657225d1838ad86e2b2"
+    },
+    {
+      "commit": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+      "path": "packages/openapi-client/src/index.ts",
+      "blob": "af65ed8daa9a59b705a133d92def40cdaefe70b9",
+      "sha256": "4bc5e97b1d8fca196bf8b23b5ed8d8f362e40c196534d3240198dbd838b7e894"
+    },
+    {
+      "commit": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+      "path": "apps/api/app/routes/listings.py",
+      "blob": "f74d59f2b87005b14f24d0ded3da538fd968b485",
+      "sha256": "97a17ee6e84689026925224f6b0dc0eb8f88fbbfc536742ca831f415efd783f9"
+    },
+    {
+      "commit": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+      "path": "modules/listing/application/assignment_sla.py",
+      "blob": "6b0155901f54aa0c48ee0aa05316e45672dbb7cb",
+      "sha256": "d98e5fe53aa131093ccac13fe1640a03e7e8baa5f6e74fa2bcb63a79c3127510"
+    },
+    {
+      "commit": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+      "path": "modules/listing/domain/intake_states.py",
+      "blob": "1196d336f1ec5adc7091d2d2e4cdb1c3ea61f820",
+      "sha256": "534c5b51bc977ef6b1a5795330f6eebd6e75fa47868186c900f399d8ac83f693"
+    },
+    {
+      "commit": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+      "path": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md",
+      "blob": "1c8a42d01b11e6726692cdbf41b31baa1c5a1dbe",
+      "sha256": "5f84f73d23e1d24dca5cf6ae774e77fcdeff72ea334894e200c1e739a355fa1c"
+    },
+    {
+      "commit": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+      "path": "infra/db/migrations/assisted_listing_intake/001_baseline.sql",
+      "blob": "e1ecabf7178b996022e1ddfc0609ee57943729bb",
+      "sha256": "475d8350be1bb01fd7083d4fa6188e353c5c1ed9e7225ddfd768d91e869f8334"
+    },
+    {
+      "commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "modules/opsboard/application/network_listings.py",
+      "blob": "81eba790613899607bbd38eccd56bd7b84d96a61",
+      "sha256": "e652c9dbc47446ac2946816578d233e83d7fc2611ad1ac8aba52f067868b75a9"
+    },
+    {
+      "commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "apps/api/app/routes/operator_modules/network_listings.py",
+      "blob": "bbdaf68161bc92e1349b0d6de10980b4a0d12863",
+      "sha256": "d25cefcf5e2b44695d40512bc74d94ed53f47430f1ae76c9a9bb9ab8b0e4c69c"
+    },
+    {
+      "commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "shared/infrastructure/persistence/operator_network_listings.py",
+      "blob": "882d68cdfd90655255bbb768a466e796797f72ee",
+      "sha256": "5a8819d5895d3292f1edad96cd394d9fca52073b40ea0657225d1838ad86e2b2"
+    },
+    {
+      "commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "packages/openapi-client/src/index.ts",
+      "blob": "49781668ce9a2b1d4e26f94b83e608a388a25e65",
+      "sha256": "afd891b5af0ef823a4db247dca868d23223ee63357d14beac7c25f069274772f"
+    },
+    {
+      "commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "apps/api/app/routes/listings.py",
+      "blob": "fabb5c49c5b4c2cf83352eeb880cb625ae0f262e",
+      "sha256": "00e84fa42faa52809fc5d02c9e4ba97db9eb8dac880aac29fe0247b427b7da56"
+    },
+    {
+      "commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "modules/listing/application/assignment_sla.py",
+      "blob": "6b0155901f54aa0c48ee0aa05316e45672dbb7cb",
+      "sha256": "d98e5fe53aa131093ccac13fe1640a03e7e8baa5f6e74fa2bcb63a79c3127510"
+    },
+    {
+      "commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "modules/listing/domain/intake_states.py",
+      "blob": "1196d336f1ec5adc7091d2d2e4cdb1c3ea61f820",
+      "sha256": "534c5b51bc977ef6b1a5795330f6eebd6e75fa47868186c900f399d8ac83f693"
+    },
+    {
+      "commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md",
+      "blob": "1c8a42d01b11e6726692cdbf41b31baa1c5a1dbe",
+      "sha256": "5f84f73d23e1d24dca5cf6ae774e77fcdeff72ea334894e200c1e739a355fa1c"
+    },
+    {
+      "commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "infra/db/migrations/assisted_listing_intake/001_baseline.sql",
+      "blob": "e1ecabf7178b996022e1ddfc0609ee57943729bb",
+      "sha256": "475d8350be1bb01fd7083d4fa6188e353c5c1ed9e7225ddfd768d91e869f8334"
+    }
+  ],
+  "existing_negative_receipts": [
+    {
+      "source_commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "docs/evidence/completion/ODP-UI-NETWORK-TABS-PARITY-001/sla-status/actual-unavailable/actual-intake-1440.json",
+      "sha256": "d66427398cad9ddb24141aa78274c8f7d05aaa6c11e9655055abedc205386e47",
+      "resource_field_presence": {
+        "assignmentId": false,
+        "assignmentVersion": false,
+        "slaInstanceId": false,
+        "slaVersion": false
+      },
+      "mode": "local-synthetic-source-real-api"
+    },
+    {
+      "source_commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "docs/evidence/completion/ODP-UI-NETWORK-TABS-PARITY-001/sla-status/actual-unavailable/refused-writes-1440.json",
+      "sha256": "ad3f58667385e8d7d7b13115f2fb500b6bc1b933e85f4abe93671fc36240e7af",
+      "attempted_resource_writes": 0
+    },
+    {
+      "source_commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "docs/evidence/completion/ODP-UI-NETWORK-TABS-PARITY-001/sla-status/actual-unavailable/actual-intake-390.json",
+      "sha256": "0a6d70450efa0fca1a3f6234fca55ff0113c72020968ae8c76ecb76b74378bb9",
+      "resource_field_presence": {
+        "assignmentId": false,
+        "assignmentVersion": false,
+        "slaInstanceId": false,
+        "slaVersion": false
+      },
+      "mode": "local-synthetic-source-real-api"
+    },
+    {
+      "source_commit": "5ef2378861dd3323713afd60dcafcd519e4d11a8",
+      "path": "docs/evidence/completion/ODP-UI-NETWORK-TABS-PARITY-001/sla-status/actual-unavailable/refused-writes-390.json",
+      "sha256": "ad3f58667385e8d7d7b13115f2fb500b6bc1b933e85f4abe93671fc36240e7af",
+      "attempted_resource_writes": 0
+    }
+  ],
+  "new_verification": "documentation diff and source-receipt hash checks only; no product verification run"
+}
