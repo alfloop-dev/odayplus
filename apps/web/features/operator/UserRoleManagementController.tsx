@@ -97,7 +97,7 @@ export function UserRoleManagementController({
   const [selectedUser, setSelectedUser] = useState<UserRecord | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [invitedCredentials, setInvitedCredentials] = useState<{ username: string; password: string } | null>(null);
+  const [invitedCredentials, setInvitedCredentials] = useState<{ username: string; token: string; invitationId: string; expiresAt: string } | null>(null);
   const [copiedPassword, setCopiedPassword] = useState<boolean>(false);
   const [isCopyingPassword, setIsCopyingPassword] = useState(false);
   const [copyPasswordError, setCopyPasswordError] = useState<string | null>(null);
@@ -108,7 +108,6 @@ export function UserRoleManagementController({
   const [editSubjectId, setEditSubjectId] = useState<string>("");
   const [editName, setEditName] = useState<string>("");
   const [editEmail, setEditEmail] = useState<string>("");
-  const [editInitialPassword, setEditInitialPassword] = useState<string>("");
   const [editRoles, setEditRoles] = useState<string[]>([]);
   const [editTenantId, setEditTenantId] = useState<string>("tenant-default");
   const [editBrands, setEditBrands] = useState<string>("");
@@ -211,7 +210,6 @@ export function UserRoleManagementController({
     setEditSubjectId(user.subject_id || "");
     setEditName(user.name || "");
     setEditEmail(user.email || "");
-    setEditInitialPassword("");
     copyAttempt.current += 1;
     setCopiedPassword(false);
     setIsCopyingPassword(false);
@@ -256,7 +254,7 @@ export function UserRoleManagementController({
         const invitePayload = {
           username: targetSubjectId,
           email: editEmail.trim(),
-          name: editName.trim() || undefined,
+          name: editName.trim(),
           roles: editRoles,
           scope: {
             tenant_id: editTenantId,
@@ -265,7 +263,6 @@ export function UserRoleManagementController({
             store_ids: parsedStores,
             clearance: editClearance,
           },
-          initialPassword: editInitialPassword.trim() || undefined,
           reason: editReason || "管理員建立營運帳號（邀請流程）",
         };
 
@@ -280,34 +277,22 @@ export function UserRoleManagementController({
 
         if (res.ok) {
           const data = await res.json();
-          const updatedUser: UserRecord = data.user || {
-            subject_id: targetSubjectId,
-            name: editName.trim() || targetSubjectId,
-            email: editEmail.trim(),
-            roles: editRoles,
-            scope: {
-              tenant_id: editTenantId,
-              brand_ids: parsedBrands,
-              region_ids: parsedRegions,
-              store_ids: parsedStores,
-              clearance: editClearance,
-            },
-            status: "active",
-          };
-          const tempPassword = data.temporary_password || data.initial_password;
-          setUsers((prev) => [updatedUser, ...prev.filter((u) => u.subject_id !== updatedUser.subject_id)]);
+          if (data.status !== "invited" || typeof data.token !== "string" ||
+              !/^[A-Za-z0-9_-]{43}$/.test(data.token) || typeof data.invitation_id !== "string" ||
+              typeof data.expires_at !== "string") {
+            showToast("邀請回應無效，請查核稽核紀錄；不要重複送出。");
+            return;
+          }
+          // Issuance creates no account. Never manufacture an active user row
+          // or report a role change before the recipient accepts the capability.
+          setInvitedCredentials({ username: targetSubjectId, token: data.token,
+            invitationId: data.invitation_id, expiresAt: data.expires_at });
           fetchUsers();
           setIsEditModalOpen(false);
-          if (tempPassword) {
-            // Identity-backed subject_id is an account UUID, not a login name.
-            setInvitedCredentials({ username: updatedUser.username || targetSubjectId, password: tempPassword });
-            setEditInitialPassword("");
-          }
-          showToast(`已成功建立並邀請 ${updatedUser.name || updatedUser.subject_id}，已產生一次性初始密碼`);
-          if (onUserRoleChange) onUserRoleChange(updatedUser);
+          showToast(`已邀請 ${targetSubjectId}；接受邀請後才建立帳號，首次登入需改密碼`);
         } else {
           const errorData = await res.json().catch(() => ({}));
-          showToast(`邀請失敗：${errorData.detail || res.statusText}`);
+          showToast(`邀請失敗：${errorData.error?.code || "INVITATION_UNAVAILABLE"}`);
         }
       } else {
         const payload = {
@@ -733,19 +718,6 @@ export function UserRoleManagementController({
                       data-testid="edit-email-input"
                     />
                   </div>
-                  {isNewUser ? (
-                    <div>
-                      <label style={{ fontSize: "11px", color: "#475569" }}>初始密碼（選填，留空自動產生）</label>
-                      <input
-                        type="password"
-                        value={editInitialPassword}
-                        onChange={(e) => setEditInitialPassword(e.target.value)}
-                        placeholder="留空將自動產生安全隨機密碼"
-                        style={{ width: "100%", padding: "6px", fontSize: "12px", borderRadius: "4px", border: "1px solid #cbd5e1" }}
-                        data-testid="edit-initial-password-input"
-                      />
-                    </div>
-                  ) : null}
                 </div>
               </div>
               {/* Role Selection Checkboxes */}
@@ -919,10 +891,11 @@ export function UserRoleManagementController({
           >
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px", color: "#16a34a" }}>
               <span style={{ fontSize: "20px" }}>✓</span>
-              <h3 style={{ margin: 0, fontSize: "16px", color: "#0f172a" }}>帳號建立成功（一次性初始憑證）</h3>
+              <h3 style={{ margin: 0, fontSize: "16px", color: "#0f172a" }}>邀請已發出（一次性邀請憑證）</h3>
             </div>
             <p style={{ fontSize: "13px", color: "#475569", marginBottom: "16px", lineHeight: "1.5" }}>
-              使用者帳號 <strong>{invitedCredentials.username}</strong> 已建立。以下為該帳號的一次性初始密碼，請妥善複製並提供給使用者。基於安全原則，此密碼僅顯示一次且於首次登入時強制重設。
+              登入名稱 <strong>{invitedCredentials.username}</strong> 的帳號尚未建立。請私下交付邀請 ID 與 token；收件者於 /auth/invitations 輸入並設定密碼，首次登入仍需改密碼。憑證僅顯示一次，請勿放入 URL、日誌或公開訊息。
+              <br />邀請 ID：{invitedCredentials.invitationId}<br />到期時間：{invitedCredentials.expiresAt}
             </p>
             <div
               style={{
@@ -938,7 +911,7 @@ export function UserRoleManagementController({
               }}
             >
               <div>
-                <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "2px" }}>一次性初始密碼</div>
+                <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "2px" }}>一次性邀請 token</div>
                 <div
                   style={{
                     fontFamily: "monospace",
@@ -949,7 +922,7 @@ export function UserRoleManagementController({
                   }}
                   data-testid="invited-password-display"
                 >
-                  {invitedCredentials.password}
+                  {invitedCredentials.token}
                 </div>
               </div>
               <button
@@ -964,11 +937,16 @@ export function UserRoleManagementController({
                     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
                       throw new Error("Clipboard unavailable");
                     }
-                    await navigator.clipboard.writeText(invitedCredentials.password);
+                    await navigator.clipboard.writeText([
+                      `Invitation ID: ${invitedCredentials.invitationId}`,
+                      `Username: ${invitedCredentials.username}`,
+                      `Token: ${invitedCredentials.token}`,
+                      `Expires: ${invitedCredentials.expiresAt}`,
+                    ].join("\n"));
                     if (attempt === copyAttempt.current) setCopiedPassword(true);
                   } catch {
                     if (attempt === copyAttempt.current) {
-                      setCopyPasswordError("無法複製密碼，請手動選取上方密碼並複製；關閉後無法再次查看。");
+                      setCopyPasswordError("無法複製邀請，請手動選取上方邀請 ID、登入名稱、token 與到期時間；關閉後無法再次查看。");
                     }
                   } finally {
                     if (attempt === copyAttempt.current) setIsCopyingPassword(false);
@@ -986,7 +964,7 @@ export function UserRoleManagementController({
                 }}
                 data-testid="copy-password-button"
               >
-                {isCopyingPassword ? "複製中…" : copiedPassword ? "已複製 ✓" : "複製密碼"}
+                {isCopyingPassword ? "複製中…" : copiedPassword ? "已複製 ✓" : "複製邀請"}
               </button>
             </div>
             {copyPasswordError ? (

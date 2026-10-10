@@ -1,4 +1,4 @@
-"""Tenant-bound, pure-admin invitation lifecycle (password-first §7.1/7.3).
+"""Tenant-bound invitation lifecycle (password-first §7.1/7.3).
 
 Internal application service, NOT a deployment CLI or an authentication path.
 The HTTP adapter must supply the principal from the existing auth boundary;
@@ -12,8 +12,10 @@ in memory, never logs, URLs, browser storage, receipts or local files. Acceptanc
 does not sign in, reset an account or create sessions. All inserts and the durable
 audit append share the production PostgreSQL engine's transaction.
 
-This deliberately implements only invitations with exactly platform_admin and
-the fixed tenant scope; general role/scope invitation editing is out of scope.
+The bounded pure-admin issue method keeps its fixed release semantics. Operator
+invitations use a versioned preset envelope with issuer-chosen username, display
+name, canonical roles and tenant-bound scope; acceptance still uses this single
+authority and sets must_change=true for their first login.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from shared.audit import AuditEvent
-from shared.auth import Principal, Role
+from shared.auth import DataClassification, Principal, Role
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 
 from .credential_service import CredentialService
@@ -139,18 +141,24 @@ class InvitationService:
     def _record(
         self, *, event_type: str, actor: str, invitation_id: str, tenant: str,
         now: Any, account_id: str | None = None, expires_at: datetime | None = None,
+        roles: list[str] | None = None, scope: dict[str, Any] | None = None,
+        must_change: bool = False, reason: str | None = None,
     ) -> Any:
         metadata: dict[str, Any] = {"tenant_id": tenant, "invitation_id": invitation_id}
         if expires_at is not None:
             metadata.update({
-                "preset_roles": [Role.PLATFORM_ADMIN.value], "preset_scope": _scope(tenant),
+                "preset_roles": roles or [Role.PLATFORM_ADMIN.value],
+                "preset_scope": scope if scope is not None else _scope(tenant),
                 "expires_at": expires_at.isoformat(),
             })
+        if reason is not None:
+            metadata["reason"] = reason
         if account_id is not None:
             metadata.update({
                 "account_id": account_id, "subject_id": account_id,
-                "roles": [Role.PLATFORM_ADMIN.value], "scope": _scope(tenant),
-                "status": "active", "must_change": False,
+                "roles": roles or [Role.PLATFORM_ADMIN.value],
+                "scope": scope if scope is not None else _scope(tenant),
+                "status": "active", "must_change": must_change,
             })
         return self._audit.record(AuditEvent(
             event_type=event_type, actor=actor, action=event_type.upper().replace(".", "_"),
@@ -159,8 +167,67 @@ class InvitationService:
             metadata=metadata,
         ))
 
+    @staticmethod
+    def _operator_preset(
+        tenant: str, *, username: str, display_name: str, roles: list[str],
+        scope: dict[str, Any] | None,
+    ) -> tuple[list[str], dict[str, Any]]:
+        if not isinstance(username, str) or not _USERNAME_RE.fullmatch(username):
+            raise InvitationRefused("INVITATION_ACCOUNT_INPUT_INVALID")
+        if not isinstance(display_name, str) or len(display_name) > 255:
+            raise InvitationRefused("INVITATION_ACCOUNT_INPUT_INVALID")
+        if (not isinstance(roles, list) or not roles
+                or any(type(role) is not str or role not in {r.value for r in Role} for role in roles)):
+            raise InvitationRefused("INVITATION_ROLES_INVALID")
+        requested = scope if scope is not None else {}
+        if not isinstance(requested, dict) or set(requested) - {"tenant_id", "clearance", *_SCOPE_AXES}:
+            raise InvitationRefused("INVITATION_SCOPE_INVALID")
+        # The UI's historical placeholder means the verified issuer tenant;
+        # no other tenant may be selected by the payload.
+        if requested.get("tenant_id", tenant) not in {tenant, "tenant-default"}:
+            raise InvitationRefused("INVITATION_SCOPE_INVALID")
+        normalized = _scope(tenant)
+        for axis in _SCOPE_AXES:
+            values = requested.get(axis, [])
+            if (not isinstance(values, list) or len(values) > 100
+                    or any(type(v) is not str or not v or len(v) > 128 for v in values)):
+                raise InvitationRefused("INVITATION_SCOPE_INVALID")
+            normalized[axis] = sorted(set(values))
+        clearance = requested.get("clearance", "CONFIDENTIAL")
+        if not isinstance(clearance, str) or clearance not in DataClassification.__members__:
+            raise InvitationRefused("INVITATION_SCOPE_INVALID")
+        normalized["clearance"] = clearance
+        return sorted(set(roles)), {
+            "kind": "operator-account-v1", "username": username,
+            "display_name": display_name, "scope": normalized, "must_change": True,
+        }
+
+    def issue_account(
+        self, principal: Principal, *, username: str, email: str, roles: list[str],
+        display_name: str = "", scope: dict[str, Any] | None = None,
+        lifetime_seconds: int = 3600, reason: str = "",
+    ) -> InvitationIssued:
+        if not isinstance(reason, str) or len(reason) > 512:
+            raise InvitationRefused("INVITATION_INPUT_INVALID")
+        # No password input and no credentials/accounts until acceptance.
+        # Authoritative actor/session validation is repeated under the write lock.
+        tenant = _uuid(principal.tenant_id, "INVITATION_TENANT_REQUIRED")
+        roles, preset = self._operator_preset(
+            tenant, username=username.strip(), display_name=display_name.strip(), roles=roles, scope=scope,
+        )
+        return self._issue(principal, email=email, lifetime_seconds=lifetime_seconds,
+                           roles=roles, preset=preset, reason=reason)
+
     def issue(
         self, principal: Principal, *, email: str, lifetime_seconds: int = 3600,
+    ) -> InvitationIssued:
+        """Fixed pure-admin release invitation; payload cannot choose grants."""
+        return self._issue(principal, email=email, lifetime_seconds=lifetime_seconds)
+
+    def _issue(
+        self, principal: Principal, *, email: str, lifetime_seconds: int,
+        roles: list[str] | None = None, preset: dict[str, Any] | None = None,
+        reason: str | None = None,
     ) -> InvitationIssued:
         email = email.strip()
         if len(email) > 320 or not _EMAIL_RE.fullmatch(email):
@@ -172,15 +239,20 @@ class InvitationService:
         with self._engine.lock:
             actor, tenant = self._actor(principal)
             now = self._now()
+            issued_roles = roles if roles is not None else [Role.PLATFORM_ADMIN.value]
+            issued_scope = preset if preset is not None else _scope(tenant)
+            username = issued_scope.get("username", "")
             if self._engine.query_one(
                 "SELECT account_id FROM identity.accounts WHERE tenant_id = ? "
-                "AND lower(email) = lower(?) LIMIT 1", (tenant, email),
+                "AND (lower(email) = lower(?) OR lower(username) = lower(?)) LIMIT 1",
+                (tenant, email, username),
             ) is not None:
                 raise InvitationRefused("INVITATION_ACCOUNT_EXISTS")
             if self._engine.query_one(
                 "SELECT invitation_id FROM identity.invitations WHERE tenant_id = ? "
-                "AND lower(email) = lower(?) AND accepted_at IS NULL AND revoked_at IS NULL "
-                "AND expires_at > clock_timestamp() LIMIT 1", (tenant, email),
+                "AND (lower(email) = lower(?) OR lower(preset_scope->>'username') = lower(?)) "
+                "AND accepted_at IS NULL AND revoked_at IS NULL "
+                "AND expires_at > clock_timestamp() LIMIT 1", (tenant, email, username),
             ) is not None:
                 # Never rotate an outstanding capability implicitly. A custodian
                 # who loses it must explicitly revoke it before issuing another.
@@ -191,11 +263,12 @@ class InvitationService:
                 "preset_roles, preset_scope, created_by, expires_at) "
                 "VALUES (?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?, ?)",
                 (invitation_id, tenant, email, hashlib.sha256(token.encode("ascii")).hexdigest(),
-                 json.dumps([Role.PLATFORM_ADMIN.value]), json.dumps(_scope(tenant)), actor, expires),
+                 json.dumps(issued_roles), json.dumps(issued_scope), actor, expires),
             )
             event = self._record(
                 event_type="identity.account.invite", actor=actor, invitation_id=invitation_id,
-                tenant=tenant, now=now, expires_at=expires,
+                tenant=tenant, now=now, expires_at=expires, roles=issued_roles, scope=issued_scope,
+                reason=reason,
             )
         return InvitationIssued(invitation_id, tenant, expires.isoformat(), event.event_id, token)
 
@@ -317,8 +390,8 @@ class InvitationService:
             if (row is None or row["accepted_at"] is not None or row["revoked_at"] is not None
                     or datetime.fromisoformat(row["expires_at"]) <= now):
                 raise InvitationRefused("INVITATION_UNAVAILABLE")
-            # Do not reinterpret arbitrary legacy/foreign presets or silently
-            # drop business grants. Only this exact bounded lifecycle is accepted.
+            # Accept only the fixed release preset or the explicit versioned
+            # operator envelope. Never reinterpret legacy arbitrary presets.
             # PostgresEngine normalizes JSONB columns to JSON text (the same
             # repository contract used by durable identity administration).
             try:
@@ -326,7 +399,24 @@ class InvitationService:
                 preset_scope = json.loads(row["preset_scope"])
             except (TypeError, ValueError):
                 raise InvitationRefused("INVITATION_PRESET_INVALID") from None
-            if preset_roles != [Role.PLATFORM_ADMIN.value] or preset_scope != _scope(tenant):
+            must_change = False
+            account_scope = _scope(tenant)
+            if isinstance(preset_scope, dict) and preset_scope.get("kind") == "operator-account-v1":
+                try:
+                    valid_roles, valid_preset = self._operator_preset(
+                        tenant, username=preset_scope["username"], display_name=preset_scope["display_name"],
+                        roles=preset_roles, scope=preset_scope["scope"],
+                    )
+                except (KeyError, InvitationRefused):
+                    raise InvitationRefused("INVITATION_PRESET_INVALID") from None
+                if valid_roles != preset_roles or valid_preset != preset_scope:
+                    raise InvitationRefused("INVITATION_PRESET_INVALID")
+                if username != preset_scope["username"]:
+                    raise InvitationRefused("INVITATION_ACCOUNT_INPUT_INVALID")
+                display_name = preset_scope["display_name"]
+                account_scope = preset_scope["scope"]
+                must_change = True
+            elif preset_roles != [Role.PLATFORM_ADMIN.value] or preset_scope != account_scope:
                 raise InvitationRefused("INVITATION_PRESET_INVALID")
             if not policy.validate(normalized, username=username, email=row["email"]).valid:
                 raise InvitationRefused("INVITATION_PASSWORD_REJECTED")
@@ -336,6 +426,15 @@ class InvitationService:
                 (tenant, username, row["email"]),
             ) is not None:
                 raise InvitationRefused("INVITATION_ACCOUNT_EXISTS")
+            # An independently issued pure-admin capability cannot steal a
+            # still-pending operator invitation's reserved login name.
+            if self._engine.query_one(
+                "SELECT invitation_id FROM identity.invitations WHERE tenant_id = ? "
+                "AND invitation_id <> ? AND lower(preset_scope->>'username') = lower(?) "
+                "AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > clock_timestamp() LIMIT 1",
+                (tenant, invitation_id, username),
+            ) is not None:
+                raise InvitationRefused("INVITATION_PENDING_EXISTS")
             account_id = str(uuid4())
             self._engine.execute(
                 "INSERT INTO identity.accounts (account_id, tenant_id, username, email, "
@@ -344,22 +443,27 @@ class InvitationService:
             )
             self._engine.execute(
                 "INSERT INTO identity.password_credentials (account_id, algorithm, phc_hash, "
-                "params, must_change, last_rotated_at) VALUES (?, 'argon2id', ?, CAST(? AS jsonb), false, ?)",
-                (account_id, phc, params, now),
+                "params, must_change, last_rotated_at) VALUES (?, 'argon2id', ?, CAST(? AS jsonb), ?, ?)",
+                (account_id, phc, params, must_change, now),
             )
+            for role in preset_roles:
+                self._engine.execute(
+                    "INSERT INTO identity.account_roles (account_id, role, granted_by) VALUES (?, ?, ?)",
+                    (account_id, role, row["created_by"]),
+                )
             self._engine.execute(
-                "INSERT INTO identity.account_roles (account_id, role, granted_by) VALUES (?, ?, ?)",
-                (account_id, Role.PLATFORM_ADMIN.value, row["created_by"]),
-            )
-            self._engine.execute(
-                "INSERT INTO identity.account_scopes (account_id, clearance) VALUES (?, 'CONFIDENTIAL')",
-                (account_id,),
+                "INSERT INTO identity.account_scopes (account_id, brand_ids, region_ids, store_ids, "
+                "assigned_area_ids, heat_zone_ids, modules, clearance) VALUES (?, "
+                "CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb), "
+                "CAST(? AS jsonb), CAST(? AS jsonb), ?)",
+                (account_id, *(json.dumps(account_scope[a]) for a in _SCOPE_AXES), account_scope["clearance"]),
             )
             self._engine.execute(
                 "UPDATE identity.invitations SET accepted_at = ? WHERE invitation_id = ?", (now, invitation_id),
             )
             event = self._record(
                 event_type="identity.account.accept", actor=account_id, invitation_id=invitation_id,
-                tenant=tenant, now=now, account_id=account_id,
+                tenant=tenant, now=now, account_id=account_id, roles=preset_roles,
+                scope=account_scope, must_change=must_change,
             )
         return InvitationAccepted(invitation_id, account_id, tenant, event.event_id)

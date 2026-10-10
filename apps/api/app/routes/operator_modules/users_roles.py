@@ -76,20 +76,22 @@ class UserStatusPayload(BaseModel):
     actorName: str | None = None
 
 
+class AccountInvitationScope(ScopePayload):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
 class UserInvitePayload(BaseModel):
-    """POST /operator/users/invite — payload for inviting / creating a new user."""
+    """Pending invitation only; never accepts a password or caller identity."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    username: str = Field(min_length=1, max_length=64)
+    username: str = Field(min_length=3, max_length=64)
     email: str = Field(min_length=3, max_length=320)
-    name: str | None = None
-    displayName: str | None = None
-    roles: list[str] = Field(min_length=1)
-    scope: ScopePayload | None = None
-    initialPassword: str | None = None
-    initial_password: str | None = None
-    reason: str = ""
+    name: str = Field(default="", max_length=255)
+    roles: list[str] = Field(min_length=1, max_length=32)
+    scope: AccountInvitationScope | None = None
+    lifetime_seconds: int = Field(default=3600, ge=1, le=259200)
+    reason: str = Field(default="", max_length=512)
 
 
 class InvitationIssuePayload(BaseModel):
@@ -510,51 +512,45 @@ def create_user_role_sub_router(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             ) from exc
 
-    @router.post("/invite", dependencies=manage_deps)
-    @router.post("/create", dependencies=manage_deps)
-    def invite_user(
-        body: UserInvitePayload,
-        request: Request,
-    ) -> dict[str, Any]:
-        svc = get_svc(request)
-        scope_dict = (
-            body.scope.model_dump(exclude_unset=True)
-            if body.scope is not None
-            else None
-        )
-        server_actor = getattr(request.state, "operator_subject_id", None) or "operator"
-        server_role = getattr(request.state, "operator_role_id", None) or "platform_admin"
-        partition_tenant = caller_tenant(request)
-        initial_pwd = body.initialPassword or body.initial_password
-        display_name = body.displayName or body.name
+    @router.post(
+        "/invite", dependencies=manage_deps, status_code=201,
+        response_model=InvitationIssuedPayload, operation_id="inviteOperatorAccount",
+        openapi_extra={"requestBody": {"required": True, "content": {
+            "application/json": {"schema": UserInvitePayload.model_json_schema()}
+        }}},
+    )
+    @router.post(
+        "/create", dependencies=manage_deps, status_code=201,
+        response_model=InvitationIssuedPayload, operation_id="createOperatorAccountInvitation",
+        openapi_extra={"requestBody": {"required": True, "content": {
+            "application/json": {"schema": UserInvitePayload.model_json_schema()}
+        }}},
+    )
+    async def invite_user(request: Request) -> JSONResponse:
         try:
-            result = svc.create_user(
-                **actor_kwargs(svc, request),
-                username=body.username,
-                email=body.email,
-                display_name=display_name,
-                roles=body.roles,
-                scope=scope_dict,
-                initial_password=initial_pwd,
-                actor_name=server_actor,
-                actor_role=server_role,
-                reason=body.reason,
-                correlation_id=getattr(request.state, "correlation_id", None),
-                tenant_id=partition_tenant,
+            parsed = await _invitation_body(request, limit=8192)
+            try:
+                payload = UserInvitePayload.model_validate(parsed)
+            except ValidationError:
+                raise HTTPException(422, detail={"code": "INVITATION_INPUT_INVALID"}) from None
+            invitations, principal = invitation_context(request)
+            result = await run_in_threadpool(
+                invitations.issue_account, principal, username=payload.username,
+                email=payload.email, display_name=payload.name, roles=payload.roles,
+                scope=payload.scope.model_dump(exclude_unset=True) if payload.scope is not None else None,
+                lifetime_seconds=payload.lifetime_seconds, reason=payload.reason,
             )
-            return {
-                "user": result["user"],
-                "temporary_password": result["temporary_password"],
-                "initial_password": result["initial_password"],
-                "invitation_token": result.get("invitation_token"),
-                "must_change": result.get("must_change", True),
-                "message": f"User '{body.username}' invited successfully.",
-                "correlation_id": getattr(request.state, "correlation_id", None),
-            }
-        except UserRolePolicyError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-            ) from exc
+            return JSONResponse({**result.to_receipt(), "token": result.token}, status_code=201,
+                                headers={"cache-control": "no-store"})
+        except InvitationRefused as exc:
+            return _invitation_error(exc)
+        except HTTPException as exc:
+            code = exc.detail.get("code", "INVITATION_INPUT_INVALID") if isinstance(exc.detail, dict) else "INVITATION_INPUT_INVALID"
+            return JSONResponse({"error": {"code": code}}, status_code=exc.status_code,
+                                headers={"cache-control": "no-store"})
+        except Exception:
+            return JSONResponse({"error": {"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"}},
+                                status_code=503, headers={"cache-control": "no-store"})
 
     return router
 
