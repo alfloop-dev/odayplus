@@ -1110,11 +1110,16 @@ fi
 # so the transport token is refreshed right before each probe stage.
 mint_api_invoker_token "${API_SERVICE_AUDIENCE}"
 echo "Running release-aware smoke checks against tagged candidate revisions..."
+# A tagged candidate revision gets no warm instance (the service-level minimum
+# only serves traffic-bearing revisions), so its first probe pays the API cold
+# start, measured at ~24-29s on dev. Cloud Run queues the request until the
+# instance serves; the per-probe timeout must outlast that, not the 15s default.
 run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py smoke \
   --api-url "${API_URL}" \
   --web-url "${WEB_URL}" \
   --expected-sha "${ODAY_RELEASE_SHA}" \
   --correlation-id "corr-cloud-run-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
+  --timeout "${CANDIDATE_SMOKE_TIMEOUT_SECONDS:-60}" \
   --output "${SMOKE_REPORT}"
 
 SCHEDULER_ROLLBACK_ARMED=true

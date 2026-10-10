@@ -69,3 +69,13 @@ def test_minimum_is_service_level_and_applied_after_promotion() -> None:
     assert update < TEXT.index("Running fail-closed live E2E acceptance gate")
     loop = TEXT[TEXT.rindex("for min_service in", 0, update) : update]
     assert '"${API_SERVICE}" "${WEB_SERVICE}"' in loop
+
+
+def test_candidate_smoke_timeout_outlasts_the_cold_start() -> None:
+    """Tagged candidates get no warm instance, so the smoke probe must wait out
+    the measured ~24-29s API cold start instead of the 15s CLI default."""
+    call = TEXT.index("validate_cloud_run_live_deployment.py smoke \\")
+    block = TEXT[call : TEXT.index("--output", call)]
+    match = re.search(r'--timeout "\$\{CANDIDATE_SMOKE_TIMEOUT_SECONDS:-(\d+)\}"', block)
+    assert match is not None
+    assert int(match.group(1)) >= 45
