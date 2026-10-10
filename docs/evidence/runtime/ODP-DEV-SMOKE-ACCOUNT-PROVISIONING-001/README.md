@@ -732,8 +732,31 @@ or final readback. They verify no unintended lifecycle mutation, cleanup only of
 newly created sessions, durable quarantine and no repeated issue/accept on restart.
 The adapter's release metadata is an offline test input, not real Next/live evidence.
 
-Verification pending at this anchor. Still unfinished: authenticated recipient
-custody/source approval/exact dev admission driver and the implementable one-time
-promoted-before-unchanged-gate cycle (GitHub job secret-context timing remains a
-real constraint). No worker live account/login/session, GitHub token/secret/config,
-IAM, deployment, source or model action. This is incremental source, not review-ready.
+### Exact serving-pair verification
+
+Source anchor `70449312b7f92bb31990e7d5481906d770b9b084` completed the five
+exact declared commands once through the canonical foreground verification module;
+the original terminal returned exit0. Each receipt binds actual command, source
+SHA, selection, real exit code and duration. No polling, broader suite, count-only
+rerun or swallowed exit. Existing uv and scratch Corepack pnpm9.15.9 launcher
+plus worktree root workspace binaries were used; no dependency/config change.
+
+| Exact declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.020s | `a75c58693a490444` |
+| Invitation/provisioning/workflow pytest | 0 | 232.783s | `c8b6db5d1d8ed4eb` |
+| Gate/operator pytest | 0 | 60.676s | `4f2b669701d86b4a` |
+| Invitation Web Vitest | 0 | 7.333s | `a3ec8d2a65f1abc7` |
+| Web typecheck | 0 | 21.846s | `743015ae48aaa9da` |
+
+Original JSON receipts are in canonical `.orchestrator/evidence`; this later
+evidence-only commit is not the measured source head. Required exact-head CI and
+independent Codex review remain necessary before activation/formal submission.
+Still unfinished: authenticated recipient custody/source approval/exact dev
+admission driver and the implementable one-time promoted-before-unchanged-gate
+cycle (GitHub job secret-context timing remains a real constraint). The new
+serving-pair readback is mandatory in the actual lifecycle, not just an unused
+validator, but proves only observation at those three points, not control-plane
+authority. Explicit remote reconciliation remains coordinator-owned. No worker
+live account/login/session, GitHub token/secret/config, IAM, deployment, source or
+model action. This is incremental source, not review-ready.
