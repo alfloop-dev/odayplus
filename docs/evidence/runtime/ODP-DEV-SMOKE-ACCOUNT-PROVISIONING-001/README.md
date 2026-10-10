@@ -336,10 +336,44 @@ to actual account and audit readbacks through the real PG/runtime routers.
 The original account snapshot still has to be unchanged. These tests are not
 live account creation, encrypted secret binding or deployment evidence.
 
-Verification of this new anchor is pending. The two changed Python selections
-will use the exact commands in the task brief with original terminal exits.
+### Exact provenance-anchor verification
+
+Canonical `task_verification.py` ran the five **exact task declarations** at
+`9d109e7d2b8f2b6f8752f1d72d13d2929231a81c`. Original foreground terminal
+status completed, exit 0 on the final infrastructure retry (no background
+wait, timeout, wider suite or invented test count):
+
+| Declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.015s | `5267744adb1e2c16` |
+| Invitation/provisioning/workflow pytest | 0 | 85.480s | `02e9489ea98d02b4` |
+| Existing gate/operator pytest | 0 | 46.850s | `4587baaced77f7e4` |
+| Invitation Web Vitest (34 tests) | 0 | 2.837s | `221571df6b16bbe9` |
+| Web typecheck | 0 | 8.031s | `84746ee1ff870882` |
+
+Failed setup receipts are retained: initial runner exit1 with Web exit127
+(`8a4c9a31bbb7e8db`, `ef7ffcf357099af7`); first explicit retry used the existing
+Corepack pnpm9.15.9 scratch shim, but npm-workspace binary PATH was still absent
+(Web exit254 `6360d9c8ad670a8f`, typecheck exit1 `2c28348db4b98317`). Both Python
+selections and diffcheck passed on each run. The final explicit infrastructure
+retry added the already-installed repository `node_modules/.bin`, exactly as
+this task's earlier setup evidence prescribed. No install or tracked lock/config
+change was made. The canonical runner repeats all declarations, so both retries
+explicitly justify remeasuring that same SHA/selection. Full receipts, exact
+commands and original exits are preserved in canonical `.orchestrator/evidence`.
+This documentation-only follow-up does not claim these receipts attest its new
+commit SHA; future source increments/final submission require their own head.
+
+During verification `origin/dev` advanced to
+`0dd210dbe04fb420825abbddc08c8d3141de9ab1` (PR #1445, Cloud Run minimum instances).
+Its warm-instance deploy changes must be preserved when composing the upcoming
+provisioning orchestration. No task provenance/identity/gate conflict was found;
+no merge/rebase or unrelated edits were made in this increment.
+
 Foreground `provision_dev_smoke.py`, encrypted matched GH dev binding/recovery,
 Human-approved promoted-before-live-gate orchestration, required exact-head CI,
-independent Codex review and formal PR submission remain outstanding. No live
-login, credential access, account mutation, GH secret/config write, IAM, source
-activation, model promotion or deployment occurred. Not review-ready.
+independent Codex review and formal PR submission remain outstanding. Custodian
+must supply an explicitly approved new username/owner-controlled email and
+original administrator credentials; no fabricated recipient or worker access.
+No live login, credential access, account mutation, GH secret/config write, IAM,
+source activation, model promotion or deployment occurred. Not review-ready.
