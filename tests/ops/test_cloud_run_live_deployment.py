@@ -7026,11 +7026,17 @@ def test_request_keeps_a_received_status_when_its_body_never_completes(
     assert elapsed < 1.0
 
 
-def test_request_bounds_a_peer_that_never_finishes_its_headers() -> None:
+@pytest.mark.parametrize("status", [200, 401, 403, 503])
+@pytest.mark.parametrize("mode", ["trickle", "stall"])
+def test_request_bounds_a_peer_that_never_finishes_its_headers(status: int, mode: str) -> None:
     class SlowHeaders(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             try:
-                self.wfile.write(b"HTTP/1.1 200 OK\r\n")
+                self.wfile.write(f"HTTP/1.1 {status} Test\r\n".encode())
+                self.wfile.flush()
+                if mode == "stall":
+                    time.sleep(2.0)
+                    return
                 for _ in range(100):
                     self.wfile.write(b"x-pad: 1\r\n")
                     self.wfile.flush()
@@ -7046,16 +7052,21 @@ def test_request_bounds_a_peer_that_never_finishes_its_headers() -> None:
     host, port = server.server_address
     try:
         started = time.monotonic()
-        with pytest.raises(validator.ResponseBodyError) as raised:
-            validator._request(f"http://{host}:{port}/platform/version", headers={}, timeout=0.2)
+        result = validator.probe_with_bounded_retry(
+            f"http://{host}:{port}/platform/version",
+            headers={},
+            policy=_smoke_policy(timeout_seconds=0.2, deadline_seconds=1.0),
+            sleep=_RecordingSleep(),
+        )
         elapsed = time.monotonic() - started
     finally:
         server.shutdown()
-    # The status line arrived, so it stays on the record; the cut-short headers
-    # make the response a final refusal rather than a 200 to judge.
-    assert raised.value.status == 200
-    assert raised.value.provenance == "unreadable_body"
-    assert "was not complete within 0.2s" in str(raised.value)
+    # Even when getresponse() raises before returning an object, the status
+    # line already arrived: never erase it and retry to a different answer.
+    assert len(result.attempts) == 1
+    assert result.final.status == status
+    assert result.final.provenance == "unreadable_body"
+    assert result.outcome == "rejected"
     assert elapsed < 1.0
 
 
@@ -7262,3 +7273,55 @@ def test_smoke_cli_redacts_a_token_quoted_by_a_transport_exception(tmp_path: Pat
     assert report["secret_values_redacted"] is True
     _assert_no_crlf_secret(report_path.read_text(encoding="utf-8"))
     _assert_no_crlf_secret(result.stdout + result.stderr)
+
+
+@pytest.mark.parametrize("status", [401, 403, 503])
+def test_received_http_error_body_exception_is_final(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    calls: list[str] = []
+
+    class BrokenBody(validator.urllib.error.HTTPError):
+        def read(self) -> bytes:
+            raise TimeoutError("body read timed out")
+
+    class Opener:
+        def open(self, request, *, timeout):
+            calls.append(request.full_url)
+            raise BrokenBody(request.full_url, status, "refused", {}, None)
+
+    monkeypatch.setattr(validator.urllib.request, "build_opener", lambda *_: Opener())
+    result = validator.probe_with_bounded_retry(
+        "https://candidate.example/platform/version",
+        headers={},
+        policy=_smoke_policy(),
+        sleep=_RecordingSleep(),
+    )
+    assert len(calls) == 1
+    assert result.final.status == status
+    assert result.final.provenance == "unreadable_body"
+    assert result.outcome == "rejected"
+    assert "body read timed out" in result.final.error
+
+
+def test_smoke_redacts_known_tokens_in_payload_keys_and_exception_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def token_echo(url, *, headers, timeout):
+        if url.endswith("/platform/version"):
+            return 200, {SMOKE_API_INVOKER: SMOKE_WEB_INVOKER, "release_sha": EXPECTED_SHA}
+        raise TimeoutError(f"transport failed with bearer {SMOKE_BEARER!r}")
+
+    monkeypatch.setattr(validator, "_json_request", token_echo)
+    monkeypatch.setattr(
+        validator, "_request_without_redirect", lambda *_, **__: (307, "/login?returnTo=%2Foperator")
+    )
+    clock, sleeper = _FakeClock(), _RecordingSleep()
+    checks, report = _run_candidate_smoke(
+        "https://candidate.example", policy=_smoke_policy(), clock=clock, sleeper=sleeper
+    )
+    _assert_smoke_redacted(checks, report)
+    assert report["version"]["<redacted>"] == "<redacted>"
+    assert all(
+        "<redacted>" in attempt["error"] for attempt in report["health_probe"]["attempts"]
+    )

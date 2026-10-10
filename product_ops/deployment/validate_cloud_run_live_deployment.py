@@ -1716,6 +1716,8 @@ class _ExchangeDeadline:
         self._lock = threading.Lock()
         self._sockets: list[Any] = []
         self.expired = threading.Event()
+        self.received_status: int | None = None
+        self._expires_at = time.monotonic() + seconds
         self._timer = threading.Timer(seconds, self._expire)
         self._timer.daemon = True
 
@@ -1740,15 +1742,32 @@ class _ExchangeDeadline:
         self._timer.start()
         return self
 
+    def has_expired(self) -> bool:
+        # Refuse a late response even if the watchdog has not been scheduled yet.
+        return self.expired.is_set() or time.monotonic() >= self._expires_at
+
     def __exit__(self, *_exc: object) -> None:
         self._timer.cancel()
+        self._timer.join()
 
 
 def _deadline_connection(base: type, deadline: _ExchangeDeadline) -> type:
+    class _DeadlineResponse(http.client.HTTPResponse):
+        def _read_status(self) -> tuple[str, int, str]:
+            version, status, reason = super()._read_status()
+            if status >= 200:
+                # getresponse() can fail while reading headers, before urllib
+                # exposes any response object. Keep the origin's status here.
+                deadline.received_status = status
+            return version, status, reason
+
     class _DeadlineConnection(base):  # type: ignore[misc, valid-type]
         def connect(self) -> None:
             super().connect()
             deadline.register(self.sock)
+            # Install after connect: a proxy CONNECT status is not an origin
+            # verdict, nor is an interim 100 Continue status.
+            self.response_class = _DeadlineResponse
 
     return _DeadlineConnection
 
@@ -1804,8 +1823,15 @@ def _request(
         except urllib.error.HTTPError as exc:
             response = exc
             status = exc.code
-        except (TimeoutError, urllib.error.URLError, OSError, http.client.HTTPException):
-            if deadline.expired.is_set():
+        except (TimeoutError, urllib.error.URLError, OSError, http.client.HTTPException) as exc:
+            if deadline.received_status is not None:
+                raise ResponseBodyError(
+                    f"{url} answered status {deadline.received_status} but its headers "
+                    f"could not be read: {type(exc).__name__}: {exc}",
+                    status=deadline.received_status,
+                    provenance=PROBE_UNREADABLE_BODY,
+                ) from exc
+            if deadline.has_expired():
                 raise TimeoutError(f"no response within {timeout}s") from None
             raise
         else:
@@ -1817,7 +1843,7 @@ def _request(
             except (OSError, ValueError, http.client.HTTPException) as exc:
                 reason = (
                     f"body not complete within {timeout}s"
-                    if deadline.expired.is_set()
+                    if deadline.has_expired()
                     else f"{type(exc).__name__}: {exc}"
                 )
                 raise ResponseBodyError(
@@ -1825,7 +1851,7 @@ def _request(
                     status=status,
                     provenance=PROBE_UNREADABLE_BODY,
                 ) from exc
-            if deadline.expired.is_set():
+            if deadline.has_expired():
                 # Shutting the socket down ends the stream cleanly, so a
                 # read-until-close body -- or headers still arriving after the
                 # status line -- can look complete. It is a truncation, not an
@@ -2371,7 +2397,10 @@ def _redact_secret_values(value: Any, spellings: list[str]) -> Any:
             detail=_redact_secret_values(value.detail, spellings),
         )
     if isinstance(value, Mapping):
-        return {key: _redact_secret_values(item, spellings) for key, item in value.items()}
+        return {
+            _redact_secret_values(key, spellings): _redact_secret_values(item, spellings)
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
         return [_redact_secret_values(item, spellings) for item in value]
     return value
