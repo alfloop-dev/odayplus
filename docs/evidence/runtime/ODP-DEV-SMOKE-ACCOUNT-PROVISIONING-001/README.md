@@ -704,3 +704,36 @@ still needs exact-head required CI and independent Codex review. The matched
 reader now composes with actual sealed-box lifecycle/journals and the unchanged
 finite gate. The foreground custody/source-approval/admitted-promotion driver
 remains unfinished; source checks are not activation/live-gate/deployment proof.
+
+## Anchor 13 — authenticated serving-pair observation
+
+Verified the existing API `/platform/release-identity` and Web BFF augmentation
+against fetched `origin/dev`. Reused that route without adding configuration,
+router, permission, scope or IAM changes. The foreground Web lifecycle now reads
+API and Web SHA, manifest digest and `dev-admin` profile through the **same**
+authenticated BFF cookie path before reservation, before invitation acceptance,
+and after fresh new-account principal/provenance proof. Every field must match
+the exact coordinator tuple; API profile validity must be boolean true. An
+independent API URL, caller plan/receipt or matching single revision is insufficient.
+
+Malformed/missing/mismatched serving metadata or a read failure before reservation
+refuses without account/invitation creation or root consumption. A mixed/rolled-back
+revision or uncertainty after reservation quarantines the root, leaving any issued
+invitation or accepted identity untouched for explicit recovery; no automatic retry,
+password reset, account delete or other-session revocation. Successful output adds
+only `serving_release_observed=true`, a point-in-time readback, **not** source
+approval, dev admission authority, traffic stability, binding or deployment proof.
+
+Offline tests use the existing labelled memory BFF adapter and actual PostgreSQL,
+API invitation routers, Argon2id and canonical session boundary. Added all seven
+serving fields' missing/wrong/type cases (including truthy integer validity),
+pre-reservation network failure and mid-lifecycle API/Web mismatch before acceptance
+or final readback. They verify no unintended lifecycle mutation, cleanup only of
+newly created sessions, durable quarantine and no repeated issue/accept on restart.
+The adapter's release metadata is an offline test input, not real Next/live evidence.
+
+Verification pending at this anchor. Still unfinished: authenticated recipient
+custody/source approval/exact dev admission driver and the implementable one-time
+promoted-before-unchanged-gate cycle (GitHub job secret-context timing remains a
+real constraint). No worker live account/login/session, GitHub token/secret/config,
+IAM, deployment, source or model action. This is incremental source, not review-ready.

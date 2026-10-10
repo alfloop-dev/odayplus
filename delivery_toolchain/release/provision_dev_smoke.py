@@ -407,6 +407,25 @@ class WebInvitationExecutor:
                 or sorted(observed) != sorted(roles)):
             raise ProvisioningRefused("PROVISIONING_PRINCIPAL_MISMATCH")
 
+    def _promoted_release(self, cookie: str, checked: ForegroundPlan) -> None:
+        """Observe BOTH revisions through the same authenticated Web/BFF path.
+
+        Caller tuple, independent API URL, plan/journal and offline receipts are
+        not serving-revision evidence. This readback is not source approval or
+        admission authority: the trusted coordinator must still verify those.
+        Missing metadata and mixed/rolled-back revisions always refuse.
+        """
+        identity = self._request("GET", "/api/v1/platform/release-identity", cookie=cookie).payload
+        expected = {
+            "release_sha": checked.release_sha, "web_release_sha": checked.release_sha,
+            "manifest_digest": checked.manifest_digest, "web_manifest_digest": checked.manifest_digest,
+            "release_profile": "dev-admin", "web_release_profile": "dev-admin",
+        }
+        if (identity.get("release_profile_valid") is not True
+                or any(type(identity.get(key)) is not str or identity[key] != value
+                       for key, value in expected.items())):
+            raise ProvisioningRefused("PROVISIONING_PROMOTED_RELEASE_MISMATCH")
+
     def execute(
         self, plan: Any, *, admin_password: str, new_password: str,
         release_sha: str, manifest_digest: str,
@@ -440,6 +459,8 @@ class WebInvitationExecutor:
             if any(str(r.get("username", "")).casefold() == checked.username.casefold()
                    or str(r.get("email", "")).casefold() == checked.email.casefold() for r in records):
                 raise ProvisioningRefused("PROVISIONING_ACCOUNT_EXISTS")
+            # Observe the serving pair before consuming the single-use root.
+            self._promoted_release(admin_cookie, checked)
             reservation = self._journal.reserve(plan, original_account=original,
                                                 release_sha=release_sha, manifest_digest=manifest_digest)
             issued = self._request("POST", "/api/v1/operator/users/invitations", cookie=admin_cookie,
@@ -450,6 +471,9 @@ class WebInvitationExecutor:
                     or not isinstance(invitation, str) or str(UUID(invitation)) != invitation
                     or not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", token)):
                 raise ProvisioningRefused("PROVISIONING_INVITATION_INVALID")
+            # A rollback/mixed-revision transition after issue cannot authorize
+            # acceptance. Leave the invitation reserved for explicit recovery.
+            self._promoted_release(admin_cookie, checked)
             accepted = self._request("POST", "/auth/invitations", body={
                 "invitation_id": invitation, "token": token, "username": checked.username,
                 "password": new_password,
@@ -476,7 +500,9 @@ class WebInvitationExecutor:
                     or provenance["issue_event_id"] != issued.get("audit_event_id")
                     or provenance["accept_event_id"] != accepted.get("audit_event_id")):
                 raise ProvisioningRefused("PROVISIONING_PROVENANCE_INVALID")
+            self._promoted_release(new_cookie, checked)
             result = {**checked.to_receipt(), "stage": "web-lifecycle-verified",
+                      "serving_release_observed": True,
                       "account_id": account, **provenance, "credential_binding_verified": False,
                       "deployment_success": False, "live_gate_passed": False}
         except Exception:

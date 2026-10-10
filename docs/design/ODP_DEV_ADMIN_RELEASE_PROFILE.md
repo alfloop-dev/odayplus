@@ -389,10 +389,20 @@ lifecycle as a foreground **library**, not an anonymous CLI or workflow hook.
 The trusted coordinator must first verify source approval, exact dev admission
 and promotion, and approved recipient custody. It authenticates `ajoe734` through
 `/login`, binds its cookie to the server principal and exact original account,
-checks recipient collisions before single-use journal reservation, issues the
-invitation through the existing BFF, and accepts through `/auth/invitations`
-without forwarding an admin session. A fresh new-account login must match
-persisted pure-admin scope and strict durable issue/accept provenance. Only the
+checks recipient collisions before single-use journal reservation, and observes
+API **and Web** serving SHA, manifest digest and `dev-admin` profile through the
+existing authenticated BFF `/api/v1/platform/release-identity`. All fields must
+match the coordinator's exact tuple; API profile validity must be boolean true.
+Missing/mixed/rolled-back metadata refuses before reservation. It issues the
+invitation through the existing BFF, repeats serving-pair readback before
+acceptance, and accepts through `/auth/invitations` without forwarding an admin
+session. A fresh new-account login must match
+persisted pure-admin scope and strict durable issue/accept provenance, followed
+by a final serving-pair readback through that new account's cookie. Post-reservation
+mismatch or read uncertainty quarantines the root; it never auto-retries. This
+point-in-time observation (`serving_release_observed=true`) is not independent
+source review, admission proof or deployment success and cannot prevent a later
+traffic transition. Only the
 two sessions created by this execution are logged out; other existing sessions
 are untouched. Secrets and capabilities never enter a receipt or subprocess.
 An uncertain issue/accept/readback/logout quarantines the root; lost replies do

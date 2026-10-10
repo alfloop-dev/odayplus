@@ -758,6 +758,15 @@ def web_lifecycle(acceptance: Any, foreground_plan_input: Any, monkeypatch: Any)
             self.sessions: dict[str, dict[str, str]] = {}
             self.fault = ""
             self.fault_after = ""
+            # Offline serving metadata only, not admission/deployment evidence.
+            self.release_identity = {
+                "release_sha": plan["release_sha"], "web_release_sha": plan["release_sha"],
+                "manifest_digest": plan["manifest_digest"], "web_manifest_digest": plan["manifest_digest"],
+                "release_profile": "dev-admin", "web_release_profile": "dev-admin",
+                "release_profile_valid": True,
+            }
+            self.release_change_at = 0
+            self.release_reads = 0
 
         def request(self, method: str, path: str, **kwargs: Any) -> Any:
             self.calls.append((method, path))
@@ -781,6 +790,13 @@ def web_lifecycle(acceptance: Any, foreground_plan_input: Any, monkeypatch: Any)
                 return HttpResponse(200, {"ok": True, "subject": body["username"]},
                                     cookies={"__Host-oday_web_session": cookie})
             outcome = s.boundary.authenticate(Credentials.from_headers(bearer))
+            if path == "/api/v1/platform/release-identity":
+                assert cookie and outcome.authenticated and method == "GET"
+                self.release_reads += 1
+                payload = dict(self.release_identity)
+                if self.release_reads == self.release_change_at:
+                    payload["web_release_sha"] = "0" * 40
+                return HttpResponse(200, payload)
             if path in {"/auth/session", "/api/v1/auth/principal", "/auth/logout"}:
                 if not outcome.authenticated:
                     return HttpResponse(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
@@ -818,6 +834,7 @@ def test_web_executor_actual_router_lifecycle_provenance_and_session_cleanup(web
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("lifecycle launched a process"))
     receipt = executor.execute(plan, **args)
     assert receipt["stage"] == "web-lifecycle-verified"
+    assert receipt["serving_release_observed"] is True and web.release_reads == 3
     assert receipt["issuer_account_id"] == s.admin
     assert receipt["account_id"] != s.admin and receipt["tenant_id"] == TENANT
     assert not receipt["credential_binding_verified"] and not receipt["deployment_success"]
@@ -860,7 +877,8 @@ def test_web_executor_uncertainty_quarantines_no_retry_or_reset(web_lifecycle: A
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(count,)]
 
 
-@pytest.mark.parametrize("fault", ["/login", "/auth/session", "/api/v1/auth/principal", "/api/v1/operator/users"])
+@pytest.mark.parametrize("fault", ["/login", "/auth/session", "/api/v1/auth/principal", "/api/v1/operator/users",
+                                   "/api/v1/platform/release-identity"])
 def test_web_executor_pre_reservation_failure_never_issues(web_lifecycle: Any, fault: str) -> None:
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     s, web, executor, journal, plan, args = web_lifecycle
@@ -870,6 +888,53 @@ def test_web_executor_pre_reservation_failure_never_issues(web_lifecycle: Any, f
     assert journal.inspect() is None
     assert ("POST", PATH) not in web.calls and ("POST", "/auth/invitations") not in web.calls
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+
+
+@pytest.mark.parametrize("field", ["release_sha", "web_release_sha", "manifest_digest", "web_manifest_digest",
+                                   "release_profile", "web_release_profile", "release_profile_valid"])
+@pytest.mark.parametrize("malformed", ["missing", "wrong", "type"])
+def test_web_executor_serving_tuple_mismatch_precedes_reservation(
+    web_lifecycle: Any, field: str, malformed: str,
+) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    before = _snapshot(s)
+    if malformed == "missing":
+        del web.release_identity[field]
+    else:
+        web.release_identity[field] = (1 if field == "release_profile_valid" else ["private-secret-input"]) \
+            if malformed == "type" else (False if field == "release_profile_valid" else "wrong")
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_LIFECYCLE_REFUSED") as error:
+        executor.execute(plan, **args)
+    assert error.value.__cause__ is None and "private-secret" not in str(error.value)
+    assert journal.inspect() is None
+    assert ("POST", PATH) not in web.calls and ("POST", "/auth/invitations") not in web.calls
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+    after = _snapshot(s)
+    assert {k: v for k, v in before.items() if k != "sessions"} == {k: v for k, v in after.items() if k != "sessions"}
+    assert all(existing in after["sessions"] for existing in before["sessions"])
+    assert _q(s, "SELECT count(*) FROM identity.sessions WHERE revoked_at IS NOT NULL") == [(1,)]
+
+
+@pytest.mark.parametrize("changed_at,accounts", [(2, 1), (3, 2)])
+def test_web_executor_mid_lifecycle_release_change_quarantines_without_retry(
+    web_lifecycle: Any, changed_at: int, accounts: int,
+) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    web.release_change_at = changed_at
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_LIFECYCLE_RECOVERY_REQUIRED"):
+        executor.execute(plan, **args)
+    assert journal.inspect().stage == "recovery-required"
+    assert web.calls.count(("POST", PATH)) == 1
+    assert web.calls.count(("POST", "/auth/invitations")) == (0 if changed_at == 2 else 1)
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(accounts,)]
+    assert _q(s, "SELECT count(*) FROM identity.sessions WHERE revoked_at IS NOT NULL") == [(accounts,)]
+    mutations = [c for c in web.calls if c[0] == "POST" and c[1] in {PATH, "/auth/invitations"}]
+    web.release_change_at = 0
+    with pytest.raises(ProvisioningRefused):
+        executor.execute(plan, **args)
+    assert [c for c in web.calls if c[0] == "POST" and c[1] in {PATH, "/auth/invitations"}] == mutations
 
 
 @pytest.mark.parametrize("path,count", [(PATH, 1), ("/auth/invitations", 2)])
