@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GovernanceWorkspace, inspectGovernanceSnapshot } from "../GovernanceWorkspace";
 import { OperatorConsole } from "../OperatorConsole";
@@ -329,6 +329,26 @@ describe("Governance decision authority in the production Operator Console mount
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+  });
+
+  it("defers the dormant workspace until navigation, then preserves read-admin authority and config access", async () => {
+    nav.search = "ws=today";
+    const { fetchMock, writes } = stubConsoleGovernance(readAdminSnapshot);
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+
+    const navigation = await screen.findByRole("navigation", { name: "Operator workspaces" });
+    await waitFor(() => expect(within(navigation).getByRole("button", { name: /Today/ })).toHaveAttribute("aria-current", "page"));
+    expect(screen.queryByTestId("governance-workspace")).toBeNull();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/governance/snapshot"))).toBe(false);
+
+    fireEvent.click(within(navigation).getByRole("button", { name: /Govern/ }));
+    const authority = await screen.findByTestId("governance-decision-authority", {}, { timeout: 5000 });
+    expect(authority).toHaveAttribute("data-authority", "denied");
+    expect(screen.getAllByText("Review candidate").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "核准" })).toBeNull();
+    expect(screen.getByTestId("governance-tab-userManagement")).toBeEnabled();
+    expect(screen.getByTestId("governance-tab-featureFlags")).toBeEnabled();
+    expect(writes).toEqual([]);
   });
 
   it("keeps the 營運主管 persona from claiming decisions for a server-verified auditor+platform_admin", async () => {
