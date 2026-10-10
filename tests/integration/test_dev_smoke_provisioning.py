@@ -1196,6 +1196,18 @@ def encrypted_binding(web_lifecycle: Any) -> Any:
             self.calls.append((request.method, path))
             assert request.url.scheme == "https" and request.url.host == "api.github.com"
             assert request.headers["authorization"] == "Bearer offline-token"
+            if path == "/user":
+                reads = self.calls.count(("GET", "/user"))
+                if self.fault == "custodian-unavailable" or (self.fault == "custodian-lost" and reads == 2):
+                    raise httpx.ReadTimeout("private-custodian-token", request=request)
+                return httpx.Response(
+                    302 if self.fault == "custodian-redirect" else
+                    401 if self.fault == "custodian-unauthorized" else 200,
+                    json={"id": True if self.fault == "custodian-bool-id" else
+                          456 if self.fault == "custodian-id" else 789,
+                          "login": "other-custodian" if self.fault == "custodian-login" else "offline-custodian",
+                          "type": "Bot" if self.fault == "custodian-bot" else "User"},
+                )
             if request.method == "PUT":
                 # Durable binding intent MUST already exist before a remote PUT.
                 events = s.audit.list_events(correlation_id=binding._CORRELATION)
@@ -1221,7 +1233,8 @@ def encrypted_binding(web_lifecycle: Any) -> Any:
             return httpx.Response(200 if self.fault == "exists" else 302 if self.fault == "redirect" else 404)
 
     remote = OfflineGitHub()
-    store = GitHubDevSecretStore(token="offline-token", transport=httpx.MockTransport(remote.request))
+    store = GitHubDevSecretStore(token="offline-token", custodian_login="offline-custodian",
+                                custodian_id=789, transport=httpx.MockTransport(remote.request))
     binding = DevCredentialBundleExecutor(lifecycle=lifecycle, store=store)
     try:
         yield s, web, journal, binding, remote, private_key, plan, args
@@ -1241,6 +1254,9 @@ def test_binding_encrypts_one_matched_pair_without_bootstrap_fallback(encrypted_
     assert binding.inspect() is None
     receipt = binding.execute(plan, **args)
     assert len(remote.uploads) == 1
+    assert remote.calls[0] == ("GET", "/user")
+    assert remote.calls[-2:] == [("GET", "/user"),
+        ("PUT", "/repositories/123/environments/dev/secrets/ODP_DEV_ADMIN_CREDENTIAL_BUNDLE")]
     bundle = json.loads(SealedBox(private_key).decrypt(base64.b64decode(remote.uploads[0]["encrypted_value"])))
     assert bundle == {
         "schema_version": 1, "authorization_id": receipt["authorization_id"],
@@ -1278,7 +1294,10 @@ def test_binding_encrypts_one_matched_pair_without_bootstrap_fallback(encrypted_
     assert journal.inspect().stage == "reserved" and s.audit.verify_chain().ok
 
 
-@pytest.mark.parametrize("fault", ["repository", "key", "exists", "redirect"])
+@pytest.mark.parametrize("fault", [
+    "repository", "key", "exists", "redirect", "custodian-login", "custodian-id",
+    "custodian-bool-id", "custodian-bot", "custodian-redirect", "custodian-unauthorized", "custodian-unavailable",
+])
 def test_binding_preflight_failure_never_logs_in_or_creates(encrypted_binding: Any, fault: str) -> None:
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     s, web, journal, binding, remote, _, plan, args = encrypted_binding
@@ -1290,7 +1309,7 @@ def test_binding_preflight_failure_never_logs_in_or_creates(encrypted_binding: A
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
 
 
-@pytest.mark.parametrize("fault", ["refused", "lost-reply", "replaced"])
+@pytest.mark.parametrize("fault", ["refused", "lost-reply", "replaced", "custodian-lost"])
 def test_binding_uncertain_or_partial_remote_result_never_retries(encrypted_binding: Any, fault: str) -> None:
     from delivery_toolchain.release.provision_dev_smoke import DevCredentialBundleExecutor, ProvisioningRefused
     s, web, journal, binding, remote, _, plan, args = encrypted_binding
@@ -1300,8 +1319,8 @@ def test_binding_uncertain_or_partial_remote_result_never_retries(encrypted_bind
         binding.execute(plan, **args)
     assert error.value.__cause__ is None and "private" not in str(error.value)
     assert binding.inspect()["stage"] == journal.inspect().stage == "recovery-required"
-    assert len([c for c in remote.calls if c[0] == "PUT"]) == 1
-    assert len(remote.uploads) == (0 if fault == "refused" else 1)
+    assert len([c for c in remote.calls if c[0] == "PUT"]) == (0 if fault == "custodian-lost" else 1)
+    assert len(remote.uploads) == (0 if fault in {"refused", "custodian-lost"} else 1)
     if remote.uploads:
         import base64
         from nacl.public import SealedBox
@@ -1321,6 +1340,25 @@ def test_binding_uncertain_or_partial_remote_result_never_retries(encrypted_bind
         restarted.execute(plan, **args)
     assert (web.calls, remote.calls) == calls
     assert not any(method == "DELETE" for method, _ in remote.calls)
+
+
+def test_binding_plan_cannot_choose_its_own_token_custodian(encrypted_binding: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, journal, binding, remote, _, plan, args = encrypted_binding
+    plan["recipient_custodian"] = "other-custodian"
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_BINDING_REFUSED"):
+        binding.execute(plan, **args)
+    assert not remote.calls and not web.calls
+    assert journal.inspect() is None and binding.inspect() is None
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+
+
+@pytest.mark.parametrize("login,identity", [("", 789), ("private\\nlogin", 789),
+                                             ("offline-custodian", True), ("offline-custodian", 0)])
+def test_binding_custodian_pin_must_be_nonempty_human_identity(login: str, identity: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import GitHubDevSecretStore, ProvisioningRefused
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_GITHUB_CONFIG_INVALID"):
+        GitHubDevSecretStore(token="offline-token", custodian_login=login, custodian_id=identity)
 
 
 @pytest.mark.parametrize("failure", ["binding-intent", "binding-acknowledged", "all"])

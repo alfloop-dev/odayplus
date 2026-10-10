@@ -420,8 +420,17 @@ explicit recovery, never automatic retry/delete/reset/rollback. Receipt says
 `binding_write_acknowledged=true` only after HTTP201 and durable acknowledgement;
 `credential_binding_verified=false` remains truthful because GitHub cannot read
 back decrypted secret values. The trusted custodian must exclude external secret
-writers (GitHub has no create-only conditional PUT). Neither custody, source
-review nor admission is authenticated by this library.
+writers (GitHub has no create-only conditional PUT). `GitHubDevSecretStore` now
+requires independently approved `custodian_login` and numeric `custodian_id`
+constructor pins; the plan cannot choose the token owner. It authenticates the
+token through fresh pinned GitHub HTTPS `/user` reads before repository/secret/key
+preflight and again immediately before encryption/PUT. Login (case-insensitive),
+exact positive integer ID and human `type=User` must all match; unavailable,
+redirected, bot, foreign or unauthorized evidence refuses before live account
+creation, or quarantines after reservation without PUT/retry. This authenticates
+only the GitHub token owner, **not** recipient mailbox control or the custodian's
+consent to this plan. Source review, approved custody, trust-root acquisition and
+rollback-owned rollout orchestration remain independent coordinator obligations.
 
 The workflow now **consumes an already staged bundle**, never invokes the
 lifecycle/writer. Its strict memory-only reader rejects nonempty malformed,

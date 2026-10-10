@@ -926,3 +926,26 @@ is now wired; default workflow still only consumes an already staged bundle.
 No live login/account/secret/configuration/IAM/traffic/source/model action or
 passing live gate/deployment/full-product/F11 acceptance is claimed. Task remains
 in progress, not review-ready; this is an increment, not review submission.
+
+## Anchor 17 — authenticated GitHub token-owner boundary
+
+The bundle store now requires independently approved human GitHub login and
+numeric-ID constructor pins. These must come from the trusted coordinator, not
+the proposed plan. Its token makes a fresh pinned HTTPS `/user` read before
+repository/secret/key preflight and again before the sole encrypted PUT. The
+plan's custodian must match the pin; the observed human login/ID/type must all
+match. Mismatch, unavailable auth, redirects, unauthorized token and bots fail
+closed. Loss after durable intent quarantines the existing reservation/binding;
+no PUT, retry, replacement, password reset or account delete follows.
+
+Offline sealed-box/actual-router/PostgreSQL tests assert authentication order,
+plan self-selection refusal, foreign login/ID, bool ID, bot, redirects, 401 and
+unavailable token-owner reads. A loss at the second read leaves the accepted
+account plus durable recovery boundary without any upload; restart cannot repeat
+creation. Error/receipt output remains static and secret-free.
+
+This proves only the GitHub token owner, not human consent, recipient mailbox
+control, exact-head source approval or promoted rollout/rollback ownership. Those
+independent coordinator obligations and the deployment hook remain unfinished.
+This increment is not review-ready. No worker live identity/GitHub secret/config,
+IAM, traffic, source or model action occurred. Verification pending at anchor.

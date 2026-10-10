@@ -676,18 +676,27 @@ class WebInvitationExecutor:
 class GitHubDevSecretStore:
     """Pinned GitHub HTTPS API, no CLI, redirects, retries or plaintext uploads.
 
-    Only the trusted foreground custodian supplies the token. The coordinator
-    must exclude concurrent external secret writers: GitHub has no create-only
-    conditional PUT. No secret value can be read back through this API.
+    The coordinator independently pins the approved human custodian's GitHub
+    numeric ID/login, never deriving them from the plan. The token's /user is
+    checked before preflight and again before PUT. This authenticates the token
+    owner, NOT mailbox control, human consent, source approval or rollout ownership.
+    The coordinator must exclude concurrent external secret writers: GitHub has
+    no create-only conditional PUT. No secret value can be read back here.
     """
 
     NAME = "ODP_DEV_ADMIN_CREDENTIAL_BUNDLE"
 
-    def __init__(self, *, token: str, transport: Any = None) -> None:
+    def __init__(
+        self, *, token: str, custodian_login: str, custodian_id: int, transport: Any = None,
+    ) -> None:
         import httpx
 
-        if not isinstance(token, str) or not token or any(c in token for c in "\r\n"):
+        if (not isinstance(token, str) or not token or any(c in token for c in "\r\n")
+                or not isinstance(custodian_login, str) or not _CUSTODIAN.fullmatch(custodian_login)
+                or type(custodian_id) is not int or custodian_id <= 0):
             raise ProvisioningRefused("PROVISIONING_GITHUB_CONFIG_INVALID")
+        self._custodian_login = custodian_login
+        self._custodian_id = custodian_id
         self._client = httpx.Client(
             base_url="https://api.github.com", transport=transport, timeout=20,
             follow_redirects=False, headers={
@@ -705,11 +714,28 @@ class GitHubDevSecretStore:
         except Exception:
             raise ProvisioningRefused("PROVISIONING_GITHUB_UNCERTAIN") from None
 
-    def prepare(self) -> tuple[str, str, str]:
-        """Read non-secret repository identity, secret absence and encryption key."""
+    def _authenticate_custodian(self, expected_custodian: Any) -> None:
+        """Fresh pinned token-owner evidence, never a caller approval receipt."""
+        try:
+            if (type(expected_custodian) is not str
+                    or expected_custodian.casefold() != self._custodian_login.casefold()):
+                raise ValueError
+            response = self._request("GET", "/user")
+            user = response.json()
+            if (response.status_code != 200 or not isinstance(user, dict)
+                    or user.get("type") != "User" or type(user.get("id")) is not int
+                    or user["id"] != self._custodian_id or type(user.get("login")) is not str
+                    or user["login"].casefold() != self._custodian_login.casefold()):
+                raise ValueError
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_CUSTODIAN_UNVERIFIED") from None
+
+    def prepare(self, *, expected_custodian: Any) -> tuple[str, str, str]:
+        """Authenticate the pinned custodian, then observe repo/key/secret absence."""
         import base64
 
         try:
+            self._authenticate_custodian(expected_custodian)
             response = self._request("GET", f"/repos/{REPOSITORY}")
             repo = response.json()
             if (response.status_code != 200 or repo.get("full_name") != REPOSITORY
@@ -730,11 +756,14 @@ class GitHubDevSecretStore:
         except Exception:
             raise ProvisioningRefused("PROVISIONING_GITHUB_PREFLIGHT_REFUSED") from None
 
-    def write(self, prepared: tuple[str, str, str], bundle: dict[str, Any]) -> None:
+    def write(
+        self, prepared: tuple[str, str, str], bundle: dict[str, Any], *, expected_custodian: Any,
+    ) -> None:
         import base64
         from nacl.public import PublicKey, SealedBox
 
         try:
+            self._authenticate_custodian(expected_custodian)
             path, key_id, public_key = prepared
             clear = json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode()
             encrypted = SealedBox(PublicKey(base64.b64decode(public_key, validate=True))).encrypt(clear)
@@ -1044,7 +1073,7 @@ class DevCredentialBundleExecutor:
             )
             if self.inspect() is not None:
                 raise ProvisioningRefused("PROVISIONING_BINDING_ALREADY_ATTEMPTED")
-            prepared = self._store.prepare()
+            prepared = self._store.prepare(expected_custodian=plan.get("recipient_custodian"))
             lifecycle = self._lifecycle.execute(plan, **credentials)
             reservation = self._journal.inspect()
             if reservation is None or reservation.stage != "reserved":
@@ -1067,7 +1096,7 @@ class DevCredentialBundleExecutor:
             self._lifecycle._observe_admission(
                 plan, release_sha=credentials["release_sha"], manifest_digest=credentials["manifest_digest"],
             )
-            self._store.write(prepared, bundle)
+            self._store.write(prepared, bundle, expected_custodian=plan["recipient_custodian"])
             event = self._append(metadata, "binding-acknowledged")
             return {**lifecycle, "stage": "binding-acknowledged", "binding_audit_event_id": event.event_id,
                     "binding_write_acknowledged": True, "credential_binding_verified": False,
