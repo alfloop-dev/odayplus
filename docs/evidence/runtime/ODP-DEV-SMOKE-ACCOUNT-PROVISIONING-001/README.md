@@ -974,3 +974,40 @@ promoted-before-gate deployment hookup. Token-owner authentication does not clos
 those obligations. Required exact-head CI and independent Codex review remain
 before activation. Task remains in progress, not review-ready; no review submission
 or live provisioning/deployment/full-product/F11 acceptance is claimed.
+
+## Anchor 18 — authenticated exact-plan custodian consent
+
+The foreground lifecycle now requires `GitHubCustodyApprovalObserver`, with an
+independently pinned repository issue/comment and human GitHub login/numeric ID.
+The existing token-owner read proves only who holds that token; a fresh read of
+the explicit custodian-authored record additionally proves their attestation of
+recipient custody/consent for this exact plan. The strict non-secret JSON body
+binds the complete plan digest, root authorization, fixed approval/control/consent
+and exact expiry. No recipient address, secret or capability is published. The
+library never writes a consent comment or chooses its trust pins from the plan.
+
+The record must be from the pinned human on the pinned repository issue, remain
+unedited, and have an offset-aware positive execution window of at most one hour.
+Every existing admission boundary now also re-reads this record: before Web
+login/reservation/issue/acceptance/new login/final success, GitHub preflight/PUT
+and final gate return. Missing, foreign, bot, malformed, duplicate-key, edited,
+expired, redirected, unavailable or changed-plan evidence refuses. Post-reservation
+loss quarantines without automatic retry, reset, replacement, delete or later PUT;
+only this execution's sessions are cleaned up.
+
+Offline tests use MockTransport records, real canonical consumed admission and
+actual router/PostgreSQL sessions. They check independent pin validation, all
+full-plan binding fields, strict record/body/time/author negatives, fresh reads
+rather than cached success, receipt substitution, loss at each lifecycle and
+binding boundary, unchanged original credentials/other sessions, durable audit
+and no subprocess/secret output. These mocked records are **not real consent**.
+The observer authenticates a custodian's mailbox-control assertion; it does not
+verify actual mailbox control or deliverability. Those must be established by
+the trusted foreground coordinator before obtaining the attestation.
+
+This increment is not review-ready. Independent exact-head source approval,
+required CI, actual mailbox verification, trust-root acquisition and rollback-owned
+promoted-before-gate deployment wiring remain unfinished. No worker live login,
+account, GitHub comment/secret/configuration, IAM, traffic, sources or model
+action occurred. Verification pending at this anchor; no passing live gate,
+deployment/full-product/F11 acceptance or secret-value readback is claimed.

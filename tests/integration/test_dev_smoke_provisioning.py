@@ -725,6 +725,47 @@ def test_journal_refuses_memory_or_different_engine_audit(invitations: Any) -> N
         engine.close()
 
 
+def _offline_custody_approval(plan: Any) -> Any:
+    """Mock GitHub record only: NOT actual human/mailbox/activation evidence."""
+    import hashlib
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    import httpx
+    from delivery_toolchain.release.provision_dev_smoke import (
+        AUTHORIZATION_ID, REPOSITORY, GitHubCustodyApprovalObserver,
+    )
+
+    created = (datetime.fromisoformat(plan["expires_at"]) - timedelta(minutes=30)).isoformat()
+    approval = {
+        "schema_version": 1, "authorization_id": AUTHORIZATION_ID,
+        "plan_digest": "sha256:" + hashlib.sha256(json.dumps(
+            plan, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        ).encode()).hexdigest(), "decision": "approve", "recipient_control": "owner-controlled",
+        "consent": "invitation-and-dev-smoke-credential-bundle", "expires_at": plan["expires_at"],
+    }
+    evidence = SimpleNamespace(
+        comment={"id": 123, "issue_url": f"https://api.github.com/repos/{REPOSITORY}/issues/456",
+                 "user": {"type": "User", "id": 789, "login": plan["recipient_custodian"]},
+                 "body": json.dumps(approval), "created_at": created, "updated_at": created},
+        calls=[], status=200, failed_at=0,
+    )
+
+    def request(req: Any) -> Any:
+        evidence.calls.append((req.method, str(req.url)))
+        assert req.method == "GET" and str(req.url) == f"https://api.github.com/repos/{REPOSITORY}/issues/comments/123"
+        assert plan["email"] not in str(req.url)
+        if len(evidence.calls) == evidence.failed_at:
+            raise RuntimeError("private-custody-read-error")
+        return httpx.Response(evidence.status, json=evidence.comment)
+
+    evidence.observer = GitHubCustodyApprovalObserver(
+        token="offline-read-token-never-output", issue_number=456, comment_id=123,
+        custodian_login=plan["recipient_custodian"], custodian_id=789,
+        transport=httpx.MockTransport(request),
+    )
+    return evidence
+
+
 @pytest.fixture
 def web_lifecycle(
     acceptance: Any, foreground_plan_input: Any, consumed_dev_admission: Any, monkeypatch: Any,
@@ -829,11 +870,16 @@ def web_lifecycle(
             return HttpResponse(response.status_code, response.json())
 
     web = MemoryBff()
+    web.custody_evidence = _offline_custody_approval(plan)
     executor = module.WebInvitationExecutor(
         web=web, web_origin="https://web.example.invalid", journal=journal, admission=admission,
+        custody=web.custody_evidence.observer,
     )
-    return s, web, executor, journal, plan, dict(admin_password=admin_password, new_password=PASSWORD,
-        release_sha=plan["release_sha"], manifest_digest=plan["manifest_digest"])
+    try:
+        yield s, web, executor, journal, plan, dict(admin_password=admin_password, new_password=PASSWORD,
+            release_sha=plan["release_sha"], manifest_digest=plan["manifest_digest"])
+    finally:
+        web.custody_evidence.observer.close()
 
 
 def test_web_executor_actual_router_lifecycle_provenance_and_session_cleanup(web_lifecycle: Any, monkeypatch: Any) -> None:
@@ -845,6 +891,7 @@ def test_web_executor_actual_router_lifecycle_provenance_and_session_cleanup(web
     receipt = executor.execute(plan, **args)
     assert receipt["stage"] == "web-lifecycle-verified"
     assert receipt["serving_release_observed"] is True and web.release_reads == 3
+    assert receipt["custody_approval_observed"] is True and len(web.custody_evidence.calls) == 6
     assert receipt["issuer_account_id"] == s.admin
     assert receipt["account_id"] != s.admin and receipt["tenant_id"] == TENANT
     assert not receipt["credential_binding_verified"] and not receipt["deployment_success"]
@@ -1101,9 +1148,10 @@ def test_consumed_dev_admission_uncertainty_never_authorizes(
 @pytest.mark.parametrize("bad", [None, {}, {"admitted": True}, {"stage": "consumed-dev-admission-observed"}])
 def test_lifecycle_requires_observer_not_receipt(web_lifecycle: Any, bad: Any) -> None:
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, WebInvitationExecutor
-    s, web, _, journal, _, _ = web_lifecycle
+    s, web, executor, journal, _, _ = web_lifecycle
     with pytest.raises(ProvisioningRefused, match="PROVISIONING_DEV_ADMISSION_UNVERIFIED"):
-        WebInvitationExecutor(web=web, web_origin="https://web.example.invalid", journal=journal, admission=bad)
+        WebInvitationExecutor(web=web, web_origin="https://web.example.invalid", journal=journal,
+                              admission=bad, custody=executor._custody)
     assert not web.calls and journal.inspect() is None
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
 
@@ -1174,6 +1222,159 @@ def test_lifecycle_actual_admission_refusal_precedes_login(
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
 
 
+def test_custody_approval_requires_fresh_exact_comment_not_plan_boolean(
+    foreground_plan_input: Any, monkeypatch: Any,
+) -> None:
+    import subprocess
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    plan, args = foreground_plan_input
+    evidence = _offline_custody_approval(plan)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("custody launched process"))
+    try:
+        assert evidence.observer.observe(plan, now=args["now"]) is None
+        assert len(evidence.calls) == 1
+        assert plan["email"] not in evidence.comment["body"]
+        evidence.status = 404
+        with pytest.raises(ProvisioningRefused, match="PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED"):
+            evidence.observer.observe(plan, now=args["now"])
+        assert len(evidence.calls) == 2  # Never reuse a cached pass.
+    finally:
+        evidence.observer.close()
+
+
+@pytest.mark.parametrize("fault", [
+    "redirect", "unauthorized", "deleted", "wrong-comment", "bool-comment", "foreign-issue",
+    "foreign-repo", "login", "identity", "bool-identity", "bot", "user-missing", "edited",
+    "body-missing", "body-malformed", "body-duplicate", "body-extra", "body-bool-schema",
+    "body-scope", "body-consent", "future-issue", "naive-issue", "expired", "naive-now",
+    "long-window", "unavailable", "plan-custodian", "plan-secret",
+])
+def test_custody_approval_uncertainty_refuses_without_echo(foreground_plan_input: Any, fault: str) -> None:
+    from datetime import timedelta
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    plan, args = foreground_plan_input
+    evidence = _offline_custody_approval(plan)
+    comment = evidence.comment
+    now = args["now"]
+    if fault in {"redirect", "unauthorized", "deleted"}:
+        evidence.status = {"redirect": 302, "unauthorized": 401, "deleted": 404}[fault]
+    elif fault in {"wrong-comment", "bool-comment"}:
+        comment["id"] = True if fault == "bool-comment" else 999
+    elif fault in {"foreign-issue", "foreign-repo"}:
+        comment["issue_url"] = "https://api.github.com/repos/" + (
+            "alfloop-dev/odayplus/issues/999" if fault == "foreign-issue" else "other/repository/issues/456")
+    elif fault in {"login", "identity", "bool-identity", "bot"}:
+        key, value = {"login": ("login", "foreign-user"), "identity": ("id", 999),
+                      "bool-identity": ("id", True), "bot": ("type", "Bot")}[fault]
+        comment["user"][key] = value
+    elif fault == "user-missing":
+        comment.pop("user")
+    elif fault == "edited":
+        comment["updated_at"] = (now + timedelta(seconds=1)).isoformat()
+    elif fault == "body-missing":
+        comment.pop("body")
+    elif fault == "body-malformed":
+        comment["body"] = "private-secret-never-output"
+    elif fault == "body-duplicate":
+        comment["body"] = comment["body"][:-1] + ', "decision": "approve"}'
+    elif fault.startswith("body-"):
+        body = json.loads(comment["body"])
+        key, value = {"body-extra": ("password", "private-secret-never-output"),
+                      "body-bool-schema": ("schema_version", True), "body-scope": ("authorization_id", "other"),
+                      "body-consent": ("consent", "token-owner-only")}[fault]
+        body[key] = value
+        comment["body"] = json.dumps(body)
+    elif fault in {"future-issue", "naive-issue", "long-window"}:
+        issued = now + timedelta(seconds=1) if fault == "future-issue" else now - timedelta(hours=2)
+        if fault == "naive-issue":
+            issued = now.replace(tzinfo=None)
+        comment["created_at"] = comment["updated_at"] = issued.isoformat()
+    elif fault == "expired":
+        now += timedelta(minutes=30)
+    elif fault == "naive-now":
+        now = now.replace(tzinfo=None)
+    elif fault == "unavailable":
+        evidence.failed_at = 1
+    elif fault == "plan-custodian":
+        plan["recipient_custodian"] = "foreign-user"
+    else:
+        plan["password"] = "private-secret-never-output"
+    try:
+        with pytest.raises(ProvisioningRefused, match="PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED") as error:
+            evidence.observer.observe(plan, now=now)
+        assert error.value.__cause__ is None and "private-secret" not in str(error.value)
+        assert len(evidence.calls) == (0 if fault in {"plan-custodian", "plan-secret", "naive-now"} else 1)
+    finally:
+        evidence.observer.close()
+
+
+@pytest.mark.parametrize("field", [
+    "authorization_id", "execution_id", "repository", "environment", "release_profile", "release_sha",
+    "manifest_digest", "tenant_id", "actor_account_id", "purpose", "username", "email", "expires_at",
+])
+def test_custody_approval_binds_every_plan_field(foreground_plan_input: Any, field: str) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    plan, args = foreground_plan_input
+    evidence = _offline_custody_approval(plan)
+    plan[field] = "changed-after-human-approval"
+    try:
+        with pytest.raises(ProvisioningRefused, match="PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED"):
+            evidence.observer.observe(plan, now=args["now"])
+    finally:
+        evidence.observer.close()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("token", ""), ("token", "private\r\ninput"), ("issue_number", True), ("comment_id", 0),
+    ("custodian_login", ""), ("custodian_id", True), ("custodian_id", -1),
+])
+def test_custody_approval_pins_are_independent_nonempty_human_identity(field: str, value: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import GitHubCustodyApprovalObserver, ProvisioningRefused
+    pins = dict(token="offline-token", issue_number=456, comment_id=123,
+                custodian_login="offline-custodian", custodian_id=789)
+    pins[field] = value
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_CUSTODY_APPROVAL_CONFIG_INVALID"):
+        GitHubCustodyApprovalObserver(**pins)
+
+
+@pytest.mark.parametrize("bad", [None, {}, {"recipient_control": "owner-controlled"}, {"approved": True}])
+def test_lifecycle_custody_receipt_or_boolean_cannot_authorize(web_lifecycle: Any, bad: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, WebInvitationExecutor
+    s, web, executor, journal, _, _ = web_lifecycle
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED"):
+        WebInvitationExecutor(web=web, web_origin="https://web.example.invalid", journal=journal,
+                              admission=executor._admission, custody=bad)
+    assert not web.calls and journal.inspect() is None
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+
+
+@pytest.mark.parametrize("changed_at", range(1, 7))
+def test_lifecycle_custody_loss_stops_next_side_effect_and_quarantines(web_lifecycle: Any, changed_at: int) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    before = _snapshot(s)
+    web.custody_evidence.failed_at = changed_at
+    with pytest.raises(ProvisioningRefused):
+        executor.execute(plan, **args)
+    assert len(web.custody_evidence.calls) == changed_at
+    assert web.calls.count(("POST", PATH)) == int(changed_at >= 4)
+    assert web.calls.count(("POST", "/auth/invitations")) == int(changed_at >= 5)
+    assert web.calls.count(("POST", "/login")) == (0 if changed_at == 1 else 2 if changed_at == 6 else 1)
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(2 if changed_at >= 5 else 1,)]
+    assert _snapshot(s)["password_credentials"] == before["password_credentials"]
+    assert all(existing in _snapshot(s)["sessions"] for existing in before["sessions"])
+    if changed_at <= 2:
+        assert journal.inspect() is None
+    else:
+        assert journal.inspect().stage == "recovery-required"
+        mutations = [c for c in web.calls if c[0] == "POST" and c[1] in {PATH, "/auth/invitations"}]
+        web.custody_evidence.failed_at = 0
+        with pytest.raises(ProvisioningRefused):
+            executor.execute(plan, **args)
+        assert [c for c in web.calls if c[0] == "POST" and c[1] in {PATH, "/auth/invitations"}] == mutations
+    assert s.audit.verify_chain().ok
+
+
 @pytest.fixture
 def encrypted_binding(web_lifecycle: Any) -> Any:
     """Actual sealed-box encryption/decryption + mocked GitHub, never a live token."""
@@ -1240,6 +1441,30 @@ def encrypted_binding(web_lifecycle: Any) -> Any:
         yield s, web, journal, binding, remote, private_key, plan, args
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("changed_at", [1, 8])
+def test_binding_custody_loss_precedes_remote_requests_or_put(encrypted_binding: Any, changed_at: int) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, journal, binding, remote, _, plan, args = encrypted_binding
+    before = _snapshot(s)
+    web.custody_evidence.failed_at = changed_at
+    with pytest.raises(ProvisioningRefused):
+        binding.execute(plan, **args)
+    assert not remote.uploads and len(web.custody_evidence.calls) == changed_at
+    assert _snapshot(s)["password_credentials"] == before["password_credentials"]
+    if changed_at == 1:
+        assert not web.calls and not remote.calls and journal.inspect() is None
+        assert binding.inspect() is None
+    else:
+        assert journal.inspect().stage == "recovery-required"
+        assert binding.inspect()["stage"] == "recovery-required"
+        calls = list(remote.calls)
+        web.custody_evidence.failed_at = 0
+        with pytest.raises(ProvisioningRefused):
+            binding.execute(plan, **args)
+        assert remote.calls == calls
+    assert s.audit.verify_chain().ok
 
 
 def test_binding_encrypts_one_matched_pair_without_bootstrap_fallback(encrypted_binding: Any, monkeypatch: Any) -> None:

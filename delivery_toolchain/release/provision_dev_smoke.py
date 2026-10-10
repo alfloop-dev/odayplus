@@ -6,7 +6,9 @@ it after an uncertain result. Neither authenticates the custodian, verifies
 release human approval, proves mailbox ownership, or authorizes a cloud mutation.
 The Web lifecycle below requires a consumed-dev-admission observer pinned by
 the trusted foreground coordinator and rechecks it before mutations. Independent
-source approval, custody and rollback ownership are still coordinator duties. The optional encrypted bundle writer below
+source approval, actual mailbox control and rollback ownership are still coordinator duties.
+A separately pinned GitHub custodian comment is re-read for exact-plan consent;
+that authenticated attestation is not a mailbox-delivery check. The optional encrypted bundle writer below
 composes the same lifecycle/password in one call but cannot prove the stored
 secret value. The release workflow consumes an already staged bundle through the
 strict memory-only reader; it never invokes the lifecycle/writer. There is
@@ -241,6 +243,103 @@ def verify_consumed_dev_admission(
         raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED") from None
 
 
+class GitHubCustodyApprovalObserver:
+    """Fresh authenticated custodian attestation, not mailbox-delivery proof.
+
+    The trusted foreground coordinator independently pins a repository issue,
+    comment ID and approved HUMAN login/numeric ID, never from the plan. That
+    exact unedited comment must explicitly approve the digest of the entire
+    non-secret plan and attest owner-controlled recipient custody/consent. Its
+    author must match the approved custodian and the plan. No comment is posted
+    by this library. A token owner, arbitrary receipt or plan boolean is NOT
+    consent. The coordinator still verifies mailbox control before requesting
+    this attestation, independent source approval and rollback ownership.
+    """
+
+    def __init__(
+        self, *, token: str, issue_number: int, comment_id: int,
+        custodian_login: str, custodian_id: int, transport: Any = None,
+    ) -> None:
+        import httpx
+
+        if (not isinstance(token, str) or not token or any(c in token for c in "\r\n")
+                or any(type(v) is not int or v <= 0 for v in (issue_number, comment_id, custodian_id))
+                or type(custodian_login) is not str or not _CUSTODIAN.fullmatch(custodian_login)):
+            raise ProvisioningRefused("PROVISIONING_CUSTODY_APPROVAL_CONFIG_INVALID")
+        self._issue = issue_number
+        self._comment = comment_id
+        self._login = custodian_login
+        self._identity = custodian_id
+        self._client = httpx.Client(
+            base_url="https://api.github.com", transport=transport, timeout=20,
+            follow_redirects=False, headers={
+                "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+
+    def close(self) -> None:
+        self._client.close()
+
+    def observe(self, plan: Any, *, now: datetime) -> None:
+        """Re-read exact evidence on EVERY call; never cache a passing receipt.
+
+        Comment body is strict JSON (no Markdown wrapper), with only schema,
+        authorization, full-plan digest, fixed decision/custody/consent and expiry.
+        No recipient address, credentials or capability belongs in that comment.
+        Deletion, edits, redirects, auth loss, stale/malformed evidence refuse.
+        """
+        try:
+            if (not isinstance(plan, dict) or set(plan) != _PLAN_KEYS
+                    or not all(type(v) is str and 0 < len(v) <= 320 for v in plan.values())
+                    or not _aware(now) or plan["recipient_control"] != "owner-controlled"
+                    or plan["recipient_custodian"].casefold() != self._login.casefold()):
+                raise ValueError
+            response = self._client.get(f"/repos/{REPOSITORY}/issues/comments/{self._comment}")
+            comment = response.json()
+            user = comment.get("user")
+            if (response.status_code != 200 or type(comment.get("id")) is not int
+                    or comment["id"] != self._comment
+                    or comment.get("issue_url") != f"https://api.github.com/repos/{REPOSITORY}/issues/{self._issue}"
+                    or not isinstance(user, dict) or user.get("type") != "User"
+                    or type(user.get("id")) is not int or user["id"] != self._identity
+                    or type(user.get("login")) is not str or user["login"].casefold() != self._login.casefold()
+                    or type(comment.get("body")) is not str or len(comment["body"]) > 2048
+                    or comment.get("created_at") != comment.get("updated_at")):
+                raise ValueError
+
+            def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+                result: dict[str, Any] = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ValueError
+                    result[key] = value
+                return result
+
+            approval = json.loads(comment["body"], object_pairs_hook=unique)
+            digest = "sha256:" + hashlib.sha256(json.dumps(
+                plan, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            ).encode()).hexdigest()
+            expected = {
+                "schema_version": 1, "authorization_id": AUTHORIZATION_ID,
+                "plan_digest": digest, "decision": "approve",
+                "recipient_control": "owner-controlled",
+                "consent": "invitation-and-dev-smoke-credential-bundle",
+                "expires_at": plan["expires_at"],
+            }
+            if (not isinstance(approval, dict) or type(approval.get("schema_version")) is not int
+                    or approval != expected):
+                raise ValueError
+            issued = datetime.fromisoformat(comment["created_at"])
+            expiry = datetime.fromisoformat(plan["expires_at"])
+            if (not _aware(issued) or not _aware(expiry)
+                    or not issued <= now < expiry <= issued + timedelta(hours=1)):
+                raise ValueError
+        except Exception:
+            # No arbitrary body, address, token, HTTP error or remote exception.
+            raise ProvisioningRefused("PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED") from None
+
+
 class ConsumedDevAdmissionObserver:
     """Pinned admission material plus fresh reads of the Supervisor-owned store.
 
@@ -446,8 +545,9 @@ class WebInvitationExecutor:
 
     This is a foreground library entrypoint, NOT an admission/approval service.
     The coordinator must verify independent source approval, promotion and
-    recipient custody, and supply independently pinned admission roots. Consumed
-    exact-dev admission is rechecked before side effects. A journal or
+    actual mailbox control, and supply independently pinned admission roots and
+    custodian consent evidence. Consumed exact-dev admission and the custodian's
+    authenticated full-plan attestation are rechecked before side effects. A journal or
     matching string is not that proof. No workflow or CLI calls this entrypoint.
 
     All HTTP side effects are single-attempt. Once reserved, ANY uncertainty
@@ -460,7 +560,7 @@ class WebInvitationExecutor:
 
     def __init__(
         self, *, web: Any, web_origin: str, journal: ProvisioningJournal,
-        admission: ConsumedDevAdmissionObserver,
+        admission: ConsumedDevAdmissionObserver, custody: GitHubCustodyApprovalObserver,
     ) -> None:
         from urllib.parse import urlsplit
 
@@ -471,17 +571,21 @@ class WebInvitationExecutor:
             raise ProvisioningRefused("PROVISIONING_TRANSPORT_INVALID")
         if type(admission) is not ConsumedDevAdmissionObserver:
             raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED")
+        if type(custody) is not GitHubCustodyApprovalObserver:
+            raise ProvisioningRefused("PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED")
         self._web = web
         self._origin = web_origin
         self._journal = journal
         self._admission = admission
+        self._custody = custody
 
     def _observe_admission(self, plan: Any, *, release_sha: str, manifest_digest: str) -> None:
         if (not isinstance(plan, dict) or plan.get("release_sha") != release_sha
                 or plan.get("manifest_digest") != manifest_digest):
             raise ProvisioningRefused("PROVISIONING_RELEASE_MISMATCH")
-        self._admission.observe(release_sha=release_sha, manifest_digest=manifest_digest,
-                                now=self._journal._now())
+        now = self._journal._now()
+        self._admission.observe(release_sha=release_sha, manifest_digest=manifest_digest, now=now)
+        self._custody.observe(plan, now=now)
 
     def _request(
         self, method: str, path: str, *, cookie: str = "", body: Any = None, status: int = 200,
@@ -645,7 +749,7 @@ class WebInvitationExecutor:
             self._promoted_release(new_cookie, checked)
             self._observe_admission(plan, release_sha=release_sha, manifest_digest=manifest_digest)
             result = {**checked.to_receipt(), "stage": "web-lifecycle-verified",
-                      "serving_release_observed": True,
+                      "serving_release_observed": True, "custody_approval_observed": True,
                       "account_id": account, **provenance, "credential_binding_verified": False,
                       "deployment_success": False, "live_gate_passed": False}
         except Exception:

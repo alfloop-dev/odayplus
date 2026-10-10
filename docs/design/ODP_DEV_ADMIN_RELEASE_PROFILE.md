@@ -479,6 +479,35 @@ reservation quarantines the root without retry; only this execution's sessions
 are still cleaned up. This enforces admission observation inside the actual
 library but is **not** authenticated source/custody approval or a rollback-owned
 deploy hook; trust-root acquisition and that hook remain unfinished.
+The mandatory `GitHubCustodyApprovalObserver` additionally re-reads an explicit
+custodian consent record before every existing admission boundary (including
+before login/GitHub preflight, reservation, issue, acceptance, fresh login, final
+readback, encrypted PUT and return from the gate). The coordinator independently
+pins the repository issue number, comment ID and approved human GitHub login/
+numeric ID; none comes from the plan. The exact unedited comment must be authored
+by that human and belong to the pinned issue in `alfloop-dev/odayplus`. Its body
+is strict JSON with exactly `schema_version=1`, the fixed `authorization_id`,
+`plan_digest` (SHA-256 of the entire plan's sorted compact ASCII JSON),
+`decision=approve`, `recipient_control=owner-controlled`,
+`consent=invitation-and-dev-smoke-credential-bundle`, and the plan's exact
+`expires_at`. Approval must already exist, remain unedited/available, and expire
+within one hour of its offset-aware creation time. This library only GETs the
+record; it never posts a consent on the custodian's behalf. The record publishes
+only the plan digest, not the recipient address, password or capability.
+
+This is an authenticated **custodian attestation** that the exact recipient is
+owner-controlled and consents to this smoke use, not a technical mailbox-control
+or deliverability test. The trusted foreground coordinator must obtain the
+actual mailbox-control evidence before requesting that attestation. Token-owner
+proof or `recipient_control` alone is still insufficient. Any changed plan field,
+foreign/bot author, edited/deleted/expired record, redirect, missing/uncertain
+readback refuses. Loss after reservation quarantines without later mutation or
+PUT/retry; cleanup still revokes only this execution's sessions. Offline mocked
+GitHub records are not actual consent. Independent exact-head source approval,
+required CI, trust-root acquisition, actual mailbox verification and rollback-owned
+promoted-before-gate deployment wiring remain outstanding; the worker creates
+neither the comment nor live identity/configuration.
+
 PR1445 deployment/inventory, admission, IAM and
 finite-role gates remain intact. Independent review is required before use; the
 background worker creates no live account or secrets. Parsing/staging a bundle
