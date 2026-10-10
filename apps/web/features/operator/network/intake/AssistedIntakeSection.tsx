@@ -26,7 +26,7 @@ import type {
   PromotionReviewInput,
 } from "./PromotionReviewPanel";
 import type { ScoreReplayInput } from "./SiteScoreJobStatus";
-import { TransferIntakeDialog, usableTransferTargets, type TransferTargetOption } from "./TransferIntakeDialog";
+import { TransferIntakeDialog, useAssignmentTransferTargets } from "./TransferIntakeDialog";
 import { PauseSlaDialog } from "./PauseSlaDialog";
 import {
   buildIntakeClient,
@@ -63,7 +63,6 @@ export function AssistedIntakeSection({
   initialSelectedId,
   selectedHeatZoneId,
   targetListings = [],
-  transferTargets = [],
 }: {
   activeRoleId: OperatorRoleId;
   activeSubjectId?: string;
@@ -71,8 +70,6 @@ export function AssistedIntakeSection({
   initialSelectedId?: string;
   selectedHeatZoneId?: string;
   targetListings?: TargetListingData[];
-  /** Resource-scoped directory results only; no static/local fallback. */
-  transferTargets?: TransferTargetOption[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -646,7 +643,7 @@ export function AssistedIntakeSection({
     handoff_note: string;
   }) {
     if (!client || !selected || busy || !canManageAssignment) return;
-    const target = usableTransferTargets(transferTargets).find((option) =>
+    const target = transferDirectory.options.find((option) =>
       option.id === payload.target_owner_subject_id && option.role === payload.target_owner_role,
     );
     if (!target) {
@@ -964,6 +961,7 @@ export function AssistedIntakeSection({
         return next;
       });
       applyRecord(getResult.value);
+      transferDirectory.refreshTargets();
       setActionError(null);
     } else {
       // A failed read must not erase the unresolved 409 or its refresh path.
@@ -992,6 +990,10 @@ export function AssistedIntakeSection({
   const assignmentResourceVersion = selected
     ? authoritativeAssignmentVersion(selected, assignmentReceipts[selected.id])
     : null;
+  const transferDirectory = useAssignmentTransferTargets(
+    client, selected?.assignmentId, assignmentResourceVersion,
+    dialog === "assignmentSla" && asgKind === "transfer" && canManageAssignment,
+  );
   const slaResourceVersion = selected
     ? authoritativeSlaVersion(selected, slaReceipts[selected.id])
     : null;
@@ -1198,7 +1200,7 @@ export function AssistedIntakeSection({
       {dialog === "assignmentSla" && selected && canManageAssignment && assignmentResourceVersion !== null && asgKind === "transfer" ? (
         <TransferIntakeDialog
           busy={busy}
-          error={actionError}
+          error={actionError || transferDirectory.error}
           onClose={() => {
             updateUrlState({ dialog: "detail", decisionKind: null });
             setActionError(null);
@@ -1206,7 +1208,10 @@ export function AssistedIntakeSection({
           onSubmit={handleTransferSubmit}
           record={selected}
           resourceVersion={assignmentResourceVersion}
-          targetOptions={transferTargets}
+          targetOptions={transferDirectory.options}
+          targetLoadState={transferDirectory.state}
+          targetLoadError={transferDirectory.error}
+          onRefreshTargets={transferDirectory.refreshTargets}
           onConflictRefresh={handleConflictRefresh}
         />
       ) : null}

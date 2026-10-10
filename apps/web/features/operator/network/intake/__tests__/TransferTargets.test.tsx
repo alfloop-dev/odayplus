@@ -1,8 +1,8 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AssistedIntake } from "@oday-plus/openapi-client";
-import { TransferIntakeDialog, usableTransferTargets } from "../TransferIntakeDialog";
+import { OdpApiClient, type AssistedIntake } from "@oday-plus/openapi-client";
+import { TransferIntakeDialog, usableTransferTargets, useAssignmentTransferTargets } from "../TransferIntakeDialog";
 
 // Explicit mounted UI fixtures. These do not authorize identities or prove API writes.
 const targets = [
@@ -13,7 +13,73 @@ const props = {
   busy: false, error: null, resourceVersion: 14, onClose: vi.fn(), onSubmit: vi.fn(),
   record: { id: "IN-TARGET-FIXTURE", version: 71, assignmentId: "00000000-0000-0000-0000-000000000301", owner: "Fixture owner" } as AssistedIntake,
 };
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
+
+const assignmentId = props.record.assignmentId!;
+function directoryResponse(id = assignmentId, version = 14, items: unknown = targets) {
+  return new Response(JSON.stringify({ assignment_id: id, assignment_version: version, items }),
+    { status: 200, headers: { "content-type": "application/json" } });
+}
+
+describe("Typed resource-bound directory reads", () => {
+  it("loads only for an enabled transfer and binds a minimal typed response to the resource", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL) => directoryResponse());
+    vi.stubGlobal("fetch", fetcher);
+    const client = new OdpApiClient({ baseUrl: "http://localhost" });
+    const { result, rerender } = renderHook(({ enabled }) =>
+      useAssignmentTransferTargets(client, assignmentId, 14, enabled), { initialProps: { enabled: false } });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(result.current.options).toEqual([]);
+    rerender({ enabled: true });
+    expect(result.current.options).toEqual([]);
+    await waitFor(() => expect(result.current.state).toBe("ready"));
+    expect(result.current.options).toEqual(targets);
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain(`/api/v1/assignments/${assignmentId}/transfer-targets`);
+    rerender({ enabled: false });
+    expect(result.current.options).toEqual([]);
+  });
+
+  it.each([
+    ["foreign resource", () => directoryResponse("00000000-0000-0000-0000-000000000999")],
+    ["stale version", () => directoryResponse(assignmentId, 15)],
+    ["display actor", () => directoryResponse(assignmentId, 14, [{ ...targets[0], id: "actor-mgr" }])],
+    ["duplicate actor", () => directoryResponse(assignmentId, 14, [targets[0], targets[0]])],
+    ["queue role", () => directoryResponse(assignmentId, 14, [{ ...targets[0], role: "gov-queue" }])],
+    ["malformed list", () => directoryResponse(assignmentId, 14, {})],
+    ["denied", () => new Response(JSON.stringify({ code: "SCOPE_DENIED" }), { status: 403 })],
+    ["unavailable", () => new Response("unavailable", { status: 503 })],
+  ])("fails closed on %s rather than retaining recipients", async (_, response) => {
+    vi.stubGlobal("fetch", vi.fn(async () => response()));
+    const client = new OdpApiClient({ baseUrl: "http://localhost" });
+    const { result } = renderHook(() => useAssignmentTransferTargets(client, assignmentId, 14, true));
+    await waitFor(() => expect(result.current.state).toBe("error"));
+    expect(result.current.options).toEqual([]);
+    expect(result.current.error).not.toBeNull();
+  });
+
+  it("drops old results on refetch and ignores late reads after a resource or client change", async () => {
+    let resolveOld!: (value: Response) => void;
+    const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveOld = resolve; }))
+      .mockImplementation(async () => directoryResponse(assignmentId, 15));
+    vi.stubGlobal("fetch", fetcher);
+    const client = new OdpApiClient({ baseUrl: "http://localhost" });
+    const { result, rerender } = renderHook(({ version, activeClient }) =>
+      useAssignmentTransferTargets(activeClient, assignmentId, version, true),
+    { initialProps: { version: 14, activeClient: client } });
+    rerender({ version: 15, activeClient: client });
+    expect(result.current.options).toEqual([]);
+    await waitFor(() => expect(result.current.state).toBe("ready"));
+    await act(async () => { resolveOld(directoryResponse()); });
+    expect(result.current.options).toEqual(targets);
+    expect(result.current.state).toBe("ready");
+    act(() => result.current.refreshTargets());
+    expect(result.current.options).toEqual([]);
+    await waitFor(() => expect(result.current.state).toBe("ready"));
+    rerender({ version: 15, activeClient: new OdpApiClient({ baseUrl: "http://localhost" }) });
+    expect(result.current.options).toEqual([]);
+    await waitFor(() => expect(result.current.state).toBe("ready"));
+  });
+});
 
 function fillDraft() {
   fireEvent.change(screen.getByTestId("transfer-handoff-note"), { target: { value: "keep this handoff" } });

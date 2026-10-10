@@ -53,6 +53,7 @@ import type {
   ErrorEnvelope,
   ReasonCommand,
   AssignmentTransferRequest,
+  AssignmentTransferTargets,
   AssignmentReceipt,
   AssignmentRequest,
   SlaPauseRequest,
@@ -1552,6 +1553,10 @@ export class OdpApiClient {
       idempotencyKey: options.idempotencyKey,
       ifMatch: options.ifMatch,
     });
+  }
+
+  listAssignmentTransferTargets(assignmentId: string): Promise<AssignmentTransferTargets> {
+    return this.request<AssignmentTransferTargets>(`/api/v1/assignments/${assignmentId}/transfer-targets`);
   }
 
   transferAssignment(

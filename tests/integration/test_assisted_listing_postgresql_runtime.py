@@ -388,6 +388,19 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
         **_headers(ACTOR_ID, key=f"production-transfer-{uuid4()}"),
         "If-Match": assigned.headers["ETag"],
     }
+    directory_path = f"/api/v1/assignments/{assigned.json()['assignment_id']}/transfer-targets"
+    directory = client.get(directory_path, headers=_headers(ACTOR_ID))
+    assert directory.status_code == 200, directory.text
+    assert directory.headers["Cache-Control"] == "no-store"
+    assert directory.json() == {
+        "assignment_id": assigned.json()["assignment_id"], "assignment_version": assigned.json()["version"],
+        "items": [{"id": REVIEWER_ID, "name": REVIEWER_ID, "role": "site-reviewer"}],
+    }
+    target_account = identities.find_account_by_id(REVIEWER_ID)
+    identities.save_account(replace(target_account, status="disabled"))
+    assert client.get(directory_path, headers=_headers(ACTOR_ID)).json()["items"] == []
+    identities.save_account(target_account)
+    assert client.get(directory_path, headers=_headers(ACTOR_ID)).json() == directory.json()
     transferred = client.post(transfer_path, json=transfer_body, headers=transfer_headers)
     assert transferred.status_code == 200, transferred.text
     assert transferred.json()["owner_subject_id"] == REVIEWER_ID

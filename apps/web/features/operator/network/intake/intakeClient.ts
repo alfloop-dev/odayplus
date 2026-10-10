@@ -25,6 +25,7 @@ import {
   type OdpApiClient,
   type AssignmentReceipt,
   type AssignmentTransferRequest,
+  type AssignmentTransferTargets,
   type AssignmentRequest,
   type PromotionDecisionReceipt,
   type PromotionRequest,
@@ -280,6 +281,24 @@ export const intakeApi = {
         },
       ),
     );
+  },
+
+  transferTargets(client: OdpApiClient, assignmentId: string): Promise<IntakeResult<AssignmentTransferTargets>> {
+    return guardPromotion(async () => {
+      const value = await client.listAssignmentTransferTargets(assignmentId);
+      // The generated DTO is a compile-time contract, not a runtime validator.
+      if (!value || value.assignment_id !== assignmentId ||
+          !Number.isSafeInteger(value.assignment_version) || value.assignment_version < 1 ||
+          !Array.isArray(value.items) || value.items.some((item) =>
+            !item || typeof item.id !== "string" || typeof item.name !== "string" ||
+            !item.name.trim() || !["site-reviewer", "executive", "data-steward", "expansion-staff"].includes(item.role) ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id) ||
+            value.items.filter((other) => other?.id?.toLowerCase() === item.id.toLowerCase()).length !== 1,
+          )) {
+        throw new Error("TRANSFER_TARGETS_UNAVAILABLE — Invalid resource-bound directory response");
+      }
+      return value;
+    });
   },
 
   claimAssignment(

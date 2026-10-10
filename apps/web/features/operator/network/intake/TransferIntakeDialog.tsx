@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
-import type { AssistedIntake } from "@oday-plus/openapi-client";
+import { useState, useEffect, useCallback } from "react";
+import type { AssistedIntake, OdpApiClient } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
-import type { IntakeApiError } from "./intakeClient";
+import { intakeApi, type IntakeApiError } from "./intakeClient";
 
 export interface TransferTargetOption {
   id: string;
@@ -18,6 +18,49 @@ export function usableTransferTargets(options: TransferTargetOption[]): Transfer
     Boolean(option.name.trim()) && Boolean(option.role.trim()) &&
     options.filter((other) => other.id.toLowerCase() === option.id.toLowerCase()).length === 1,
   );
+}
+
+// Only the exact enabled resource/client context can consume a completed read.
+// Changing selection, role/client, version or closing the dialog drops authority
+// immediately, even before the new effect runs. Late responses are ignored.
+export function useAssignmentTransferTargets(
+  client: OdpApiClient | null, assignmentId: string | null | undefined,
+  version: number | null, enabled: boolean,
+) {
+  const key = enabled && assignmentId && version !== null ? `${assignmentId}:v${version}` : null;
+  const [generation, setGeneration] = useState(0);
+  const [directory, setDirectory] = useState<{
+    client: OdpApiClient | null; key: string | null; generation: number;
+    state: "loading" | "ready" | "error"; options: TransferTargetOption[]; error: IntakeApiError | null;
+  } | null>(null);
+  const refreshTargets = useCallback(() => setGeneration((value) => value + 1), []);
+  useEffect(() => {
+    if (!client || !key || !assignmentId) return;
+    let cancelled = false;
+    setDirectory({ client, key, generation, state: "loading", options: [], error: null });
+    void intakeApi.transferTargets(client, assignmentId).then((result) => {
+      if (cancelled) return;
+      const matches = result.ok && result.value.assignment_version === version;
+      setDirectory({
+        client, key, generation, state: matches ? "ready" : "error",
+        options: matches && result.ok ? usableTransferTargets(result.value.items) : [],
+        error: !result.ok ? result.error : !matches ? {
+          status: 409, code: "ODP-INTAKE-CONFLICT", summary: "指派版本已變更，請重新整理指派後再載入對象。",
+          nextAction: "重新整理 owner／指派版本。", retryable: false,
+          correlationId: null, occurredAt: new Date().toISOString(),
+        } : null,
+      });
+    });
+    return () => { cancelled = true; };
+  }, [client, key, assignmentId, version, generation]);
+  const current = key && directory?.key === key && directory.client === client && directory.generation === generation
+    ? directory : null;
+  return {
+    options: current?.options ?? [],
+    state: current?.state ?? (key && client ? "loading" as const : "idle" as const),
+    error: current?.error ?? null,
+    refreshTargets,
+  };
 }
 
 export interface TransferIntakeDialogProps {
@@ -37,6 +80,9 @@ export interface TransferIntakeDialogProps {
   onConflictRefresh?: () => void;
   /** No fixture fallback: unavailable directory authority closes submission. */
   targetOptions?: TransferTargetOption[];
+  targetLoadState?: "idle" | "loading" | "ready" | "error";
+  targetLoadError?: IntakeApiError | null;
+  onRefreshTargets?: () => void;
 }
 
 /**
@@ -53,6 +99,9 @@ export function TransferIntakeDialog({
   resourceVersion = null,
   onConflictRefresh,
   targetOptions = [],
+  targetLoadState = "ready",
+  targetLoadError = null,
+  onRefreshTargets,
 }: TransferIntakeDialogProps) {
   const targets = usableTransferTargets(targetOptions);
   const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
@@ -175,11 +224,18 @@ export function TransferIntakeDialog({
           {!selectedTarget ? (
             <div className={styles.noteBox} data-testid="transfer-targets-unavailable"
               id="transfer-targets-unavailable" role="status">
-              TRANSFER_TARGETS_UNAVAILABLE — 後端尚未提供此收件可轉交的對象，或原選擇已不可用。
-              請重新整理權威指派與身分範圍；不使用示範人物或治理佇列代替。
+              {targetLoadState === "loading" ? "正在載入此指派的權威轉交對象…" :
+                targetLoadError?.summary || "TRANSFER_TARGETS_UNAVAILABLE — 尚無可轉交的對象，或原選擇已不可用。請重新整理權威指派與身分範圍；不使用示範人物或治理佇列代替。"}
             </div>
           ) : null}
         </div>
+
+        {onRefreshTargets ? (
+          <button className={styles.secondaryButton} type="button" onClick={onRefreshTargets}
+            disabled={busy || targetLoadState === "loading"} data-testid="transfer-targets-refresh">
+            重新載入轉交對象
+          </button>
+        ) : null}
 
         <div>
           <label className={styles.fieldLabel} htmlFor="transfer-handoff-note">

@@ -594,12 +594,14 @@ describe("AssistedIntakeSection production container", () => {
       version: 71, assignmentVersion: 14, slaInstanceId: "SLA-101", slaState: "ON_TRACK", slaVersion: 24,
     } as Partial<AssistedIntake> & { assignmentVersion: number; slaVersion: number });
     const requests: Array<{ path: string; headers: Headers }> = [];
-    stubActionFetch(record, requests);
+    stubActionFetch(record, requests, transferTargets);
     nav.reset(`selected=${record.id}&dialog=detail`);
-    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} transferTargets={transferTargets} />);
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
     fireEvent.click(await screen.findByTestId("asg-btn-transfer"));
     expect(await screen.findByTestId("transfer-record-version")).toHaveTextContent("v14");
     expect(screen.getByTestId("transfer-record-version")).not.toHaveTextContent("v71");
+    await screen.findByRole("option", { name: transferTargets[0].name });
+    fireEvent.change(screen.getByTestId("transfer-target-select"), { target: { value: transferTargets[0].id } });
     fireEvent.change(await screen.findByTestId("transfer-handoff-note"), { target: { value: "authoritative transfer" } });
     fireEvent.click(screen.getByTestId("transfer-risk-ack"));
     fireEvent.click(screen.getByTestId("transfer-submit-btn"));
@@ -665,6 +667,9 @@ describe("AssistedIntakeSection production container", () => {
         return json(record);
       }
       if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
+      if (path.endsWith("/transfer-targets")) return json({
+        assignment_id: record.assignmentId, assignment_version: record.assignmentVersion, items: transferTargets,
+      });
       if (path.endsWith("/actions/claim")) {
         record = { ...record, owner: "subject-1", assignmentStatus: "CLAIMED", assignmentVersion: 8 } as typeof record;
         return json({ assignment_id: record.assignmentId, status: "CLAIMED", owner_subject_id: "subject-1", version: 8, audit_event_id: "AUD-CLAIM" });
@@ -681,11 +686,13 @@ describe("AssistedIntakeSection production container", () => {
       return json({ code: "NOT_FOUND" }, 404);
     }));
     nav.reset(`selected=${record.id}&dialog=detail`);
-    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} transferTargets={transferTargets} />);
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialDialog="detail" initialSelectedId={record.id} />);
     fireEvent.click(await screen.findByTestId("asg-btn-claim"));
     await waitFor(() => expect(screen.getByTestId("asg-owner")).toHaveTextContent("subject-1"));
     fireEvent.click(screen.getByTestId("asg-btn-transfer"));
     expect(await screen.findByTestId("transfer-record-version")).toHaveTextContent("v8");
+    await screen.findByRole("option", { name: transferTargets[0].name });
+    fireEvent.change(screen.getByTestId("transfer-target-select"), { target: { value: transferTargets[0].id } });
     fireEvent.change(screen.getByTestId("transfer-handoff-note"), { target: { value: "preserve this handoff" } });
     fireEvent.click(screen.getByTestId("transfer-risk-ack"));
     fireEvent.click(screen.getByTestId("transfer-submit-btn"));
@@ -701,7 +708,9 @@ describe("AssistedIntakeSection production container", () => {
     await waitFor(() => expect(screen.getByTestId("transfer-record-version")).toHaveTextContent("v9"));
     expect(screen.getByTestId("transfer-record-owner")).toHaveTextContent("reviewer-3");
     expect(screen.getByTestId("transfer-handoff-note")).toHaveValue("preserve this handoff");
-    expect(screen.getByTestId("transfer-risk-ack")).toBeChecked();
+    await screen.findByRole("option", { name: transferTargets[0].name });
+    expect(screen.getByTestId("transfer-risk-ack")).not.toBeChecked();
+    fireEvent.click(screen.getByTestId("transfer-risk-ack"));
     fireEvent.click(screen.getByTestId("transfer-submit-btn"));
     await waitFor(() => expect(transferHeaders).toHaveLength(2));
     expect(transferHeaders[1]!.get("if-match")).toBe('W/"9"');
@@ -895,6 +904,7 @@ function json(body: unknown, status = 200): Response {
 function stubActionFetch(
   record: AssistedIntake,
   requests: Array<{ path: string; headers: Headers }>,
+  directoryItems = [] as typeof transferTargets,
 ) {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), "http://localhost").pathname;
@@ -906,6 +916,9 @@ function stubActionFetch(
     });
     if (path === `/api/v1/operator/network-listings/intake/${record.id}`) return json(record);
     if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
+    if (path.endsWith("/transfer-targets")) return json({
+      assignment_id: record.assignmentId, assignment_version: record.assignmentVersion, items: directoryItems,
+    });
     if (path.includes("/assignments/")) return json({
       assignment_id: record.assignmentId, status: "CLAIMED", owner_subject_id: "subject-1",
       version: 99, audit_event_id: "AUD-ASG-101",
