@@ -1,0 +1,24 @@
+{
+  "authoritative_record": {
+    "author_id": 169176954,
+    "author_login": "ajoe734",
+    "created_at": "2026-10-10T05:21:45Z",
+    "issue_number": 1446,
+    "system": "GitHub issues",
+    "updated_at": "2026-10-10T05:21:45Z",
+    "url": "https://github.com/alfloop-dev/odayplus/issues/1446"
+  },
+  "note": "This record does not change requirement statuses, registries or gates. AVM production cutover remains gated by the technical conditions stated in the receipt.",
+  "obligations": [
+    "ODP-ADJUST-OPERATIONAL-CONFIRMATION",
+    "ODP-AVM-FINANCE-CUTOVER"
+  ],
+  "readback": {
+    "matches_committed_receipt": true,
+    "method": "gh api repos/alfloop-dev/odayplus/issues/1446; sha256 of the ```json block content",
+    "read_at": "2026-10-10T09:18:55Z"
+  },
+  "receipt_sha256": "cecb881659ba0f3542a99af63fcce48317cdbabe4756cc9109b6349b2c4e5be0",
+  "record_type": "human_requirement_disposition_approval_readback",
+  "task_id": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001"
+}

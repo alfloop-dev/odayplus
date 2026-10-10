@@ -1,0 +1,50 @@
+{
+  "approval_reference": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001/adjust-and-avm-finance-20261009",
+  "approved_by": {
+    "display_name": "蔡尚志",
+    "github_login": "ajoe734",
+    "principal_id": "github:169176954",
+    "role": "負責人"
+  },
+  "decision": "approved",
+  "decisions": {
+    "ODP-ADJUST-OPERATIONAL-CONFIRMATION": {
+      "applicable_scope": "全部門市、全部介入類型",
+      "authority": {
+        "operations_lead": "蔡尚志",
+        "product_lead": "蔡尚志"
+      },
+      "decision_date": "2026-10-09",
+      "operational_practice": "stop_plus_recreate",
+      "practice_statement": "門市調整進行中的介入時，現行實務為停止原介入、另開新介入，並記錄兩者關聯；不採原地直接修改。",
+      "requirement_ref": "ODP-FR-INTV-006::ADJUST",
+      "scope_acceptance": "納入 HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+      "source_evidence": "負責人本人對現行門市營運實務的直接確認（本收據）；對應 docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md §4.4 與 docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md 項目 16"
+    },
+    "ODP-AVM-FINANCE-CUTOVER": {
+      "authority": {
+        "finance_owner": "蔡尚志",
+        "ml_risk_owner": "蔡尚志",
+        "product_owner": "蔡尚志"
+      },
+      "cutover_conditions": [
+        "本核准不取代任何技術閘：AVM 折舊實作需通過契約測試（八條 xfail 轉為 PASSED）、DEPRECIATION 需求狀態為 satisfied，模型需完成 registry、promotion 與 rollback target 讀回，production 准入閘全數通過後才可實際執行",
+        "回滾採 R-1 v0 pin，任一 R-4 門檻觸發即回滾，回滾需記錄 decider、時間、理由與預計期限（R-3）",
+        "門檻或折舊參數變更需重新核准"
+      ],
+      "production_valuation_cutover": "approved_with_conditions",
+      "r4_rollback_thresholds": {
+        "calibration": "v1 cohort 的 P10–P90 coverage 較 v0 下降超過 5 個百分點時回滾",
+        "numerical": "重估 cohort 中 asset lens 相對 v0 變動幅度超過 15%、且無資料面解釋者占 cohort 比例超過 5% 時回滾",
+        "structural": "出現任何 1 張 depreciation_applied = true 但 evidence 區塊鍵位不全的卡即回滾"
+      },
+      "requirement_ref": "ODP-FR-AVM-001::DEPRECIATION",
+      "thresholds_reference": "docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md R-4"
+    }
+  },
+  "issued_at": "2026-10-09T01:13:14Z",
+  "receipt_type": "human_requirement_disposition_approval",
+  "review_by": "2027-10-09",
+  "schema_version": "1.0.0",
+  "task_id": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001"
+}

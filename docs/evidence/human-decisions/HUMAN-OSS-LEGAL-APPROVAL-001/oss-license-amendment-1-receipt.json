@@ -1,0 +1,35 @@
+{
+  "amends": {
+    "issue": "alfloop-dev/odayplus#1421",
+    "receipt_sha256": "ce5fe213070e4f45cfc85953ac26d4a70e82a886a36d35d45125328064635210"
+  },
+  "approved_by": {
+    "display_name": "蔡尚志",
+    "github_login": "ajoe734",
+    "principal_id": "github:169176954",
+    "role": "負責人"
+  },
+  "changes": {
+    "D01": {
+      "conditions": "與原收據 D01 相同",
+      "decision": "allow_with_conditions",
+      "dependency_path": "@oday-plus/web -> next -> sharp@0.35.5 (Apache-2.0) -> @img/sharp-libvips-*@1.3.4",
+      "license": "LGPL-3.0-or-later",
+      "packages_after": [
+        "pkg:npm/%40img/sharp-libvips-linux-x64@1.3.4",
+        "pkg:npm/%40img/sharp-libvips-linuxmusl-x64@1.3.4"
+      ],
+      "packages_before": [
+        "pkg:npm/%40img/sharp-libvips-linux-x64@1.3.3",
+        "pkg:npm/%40img/sharp-libvips-linuxmusl-x64@1.3.3"
+      ]
+    }
+  },
+  "issued_at": "2026-10-07T23:30:32Z",
+  "reason": "安全修正：GHSA-wq5f-xc86-pv6w（sharp <0.35.5，內建 librsvg CVE-2026-96889）。sharp 0.35.5 連帶將 libvips 由 1.3.3 升至 1.3.4，觸發原收據的「D01-D04 版本變更需重新核准」條件。",
+  "receipt_type": "oss_legal_policy_approval_amendment",
+  "schema_version": "1.0.0",
+  "source_branch": "task/ODP-NPM-SHARP-GHSA-WQ5F-001 @ f05436a9",
+  "task_id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+  "unchanged": "D02-D14、到期日（2028-10-06）、複審日（2027-10-06）、範圍與其他條件均與原收據相同"
+}
