@@ -284,3 +284,15 @@ identity engine/store/sessions/audit are still real PostgreSQL, and no factory
 or permission guard is changed. This hybrid composition is not evidence of
 healthy live business persistence, providers or deployment. New-head canonical
 checks are still required. No broader suite was launched.
+
+At exact `56c0af50558d732c4902aab40d798374ee4dd89c`, canonical runner again
+completed all declarations: diff exit0/0.015s (`c458f1e5de026110`), invitation /
+provisioning / workflow exit1/81.597s (`9783751b45666339`), gate / operator
+exit0/43.010s (`a2db4dc54c054c38`), Web exit0/2.210s (`a708e6fce3317e7e`),
+typecheck exit0/6.106s (`59864447f89cc774`). The single new composition test
+correctly hit the global persistence refusal: hybrid memory bundle is not
+production persistence. **No guard was relaxed.** The test fixture is now
+replaced by the normal deployment migration command plus the real PostgreSQL
+persistence factory, with its own closed pool and same-database genuine auth
+boundary. This correction supersedes the hybrid approach, not the negative
+receipts, and still needs exact-head verification.

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -302,22 +301,34 @@ def test_acceptance_router_audit_failure_has_safe_error_and_atomic_recovery(acce
     assert s.accept_client.post(ACCEPT, json=_accept_body(issued)).status_code == 201
 
 
-def test_full_runtime_mounts_admin_issue_and_pg_capability_acceptance(invitations: Any, monkeypatch: Any) -> None:
+@pytest.fixture
+def pg_runtime(invitations: Any, monkeypatch: Any) -> Any:
     from apps.api.oday_api.main import create_app
     from apps.api.oday_api.security import dependencies
+    from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
     from shared.infrastructure.persistence.factory import build_persistence
+    from tests.integration.test_postgresql_persistence import _provision_canonical_schema
 
     s = invitations
-    bundle = replace(build_persistence(mode="memory"), engine=s.engine,
-                     identity_store=s.identity, session_service=s.sessions)
-    # Build offline non-identity adapters before selecting live routing; the
-    # runtime identity service below is still the genuine PG engine/store.
+    # Normal deployment migrations and real PG factory: no memory-backed
+    # non-identity adapters and no bypass of the global persistence guard.
+    _provision_canonical_schema(s.db)
+    apply_upgrade_to_database(s.db.url())
+    monkeypatch.setenv("ODAY_DATABASE_URL", s.db.url())
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
-    # Real canonical boundary and PG session resolver, not a fabricated
-    # Principal or a permission dependency override.
+    bundle = build_persistence(mode="postgresql")
+    # Genuine existing boundary and PG session resolver, not a fabricated
+    # Principal or a permission dependency override. Both pools share the DB.
     monkeypatch.setattr(dependencies, "default_boundary", lambda: s.boundary)
-    client = TestClient(create_app(persistence=bundle, audit_log=s.audit,
-                                  external_provider_validation=lambda: None))
+    try:
+        yield s, TestClient(create_app(persistence=bundle, external_provider_validation=lambda: None))
+    finally:
+        bundle.engine.close()
+
+
+def test_full_runtime_mounts_admin_issue_and_pg_capability_acceptance(pg_runtime: Any) -> None:
+    s, client = pg_runtime
     headers = _headers(s)
     before = _snapshot(s)
     issued = client.post(PATH, headers=headers, json={"email": EMAIL})
