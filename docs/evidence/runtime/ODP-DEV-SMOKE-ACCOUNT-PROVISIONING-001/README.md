@@ -672,3 +672,35 @@ Verification pending at this anchor. Still unfinished: authenticated foreground
 custody/source approval and normally admitted dev promotion -> same-pair unchanged
 final gate orchestration; explicit recovery reconciliation remains coordinator-owned.
 Not review-ready; no live account/session/secret/IAM/deploy/source/model action.
+
+### Exact consumer verification
+
+Source anchor `33077f14f68ba95223dfb1d02809ae1d23d6ac66` completed all five
+exact declared commands (original foreground terminal exit1 overall). Only the
+provisioning selection failed (exit1, 205.415s, `6690639070fd627e`): the checker
+expected a bare plan hash while the actual journal emits `sha256:` + hash.
+This was a checker defect, not a live mutation. Four other commands passed;
+all original receipts were retained, not discarded or misreported.
+
+Fix anchor `8248405d3ae1c7634941059b3a1e66d16bc19099` aligns the checker and
+negative fixtures with the existing journal digest format and adds actual
+remote-committed lost-reply/replacement bundle consumption refusal. The canonical
+foreground verification runner executed all five **exact** declarations at this
+new source head, terminal exit0 (no background waiting, wider suite or count-only
+rerun). Existing local uv, scratch Corepack pnpm9.15.9 launcher and already
+installed worktree `node_modules/.bin` were used; no tracked dependency change.
+
+| Exact declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.024s | `d40ef9b265598563` |
+| Invitation/provisioning/workflow pytest | 0 | 193.308s | `f5ccec26a8794ee1` |
+| Gate/operator pytest | 0 | 56.183s | `a5aab1469d817b64` |
+| Invitation Web Vitest | 0 | 2.766s | `b75cf39e2e111d00` |
+| Web typecheck | 0 | 7.185s | `4723d9d9439c2234` |
+
+All ten original JSON receipts copied to canonical `.orchestrator/evidence`.
+This evidence-only follow-up is not the measured source head; final submission
+still needs exact-head required CI and independent Codex review. The matched
+reader now composes with actual sealed-box lifecycle/journals and the unchanged
+finite gate. The foreground custody/source-approval/admitted-promotion driver
+remains unfinished; source checks are not activation/live-gate/deployment proof.
