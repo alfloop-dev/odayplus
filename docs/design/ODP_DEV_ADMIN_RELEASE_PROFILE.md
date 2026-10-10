@@ -343,16 +343,315 @@ profile/model/registry/source/admission boundaries remain unchanged. This permit
 verification of the actual current audited subject, not permission promotion or
 full-product/F11 acceptance.
 
+### 5.7 Invitation-created pure administrator (ODP-DEV-SMOKE-ACCOUNT-PROVISIONING-001)
+
+The normal expand-only migration `0022` creates the dedicated
+`identity.invitation_acceptance_budget`. Acceptance reserves its global (50)
+and existing-invitation (5) budgets per 15-minute database-time window in an
+independent committed transaction before policy/Argon2 work. Invalid capabilities,
+replay and failed acceptance still consume budget; random UUIDs cannot create
+per-invitation rows. Migration replay/downgrade preserves counters; missing budget
+schema fails closed before hashing. This is not a second login throttle:
+`apps/web/src/lib/auth/loginThrottle.ts` remains the only writer of
+`identity.login_attempts`; account login counters and original sessions are untouched.
+
+A separate pure `platform_admin` can be created through the authenticated,
+server-tenant-bound invitation lifecycle (§7.1/7.3 of the password-first
+contract), not by rerunning first-administrator bootstrap. It must satisfy all
+existing pure-admin session, foreign-tenant refusal/readback, business denial,
+wrong-persona, password, logout, worker, persistence and model checks. The
+finite-role policy, `full` profile and admission requirements are unchanged.
+
+The gate derives provenance from authenticated identity account/audit readbacks,
+never a caller switch or offline receipt. An invitation-created subject requires:
+
+- Exactly one `identity.account.invite` and one `identity.account.accept` with
+  the same invitation UUID, tenant, resource and correlation; distinct event
+  UUIDs and successful outcomes. No duplicate acceptance, revocation or fake
+  `identity.account.bootstrap` for that subject is accepted.
+- A UUID issuing administrator different from the new account and equal to the
+  identity account's persisted `created_by` (projected as `updated_by`). The
+  accept actor, account and subject UUIDs must equal the new account.
+- Issue presets and acceptance metadata must prove pure `platform_admin`,
+  tenant-only empty-axis `CONFIDENTIAL` scope, active acceptance and
+  `must_change=false`. Current persisted account roles/status/scope must match.
+- Offset-aware issue/accept/expiry timestamps: acceptance at or after issuance,
+  strictly before expiry; positive invitation lifetime no longer than 72 hours.
+- Cookie session username and `/api/v1/auth/principal` must bind the same UUID
+  account, tenant and exactly `platform_admin`.
+
+Receipts label `identity_provenance.mode=invitation`, with identifier-only issue
+and accept event bindings. They never pretend this account was bootstrapped.
+The existing bootstrap and explicitly read-enabled branches remain intact;
+this invitation branch admits no additional roles or business authority.
+
+This is a **source contract, not activation evidence**. The partial
+`delivery_toolchain/release/provision_dev_smoke.py` preflight checks a non-secret
+foreground plan against the exact candidate/manifest tuple, repository, dev
+profile, tenant and original three-role account readback. It requires an explicit
+new username, recipient/custodian assertion, execution UUID and offset-aware
+expiry within one hour. These inputs are proposals, **not** authenticated
+custodian approval, mailbox verification, release admission or durable single-use
+consumption; its receipt explicitly says `execution_authorized=false`.
+`WebInvitationExecutor.execute(plan, admin_password=..., new_password=...,
+release_sha=..., manifest_digest=...)` now executes the memory-only Web
+lifecycle as a foreground **library**, not an anonymous CLI or workflow hook.
+The trusted coordinator must first verify source approval, exact dev admission
+and promotion, and approved recipient custody. It authenticates `ajoe734` through
+`/login`, binds its cookie to the server principal and exact original account,
+checks recipient collisions before single-use journal reservation, and observes
+API **and Web** serving SHA, manifest digest and `dev-admin` profile through the
+existing authenticated BFF `/api/v1/platform/release-identity`. All fields must
+match the coordinator's exact tuple; API profile validity must be boolean true.
+Missing/mixed/rolled-back metadata refuses before reservation. It issues the
+invitation through the existing BFF, repeats serving-pair readback before
+acceptance, and accepts through `/auth/invitations` without forwarding an admin
+session. A fresh new-account login must match
+persisted pure-admin scope and strict durable issue/accept provenance, followed
+by a final serving-pair readback through that new account's cookie. Post-reservation
+mismatch or read uncertainty quarantines the root; it never auto-retries. This
+point-in-time observation (`serving_release_observed=true`) is not independent
+source review, admission proof or deployment success and cannot prevent a later
+traffic transition. Only the
+two sessions created by this execution are logged out; other existing sessions
+are untouched. Secrets and capabilities never enter a receipt or subprocess.
+An uncertain issue/accept/readback/logout quarantines the root; lost replies do
+not permit automatic retry, reset, delete or replacement. Successful output
+says `credential_binding_verified=false`, `live_gate_passed=false` and
+`deployment_success=false`: it is **not** end-to-end activation authority.
+No CLI or workflow is wired. `DevCredentialBundleExecutor` now composes that
+actual lifecycle with the **same** new password and stages a single encrypted
+JSON `ODP_DEV_ADMIN_CREDENTIAL_BUNDLE` secret in the pinned repository's dev
+environment, using PyNaCl/libsodium sealed-box encryption and memory-only HTTP.
+It refuses an existing bundle and never touches the standing username variable,
+password/initial-password secrets or IAM. A durable binding intent precedes the
+single PUT; a crash, lost reply, replacement response or audit failure requires
+explicit recovery, never automatic retry/delete/reset/rollback. Receipt says
+`binding_write_acknowledged=true` only after HTTP201 and durable acknowledgement;
+`credential_binding_verified=false` remains truthful because GitHub cannot read
+back decrypted secret values. The trusted custodian must exclude external secret
+writers (GitHub has no create-only conditional PUT). `GitHubDevSecretStore` now
+requires independently approved `custodian_login` and numeric `custodian_id`
+constructor pins; the plan cannot choose the token owner. It authenticates the
+token through fresh pinned GitHub HTTPS `/user` reads before repository/secret/key
+preflight and again immediately before encryption/PUT. Login (case-insensitive),
+exact positive integer ID and human `type=User` must all match; unavailable,
+redirected, bot, foreign or unauthorized evidence refuses before live account
+creation, or quarantines after reservation without PUT/retry. This authenticates
+only the GitHub token owner, **not** recipient mailbox control or the custodian's
+consent to this plan. Source review, approved custody, trust-root acquisition and
+rollback-owned rollout orchestration remain independent coordinator obligations.
+
+The workflow now **consumes an already staged bundle**, never invokes the
+lifecycle/writer. It injects the secret only for `inputs.environment=dev` and
+the **admitted** `dev-admin` profile, not a deploy-time profile proposal. The
+admitted profile is the same effective value as `ODP_RELEASE_PROFILE`: the manual
+`admission` output for `phase=deploy` OR the `automatic_admission` output for
+`phase=auto` (the skipped job's output is empty), so the standing automatic
+dev-admin release consumes the staged bundle exactly like a manual one. A
+populated dev secret therefore leaves normal `full` releases (manual or automatic)
+on their original credential/gate path. An explicitly supplied bundle outside that scope remains
+a strict preflight refusal; it is not silently ignored. Its strict memory-only
+reader rejects nonempty malformed,
+partial, duplicate-key or wrong-scope JSON before cloud mutation, with no legacy
+fallback. A present bundle supplies both username/password and suppresses every
+old initial/bootstrap credential. The gate additionally binds account/tenant to
+the authenticated pure-admin record and requires genuine invitation provenance
+plus the matching durable reservation, binding intent and acknowledgement on
+the tenant-filtered authenticated audit read. Missing ACK, duplicate/extra events,
+quarantine or execution/plan/account mismatch blocks; a secret's presence alone
+cannot authorize recovery. No decoded pair enters shell, arguments, files or
+workflow outputs. Standing bundle creation provenance is not relabelled when a
+later admitted candidate uses it. Without a bundle the existing binding is unchanged.
+
+**Post-accepted-deploy path.** The supported activation does not need a second
+cloud rollout or a re-used consumed lease. Once the reviewed source is merged and
+the ordinary dev Runtime Release (normally the automatic `phase=auto` dev-admin
+run) has deployed and live-gated it, the trusted foreground coordinator builds
+`WebInvitationExecutor` with `DeployedDevReleaseObserver(repository=...)` instead
+of `ConsumedDevAdmissionObserver`. On every observation it re-reads GitHub's own
+dev deployment history through the canonical `automatic_dev.previous_deployment`
+(newest live-changing attempt decides; failed-after-commit, unproven restoration,
+expired artifacts or missing environment proof refuse), then re-applies
+`validate_manifest`/`validate_release_admission`, the exact SHA/digest, dev-admin
+profile and sources-off posture to the retained deployed manifest. A newer deploy
+of any other release during the lifecycle refuses and quarantines. It uses the
+operator's own `gh` authentication for the pinned repository, refuses inside an
+Actions run, issues/consumes no lease and dispatches nothing.
+`DevCredentialBundleExecutor.execute` then invites, accepts and stages the bundle
+against the already-serving release (the authenticated serving-pair readback,
+recorded consent and exact source/CI observers are unchanged). The next ordinary
+admitted dev-admin release consumes it and runs the unchanged finite gate with
+the fresh pure admin. `ForegroundDevSmokeRollout` refuses this observer: a deployed
+release's record never authorizes launching another rollout.
+
+**Existing account baseline.** The consent receipt's
+`preserve_existing_roles` list is an immutable historical record, not a state to
+force or restore. The executor reads the existing account freshly through the
+authenticated user inventory, requires the verified session principal to agree,
+and uses that ACTUAL state as the before-baseline; the after-readback must equal
+it exactly. The actual roles must keep `platform_admin` (the issuer) and stay
+within the recorded set (e.g. the observed `auditor`+`platform_admin` after its
+owner removed `operations_manager`). A role outside that bound or a change during
+execution refuses or quarantines; nothing is re-granted.
+
+`DevCredentialBundleExecutor.execute_and_check_gate` additionally composes the
+acknowledged lifecycle/binding with the canonical `evaluate_gate` in the **same
+foreground process**, using the newly accepted pair rather than reloading a
+GitHub job's stale secret context. Before any login/reservation/PUT it requires
+matching SHA/digest, dev-only profile, the same HTTPS Web origin, sources disabled,
+and all canonical gate inputs. It suppresses standing/initial/bootstrap credentials,
+binds the new account/tenant/execution, and uses the existing HTTP and Cloud Run
+worker drivers. A red or uncertain gate quarantines the root without retry or
+secret/account rollback; the rollout owner must restore traffic. A passing result
+still says `deployment_success=false` and `credential_binding_verified=false`:
+this is not a readback of GitHub's encrypted secret or a deployment commit.
+No CLI/workflow calls this method. Authenticated-foreground custody/source approval,
+exact admission and rollback-owned promoted-before-gate wiring, and actual live
+gate proof remain unfinished. The read-only foreground helper
+`verify_consumed_dev_admission` now rechecks the canonical manifest/admission,
+exact four component images, dev-admin sources-off registry boundary, signed
+lease and real Supervisor-store consumption for the same task/SHA/digest/release
+and expected rollout consumer. It rejects issued/revoked/missing/mismatched or
+expired evidence without issuing or consuming a lease again; receipt says
+`execution_authorized=false`. Its key/store/registry/consumer trust roots must
+come independently from the coordinator, never the plan or an `admitted=true`
+receipt. This observation is not authentication of source approval/custody,
+proof of who called admission, or promotion/rollback ownership. It now backs the mandatory `ConsumedDevAdmissionObserver` supplied to
+`WebInvitationExecutor`. The coordinator independently pins its key/store/registry/
+consumer and admission documents (snapshotted, not plan-loaded); every observation
+reuses canonical predicates and fresh Supervisor state, never a cached pass or
+caller receipt. Lifecycle checks precede login, reservation, issue, acceptance,
+fresh login and final success. The binding executor also checks before any
+GitHub request and immediately before the single PUT; the canonical gate's result
+cannot be returned as successful after admission becomes uncertain. Loss after
+reservation quarantines the root without retry; only this execution's sessions
+are still cleaned up. This enforces admission observation inside the actual
+library but is **not** authenticated source/custody approval or a rollback-owned
+deploy hook; trust-root acquisition and that hook remain unfinished.
+**Scope correction (2026-10-10):** the explicit user reply already recorded in
+`USER-AUTHORIZATION-20261010.json` authorizes this bounded operation. A new
+GitHub issue/comment or SMTP/mailbox-deliverability ceremony is not part of
+§7.1/7.3 or that authorization and is **not mandatory**. The trusted foreground
+owner supplies `RecordedUserAuthorization(authorization=<canonical recorded
+consent>, approved_plan=<owner-approved non-secret scoped plan>)`. It snapshots
+both inputs and refuses any plan change/expiry or incompatible recorded scope.
+The username is fixed to `odp-dev-smoke`; the foreground owner selects the
+recipient (including an explicitly understood private service alias) and approved
+GitHub custodian. This is a trusted invocation boundary, not a public receipt
+upload or a worker self-approval. Neither the recipient assertion nor the GitHub
+token owner is presented as SMTP verification. The former
+`GitHubCustodyApprovalObserver` remains an optional existing-evidence adapter;
+no worker or library posts a new consent on the user's behalf. Independent
+exact-head source review/CI and signed consumed admission are still required.
+The mandatory `GitHubSourceApprovalObserver` additionally re-reads independently pinned
+source trust roots at every lifecycle/admission/binding/gate boundary: merged
+same-repository PR into `dev`, its exact reviewed head, canonical
+`task-review-gate` writer login/numeric ID, CI workflow ID, checks app ID and
+non-empty required job names. The coordinator obtains these pins from trusted
+review/control-plane and branch-policy records, not a proposed plan or receipt.
+The latest review status must be success from the pinned canonical writer, whose
+existing policy enforces the assigned independent review. A newer pending/failed
+status or ambiguous timestamp refuses. The candidate must be that PR's merge
+commit, with an entire Git tree identical to the reviewed head. Merge composition
+that changes the tree is deliberately unsupported without new exact-source
+review; ancestry or a passing PR alone cannot bless unreviewed source.
+
+The latest run of the pinned `.github/workflows/ci.yml` must complete successfully
+on both reviewed head and candidate. Each pinned required job must occur exactly
+once in that run's own check suite, for the exact SHA/app, completed with success;
+skipped/neutral/pending/failed or missing jobs never count as CI. Foreign PRs,
+wrong trees/SHAs/workflows/writers/apps, incomplete pagination, unavailable or
+changed evidence refuse, with post-reservation quarantine and no later mutation,
+PUT or retry. No approvals/statuses/comments are posted and CI is never triggered
+by this observer. It observes existing source approval and CI, not a release
+lease, mailbox proof or traffic/rollback capability; no cached pass is accepted.
+Offline mocks are regression inputs, not actual review/CI receipts.
+
+The foreground now supports `RemoteProvisioningJournal(web=<canonical Web
+HTTP client>, web_origin=<same HTTPS origin>)`: it needs **no PostgreSQL engine
+or database credential**. `/api/v1/operator/users/dev-smoke-journal` uses the
+existing BFF and `user:manage` dependency, then rechecks the durable active
+platform-admin session, exact preserved actor/tenant/three-role/full-scope
+snapshot and dev-admin runtime. Reservation uses fresh server account data,
+serving SHA/digest, DB time and the existing global advisory-lock/audit root.
+It never trusts a caller's account receipt or constructs a Principal. Binding
+intent additionally binds a real invitation-created pure `odp-dev-smoke` account
+issued by that actor after reservation; terminal records bind the same
+execution/plan/account. The API grants no source/admission authority and cannot
+verify GitHub's decrypted value. Reads/writes are bounded and secret-free;
+replay, unknown actions/fields, malformed evidence and audit/commit failure refuse.
+
+The outer foreground lifecycle/binding/gate operation owns one extra journal
+admin session, shared across nested calls and revoked at exit. It creates no
+standing session and does not revoke any original session. Independent
+source/consent/admission observations precede this login; invalid gate configuration
+is rejected before it. Issue/accept still use their original two execution-owned
+sessions. The remote ledger supplies the actual same-process encrypted bundle
+staging and canonical gate composition, not a fake local PG proxy. Lost replies
+leave the durable root/intent/ACK as a no-retry boundary, with quarantine when
+possible. Logout uncertainty never returns success. No credential enters the
+journal payload, a process argument, file or report.
+
+`ForegroundDevSmokeRollout(binding=<actual DevCredentialBundleExecutor>)`
+now supplies an explicit trusted-owner deployment invocation. It checks the
+exact clean candidate checkout, owner-pinned dev-admin/sources-off tuple and
+gate inputs, and freshly observes independent source/recorded consent/consumed
+admission before spawning the existing `deploy_cloud_run_waji.sh`. The owner
+supplies a separate deployment environment; admin/new-account/GitHub custodian
+credentials are forbidden there and remain in foreground memory. There is no
+arbitrary executable hook or uploaded passing receipt. An inherited socket is
+validated before cloud mutation; after API/Web promotion the fixed shell hook
+sends its actual serving origins, tuple, worker name and freshly minted service
+tokens to the parent. Every non-token field must equal the owner's pinned gate
+context. The parent runs the actual lifecycle/binding and unchanged canonical
+gate with the newly accepted pair, writes only the canonical redacted gate
+report, and sends a fixed completion acknowledgement only after session cleanup.
+The shell commits only after this acknowledgement; refusal, lost channel or red
+gate exits nonzero under the original traffic/scheduler EXIT rollback boundary.
+The parent waits on that original process handle and never counts a gate pass
+with nonzero/missing shell exit as deployment success. Deadline interruption
+means recovery is unknown, never successful rollback; durable reservation/intent
+still prohibit automatic provisioning retry. An acknowledged bundle is not
+rolled back, reset or replaced after rollout failure.
+
+Independent acquisition of review/CI/admission/custodian trust roots, approved
+recipient/plan and normal deployment credentials remains the foreground owner's
+duty. No CLI or GitHub workflow invokes this library: default automation still
+only consumes an already-staged bundle and cannot create accounts. The worker
+creates neither live approval/comment nor identity/configuration. No new
+mailbox-verification gate is imposed. Offline shell/socket/router composition is
+not activation approval, real traffic restoration or successful deployment.
+The journal router now imports only product code: `shared.identity.dev_smoke_journal`
+owns the exact plan/original-account validation, reservation and local binding
+ledger, and `shared.identity.invitation_provenance` owns the common account/audit
+predicate. Foreground tooling reexports the same contracts and adapts only the
+remote transport; the canonical gate shares the same provenance predicate.
+There is no duplicated ledger, dynamic import bypass or relaxed boundary policy.
+The canonical boundary inventory is regenerated. Final-head lint/declared
+verification receipts and independent exact-head review/CI must precede use;
+offline source verification still is not activation or deployment evidence.
+
+PR1445 deployment/inventory, admission, IAM and
+finite-role gates remain intact. Independent review is required before use; the
+background worker creates no live account or secrets. Parsing/staging a bundle
+is not standing-binding activation or deployment proof.
+
 ## 6. Operator / coordinator handoff
 
 **Changed release interface**
 
 - `deploy-dev.yml` adds the build-phase input `release_profile` (`full` |
   `dev-admin`, default `full`), the admission job output `release_profile`,
-  and the deploy job env `ODP_RELEASE_PROFILE`, which comes from admission
-  only. The Cloud Run deploy step reads `vars.ODP_DEV_ADMIN_USERNAME`,
+  and the deploy job env `ODP_RELEASE_PROFILE`, which comes from the manual or
+  automatic admission output only. The Cloud Run deploy step reads `vars.ODP_DEV_ADMIN_USERNAME`,
   `secrets.ODP_DEV_ADMIN_PASSWORD`, optional `secrets.ODP_DEV_ADMIN_INITIAL_PASSWORD`,
-  and `vars.ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE`.
+  and `vars.ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE`. Optional dev-only secret
+  `ODP_DEV_ADMIN_CREDENTIAL_BUNDLE` replaces the matched pair and suppresses every
+  old initial/bootstrap fallback when present (§5.7); malformed bundles refuse
+  before mutation. It is injected only for dev with the same effective admitted
+  `dev-admin` profile (manual or automatic). It is consumed, never provisioned,
+  by the workflow; provisioning is the foreground post-accepted-deploy path.
 - `build_release_handoff.py --release-profile`. Its GitHub output adds
   `release_profile`.
 - `check_release_phase.py --release-profile` (default `full`) in the

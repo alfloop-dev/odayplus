@@ -65,8 +65,12 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
 // resolves the same durable session itself and answers 401 WEB_SESSION_REQUIRED
 // for an absent, expired or revoked session. Redirecting it to /login would turn
 // that denial into a 200 login page and hide revocation from API callers.
+// /auth/invitations is capability consumption, not login: its own bounded
+// handler enforces same-origin POST and accepts only an admin-issued token.
+// Running session middleware here would redirect unauthenticated invitees and
+// mutate the issuer's existing cookie. All other auth/pages stay gated.
 export const config = {
   matcher: [
-    "/((?!api/v1(?:/|$)|avm(?:/|$)|login(?:/|$)|auth/callback(?:/|$)|auth/logout(?:/|$)|auth/session(?:/|$)|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
+    "/((?!api/v1(?:/|$)|avm(?:/|$)|login(?:/|$)|auth/callback(?:/|$)|auth/logout(?:/|$)|auth/session(?:/|$)|auth/invitations$|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
   ],
 };
