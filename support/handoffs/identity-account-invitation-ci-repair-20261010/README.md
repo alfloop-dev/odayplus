@@ -2,6 +2,15 @@
 
 Owner: Pi · Reviewer: Codex2 · PR: [#1447](https://github.com/alfloop-dev/odayplus/pull/1447)
 
+**Current checkpoint (2026-10-10):** base `d99de4a05ef5` is composed with
+preserved history; the lifecycle repair is implemented on source anchor
+`c29f9c46524c`. Focused verification passes, including actual Web/Pg/API auth.
+Submit the new head for independent Codex2 review and required remote CI;
+**no merge, live provisioning, or deployment acceptance is claimed.** The older
+"not ready" paragraphs below describe prior increments, not this checkpoint.
+The optional broader release-binding run hit a missing local PyNaCl dependency;
+its failure and unavailable project runner are disclosed in the final section.
+
 ## Failure and bounded repair
 
 [CI run 38029501236](https://github.com/alfloop-dev/odayplus/actions/runs/38029501236)
@@ -124,3 +133,124 @@ use one acceptance authority and no conflicting route mounts. Required work:
 Do not infer lifecycle safety from this UI increment or green CI. No live
 credential custody, role mutations, provisioning, or deployment acceptance is
 part of this worker's execution.
+
+## Independently merged base and lifecycle repair (2026-10-10)
+
+GitHub confirmed PR #1448 merged at `2026-10-10T14:00:26Z`; `origin/dev` is
+`d99de4a05ef58340247470ab213089b8706543c7`. Merge anchor `d891af7c7749`
+has parents `81b1b05599ce` and that base. Router conflicts retain both the fixed
+release invitation endpoint and this task's general endpoint; generated contract
+conflicts were resolved by exporting the composed schema. No task commit was
+reset, rebased, discarded or overwritten. Anchors `40850238dc1a`, `5966b2200eca`
+and `c29f9c46524c` make the following repair durable:
+
+- Removed both immediate-account/password-as-token implementations, including
+  the document-store fake credential fallback. Issuance creates only a pending
+  `identity.invitations` row, never an account, password credential or session.
+- `InvitationService.issue_account` extends the same PostgreSQL transaction,
+  durable audit and acceptance budget authority with a versioned, validated
+  username/display-name/roles/scope preset. Tenant comes from the verified
+  issuer, whose persisted admin role, active account, rotated password and
+  unrevoked/unexpired session are rechecked under the administration lock.
+- Token is independent `secrets.token_urlsafe(32)` entropy, returned once with
+  ID/expiry and persisted only as its hash. No issuance password is accepted.
+  Pending username/email collisions are case-insensitive. A pure release invite
+  cannot consume a pending general invitation's reserved username.
+- Existing capability acceptance checks expiry, revocation and single use under
+  the write lock, including after expensive hashing. General acceptance binds
+  the issuer-selected username, roles and full scope; creates Argon2id credentials
+  with `must_change=true`; and consumes capability plus audit in one transaction.
+  Pure-admin release presets remain unchanged (`must_change=false`); legacy or
+  malformed presets still fail closed rather than silently dropping grants.
+- POST `/api/v1/operator/users/invite` (and `/create` alias) now returns **201**
+  with `{status, invitation_id, tenant_id, expires_at, audit_event_id, token}`.
+  It uses bounded manual validation/static errors and `cache-control: no-store`.
+  Caller actor fields, passwords and unknown fields are refused without echo.
+  These endpoints are additive against `origin/dev`, not an approved breaking
+  change to mainline. Regenerated OpenAPI and client match this exact contract.
+- Admin UI hands off the submitted login name separately from the invitation ID,
+  token and expiry, never a manufactured active user or password. Clipboard
+  completion/failure/manual-copy/late-completion behavior is preserved. The
+  token lives only in component memory and is cleared on close/unmount.
+- GET `/auth/invitations` adds manual private entry on the existing bounded Web
+  adapter. No query prefill, browser storage, session creation or token URL is
+  used. It has no-store/no-referrer/CSP; success clears the form. POST remains the
+  existing capability adapter; after acceptance, use the existing login and
+  password-change flow, not a second authentication authority.
+
+### Verified source and terminal receipts
+
+The following completed synchronously on source `c29f9c46524c` with **exit 0**:
+
+```sh
+.venv/bin/python -m pytest -m 'not requires_live_env' \
+  tests/contract/test_openapi_artifact_and_client.py \
+  tests/identity/test_identity_user_role_management.py \
+  tests/security/test_user_role_management.py \
+  tests/security/test_dev_smoke_invitation.py
+npm test --workspace=@oday-plus/web -- \
+  features/operator/__tests__/UserRoleManagementController.test.tsx \
+  src/app/auth/invitations/__tests__/route.test.ts \
+  src/lib/auth/__tests__/password.test.ts \
+  src/lib/auth/__tests__/login.test.ts \
+  src/lib/auth/__tests__/localAuth.test.ts
+npm run typecheck --workspace=@oday-plus/web
+.venv/bin/python -m ruff check \
+  apps/api/app/routes/operator_modules/users_roles.py \
+  modules/opsboard/application/identity_user_role_management.py \
+  modules/opsboard/application/user_role_management.py \
+  shared/identity/invitation_service.py \
+  tests/identity/test_identity_user_role_management.py \
+  tests/security/test_user_role_management.py \
+  tests/security/test_dev_smoke_invitation.py
+.venv/bin/python delivery_toolchain/governance/check_code_boundaries.py
+.venv/bin/python delivery_toolchain/openapi/check_drift.py --base-ref origin/dev
+git diff --check
+```
+
+- Focused Python/contract: **108 passed**, 8 deprecation warnings, 160.51 seconds.
+- Web: **81 passed, 1 skipped**; the skipped case requires the disposable Pg
+  fixture and is executed (not skipped) by the Python acceptance regression.
+- That regression invokes the existing password-route Vitest fixture with real
+  PostgreSQL identity, session and throttle stores, using finite subprocess
+  timeouts and asserting every terminal exit. It proves expired/revoked
+  capabilities cannot log in/reset; actual API acceptance creates the account;
+  `/login` verifies the accepted password and persists a real Web bearer;
+  the existing API boundary returns `PASSWORD_CHANGE_REQUIRED`; actual
+  `/auth/password` verifies and rotates the credential/sessions; the old Web
+  bearer is refused and the rotated bearer has only its authorized business
+  role (no user administration). There is no manually minted recipient JWT or
+  direct SQL password rotation standing in for the tested path.
+- General tests cover hash-only custody, full role/scope persistence, issuer name
+  binding, malformed/foreign presets, pending/active duplicates, pure-release
+  isolation, expiry after hashing, replay and atomic audit-failure rollback.
+- Lint, Web typecheck, boundary inventory (1220 files) and contract freshness pass;
+  drift is **2 additive, 0 unapproved breaking**.
+
+The first auth-fixture runs failed on happy-dom's forbidden Origin header and
+constructor-time cookie parsing (403, then 401). Using the existing route-test
+patterns (explicit Origin and request.cookies.set) repaired the fixture; no
+production auth, CSRF, session or gate policy was weakened. The dedicated real
+Web/Pg/API regression then completed with exit 0, before the integrated rerun.
+
+### Broader optional release-binding verification limitation
+
+The combined focused command above **plus**
+`tests/integration/test_dev_smoke_provisioning.py` completed with **exit 1**:
+**437 passed, 59 setup errors**, 432.92 seconds. All setup errors were missing
+`nacl` in the inherited local `.venv` at the encrypted-binding fixture. PyNaCl is
+already declared by the independently merged base's `pyproject.toml`/`uv.lock`.
+No release-binding assertion failure was observed, but this run is **not a
+passing integrated-release receipt**. No tests were skipped or weakened to hide
+it. The isolated task-focused command was subsequently rerun to establish the
+passing terminal receipt above, not to count tests.
+
+The permitted project recovery runner is unavailable here: `uv run pytest
+--version` exited 127; `python3 -m uv --version` and `.venv/bin/python -m uv
+--version` exited 1 (module absent). No host-wide tool search, ad-hoc dependency
+installation, dependency/lockfile edit, or blind CI retry was attempted.
+Required remote CI must exercise the exact submitted head with declared
+dependencies; Codex2 must independently approve before any merge or `done`.
+The next commit records evidence only, not another source change. This worker
+performed no live identity mutations, credential binding, release admission or
+deployment changes and did not alter the dev-admin gate relative to the base.
