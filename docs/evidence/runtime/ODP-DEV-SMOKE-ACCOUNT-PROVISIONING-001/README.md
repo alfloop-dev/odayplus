@@ -57,6 +57,13 @@ install or host-wide scan occurred.
 | `pnpm --dir apps/web exec vitest run src/app/auth/invitations/__tests__/route.test.ts` | 0 | 2.701s | `4824b8a1e1963f4f` |
 | `pnpm --dir apps/web typecheck` | 0 | 7.386s | `e75033f6fd248898` |
 
+`task_finalize.sh --dry-run` at `f0d01dced276` exited **1**: the new Alembic
+revision was missing from the canonical boundary inventory. The prescribed
+`check_code_boundaries.py --write-inventory` then exited **0**, classified 1220
+files, and added only revision0022 as product-operations tooling. The inventory
+is committed before the fresh final-head declarations; no boundary waiver or
+full-suite escalation was used.
+
 No live login/account/secret/configuration/IAM/traffic/source/model action was
 performed. Required exact-head CI, independent Codex approval, merge and the
 trusted foreground rollout remain prerequisites. Offline passes do not establish
