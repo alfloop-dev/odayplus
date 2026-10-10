@@ -1,0 +1,39 @@
+{
+  "evidenceMode": "mocked-read-projection-no-provisioning-or-writes",
+  "record": {
+    "id": "IN-SLA-UI-FIXTURE",
+    "sourceId": "fixture-source",
+    "originalUrl": "https://fixture.invalid/sla",
+    "canonicalUrl": "https://fixture.invalid/sla",
+    "stage": "NEEDS_REVIEW",
+    "policy": "APPROVED_RETRIEVAL",
+    "policyLabel": "Explicit SLA read fixture",
+    "policyReason": "No provisioning or policy proof",
+    "rawSnapshot": null,
+    "snapshotId": null,
+    "parserVersion": null,
+    "auditEvents": [],
+    "capturedAt": null,
+    "submitter": "Fixture submitter",
+    "owner": "Fixture owner",
+    "heatZoneId": "HZ-01",
+    "version": 71,
+    "assignmentId": null,
+    "assignmentStatus": null,
+    "slaInstanceId": null,
+    "matchResult": null,
+    "parsedFields": {},
+    "slaState": "OVERDUE",
+    "slaDueAt": "2026-10-10T03:02:05.115Z"
+  },
+  "geometry": {
+    "documentWidth": 1440,
+    "documentScrollWidth": 1440,
+    "x": 160,
+    "width": 1120,
+    "height": 249.4375,
+    "scrollWidth": 1118,
+    "fontSize": "13px",
+    "text": "指派與 SLA 狀態 (ASSIGNMENT & SLA SUMMARY)目前 Owner / 負責人Fixture owner佇列：UNAVAILABLEAssignment ID：UNAVAILABLEAssignment Status：UNAVAILABLESLA 處理狀態‼已逾期 (Overdue)[‼ OVERDUE]到期時間：2026/10/10 上午3:02:05SLA Instance ID：UNAVAILABLEASSIGNMENT ACTIONS: UNAVAILABLE — 後端未提供可操作的 assignment ID 與狀態。SLA ACTIONS: UNAVAILABLE — 後端未提供可操作的 SLA instance ID 與明確狀態。RESOURCE_VERSION_UNAVAILABLE — assignment resource version 未由權威收據或 read model 提供。RESOURCE_VERSION_UNAVAILABLE — SLA resource version 未由權威收據或 read model 提供。"
+  }
+}

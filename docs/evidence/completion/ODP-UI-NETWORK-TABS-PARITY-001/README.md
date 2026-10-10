@@ -38,6 +38,19 @@ IDs/versions: Transfer/Pause product modal/state pairs remain unavailable, not
 mocked or falsely approved. Promotion/Review Decision/all-tab/VDC scope remains
 open; **not ready for review resubmission**.
 
+## Authoritative SLA summary increment
+
+[sla-status/README.md](sla-status/README.md) records anchors `ac8d3bfc3b85` /
+`b8d6b7d3c0ae`: exact server SLA state instead of browser-clock/legacy-flag
+overrides, terminal COMPLETED and invalid/missing deadline handling. Thirty
+1440/390 reference/before/after state PNGs and 14 clear scoped AA scans use
+**explicit mocked reads**, not SLA provisioning or mutation proof. A separate
+actual local Intake unavailable-resource regression retains four screenshots
+and zero resource writes. Final focused 73/full Web 833, typecheck/lint,
+boundaries/inventory passed; original failed unit receipts are retained.
+Real Operator-to-v1 association/SLA provisioning and successful Transfer/Pause
+UI writes/reload remain unresolved; **increment only, not ready for submission**.
+
 ## History-preserving base advance
 
 - Resumed clean task branch at `8e5183f47e3a`.

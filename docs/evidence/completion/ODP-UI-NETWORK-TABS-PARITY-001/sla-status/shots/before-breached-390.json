@@ -1,0 +1,39 @@
+{
+  "evidenceMode": "mocked-read-projection-no-provisioning-or-writes",
+  "record": {
+    "id": "IN-SLA-UI-FIXTURE",
+    "sourceId": "fixture-source",
+    "originalUrl": "https://fixture.invalid/sla",
+    "canonicalUrl": "https://fixture.invalid/sla",
+    "stage": "NEEDS_REVIEW",
+    "policy": "APPROVED_RETRIEVAL",
+    "policyLabel": "Explicit SLA read fixture",
+    "policyReason": "No provisioning or policy proof",
+    "rawSnapshot": null,
+    "snapshotId": null,
+    "parserVersion": null,
+    "auditEvents": [],
+    "capturedAt": null,
+    "submitter": "Fixture submitter",
+    "owner": "Fixture owner",
+    "heatZoneId": "HZ-01",
+    "version": 71,
+    "assignmentId": null,
+    "assignmentStatus": null,
+    "slaInstanceId": null,
+    "matchResult": null,
+    "parsedFields": {},
+    "slaState": "BREACHED",
+    "slaDueAt": "2026-10-10T03:00:15.959Z"
+  },
+  "geometry": {
+    "documentWidth": 390,
+    "documentScrollWidth": 390,
+    "x": 22,
+    "width": 346,
+    "height": 417,
+    "scrollWidth": 344,
+    "fontSize": "13px",
+    "text": "指派與 SLA 狀態 (ASSIGNMENT & SLA SUMMARY)目前 Owner / 負責人Fixture owner佇列：UNAVAILABLEAssignment ID：UNAVAILABLEAssignment Status：UNAVAILABLESLA 處理狀態🔥違約 (Breached)[🔥 BREACHED]到期時間：2026/10/10 上午3:00:15SLA Instance ID：UNAVAILABLEASSIGNMENT ACTIONS: UNAVAILABLE — 後端未提供可操作的 assignment ID 與狀態。SLA ACTIONS: UNAVAILABLE — 後端未提供可操作的 SLA instance ID 與明確狀態。RESOURCE_VERSION_UNAVAILABLE — assignment resource version 未由權威收據或 read model 提供。RESOURCE_VERSION_UNAVAILABLE — SLA resource version 未由權威收據或 read model 提供。"
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "evidenceMode": "mocked-read-projection",
+  "writes": []
+}

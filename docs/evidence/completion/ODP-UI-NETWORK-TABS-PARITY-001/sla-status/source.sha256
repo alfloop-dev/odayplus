@@ -1,0 +1,12 @@
+baseline-summary ac8d3bfc3b85
+92735d85794c89e7d0452e0437d23ebd1143990c9116ff62001cd804b5dcd032  -
+
+final-product-and-harness
+f5aadd9c2b6365b777c2f7178c5d95db21ce3f657c1d6d326c531b8e3f874809  apps/web/features/operator/network/intake/AssignmentSlaSummary.tsx
+74c7cb7b7bc3f1bbabc4a28ee1120fe9675d6dfbbcf94d7ebe9467656d2fd254  apps/web/features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx
+6cb6cf47e62aad94f66735b0897ae7881cdd054d66b1239f0e20757f477a9fa4  tests/visual/operator-sla-status-parity.spec.ts
+b730e3ae0e1bce5dd5ea7b9d0550ca52f2e6584dd6028ad73c53df8de673d30c  tests/visual/operator-network-tabs-parity.config.ts
+8871f50d52eaafcc6f3c29fcbe41e286f4e3fe83ae40d1506462564d8f965e5d  tests/visual/operator-assignment-authority-parity.spec.ts
+
+canonical-source-ref
+10eb6224fa31010fbf3c6f27612ca7d17ba4401e

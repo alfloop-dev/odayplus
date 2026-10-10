@@ -1,0 +1,229 @@
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx (34 tests | 20 failed) 308ms
+       × preserves authoritative ON_TRACK independently of browser time, deadlines and legacy flags 16ms
+       × preserves authoritative DUE_SOON independently of browser time, deadlines and legacy flags 2ms
+       × preserves authoritative OVERDUE independently of browser time, deadlines and legacy flags 1ms
+       × preserves authoritative BREACHED independently of browser time, deadlines and legacy flags 1ms
+       ✓ preserves authoritative PAUSED independently of browser time, deadlines and legacy flags 1ms
+       × preserves authoritative COMPLETED independently of browser time, deadlines and legacy flags 1ms
+       × does not derive a state from deadlines or flags when authority is undefined 2ms
+       × does not derive a state from deadlines or flags when authority is null 1ms
+       × does not derive a state from deadlines or flags when authority is  2ms
+       × does not derive a state from deadlines or flags when authority is UNKNOWN 2ms
+       × does not derive a state from deadlines or flags when authority is toString 1ms
+       × does not derive a state from deadlines or flags when authority is __proto__ 1ms
+       × does not derive a state from deadlines or flags when authority is on_track 1ms
+       × shows an unavailable due time for undefined 18ms
+       × shows an unavailable due time for  6ms
+       × shows an unavailable due time for invalid 5ms
+       × does not offer Pause for BREACHED even with a callback 5ms
+       × does not offer Pause for COMPLETED even with a callback 7ms
+       × does not offer Pause for UNKNOWN even with a callback 5ms
+       × does not offer Pause for null even with a callback 4ms
+       × verifies SLA text plus icon/pattern mapping for WCAG AA compliance 2ms
+       ✓ renders assignment and SLA summary with action buttons 3ms
+     ✓ transfer displays only resource authority and disables missing tokens 14ms
+     ✓ pause displays only resource authority and disables missing tokens 11ms
+       ✓ renders target selection and handoff note ONLY per VDC-001 3ms
+       ✓ preserves transfer draft inputs across a 409 OWNER_CONFLICT refresh and exposes current owner/version upon completion 4ms
+       ✓ submits with refreshed record.version (If-Match header) after 409 conflict refresh 3ms
+       ✓ renders reason and required editable resume time ONLY per VDC-001 with initial BLANK resume time 3ms
+       ✓ preserves pause SLA draft inputs across a 409 OWNER_CONFLICT refresh and exposes current owner/version upon completion 3ms
+       ✓ submits pause with refreshed record.version (If-Match header) after 409 conflict refresh 1ms
+       ✓ renders authoritative AssignmentReceipt data in DurableReceiptPanel and versioned audit timeline UI 40ms
+       ✓ renders authoritative SlaReceipt data in DurableReceiptPanel and versioned audit timeline UI 22ms
+       ✓ proves TransferIntakeDialog retains draft state during 409 conflict refresh on a mounted component and resubmits with refreshed version 89ms
+       ✓ proves PauseSlaDialog retains draft state during 409 conflict refresh on a mounted component and resubmits with refreshed version 23ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 20 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > preserves authoritative ON_TRACK independently of browser time, deadlines and legacy flags
+AssertionError: expected 'PAUSED' to be 'ON_TRACK' // Object.is equality
+
+Expected: "ON_TRACK"
+Received: "PAUSED"
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:74:22
+     72|           expect(computeSlaState({
+     73|             ...sampleIntakeRecord, slaState, dueAt, isBreached: true, …
+     74|           } as any)).toBe(slaState);
+       |                      ^
+     75|         }
+     76|       },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/20]⎯
+
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > preserves authoritative DUE_SOON independently of browser time, deadlines and legacy flags
+AssertionError: expected 'PAUSED' to be 'DUE_SOON' // Object.is equality
+
+Expected: "DUE_SOON"
+Received: "PAUSED"
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:74:22
+     72|           expect(computeSlaState({
+     73|             ...sampleIntakeRecord, slaState, dueAt, isBreached: true, …
+     74|           } as any)).toBe(slaState);
+       |                      ^
+     75|         }
+     76|       },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/20]⎯
+
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > preserves authoritative OVERDUE independently of browser time, deadlines and legacy flags
+AssertionError: expected 'PAUSED' to be 'OVERDUE' // Object.is equality
+
+Expected: "OVERDUE"
+Received: "PAUSED"
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:74:22
+     72|           expect(computeSlaState({
+     73|             ...sampleIntakeRecord, slaState, dueAt, isBreached: true, …
+     74|           } as any)).toBe(slaState);
+       |                      ^
+     75|         }
+     76|       },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/20]⎯
+
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > preserves authoritative BREACHED independently of browser time, deadlines and legacy flags
+AssertionError: expected 'PAUSED' to be 'BREACHED' // Object.is equality
+
+Expected: "BREACHED"
+Received: "PAUSED"
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:74:22
+     72|           expect(computeSlaState({
+     73|             ...sampleIntakeRecord, slaState, dueAt, isBreached: true, …
+     74|           } as any)).toBe(slaState);
+       |                      ^
+     75|         }
+     76|       },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/20]⎯
+
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > preserves authoritative COMPLETED independently of browser time, deadlines and legacy flags
+AssertionError: expected 'PAUSED' to be 'COMPLETED' // Object.is equality
+
+Expected: "COMPLETED"
+Received: "PAUSED"
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:74:22
+     72|           expect(computeSlaState({
+     73|             ...sampleIntakeRecord, slaState, dueAt, isBreached: true, …
+     74|           } as any)).toBe(slaState);
+       |                      ^
+     75|         }
+     76|       },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/20]⎯
+
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > does not derive a state from deadlines or flags when authority is undefined
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > does not derive a state from deadlines or flags when authority is null
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > does not derive a state from deadlines or flags when authority is 
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > does not derive a state from deadlines or flags when authority is UNKNOWN
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > does not derive a state from deadlines or flags when authority is toString
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > does not derive a state from deadlines or flags when authority is __proto__
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > does not derive a state from deadlines or flags when authority is on_track
+AssertionError: expected 'PAUSED' to be 'UNAVAILABLE' // Object.is equality
+
+Expected: "UNAVAILABLE"
+Received: "PAUSED"
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:85:22
+     83|           expect(computeSlaState({
+     84|             ...sampleIntakeRecord, slaState, dueAt, isBreached: true, …
+     85|           } as any)).toBe("UNAVAILABLE");
+       |                      ^
+     86|         }
+     87|       },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/20]⎯
+
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > shows an unavailable due time for undefined
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > shows an unavailable due time for 
+AssertionError: expected '<div class="_sectionBox_eb8a11 _assig…' to contain '到期時間：UNAVAILABLE'
+
+Expected: "到期時間：UNAVAILABLE"
+Received: "<div class="_sectionBox_eb8a11 _assignmentSummary_eb8a11 " data-testid="assignment-sla-summary"><div class="_sectionHead_eb8a11">指派與 SLA 狀態 (ASSIGNMENT &amp; SLA SUMMARY)</div><div class="_assignmentCards_eb8a11"><div class="_assignmentCard_eb8a11"><div style="font-size:11px;color:#64748b;font-weight:600">目前 Owner / 負責人</div><div style="font-size:14px;font-weight:700;margin-top:2px" data-testid="asg-owner">許庭瑜（展店）</div><div style="font-size:10.5px;color:#475569">佇列：<!-- -->UNAVAILABLE</div><div style="font-size:10.5px;color:#475569">Assignment ID：<!-- -->ASG-TEST-001</div><div style="font-size:10.5px;color:#475569">Assignment Status：<!-- -->ASSIGNED</div></div><div class="_assignmentCard_eb8a11"><div style="font-size:11px;color:#64748b;font-weight:600">SLA 處理狀態</div><div style="font-size:14px;font-weight:700;margin-top:2px;display:flex;align-items:center;gap:6px" data-testid="asg-sla-status"><span style="font-size:16px" aria-hidden="true">✓</span><span>正常 (On Track)</span><span style="font-size:10px;padding:1px 4px;background:#e2e8f0;border-radius:3px;font-family:monospace">[✓ ON TRACK]</span></div><div style="font-size:10.5px;color:#475569">到期時間：<!-- -->UNAVAILABLE</div><div style="font-size:10.5px;color:#475569">SLA Instance ID：<!-- -->SLA-TEST-001</div></div></div><div class="_emptyState_eb8a11" data-testid="assignment-resource-version-unavailable" role="status">RESOURCE_VERSION_UNAVAILABLE — assignment resource version 未由權威收據或 read model 提供。</div><div class="_emptyState_eb8a11" data-testid="sla-resource-version-unavailable" role="status">RESOURCE_VERSION_UNAVAILABLE — SLA resource version 未由權威收據或 read model 提供。</div><div class="_assignmentActions_eb8a11"></div></div>"
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:92:20
+     90|     it.each([undefined, "", "invalid"])("shows an unavailable due time…
+     91|       const html = renderToString(<AssignmentSlaSummary record={{ ...s…
+     92|       expect(html).toContain("到期時間：UNAVAILABLE");
+       |                    ^
+     93|       expect(html).not.toContain("Invalid Date");
+     94|       expect(html).toContain("[✓ ON TRACK]");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/20]⎯
+
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > shows an unavailable due time for invalid
+AssertionError: expected '<div class="_sectionBox_eb8a11 _assig…' to contain '到期時間：UNAVAILABLE'
+
+Expected: "到期時間：UNAVAILABLE"
+Received: "<div class="_sectionBox_eb8a11 _assignmentSummary_eb8a11 " data-testid="assignment-sla-summary"><div class="_sectionHead_eb8a11">指派與 SLA 狀態 (ASSIGNMENT &amp; SLA SUMMARY)</div><div class="_assignmentCards_eb8a11"><div class="_assignmentCard_eb8a11"><div style="font-size:11px;color:#64748b;font-weight:600">目前 Owner / 負責人</div><div style="font-size:14px;font-weight:700;margin-top:2px" data-testid="asg-owner">許庭瑜（展店）</div><div style="font-size:10.5px;color:#475569">佇列：<!-- -->UNAVAILABLE</div><div style="font-size:10.5px;color:#475569">Assignment ID：<!-- -->ASG-TEST-001</div><div style="font-size:10.5px;color:#475569">Assignment Status：<!-- -->ASSIGNED</div></div><div class="_assignmentCard_eb8a11"><div style="font-size:11px;color:#64748b;font-weight:600">SLA 處理狀態</div><div style="font-size:14px;font-weight:700;margin-top:2px;display:flex;align-items:center;gap:6px" data-testid="asg-sla-status"><span style="font-size:16px" aria-hidden="true">✓</span><span>正常 (On Track)</span><span style="font-size:10px;padding:1px 4px;background:#e2e8f0;border-radius:3px;font-family:monospace">[✓ ON TRACK]</span></div><div style="font-size:10.5px;color:#475569">到期時間：<!-- -->Invalid Date</div><div style="font-size:10.5px;color:#475569">SLA Instance ID：<!-- -->SLA-TEST-001</div></div></div><div class="_emptyState_eb8a11" data-testid="assignment-resource-version-unavailable" role="status">RESOURCE_VERSION_UNAVAILABLE — assignment resource version 未由權威收據或 read model 提供。</div><div class="_emptyState_eb8a11" data-testid="sla-resource-version-unavailable" role="status">RESOURCE_VERSION_UNAVAILABLE — SLA resource version 未由權威收據或 read model 提供。</div><div class="_assignmentActions_eb8a11"></div></div>"
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:92:20
+     90|     it.each([undefined, "", "invalid"])("shows an unavailable due time…
+     91|       const html = renderToString(<AssignmentSlaSummary record={{ ...s…
+     92|       expect(html).toContain("到期時間：UNAVAILABLE");
+       |                    ^
+     93|       expect(html).not.toContain("Invalid Date");
+     94|       expect(html).toContain("[✓ ON TRACK]");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/20]⎯
+
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > does not offer Pause for BREACHED even with a callback
+AssertionError: expected '<div class="_sectionBox_eb8a11 _assig…' not to contain 'asg-btn-pause'
+
+Expected: "asg-btn-pause"
+Received: "<div class="_sectionBox_eb8a11 _assignmentSummary_eb8a11 " data-testid="assignment-sla-summary"><div class="_sectionHead_eb8a11">指派與 SLA 狀態 (ASSIGNMENT &amp; SLA SUMMARY)</div><div class="_assignmentCards_eb8a11"><div class="_assignmentCard_eb8a11"><div style="font-size:11px;color:#64748b;font-weight:600">目前 Owner / 負責人</div><div style="font-size:14px;font-weight:700;margin-top:2px" data-testid="asg-owner">許庭瑜（展店）</div><div style="font-size:10.5px;color:#475569">佇列：<!-- -->UNAVAILABLE</div><div style="font-size:10.5px;color:#475569">Assignment ID：<!-- -->ASG-TEST-001</div><div style="font-size:10.5px;color:#475569">Assignment Status：<!-- -->ASSIGNED</div></div><div class="_assignmentCard_eb8a11"><div style="font-size:11px;color:#64748b;font-weight:600">SLA 處理狀態</div><div style="font-size:14px;font-weight:700;margin-top:2px;display:flex;align-items:center;gap:6px" data-testid="asg-sla-status"><span style="font-size:16px" aria-hidden="true">🔥</span><span>違約 (Breached)</span><span style="font-size:10px;padding:1px 4px;background:#e2e8f0;border-radius:3px;font-family:monospace">[🔥 BREACHED]</span></div><div style="font-size:10.5px;color:#475569">到期時間：<!-- -->UNAVAILABLE</div><div style="font-size:10.5px;color:#475569">SLA Instance ID：<!-- -->SLA-TEST-001</div></div></div><div class="_emptyState_eb8a11" data-testid="assignment-resource-version-unavailable" role="status">RESOURCE_VERSION_UNAVAILABLE — assignment resource version 未由權威收據或 read model 提供。</div><div class="_emptyState_eb8a11" data-testid="sla-resource-version-unavailable" role="status">RESOURCE_VERSION_UNAVAILABLE — SLA resource version 未由權威收據或 read model 提供。</div><div class="_assignmentActions_eb8a11"><button class="_secondaryButton_eb8a11" data-testid="asg-btn-pause" type="button">暫停 SLA (Pause)</button></div></div>"
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:101:24
+     99|         record={{ ...sampleIntakeRecord, slaState }} onOpenPause={vi.f…
+    100|       />);
+    101|       expect(html).not.toContain("asg-btn-pause");
+       |                        ^
+    102|       expect(html).not.toContain("asg-btn-resume");
+    103|       if (slaState === "COMPLETED") {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/20]⎯
+
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > does not offer Pause for COMPLETED even with a callback
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > does not offer Pause for UNKNOWN even with a callback
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > does not offer Pause for null even with a callback
+AssertionError: expected '<div class="_sectionBox_eb8a11 _assig…' not to contain 'asg-btn-pause'
+
+Expected: "asg-btn-pause"
+Received: "<div class="_sectionBox_eb8a11 _assignmentSummary_eb8a11 " data-testid="assignment-sla-summary"><div class="_sectionHead_eb8a11">指派與 SLA 狀態 (ASSIGNMENT &amp; SLA SUMMARY)</div><div class="_assignmentCards_eb8a11"><div class="_assignmentCard_eb8a11"><div style="font-size:11px;color:#64748b;font-weight:600">目前 Owner / 負責人</div><div style="font-size:14px;font-weight:700;margin-top:2px" data-testid="asg-owner">許庭瑜（展店）</div><div style="font-size:10.5px;color:#475569">佇列：<!-- -->UNAVAILABLE</div><div style="font-size:10.5px;color:#475569">Assignment ID：<!-- -->ASG-TEST-001</div><div style="font-size:10.5px;color:#475569">Assignment Status：<!-- -->ASSIGNED</div></div><div class="_assignmentCard_eb8a11"><div style="font-size:11px;color:#64748b;font-weight:600">SLA 處理狀態</div><div style="font-size:14px;font-weight:700;margin-top:2px;display:flex;align-items:center;gap:6px" data-testid="asg-sla-status"><span style="font-size:16px" aria-hidden="true">?</span><span>UNAVAILABLE</span><span style="font-size:10px;padding:1px 4px;background:#e2e8f0;border-radius:3px;font-family:monospace">[? UNAVAILABLE]</span></div><div style="font-size:10.5px;color:#475569">到期時間：<!-- -->UNAVAILABLE</div><div style="font-size:10.5px;color:#475569">SLA Instance ID：<!-- -->SLA-TEST-001</div></div></div><div class="_emptyState_eb8a11" data-testid="sla-action-unavailable" role="status">SLA ACTIONS: UNAVAILABLE — 後端未提供可操作的 SLA instance ID 與明確狀態。</div><div class="_emptyState_eb8a11" data-testid="assignment-resource-version-unavailable" role="status">RESOURCE_VERSION_UNAVAILABLE — assignment resource version 未由權威收據或 read model 提供。</div><div class="_emptyState_eb8a11" data-testid="sla-resource-version-unavailable" role="status">RESOURCE_VERSION_UNAVAILABLE — SLA resource version 未由權威收據或 read model 提供。</div><div class="_assignmentActions_eb8a11"><button class="_secondaryButton_eb8a11" data-testid="asg-btn-pause" type="button">暫停 SLA (Pause)</button></div></div>"
+
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:101:24
+     99|         record={{ ...sampleIntakeRecord, slaState }} onOpenPause={vi.f…
+    100|       />);
+    101|       expect(html).not.toContain("asg-btn-pause");
+       |                        ^
+    102|       expect(html).not.toContain("asg-btn-resume");
+    103|       if (slaState === "COMPLETED") {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/20]⎯
+
+ FAIL  features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx > Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001) > AssignmentSlaSummary Component & SLA Logic > verifies SLA text plus icon/pattern mapping for WCAG AA compliance
+TypeError: Cannot read properties of undefined (reading 'pattern')
+ ❯ features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx:115:38
+    113|       expect(SLA_STATE_MAP.BREACHED.pattern).toBe("[🔥 BREACHED]");
+    114|       expect(SLA_STATE_MAP.PAUSED.pattern).toBe("[⏸ PAUSED]");
+    115|       expect(SLA_STATE_MAP.COMPLETED.pattern).toBe("[✓ COMPLETED]");
+       |                                      ^
+    116|
+    117|       expect(SLA_STATE_MAP.ON_TRACK.icon).toBe("✓");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/20]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  20 failed | 14 passed (34)
+   Start at  01:28:53
+   Duration  1.93s (transform 765ms, setup 0ms, import 980ms, tests 308ms, environment 418ms)
+
+JUNIT report written to /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/docs/evidence/completion/ODP-UI-NETWORK-TABS-PARITY-001/sla-status/before-unit.xml
