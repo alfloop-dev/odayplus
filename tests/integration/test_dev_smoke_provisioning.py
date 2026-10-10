@@ -308,6 +308,7 @@ def test_full_runtime_mounts_admin_issue_and_pg_capability_acceptance(invitation
     from shared.infrastructure.persistence.factory import build_persistence
 
     s = invitations
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     bundle = replace(build_persistence(mode="memory"), engine=s.engine,
                      identity_store=s.identity, session_service=s.sessions)
     # Real canonical boundary and PG session resolver, not a fabricated
@@ -350,7 +351,9 @@ def test_runtime_contract_is_exported_with_exact_invitation_paths_and_client(mon
     monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
     schema = build_schema()
     assert ARTIFACT_PATH.read_text() == serialize(schema)
-    assert OUTPUT_PATH.read_text() == render(schema)
+    # The generator reads the deterministically sorted serialized artifact;
+    # component property order in the in-memory FastAPI schema is different.
+    assert OUTPUT_PATH.read_text() == render(json.loads(serialize(schema)))
     expected = {PATH, f"{PATH}/{{invitation_id}}/revoke", ACCEPT}
     actual = {path for path in schema["paths"] if "/invitations" in path}
     assert actual == expected

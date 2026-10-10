@@ -253,3 +253,24 @@ provenance in the unchanged finite gate, updated canonical release profile,
 exact-head required CI and independent Codex approval remain outstanding.
 No live credentials, account creation, secret binding, IAM changes or deploy
 were performed. Source activation is not successful deployment or acceptance.
+
+### First routing-anchor verification
+
+Canonical runner at exact `380487b0217743fb8ebdd9af339e97d3d7738ad8` completed
+all five declared commands (terminal exit 1 overall, no timeout/background job):
+
+| Declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| Diffcheck | 0 | 0.017s | `4065a57bcfbb419a` |
+| Invitation/provisioning/workflow pytest | 1 | 82.667s | `329f1e2599804014` |
+| Existing gate/operator pytest | 0 | 45.308s | `085c0233135cedaa` |
+| Invitation Web Vitest (includes production matcher composition) | 0 | 2.258s | `e10e29aa583708f4` |
+| Web typecheck | 0 | 17.632s | `9ed7345426610a3d` |
+
+Two new regression assertions failed. Client comparison now renders the sorted
+serialized schema, exactly as the project generator reads it, instead of raw
+in-memory FastAPI property order. The full-runtime PostgreSQL regression now
+explicitly requests live-data composition (otherwise the local document-service
+router is selected). This is an offline composition selector, not a live flag
+change or auth override. These repairs require new-head checks; the failure
+above is retained, not converted to a pass.
