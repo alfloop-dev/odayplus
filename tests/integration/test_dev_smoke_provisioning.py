@@ -955,6 +955,126 @@ def test_web_executor_lost_reply_after_durable_commit_never_retries(web_lifecycl
 
 
 @pytest.fixture
+def consumed_dev_admission(tmp_path: Any) -> Any:
+    """Offline canonical admission + real durable lease store; no cloud calls."""
+    from datetime import UTC, datetime
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from delivery_toolchain.release.check_runtime_admission import admit_release
+    from delivery_toolchain.release.release_lease import LeaseStateStore, build_lease
+    from delivery_toolchain.release.release_manifest import compute_manifest_digest
+    from tests.release.test_release_profile import base_manifest, DEV_ADMIN, SHA, TASK_ID
+    from tests.release.test_runtime_admission import build_registry
+
+    manifest = base_manifest(release_profile=DEV_ADMIN)
+    manifest["components"] = {
+        name: {"image": f"ghcr.io/example/{name}@sha256:" + str(i) * 64}
+        for i, name in enumerate(("api", "web", "worker", "scheduler"), 1)
+    }
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    registry = build_registry(candidate_sha=SHA, manifest_digest=manifest["manifest_digest"])
+    key = Ed25519PrivateKey.generate()
+    store = LeaseStateStore(tmp_path / "supervisor-lease-state")
+    lease = build_lease(task_id=TASK_ID, release_id=manifest["release_id"], candidate_sha=SHA,
+                        manifest_digest=manifest["manifest_digest"], target_environment="dev",
+                        private_key=key)
+    store.record_issued(lease)
+    images = {name: value["image"] for name, value in manifest["components"].items()}
+    consumer = "offline-foreground-rollout"
+    ok, errors, _ = admit_release(
+        registry, lease, release_sha=SHA, environment="dev", task_id=TASK_ID,
+        public_key=key.public_key(), state_store=store, manifest=manifest,
+        manifest_digest=manifest["manifest_digest"], component_images=images, consumed_by=consumer,
+    )
+    assert ok, errors
+    return dict(manifest=manifest, registry=registry, lease=lease, public_key=key.public_key(),
+                state_store=store, release_sha=SHA, manifest_digest=manifest["manifest_digest"],
+                task_id=TASK_ID, consumed_by=consumer, component_images=images, now=datetime.now(UTC))
+
+
+def test_consumed_dev_admission_rechecks_canonical_predicates_read_only(
+    consumed_dev_admission: Any, monkeypatch: Any,
+) -> None:
+    import subprocess
+    from delivery_toolchain.release.provision_dev_smoke import verify_consumed_dev_admission
+    args = consumed_dev_admission
+    store = args["state_store"]
+    before = store.get(args["lease"]["lease_id"])
+    monkeypatch.setattr(store, "consume", lambda *a, **k: pytest.fail("admission consumed again"))
+    monkeypatch.setattr(store, "record_issued", lambda *a, **k: pytest.fail("minted a lease"))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("admission launched process"))
+    receipt = verify_consumed_dev_admission(**args)
+    assert receipt["stage"] == "consumed-dev-admission-observed"
+    assert receipt["execution_authorized"] is False and receipt["deployment_success"] is False
+    assert store.get(args["lease"]["lease_id"]) == before
+    for value in (args["lease"]["nonce"], args["lease"]["signature"]["value"]):
+        assert value not in json.dumps(receipt)
+
+
+@pytest.mark.parametrize("fault", [
+    "sha", "digest", "task", "consumer", "wrong-key", "bad-signature", "lease-environment",
+    "lease-action", "lease-extra", "manifest-tamper", "manifest-profile", "sources", "image",
+    "missing-component", "registry-sha", "registry-digest", "registry-red", "registry-staging",
+    "missing-state", "issued", "revoked", "state-lease", "state-consumer", "state-naive-time",
+    "state-future-time", "state-before-issue", "state-revocation", "expired", "naive-now", "unavailable",
+])
+def test_consumed_dev_admission_uncertainty_never_authorizes(
+    consumed_dev_admission: Any, monkeypatch: Any, fault: str,
+) -> None:
+    from datetime import timedelta
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, verify_consumed_dev_admission
+    args = consumed_dev_admission
+    if fault in {"sha", "digest", "task", "consumer"}:
+        field = {"sha": "release_sha", "digest": "manifest_digest", "task": "task_id", "consumer": "consumed_by"}[fault]
+        args[field] = {"sha": "f" * 40, "digest": "sha256:" + "f" * 64,
+                       "task": "OTHER-TASK", "consumer": "other-consumer"}[fault]
+    elif fault == "wrong-key":
+        args["public_key"] = Ed25519PrivateKey.generate().public_key()
+    elif fault.startswith("lease-") or fault == "bad-signature":
+        field = {"lease-environment": "target_environment", "lease-action": "allowed_action",
+                 "lease-extra": "admitted", "bad-signature": "nonce"}[fault]
+        args["lease"][field] = "private-input-never-echo"
+    elif fault.startswith("manifest-") or fault == "sources":
+        field = {"manifest-tamper": "created_by_workflow", "manifest-profile": "release_profile",
+                 "sources": "external_sources_expected_enabled"}[fault]
+        args["manifest"][field] = "private-input-never-echo"
+    elif fault == "image":
+        args["component_images"]["api"] = "ghcr.io/example/api@sha256:" + "f" * 64
+    elif fault == "missing-component":
+        args["component_images"].pop("worker")
+    elif fault.startswith("registry-"):
+        field = {"registry-sha": "candidate_sha", "registry-digest": "manifest_digest",
+                 "registry-red": "decision", "registry-staging": "admission_target"}[fault]
+        args["registry"]["release"][field] = "private-input-never-echo"
+    elif fault == "expired":
+        args["now"] += timedelta(hours=2)
+    elif fault == "naive-now":
+        args["now"] = args["now"].replace(tzinfo=None)
+    else:
+        store = args["state_store"]
+        original = store.get(args["lease"]["lease_id"])
+        if fault in {"issued", "revoked"}:
+            original["state"] = fault
+        elif fault == "state-lease":
+            original["lease"] = {**original["lease"], "candidate_sha": "f" * 40}
+        elif fault == "state-consumer":
+            original["consumed_by"] = "other-consumer"
+        elif fault == "state-revocation":
+            original["revoked_at"] = args["now"].isoformat()
+        elif fault.startswith("state-"):
+            at = args["now"] + timedelta(hours=1) if fault == "state-future-time" else args["now"] - timedelta(hours=1)
+            original["consumed_at"] = at.replace(tzinfo=None).isoformat() if fault == "state-naive-time" else at.isoformat()
+        def get(*a: Any) -> Any:
+            if fault == "unavailable":
+                raise RuntimeError("private-input-never-echo")
+            return None if fault == "missing-state" else original
+        monkeypatch.setattr(store, "get", get)
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_DEV_ADMISSION_UNVERIFIED") as error:
+        verify_consumed_dev_admission(**args)
+    assert error.value.__cause__ is None and "private-input" not in str(error.value)
+
+
+@pytest.fixture
 def encrypted_binding(web_lifecycle: Any) -> Any:
     """Actual sealed-box encryption/decryption + mocked GitHub, never a live token."""
     import base64

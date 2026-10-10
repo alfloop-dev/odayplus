@@ -813,3 +813,32 @@ negative proves unavailable runtime quarantine, not live release acceptance.
 Source/admission/custody authentication and rollback-owned deployment hookup are
 still the next source work. No worker live identity, secret/config, IAM, traffic,
 source or model action; no deployment/F11/full-product claim or review submission.
+
+## Anchor 15 — consumed exact-dev admission observation
+
+Added read-only foreground `verify_consumed_dev_admission`. Rather than trusting
+an `admitted=true` receipt, it reuses canonical manifest integrity/admissibility,
+component binding and staged registry predicates, with exact candidate equality
+(no ancestor substitution), four API/Web/worker/scheduler images, dev-admin and
+sources disabled. It verifies the Supervisor signature and canonical lease
+format/window/bindings, then reads the real store for the same signed lease in
+`consumed` state with the expected task/release/consumer and offset-aware
+consumption time. Issued, revoked, absent, mismatched, expired or unavailable
+records refuse with a static secret-free error. It neither mints nor consumes a
+lease, and never projects a fake issued state to reuse new-admission verification.
+
+The coordinator must independently pin public key, durable store, registry and
+rollout consumer; caller-provided trust roots cannot authenticate themselves.
+The safe receipt says `execution_authorized=false`, `deployment_success=false`.
+This is observation plus canonical predicate revalidation, **not** proof of the
+historical caller of admission, source review, recipient custody, promotion or
+rollback ownership. No executor/deployment hook invokes this helper yet. Those
+remaining authentication/wiring steps are required before review-ready use.
+
+Offline tests first run the actual canonical `admit_release` with a generated
+Ed25519 key and real local durable state; positive observation is read-only,
+with process/mint/consume spies. Thirty negative cases cover tuple, key/signature,
+manifest/profile/sources/images/registry, state and time uncertainty. These are
+labelled offline inputs, not live release or control-plane approval receipts.
+Verification pending on the source anchor. No worker live login, identity,
+secret/configuration, IAM, traffic, sources or model action.

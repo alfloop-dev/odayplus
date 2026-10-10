@@ -156,6 +156,91 @@ def validate_foreground_plan(
                           email, plan["recipient_custodian"], expires_at)
 
 
+def verify_consumed_dev_admission(
+    *, manifest: Any, registry: Any, lease: Any, public_key: Any,
+    state_store: Any, release_sha: str, manifest_digest: str, task_id: str,
+    consumed_by: str, component_images: Any, now: datetime,
+) -> dict[str, Any]:
+    """Read-only foreground check of the already-consumed exact dev admission.
+
+    Trust roots (public key, Supervisor-owned state store, registry and consumer
+    identity) MUST be obtained by the coordinator independently, not from the
+    provisioning plan or a caller's `admitted=true` receipt. This does not issue,
+    consume or replay a lease. It rechecks canonical admission predicates and
+    observes existing consumption; it cannot prove custody/source approval,
+    promotion, rollout ownership or who originally called the admission tool.
+    The returned identifiers are evidence only, never execution authority.
+    """
+    from delivery_toolchain.release.check_runtime_admission import registry_admission_errors
+    from delivery_toolchain.release import release_lease as leases
+    from delivery_toolchain.release.release_manifest import (
+        component_binding_errors, manifest_release_profile,
+        validate_manifest, validate_release_admission,
+    )
+
+    try:
+        if (not _aware(now) or not isinstance(release_sha, str) or not _SHA.fullmatch(release_sha)
+                or not isinstance(manifest_digest, str) or not _DIGEST.fullmatch(manifest_digest)
+                or not isinstance(task_id, str) or not leases.TASK_ID_PATTERN.fullmatch(task_id)
+                or not isinstance(consumed_by, str) or not consumed_by.strip()
+                or len(consumed_by) > 320 or not isinstance(state_store, leases.LeaseStateStore)
+                or not isinstance(manifest, dict) or not isinstance(registry, dict)
+                or not isinstance(lease, dict) or not isinstance(component_images, dict)
+                or set(component_images) != {"api", "web", "worker", "scheduler"}
+                or registry.get("release", {}).get("candidate_sha") != release_sha):
+            raise ValueError
+        # Reuse the actual release predicates, not a shape-only receipt check.
+        if (validate_manifest(manifest, expected_candidate_sha=release_sha,
+                              expected_digest=manifest_digest)
+                or validate_release_admission(manifest, environment="dev")
+                or manifest_release_profile(manifest) != "dev-admin"
+                or manifest.get("external_sources_expected_enabled") != []
+                or component_binding_errors(manifest, component_images)
+                or registry_admission_errors(registry, release_sha=release_sha,
+                                             environment="dev",
+                                             expected_manifest_digest=manifest_digest)):
+            raise ValueError
+        if (set(lease) - set((*leases.LEASE_FIELDS, "signature"))
+                or any(k not in lease for k in (*leases.LEASE_REQUIRED_FIELDS, "signature"))
+                or type(lease.get("schema_version")) is not int
+                or lease["schema_version"] != leases.LEASE_SCHEMA_VERSION
+                or leases.signature_errors(lease, public_key=public_key)
+                or leases._field_format_errors(lease)
+                or leases._validity_window_errors(lease, now)
+                or leases._binding_errors(
+                    lease, expected_task_id=task_id, expected_candidate_sha=release_sha,
+                    expected_manifest_digest=manifest_digest, expected_environment="dev",
+                    expected_action="deploy",
+                )
+                or lease["release_id"] != manifest["release_id"]):
+            raise ValueError
+        # verify_lease deliberately requires ISSUED for *new* admission. Do not
+        # call it with a fake issued view or consume again. Here the real store
+        # must already contain the same signed lease in CONSUMED state.
+        record = state_store.get(lease["lease_id"])
+        if (not isinstance(record, dict) or record.get("state") != leases.STATE_CONSUMED
+                or record.get("lease_id") != lease["lease_id"]
+                or record.get("lease") != lease or record.get("consumed_by") != consumed_by
+                or record.get("revoked_at") is not None or record.get("revoked_reason") is not None):
+            raise ValueError
+        consumed_at = datetime.fromisoformat(record["consumed_at"])
+        issued_at = datetime.fromisoformat(lease["issued_at"])
+        expires_at = datetime.fromisoformat(lease["expires_at"])
+        if (not _aware(consumed_at) or not issued_at <= consumed_at <= now < expires_at):
+            raise ValueError
+        return {
+            "stage": "consumed-dev-admission-observed", "execution_authorized": False,
+            "repository": REPOSITORY, "environment": "dev", "release_profile": "dev-admin",
+            "task_id": task_id, "lease_id": lease["lease_id"], "release_sha": release_sha,
+            "manifest_digest": manifest_digest, "secret_values_redacted": True,
+            "deployment_success": False,
+        }
+    except Exception:
+        # Never surface a nonce, signature, arbitrary registry/state error or
+        # remote exception. An unavailable/corrupt trust root is not approval.
+        raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED") from None
+
+
 @dataclass(frozen=True)
 class JournalReservation:
     """Internal bookkeeping only; never a bearer capability or approval proof."""

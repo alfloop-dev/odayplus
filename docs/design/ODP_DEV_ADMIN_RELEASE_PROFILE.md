@@ -449,7 +449,17 @@ still says `deployment_success=false` and `credential_binding_verified=false`:
 this is not a readback of GitHub's encrypted secret or a deployment commit.
 No CLI/workflow calls this method. Authenticated-foreground custody/source approval,
 exact admission and rollback-owned promoted-before-gate wiring, and actual live
-gate proof remain unfinished. PR1445 deployment/inventory, admission, IAM and
+gate proof remain unfinished. The read-only foreground helper
+`verify_consumed_dev_admission` now rechecks the canonical manifest/admission,
+exact four component images, dev-admin sources-off registry boundary, signed
+lease and real Supervisor-store consumption for the same task/SHA/digest/release
+and expected rollout consumer. It rejects issued/revoked/missing/mismatched or
+expired evidence without issuing or consuming a lease again; receipt says
+`execution_authorized=false`. Its key/store/registry/consumer trust roots must
+come independently from the coordinator, never the plan or an `admitted=true`
+receipt. This observation is not authentication of source approval/custody,
+proof of who called admission, or promotion/rollback ownership. It is not yet
+wired into the executor or a deploy hook. PR1445 deployment/inventory, admission, IAM and
 finite-role gates remain intact. Independent review is required before use; the
 background worker creates no live account or secrets. Parsing/staging a bundle
 is not standing-binding activation or deployment proof.
