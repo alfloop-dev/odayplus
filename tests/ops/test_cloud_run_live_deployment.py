@@ -6686,6 +6686,8 @@ def test_candidate_smoke_deadline_is_one_budget_shared_by_every_api_probe(
     # readiness attempt is clamped to the 11s that remain, and the bootstrap
     # never sends a request. No probe receives a fresh window.
     assert clock.now <= 100.0
+    assert report["api_probe_elapsed_seconds"] == pytest.approx(clock.now)
+    assert report["api_probe_elapsed_seconds"] == pytest.approx(100.0)
     assert transport.calls == [
         "/platform/version",
         "/platform/version",

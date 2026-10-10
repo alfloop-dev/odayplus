@@ -2674,6 +2674,9 @@ def smoke_checks(
             )
         )
 
+    # Include backoff and all four probes, unlike the per-probe receipt's
+    # request-only elapsed total. The Web redirect is outside this API budget.
+    report["api_probe_elapsed_seconds"] = round(monotonic() - smoke_started, 3)
     try:
         web_status, location = _request_without_redirect(
             f"{web_url.rstrip('/')}/operator",

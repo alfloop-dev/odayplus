@@ -26,7 +26,7 @@ Runtime Release `38025605232` attempt 2（SHA `0dd210dbe04f…`）artifact `1166
 - `smoke` CLI 預設：`attempts=4`、per-attempt timeout 沿用 `--timeout`（15s）、backoff `2s` 指數、上限 `8s`、總預算 `180s`。總預算是**全部 API probe 共用一個**（`deadline_scope=shared_by_api_probes`），每次 attempt 的 timeout 夾到剩餘預算；預算用完就不送出請求並 fail closed。新增 `--smoke-retry-*` 旗標；NaN/inf/負值/0 次一律以 `smoke:retry_policy` fail closed。
 - 直接呼叫 `smoke_checks()` 而未給 policy 時維持單次嘗試（原行為）。
 - 每個原本的 smoke check 名稱與判定不變，且只依真實回答判定；沒有回答一律 fail（例如 version 用盡重試時 `release_sha` 檢查為 `actual=<missing>`）。
-- report 新增 `probe_retry_policy` 與各 probe 的 `*_probe` 收據（每次 attempt 的 status、error、elapsed、provenance、transient），失敗的 attempt 全部保留不覆寫。
+- report 新增 `probe_retry_policy` 與各 probe 的 `*_probe` 收據（每次 attempt 的 status、error、elapsed、provenance、transient），失敗的 attempt 全部保留不覆寫。`api_probe_elapsed_seconds` 為全部 API probes 含 backoff 的實際總 elapsed；既有 per-probe `elapsed_seconds` 是 request durations 的合計，不含 backoff。Web redirect 保持獨立單次 timeout，不計入 API budget。
 - **遮蔽**：headers 本身不寫入收據，但 exception 訊息可能引用 token（例如含 CR/LF 的 token 會讓 http.client 以 bytes repr 把整個 header value 放進 `Invalid header value ...`）。`smoke_checks`、`compatibility_smoke_checks` 回傳前與 CLI `_finalize` 寫出／印出前，都會把 bearer、API/Web invoker token 的原文、strip 後、str/bytes repr、JSON 跳脫形式，以及控制字元之間 ≥8 字元的片段替換為 `<redacted>`。Web `/operator` probe 遇到無法送出的 token 改為 fail closed，不再以 traceback 印出 token。回應中的 mapping keys 與 values 同樣遮蔽，避免 credential echo 作為 JSON key 外洩。
 - `_json_request` 對無法解析的 body 改拋 `ResponseBodyError(ValueError)`，攜帶收到的 status 與 provenance；`probe_json_endpoint` 改經由它。compatibility gate 共用同一個 `_request`，因此同樣得到「已收到 status 不可重試」、整個交換的絕對時限與 token 遮蔽；其餘判定不變。
 
@@ -59,7 +59,16 @@ Task-scoped 12:12 canonical note 回報 RuntimeRelease `38044574206`／SHA `3178
 
 ## 5. 驗證
 
-宣告的驗證（`git diff --check`、`uv run --frozen --python 3.12 pytest tests/ops/test_cloud_run_live_deployment.py -q`）由 `delivery_toolchain/git/task_verification.py run --task-id ODP-DEV-CANDIDATE-SMOKE-STARTUP-001` 在送審最終 head 執行；每個 receipt 綁定 exact SHA、command、exit code、duration、selection。receipt 位於該 worktree `.orchestrator/evidence/verification/`，結果與 receipt IDs 另以 canonical task note 公布；這段說明不是預先宣稱通過。必要 CI 與 Codex2 審查仍須綁定 PR #1450 最新遠端 head，舊 `4c093dccf` 的綠色 CI 不可沿用。
+宣告的驗證（`git diff --check`、`uv run --frozen --python 3.12 pytest tests/ops/test_cloud_run_live_deployment.py -q`）由 `delivery_toolchain/git/task_verification.py run --task-id ODP-DEV-CANDIDATE-SMOKE-STARTUP-001` 在送審最終 head 執行；每個 receipt 綁定 exact SHA、command、exit code、duration、selection。receipt 位於該 worktree `.orchestrator/evidence/verification-odp_dev_candidate_smoke_startup_001-<receipt_id>.json`，結果與 receipt IDs 另以 canonical task note 公布；這段說明不是預先宣稱通過。必要 CI 與 Codex2 審查仍須綁定 PR #1450 最新遠端 head，舊 `4c093dccf` 的綠色 CI 不可沿用。
+
+Pi anchor `43881d5f257a1ec66716f5fc14afd11b9470cecf` 的實際收據：
+
+| Command | Exit | Duration | Receipt ID |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.023s | `d6a6d036562c6487` |
+| `uv run --frozen --python 3.12 pytest tests/ops/test_cloud_run_live_deployment.py -q` | 0 | 107.665s | `f659cd5d0e872012` |
+
+首次同 head 測試啟動 exit 127（0.001s，`fd17de0b80321c85`）：harness PATH 缺少 `/home/lupin/.local/bin`，沒有啟動 pytest。恢復該既有 uv PATH 後以 explicit retry reason 重跑相同 selection；失敗收據保留。最終 head 加入總 API elapsed 收據與此 evidence，必須重新取得 exact-head 收據，不能沿用 anchor 通過結果。
 
 Boundary inventory 的既有 validator entry 與 module ownership 不變，沒有增加分類檔案，故不重寫 CSV。
 
