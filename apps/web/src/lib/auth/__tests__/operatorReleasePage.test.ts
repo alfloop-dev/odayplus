@@ -2,14 +2,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import OperatorPage from "../../../app/operator/page";
 import { cookies } from "next/headers";
 import { readOperatorReleaseStatus } from "../operatorReleaseStatus";
-import { OperatorAdminConsole, OperatorPasswordChange } from "../../../../features/operator";
+import { OperatorAdminConsole } from "../../../../features/operator/OperatorAdminConsole";
+import { OperatorConsole } from "../../../../features/operator/OperatorConsole";
+import { OperatorPasswordChange } from "../../../../features/operator/OperatorPasswordChange";
 
 vi.mock("next/headers", () => ({ cookies: vi.fn() }));
 vi.mock("../operatorReleaseStatus", () => ({ readOperatorReleaseStatus: vi.fn() }));
 vi.mock("../session", () => ({ webSessionCookieName: "__Host-oday_web_session" }));
-vi.mock("../../../../features/operator", () => ({
-  OperatorAdminConsole: vi.fn(), OperatorConsole: vi.fn(), OperatorPasswordChange: vi.fn(),
-}));
+vi.mock("../../../../features/operator/OperatorAdminConsole", () => ({ OperatorAdminConsole: vi.fn() }));
+vi.mock("../../../../features/operator/OperatorConsole", () => ({ OperatorConsole: vi.fn() }));
+vi.mock("../../../../features/operator/OperatorPasswordChange", () => ({ OperatorPasswordChange: vi.fn() }));
 vi.mock("../../../features/market-intelligence", () => ({
   MarketIntelligencePanel: vi.fn(), shouldShowMarketIntelligence: () => false,
 }));
@@ -32,6 +34,7 @@ describe("canonical Operator page release notice wiring", () => {
   it.each(["password", "business"])("does not change %s routing or require runtime probes there", async view => {
     const page = await OperatorPage({ searchParams: Promise.resolve({ view }) });
     if (view === "password") expect(page.type).toBe(OperatorPasswordChange);
+    else expect(page.props.children[0].type).toBe(OperatorConsole);
     expect(readOperatorReleaseStatus).not.toHaveBeenCalled();
     expect(cookies).not.toHaveBeenCalled();
   });

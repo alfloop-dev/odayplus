@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { createOdpApiClient } from "@oday-plus/openapi-client";
+import dynamic from "next/dynamic";
 import {
   Button,
   Chip,
@@ -18,7 +19,7 @@ import {
   type Tone,
 } from "./components";
 import { DesignStoreOpsWorkspace } from "./DesignAlignedWorkspaces";
-import { GovernanceWorkspace } from "./GovernanceWorkspace";
+import type { GovernanceWorkspaceProps } from "./GovernanceWorkspace";
 import {
   normalizeGovernanceApprovals,
   normalizeGovernanceAuditRows,
@@ -70,6 +71,17 @@ import {
   classifyAccessDenial,
   signOutOperator,
 } from "./operatorSession";
+
+// Governance (including its admin controllers) is dormant on Today/Network.
+// Load it only when selected, without changing its server-verified authority
+// or any of its account/config controls. The shell is client-data driven.
+const GovernanceWorkspace = dynamic<GovernanceWorkspaceProps>(
+  () => import("./GovernanceWorkspace").then((mod) => mod.GovernanceWorkspace),
+  {
+    ssr: false,
+    loading: () => <div aria-live="polite" role="status">治理工作區載入中…</div>,
+  },
+);
 
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
