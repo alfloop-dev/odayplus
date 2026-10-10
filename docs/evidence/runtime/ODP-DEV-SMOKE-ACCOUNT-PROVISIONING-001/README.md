@@ -483,3 +483,84 @@ runner receipts were copied into canonical `.orchestrator/evidence`.
 These receipts attest the source anchor above, not this later evidence-only
 follow-up's SHA, CI, human approval, mailbox custody, account/configuration
 execution or deployment success. The task stays in progress, not review.
+
+## Anchor 10 — callable memory-only Web lifecycle executor
+
+Source anchor: `22d921d0b5933f08c0bb2bfe8ea51effcaafd547`.
+The previous internal-only journal is now composed with an actual callable
+`WebInvitationExecutor.execute` in `delivery_toolchain/release/provision_dev_smoke.py`.
+It is a foreground library, not an anonymous CLI or automatic workflow hook.
+Source approval, admitted/promoted exact release and recipient custody must be
+verified by the trusted coordinator before invocation; this library does not
+pretend to authenticate those control-plane approvals.
+
+Execution path:
+
+1. Original administrator password login through Web, canonical session cookie,
+   `/auth/session`, server-verified `/api/v1/auth/principal`, authoritative
+   tenant user inventory. Exact three roles, original subject/tenant/username,
+   active status, original scope and authoritative source must match.
+2. Validate the bounded plan with database time, reject existing recipient
+   username/email, durably reserve the original Human authorization once.
+3. Issue through `/api/v1/operator/users/invitations` using only the Web cookie;
+   accept through `/auth/invitations` without carrying the administrator session.
+   Capabilities and passwords remain in memory; no subprocess/file/output path.
+4. Fresh login as the new account; server principal and authoritative account
+   must be pure admin with the fixed scope. Read back the original account
+   unchanged and require the gate's existing strict issue/accept provenance
+   predicate, bound to both actual HTTP audit event receipts and issuing admin.
+5. Logout only the two newly created sessions and require revoked session401.
+   Other existing sessions are neither revoked nor reset.
+
+Every remote action is single-attempt. Any uncertainty after reservation,
+including lost HTTP reply **after durable commit**, failed provenance or logout,
+marks `recovery-required`. No automatic retry, reset, deletion, replacement or
+secret rebinding occurs. A failed quarantine append still leaves the original
+reservation as the durable no-retry boundary. A successful lifecycle receipt
+contains identifiers only and still says `execution_authorized=false`,
+`credential_binding_verified=false`, `live_gate_passed=false`,
+`deployment_success=false`.
+
+Offline regressions bridge the executor's HTTP protocol with an explicitly
+labelled memory BFF adapter to the actual API routers, PostgreSQL Argon2id
+credentials, session service and production AuthenticationBoundary. They are
+**not** a running Next server or live proof. The independently declared Next
+invitation route tests still cover actual adapter forwarding/sanitization.
+Cases include successful issue/accept/provenance and current-session cleanup;
+original account/credential/scope/roles and other-session preservation;
+pre-reservation login/session/principal/inventory failures; post-reservation
+issue/accept/audit/logout failures; lost replies after issue/accept commit;
+root replay refused with zero extra issue/accept; secret absence and zero
+subprocess calls. No fake Principal/request actor/permission override is used.
+
+### Exact source-anchor receipts
+
+Canonical foreground `task_verification.py run` completed exit 0 at the source
+anchor above. All **five exact declarations** were run once; no polling, broader
+suite, or rerun for counts. The first CLI invocation was rejected by argparse
+(exit2, missing `--task-id`) before any verification command launched; the
+correct invocation then ran normally. Existing uv and scratch pnpm PATH entries
+were reused, with no install or dependency/config changes.
+
+| Exact declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.018s | `6279287be558eff5` |
+| Invitation/provisioning/workflow pytest | 0 | 121.330s | `1d5faa9c23e44122` |
+| Gate/operator pytest | 0 | 42.963s | `f68da67a08091b7f` |
+| Invitation Web Vitest | 0 | 2.423s | `5c101f9f979daff6` |
+| Web typecheck | 0 | 5.838s | `bf8d9faa9cd0895f` |
+
+Original JSON receipts are retained in canonical `.orchestrator/evidence`.
+They bind exact commands, source head, selections, exit codes, durations and
+output tails. This evidence-only follow-up is not the measured source head.
+
+**Exact remaining boundary:** connect authenticated foreground custody and
+admitted dev promotion to encrypted **matched** GitHub credential binding with
+uncertain/partial-write recovery and the unchanged final live gate. This Web
+library does not solve or claim that binding/orchestration. No default workflow
+invokes it. PR1445 deploy/inventory code, IAM and finite gate remain untouched.
+Custodian still supplies the approved new username, owner-controlled email and
+credentials; worker never obtains them. Task remains in progress, not ready for
+formal PR/review: exact-head CI and independent Codex approval remain required
+once that end-to-end boundary is implemented. No live account/login/session,
+secret/configuration, deployment, source or model action occurred here.
