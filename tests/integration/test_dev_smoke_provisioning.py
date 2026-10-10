@@ -30,8 +30,6 @@ from tests.identity.test_identity_user_role_management import (
     _q,
     _sign_in,
 )
-from tests.security.test_dev_smoke_invitation import identity_stack as identity_stack
-from tests.security.test_dev_smoke_invitation import stack as stack
 from tests.security.test_dev_smoke_invitation import (
     EMAIL,  # noqa: F401
     PASSWORD,
@@ -39,7 +37,13 @@ from tests.security.test_dev_smoke_invitation import (
     _snapshot,
 )
 from tests.security.test_dev_smoke_invitation import (
+    identity_stack as identity_stack,
+)
+from tests.security.test_dev_smoke_invitation import (
     invitations as invitations,
+)
+from tests.security.test_dev_smoke_invitation import (
+    stack as stack,
 )
 
 PATH = "/api/v1/operator/users/invitations"

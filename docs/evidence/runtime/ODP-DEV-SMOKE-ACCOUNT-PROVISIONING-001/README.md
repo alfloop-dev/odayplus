@@ -8,6 +8,60 @@ operation; it is not evidence that any account, credential binding or deployment
 changed. Exact-head required CI and independent Codex review remain mandatory.
 Earlier progress sections below are historical, not current readiness verdicts.
 
+## PR #1448 security CI repair (2026-10-10)
+
+Fetched canonical `origin/dev` remains `0dd210dbe04fb420825abbddc08c8d3141de9ab1`.
+The original `product-security` job at head `92dd8773c72f691553197119f5a12fa2424341a0`
+[run 38039097879 / job 114175628346](https://github.com/alfloop-dev/odayplus/actions/runs/38039097879/job/114175628346)
+is completed/failure (08:52:07Z); that failure is not relabelled as a pass.
+The run's product-lint-unit was still running at the 09:13 read, so the CLI
+refused to provide failed logs for the unfinished run. No inferred full-run
+verdict or lost exit receipt is claimed.
+
+Source anchor `2d296e01b113a15ad32dcee265947e0ea2bf7400` repairs the invitation
+writer conflict without weakening `test_login_throttle_wiring.py` or removing
+acceptance abuse protection. Normal expand-only Alembic `0022` applies SQL
+`000028_identity_invitation_acceptance_budget.sql`: one global row and at most
+one per existing invitation, with the same 50/global and 5/invitation limits,
+15-minute database-time reset, shared advisory lock and independently committed
+reservation. Random IDs do not grow rows or reach Argon2. Refused/replayed/audit-
+failed acceptance keeps its reservation. Migration replay/downgrade preserves
+counters; missing schema refuses safely before hashing. Existing
+`identity.login_attempts` is never written by the invitation service: the
+canonical Web module remains its sole writer. Added real-router missing-schema
+and PG migration replay/login-counter preservation regressions pass.
+
+SBOM and NOTICE were regenerated using the unchanged official generators for
+the actual PyNaCl/libsodium-encryption dependency lock; no license-policy,
+exemption, signing/admission, finite-role or IAM gate was modified. The separate
+PR #1447 usersrouter/OpenAPI work remains open at `525feca410857f55019282b38b1314409b6e5181`
+at this read. This repair does not edit those leased routing artifacts.
+
+### Original terminal receipts for the repair anchor
+
+These six exact declared selections ran once at the source anchor above through
+the live canonical `verification_evidence.py`, using original foreground
+subprocess exit codes (no summary polling, timeout or count-only rerun).
+Receipts are in canonical `.orchestrator/evidence`. This evidence/import-order
+follow-up is not that measured head; final-head receipts and required GitHub CI
+must bind the submitted head separately. Existing uv/Corepack and repository
+Node executables were exposed through PATH/scratch-only pnpm launcher; no package
+install or host-wide scan occurred.
+
+| Exact declared command | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.024s | `72e563e5bc6e2fcc` |
+| `uv run --frozen --python 3.12 pytest tests/security/test_login_throttle_wiring.py tests/security/test_oss_license_gate.py tests/security/test_oss_notice.py tests/security/test_supply_chain_security_gate.py -q` | 0 | 93.469s | `55d6795747e61b8e` |
+| `uv run --frozen --python 3.12 pytest tests/security/test_dev_smoke_invitation.py tests/integration/test_dev_smoke_provisioning.py tests/contract/test_runtime_release_workflow.py -q` | 0 | 348.063s | `3b045e4a5456f8f5` |
+| `uv run --frozen --python 3.12 pytest tests/e2e/test_live_e2e_gate_dev_admin.py tests/security/test_operator_read_authorization.py -q` | 0 | 45.379s | `7e8c5a9d6359c56e` |
+| `pnpm --dir apps/web exec vitest run src/app/auth/invitations/__tests__/route.test.ts` | 0 | 2.701s | `4824b8a1e1963f4f` |
+| `pnpm --dir apps/web typecheck` | 0 | 7.386s | `e75033f6fd248898` |
+
+No live login/account/secret/configuration/IAM/traffic/source/model action was
+performed. Required exact-head CI, independent Codex approval, merge and the
+trusted foreground rollout remain prerequisites. Offline passes do not establish
+activation, credential-value readback, deployment, full-product or F11 success.
+
 ## Product/tooling boundary repair (2026-10-10)
 
 The server journal API now depends only on shared product identity code.
