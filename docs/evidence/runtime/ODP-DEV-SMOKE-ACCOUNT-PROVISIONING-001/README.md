@@ -8,6 +8,33 @@ operation; it is not evidence that any account, credential binding or deployment
 changed. Exact-head required CI and independent Codex review remain mandatory.
 Earlier progress sections below are historical, not current readiness verdicts.
 
+## PR1448 independent-review composition repair (2026-10-10)
+
+Codex rejected exact head `45370d65e218e8e247d0c17d25afafbb94774529`:
+the workflow unconditionally injected the standing dev bundle, causing subsequent
+normal `full` releases to fail the correctly strict bundle parser. Prior passing
+verification/CI does not resolve or erase that composition defect.
+
+The workflow now injects the matched secret only for dev and the **admission
+output** `dev-admin`. It does not read a mutable deploy-phase profile input.
+A populated secret leaves `full` on its unchanged standing credential/gate path.
+The real shell/parser still refuses explicitly misplaced or malformed bundles;
+no parser, finite-role, model, admission or full-profile gate is relaxed.
+Offline regression pins the exact Actions condition and composes both admitted
+profiles with a populated environment secret and the real shell preflight.
+It also covers production/full non-injection, malformed scoped bundles and direct
+wrong-scope refusal, asserting original profile/credentials and secret absence.
+The first-cloud marker is offline, not an actual cloud mutation or live gate.
+
+Canonical `origin/dev` was fetched and verified at
+`31785c571e062b9bef4512ec3d848391c47621d3`. The repair is anchored before
+running the eight declared commands. Original per-command terminal receipts
+bind the new final head, command, selection, real exit and duration in
+`.orchestrator/evidence` and canonical submission; no evidence-only head change
+is needed after verification. Required new-head CI and independent Codex review
+remain prerequisites. No live account, secret/configuration, IAM or deployment
+operation is performed by this worker.
+
 ## Current-base and migration-plan CI repair (2026-10-10)
 
 Non-rewriting merge `12147a6efb8cec5a74507ace5bd7b44b65bdcfcd` composes

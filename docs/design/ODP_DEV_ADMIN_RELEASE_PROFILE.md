@@ -443,7 +443,12 @@ consent to this plan. Source review, approved custody, trust-root acquisition an
 rollback-owned rollout orchestration remain independent coordinator obligations.
 
 The workflow now **consumes an already staged bundle**, never invokes the
-lifecycle/writer. Its strict memory-only reader rejects nonempty malformed,
+lifecycle/writer. It injects the secret only for `inputs.environment=dev` and
+the **admitted** `dev-admin` profile, not a deploy-time profile proposal. A
+populated dev secret therefore leaves normal `full` releases on their original
+credential/gate path. An explicitly supplied bundle outside that scope remains
+a strict preflight refusal; it is not silently ignored. Its strict memory-only
+reader rejects nonempty malformed,
 partial, duplicate-key or wrong-scope JSON before cloud mutation, with no legacy
 fallback. A present bundle supplies both username/password and suppresses every
 old initial/bootstrap credential. The gate additionally binds account/tenant to

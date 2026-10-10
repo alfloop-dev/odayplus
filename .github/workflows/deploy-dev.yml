@@ -1419,8 +1419,10 @@ jobs:
           # if fresh, authoritative user admin, and signs out again.
           # Optional one-secret matched pair staged by the approved foreground
           # custodian. Consumer only: this step never creates accounts/bindings.
-          # It suppresses ALL standing/initial-password fallbacks when present.
-          ODP_DEV_ADMIN_CREDENTIAL_BUNDLE: ${{ secrets.ODP_DEV_ADMIN_CREDENTIAL_BUNDLE }}
+          # Only the admitted dev/dev-admin scope receives it; a populated dev
+          # secret must not change the normal full-profile path. When present,
+          # it suppresses ALL standing/initial-password fallbacks.
+          ODP_DEV_ADMIN_CREDENTIAL_BUNDLE: ${{ inputs.environment == 'dev' && needs.admission.outputs.release_profile == 'dev-admin' && secrets.ODP_DEV_ADMIN_CREDENTIAL_BUNDLE || '' }}
           ODP_DEV_ADMIN_USERNAME: ${{ vars.ODP_DEV_ADMIN_USERNAME }}
           ODP_DEV_ADMIN_PASSWORD: ${{ secrets.ODP_DEV_ADMIN_PASSWORD }}
           ODP_DEV_ADMIN_INITIAL_PASSWORD: ${{ secrets.ODP_DEV_ADMIN_INITIAL_PASSWORD }}

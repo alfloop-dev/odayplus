@@ -173,10 +173,25 @@ def test_missing_supply_chain_digest_still_blocks_handoff(publication):
     assert "signature_refs=" not in output and "sbom_refs=" not in output
 
 
+def _workflow_bundle(environment: str, admitted_profile: str, secret: str) -> str:
+    jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
+    (step,) = [s for s in jobs["deploy"]["steps"] if s.get("id") == "live-deploy"]
+    # Pin the actual Actions expression before modelling its && / || semantics.
+    # In particular, use admission output, never a deploy-time profile input.
+    assert step["env"]["ODP_DEV_ADMIN_CREDENTIAL_BUNDLE"] == (
+        "${{ inputs.environment == 'dev' && needs.admission.outputs.release_profile == 'dev-admin' "
+        "&& secrets.ODP_DEV_ADMIN_CREDENTIAL_BUNDLE || '' }}"
+    )
+    return secret if environment == "dev" and admitted_profile == "dev-admin" else ""
+
+
 def test_deploy_workflow_only_consumes_matched_bundle_never_provisions() -> None:
     jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
     (step,) = [s for s in jobs["deploy"]["steps"] if s.get("id") == "live-deploy"]
-    assert step["env"]["ODP_DEV_ADMIN_CREDENTIAL_BUNDLE"] == "${{ secrets.ODP_DEV_ADMIN_CREDENTIAL_BUNDLE }}"
+    assert _workflow_bundle("dev", "dev-admin", "populated-secret") == "populated-secret"
+    assert _workflow_bundle("dev", "full", "populated-secret") == ""
+    assert _workflow_bundle("production", "dev-admin", "populated-secret") == ""
+    assert _workflow_bundle("dev", "dev-admin", "") == ""
     assert step["run"] == "./product_ops/deployment/deploy_cloud_run_waji.sh"
     script = (ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
     assert "WebInvitationExecutor" not in script and "DevCredentialBundleExecutor" not in script
@@ -189,8 +204,20 @@ def test_deploy_workflow_only_consumes_matched_bundle_never_provisions() -> None
     assert "trap handle_deployment_exit EXIT" in script
 
 
-@pytest.mark.parametrize("case", ["valid", "malformed", "full", "staging"])
-def test_actual_deploy_bundle_preflight_refuses_before_cloud_without_decoding_shell(case: str) -> None:
+@pytest.mark.parametrize("environment,profile,workflow_injection,malformed,passes", [
+    ("dev", "dev-admin", True, False, True),
+    ("dev", "full", True, False, True),
+    ("production", "full", True, False, True),
+    ("dev", "dev-admin", True, True, False),
+    ("dev", "dev-admin", False, False, True),
+    ("dev", "dev-admin", False, True, False),
+    ("dev", "full", False, False, False),
+    ("staging", "dev-admin", False, False, False),
+    ("production", "full", False, False, False),
+])
+def test_actual_deploy_bundle_preflight_refuses_before_cloud_without_decoding_shell(
+    environment: str, profile: str, workflow_injection: bool, malformed: bool, passes: bool,
+) -> None:
     import shlex
 
     from delivery_toolchain.release.provision_dev_smoke import AUTHORIZATION_ID, TENANT_ID
@@ -203,21 +230,37 @@ def test_actual_deploy_bundle_preflight_refuses_before_cloud_without_decoding_sh
     # Execute the unchanged real profile/preflight block. The downstream marker
     # models first cloud mutation; subprocess Python is the frozen test interpreter.
     block = script[script.index('ODP_RELEASE_PROFILE="'):script.index('if [ "${ODP_DEPLOY_ENV}" = "production" ]; then')]
-    shell = ('set -euo pipefail\nrun_locked_python() { ' + shlex.quote(sys.executable) +
-             ' "$@"; }\n' + block + '\nprintf "cloud-boundary-reached\\n"\n')
-    env = dict(os.environ, ODP_DEPLOY_ENV="staging" if case == "staging" else "dev",
-               ODP_RELEASE_PROFILE="full" if case == "full" else "dev-admin",
-               ODP_DEV_ADMIN_CREDENTIAL_BUNDLE="{private-malformed-password" if case == "malformed" else json.dumps(bundle),
-               ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE="cs-lead")
-    # Valid bundle must not need or decode the old pair, even with a stale initial.
-    for key in ("ODP_DEV_ADMIN_USERNAME", "ODP_DEV_ADMIN_PASSWORD", "ODP_DEV_BOOTSTRAP_ADMIN_USERNAME", "ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD"):
+    shell = ('set -euo pipefail\nrun_locked_python() { printf "bundle-preflight-invoked\\n"; ' +
+             shlex.quote(sys.executable) + ' "$@"; }\n' + block +
+             '\ntest "${ODP_RELEASE_PROFILE}" = "${EXPECTED_PROFILE}"\n'
+             'test "${ODP_DEV_ADMIN_USERNAME:-}" = "${EXPECTED_USERNAME}"\n'
+             'test "${ODP_DEV_ADMIN_PASSWORD:-}" = "${EXPECTED_PASSWORD}"\n'
+             'printf "cloud-boundary-reached\\n"\n')
+    stored_secret = "{private-malformed-password" if malformed else json.dumps(bundle)
+    injected_bundle = (_workflow_bundle(environment, profile, stored_secret)
+                       if workflow_injection else stored_secret)
+    env = dict(os.environ, ODP_DEPLOY_ENV=environment, ODP_RELEASE_PROFILE=profile,
+               ODP_DEV_ADMIN_CREDENTIAL_BUNDLE=injected_bundle,
+               ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE="cs-lead", EXPECTED_PROFILE=profile)
+    # A scoped bundle needs no standing pair. Full keeps its original credentials
+    # and acceptance profile even when the environment secret is populated.
+    for key in ("ODP_DEV_ADMIN_USERNAME", "ODP_DEV_ADMIN_PASSWORD", "ODP_DEV_BOOTSTRAP_ADMIN_USERNAME",
+                "ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD", "ODP_DEV_SMOKE_FOREGROUND_FD"):
         env.pop(key, None)
+    env["EXPECTED_USERNAME"] = "standing.admin" if profile == "full" else ""
+    env["EXPECTED_PASSWORD"] = "private-standing-password" if profile == "full" else ""
+    if profile == "full":
+        env["ODP_DEV_ADMIN_USERNAME"] = env["EXPECTED_USERNAME"]
+        env["ODP_DEV_ADMIN_PASSWORD"] = env["EXPECTED_PASSWORD"]
     env["ODP_DEV_ADMIN_INITIAL_PASSWORD"] = "private-stale-initial-password"
     result = subprocess.run(["bash", "-c", shell], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=20, check=False)
-    assert result.returncode == 0 if case == "valid" else result.returncode != 0
-    assert ("cloud-boundary-reached" in result.stdout) is (case == "valid")
-    for secret in (bundle["password"], "private-malformed-password", env["ODP_DEV_ADMIN_INITIAL_PASSWORD"]):
+    assert (result.returncode == 0) is passes, result.stderr
+    assert ("cloud-boundary-reached" in result.stdout) is passes
+    if passes:
+        assert ("bundle-preflight-invoked" in result.stdout) is bool(injected_bundle)
+    for secret in (bundle["password"], "private-malformed-password", "private-standing-password",
+                   env["ODP_DEV_ADMIN_INITIAL_PASSWORD"]):
         assert secret not in result.stdout + result.stderr
     assert bundle["password"] not in shell
 
