@@ -13,6 +13,7 @@ import pytest
 
 def _recorded_authorization(plan: Any) -> Any:
     from pathlib import Path
+
     from delivery_toolchain.release.provision_dev_smoke import RecordedUserAuthorization
     record = json.loads(Path(
         "support/handoffs/dev-smoke-principal-isolation-20261009/USER-AUTHORIZATION-20261010.json"
@@ -28,6 +29,7 @@ def test_existing_recorded_consent_needs_no_new_github_comment(
     foreground_plan_input: Any, changed: str | None,
 ) -> None:
     from copy import deepcopy
+
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     plan, context = foreground_plan_input
     consent = _recorded_authorization(plan)
@@ -66,10 +68,16 @@ def test_foreground_remote_journal_composes_actual_router_binding_same_pair_and_
 ) -> None:
     import base64
     import subprocess
+
     from nacl.public import SealedBox
+
     from delivery_toolchain.e2e import check_live_e2e_gate as gate
     from delivery_toolchain.release.provision_dev_smoke import DevSmokeBindingJournal
-    from tests.integration.test_dev_smoke_provisioning import _snapshot, _q, _foreground_gate_template
+    from tests.integration.test_dev_smoke_provisioning import (
+        _foreground_gate_template,
+        _q,
+        _snapshot,
+    )
     s, web, local, binding, github, private, plan, args = remote_binding
     before = _snapshot(s)
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("offline executor launched process"))
@@ -108,7 +116,10 @@ def test_foreground_remote_journal_composes_actual_router_binding_same_pair_and_
 def test_remote_journal_lost_committed_reply_never_retries_or_replaces(
     remote_binding: Any, monkeypatch: Any, action: str,
 ) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, RemoteProvisioningJournal
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        RemoteProvisioningJournal,
+    )
     from tests.integration.test_dev_smoke_provisioning import _q
     s, web, local, binding, github, _, plan, args = remote_binding
     original = web.request
@@ -142,8 +153,11 @@ def test_remote_journal_lost_committed_reply_never_retries_or_replaces(
 def test_remote_journal_actual_auth_guard_precedes_any_ledger_write(
     remote_binding: Any, monkeypatch: Any, mode: str,
 ) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningJournal, RemoteProvisioningJournal
-    from tests.integration.test_dev_smoke_provisioning import _headers, _q, TENANT, OTHER_TENANT
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningJournal,
+        RemoteProvisioningJournal,
+    )
+    from tests.integration.test_dev_smoke_provisioning import OTHER_TENANT, TENANT, _headers, _q
     s, _, local, _, _, _, plan, _ = remote_binding
     headers = _headers(s)
     if mode == "anonymous":
@@ -169,6 +183,7 @@ def test_remote_gate_preflight_refuses_before_journal_session_login(
     remote_binding: Any, fault: str,
 ) -> None:
     from dataclasses import replace
+
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     from tests.integration.test_dev_smoke_provisioning import _foreground_gate_template
     _, web, local, binding, github, _, plan, args = remote_binding
@@ -213,6 +228,7 @@ def test_remote_journal_reserve_uses_server_account_tuple_and_global_single_use(
     remote_binding: Any, monkeypatch: Any,
 ) -> None:
     from concurrent.futures import ThreadPoolExecutor
+
     from delivery_toolchain.release.provision_dev_smoke import RemoteProvisioningJournal
     from tests.integration.test_dev_smoke_provisioning import _headers, _q
     s, _, local, _, _, _, plan, _ = remote_binding

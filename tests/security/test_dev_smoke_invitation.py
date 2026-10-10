@@ -27,7 +27,9 @@ from tests.identity.test_identity_user_role_management import (
     _q,
     _rotate_password,
     _sign_in,
-    stack,  # noqa: F401 - existing PostgreSQL/auth-boundary pytest fixture
+)
+from tests.identity.test_identity_user_role_management import (
+    stack as stack,  # existing PostgreSQL/auth-boundary pytest fixture
 )
 
 PASSWORD = "Independent-Smoke-Credential-7319"

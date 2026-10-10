@@ -45,12 +45,24 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
 
 ROOT = Path(__file__).resolve().parents[2]
+# Keep the canonical gate usable as a direct script as well as a library.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from shared.identity.invitation_provenance import (
+    canonical_uuid as _canonical_uuid,
+)
+from shared.identity.invitation_provenance import (
+    identity_snapshot as _identity_snapshot,
+)
+from shared.identity.invitation_provenance import (
+    invitation_provenance as _invitation_provenance,
+)
+
 DEFAULT_OUTPUT = ROOT / ".odp_data" / "live-e2e-gate" / "live-e2e-gate-report.json"
 LIVE_DATA_GATE = ROOT / "delivery_toolchain" / "e2e" / "check_live_production_data.py"
 # ODP-BUSINESS-LIVE-E2E-COVERAGE-001: the six real business journeys whose
@@ -1678,126 +1690,11 @@ def _cookie_header(cookies: Mapping[str, str]) -> str:
     return "; ".join(f"{name}={value}" for name, value in sorted(cookies.items()) if value)
 
 
-def _canonical_uuid(value: Any) -> str | None:
-    try:
-        return str(UUID(str(value)))
-    except (TypeError, ValueError):
-        return None
-
-
 def _foreign_tenant_for(own_tenant: str) -> str:
     """A valid tenant UUID guaranteed to differ from the admin's own tenant."""
     if own_tenant != FOREIGN_TENANT_PROBE_ID:
         return FOREIGN_TENANT_PROBE_ID
     return str(UUID(int=UUID(own_tenant).int ^ 1))
-
-
-def _identity_snapshot(record: Mapping[str, Any]) -> dict[str, Any] | None:
-    """The identity facts a refused tenant move must leave untouched.
-
-    Returns ``None`` when any of them is absent, so a readback that drops a
-    field is treated as changed rather than silently compared as missing.
-    """
-    subject_id = record.get("subject_id")
-    username = record.get("username")
-    roles = record.get("roles")
-    status = record.get("status")
-    scope = record.get("scope")
-    if not (
-        isinstance(subject_id, str)
-        and subject_id
-        and isinstance(username, str)
-        and username
-        and isinstance(roles, list)
-        and roles
-        and isinstance(status, str)
-        and status
-        and isinstance(scope, dict)
-        and _canonical_uuid(scope.get("tenant_id")) is not None
-    ):
-        return None
-    return {
-        "subject_id": subject_id,
-        "username": username,
-        "roles": sorted(str(r) for r in roles),
-        "status": status,
-        "scope": json.loads(json.dumps(scope, sort_keys=True)),
-    }
-
-
-def _invitation_provenance(
-    record: Mapping[str, Any], events: Sequence[Mapping[str, Any]],
-) -> dict[str, str] | None:
-    """Bind a pure admin to one real issue/accept pair, never a fake bootstrap.
-
-    Inputs come only from the authenticated identity administration readback.
-    No receipt/config switch can waive the existing role or release checks.
-    """
-    account = record.get("subject_id")
-    snapshot = _identity_snapshot(record)
-    if snapshot is None or _canonical_uuid(account) != account:
-        return None
-    tenant = snapshot["scope"]["tenant_id"]
-    fixed_scope = {"tenant_id": tenant, "clearance": "CONFIDENTIAL", **{
-        axis: [] for axis in ("brand_ids", "region_ids", "store_ids", "assigned_area_ids",
-                             "heat_zone_ids", "modules")
-    }}
-    if snapshot["roles"] != ["platform_admin"] or snapshot["status"] != "active" or snapshot["scope"] != fixed_scope:
-        return None
-    accepts = [e for e in events if e.get("event_type") == "identity.account.accept"
-               and (e.get("actor") == account or _as_dict(e.get("metadata")).get("account_id") == account)]
-    if len(accepts) != 1 or any(
-        e.get("event_type") == BOOTSTRAP_AUDIT_EVENT
-        and _as_dict(e.get("metadata")).get("account_id") == account for e in events
-    ):
-        return None
-    accept = accepts[0]
-    meta = _as_dict(accept.get("metadata"))
-    invitation = meta.get("invitation_id")
-    if _canonical_uuid(invitation) != invitation or invitation is None:
-        return None
-    issues = [e for e in events if e.get("event_type") == "identity.account.invite"
-              and _as_dict(e.get("metadata")).get("invitation_id") == invitation]
-    # A duplicate/revoked/replayed lifecycle is not provenance for this account.
-    related_accepts = [e for e in events if e.get("event_type") == "identity.account.accept"
-                       and _as_dict(e.get("metadata")).get("invitation_id") == invitation]
-    if len(issues) != 1 or len(related_accepts) != 1 or any(
-        e.get("event_type") == "identity.account.invitation_revoked"
-        and _as_dict(e.get("metadata")).get("invitation_id") == invitation for e in events
-    ):
-        return None
-    issue = issues[0]
-    preset = _as_dict(issue.get("metadata"))
-    actor = issue.get("actor")
-    if actor is None or _canonical_uuid(actor) != actor or actor == account or record.get("updated_by") != actor:
-        return None
-    if (accept.get("actor") != account or meta.get("account_id") != account
-            or meta.get("subject_id") != account or meta.get("tenant_id") != tenant
-            or meta.get("roles") != ["platform_admin"] or meta.get("scope") != fixed_scope
-            or meta.get("status") != "active" or meta.get("must_change") is not False
-            or preset.get("tenant_id") != tenant or preset.get("preset_roles") != ["platform_admin"]
-            or preset.get("preset_scope") != fixed_scope):
-        return None
-    for event in (issue, accept):
-        if (event.get("outcome") != "success"
-                or event.get("resource") != f"identity.invitation:{invitation}"
-                or event.get("correlation_id") != f"identity-invitation-{invitation}"
-                or _canonical_uuid(event.get("event_id")) != event.get("event_id")
-                or event.get("event_id") is None):
-            return None
-    if issue["event_id"] == accept["event_id"]:
-        return None
-    try:
-        issued = datetime.fromisoformat(issue["timestamp"])
-        accepted = datetime.fromisoformat(accept["timestamp"])
-        expires = datetime.fromisoformat(preset["expires_at"])
-        if (any(t.tzinfo is None for t in (issued, accepted, expires))
-                or not issued <= accepted < expires or not timedelta(0) < expires - issued <= timedelta(hours=72)):
-            return None
-    except (KeyError, TypeError, ValueError, OverflowError):
-        return None
-    return {"invitation_id": invitation, "issue_event_id": issue["event_id"],
-            "accept_event_id": accept["event_id"], "issuer_account_id": actor}
 
 
 def _read_admin_roles(roles: Any) -> bool:
@@ -2216,7 +2113,10 @@ def _check_dev_admin_session(
     events = trail.payload.get("events") if not trail.failed else None
     events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
     if config.dev_admin_bundle_account_id:
-        from delivery_toolchain.release.provision_dev_smoke import DevCredentialBundle, credential_bundle_acknowledged
+        from delivery_toolchain.release.provision_dev_smoke import (
+            DevCredentialBundle,
+            credential_bundle_acknowledged,
+        )
         acknowledged = credential_bundle_acknowledged(DevCredentialBundle(
             username, "", config.dev_admin_bundle_account_id, config.dev_admin_bundle_tenant_id,
             config.dev_admin_bundle_execution_id,
@@ -3446,7 +3346,10 @@ def _required_providers(args: argparse.Namespace) -> tuple[str, ...]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, read_dev_credential_bundle
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
 
     try:
         bundle = read_dev_credential_bundle(

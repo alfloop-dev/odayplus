@@ -25,10 +25,20 @@ from shared.identity.invitation_service import InvitationRefused, InvitationServ
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.postgresql import PostgresEngine
 from tests.identity.test_identity_user_role_management import (
-    OTHER_TENANT, TENANT, _q, _sign_in, stack,  # noqa: F401
+    OTHER_TENANT,  # noqa: F401
+    TENANT,
+    _q,
+    _sign_in,
+)
+from tests.identity.test_identity_user_role_management import stack as stack
+from tests.security.test_dev_smoke_invitation import (
+    EMAIL,  # noqa: F401
+    PASSWORD,
+    _issue,
+    _snapshot,
 )
 from tests.security.test_dev_smoke_invitation import (
-    EMAIL, PASSWORD, _accept, _issue, _snapshot, invitations,  # noqa: F401
+    invitations as invitations,
 )
 
 PATH = "/api/v1/operator/users/invitations"
@@ -308,7 +318,9 @@ def pg_runtime(invitations: Any, monkeypatch: Any) -> Any:
     from apps.api.oday_api.security import dependencies
     from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
     from shared.infrastructure.persistence.factory import build_persistence
-    from tests.integration.test_assisted_listing_postgresql_runtime import _install_canonical_runtime
+    from tests.integration.test_assisted_listing_postgresql_runtime import (
+        _install_canonical_runtime,
+    )
 
     s = invitations
     # Existing offline fixture supplies unrelated core/workflow relations;
@@ -375,9 +387,9 @@ def test_full_runtime_mounts_admin_issue_and_pg_capability_acceptance(pg_runtime
 
 
 def test_runtime_contract_is_exported_with_exact_invitation_paths_and_client(monkeypatch: Any) -> None:
+    from apps.api.oday_api.main import create_app
     from delivery_toolchain.openapi.export_openapi import ARTIFACT_PATH, build_schema, serialize
     from delivery_toolchain.openapi.generate_client import OUTPUT_PATH, render
-    from apps.api.oday_api.main import create_app
     from shared.api.versioning import alias_paths, versioned_paths
     from shared.infrastructure.persistence.factory import build_persistence
 
@@ -416,8 +428,13 @@ def test_runtime_contract_is_exported_with_exact_invitation_paths_and_client(mon
 def foreground_plan_input() -> Any:
     """Offline proposed request, not a custodian approval or live receipt."""
     from datetime import UTC, datetime
+
     from delivery_toolchain.release.provision_dev_smoke import (
-        AUTHORIZATION_ID, PRESERVED_ACCOUNT_ID, PURPOSE, REPOSITORY, TENANT_ID,
+        AUTHORIZATION_ID,
+        PRESERVED_ACCOUNT_ID,
+        PURPOSE,
+        REPOSITORY,
+        TENANT_ID,
     )
     now = datetime(2026, 10, 10, 5, tzinfo=UTC)
     account = {
@@ -440,8 +457,25 @@ def foreground_plan_input() -> Any:
                   "manifest_digest": plan["manifest_digest"], "now": now}
 
 
+def test_runtime_and_foreground_share_identity_contracts() -> None:
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.release import provision_dev_smoke as foreground
+    from shared.identity import dev_smoke_journal as shared
+    from shared.identity import invitation_provenance as provenance
+
+    assert foreground.ProvisioningJournal is shared.ProvisioningJournal
+    assert foreground.ProvisioningRefused is shared.ProvisioningRefused
+    assert foreground.validate_foreground_plan is shared.validate_foreground_plan
+    assert foreground.WebInvitationExecutor._original is shared.original_account_readback
+    assert foreground.DevSmokeBindingJournal._events is shared.DevSmokeBindingJournal._events
+    assert gate._invitation_provenance is provenance.invitation_provenance
+    assert gate._identity_snapshot is provenance.identity_snapshot
+    assert foreground.GitHubDevSecretStore.NAME == shared.CREDENTIAL_BUNDLE_SECRET_NAME
+
+
 def test_foreground_preflight_is_pure_and_never_claims_execution(foreground_plan_input: Any) -> None:
     from copy import deepcopy
+
     from delivery_toolchain.release.provision_dev_smoke import validate_foreground_plan
     plan, context = foreground_plan_input
     before = deepcopy((plan, context))
@@ -478,7 +512,10 @@ def test_foreground_preflight_is_pure_and_never_claims_execution(foreground_plan
 def test_foreground_preflight_refuses_unbound_or_secret_input(
     foreground_plan_input: Any, key: str, value: Any,
 ) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, validate_foreground_plan
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        validate_foreground_plan,
+    )
     plan, context = foreground_plan_input
     plan[key] = value
     with pytest.raises(ProvisioningRefused) as error:
@@ -489,7 +526,10 @@ def test_foreground_preflight_refuses_unbound_or_secret_input(
 
 @pytest.mark.parametrize("change", ["roles", "duplicate_role", "status", "tenant", "scope", "identity", "account", "clock"])
 def test_foreground_preflight_requires_exact_original_inventory(foreground_plan_input: Any, change: str) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, validate_foreground_plan
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        validate_foreground_plan,
+    )
     plan, context = foreground_plan_input
     original = context["original_account"]
     if change == "roles":
@@ -516,6 +556,7 @@ def test_foreground_preflight_requires_exact_original_inventory(foreground_plan_
 def provisioning_journal(invitations: Any, foreground_plan_input: Any) -> Any:
     """Real PG journal with OFFLINE proposed inputs, not foreground approval."""
     from datetime import datetime, timedelta
+
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningJournal
     s = invitations
     plan, context = foreground_plan_input
@@ -560,6 +601,7 @@ def test_journal_reservation_is_nonsecret_bookkeeping_not_account_creation(
 @pytest.mark.parametrize("change", [None, "execution_id", "release_sha", "email", "username", "recipient_custodian"])
 def test_journal_root_can_never_be_reserved_twice(provisioning_journal: Any, change: str | None) -> None:
     from uuid import uuid4
+
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     s, journal, plan, context = provisioning_journal
     reserved = journal.reserve(plan, **context)
@@ -580,7 +622,10 @@ def test_journal_root_can_never_be_reserved_twice(provisioning_journal: Any, cha
 
 
 def test_journal_serializes_single_use_across_independent_pg_connections(provisioning_journal: Any) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningJournal, ProvisioningRefused
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningJournal,
+        ProvisioningRefused,
+    )
     s, journal, plan, context = provisioning_journal
     engine = PostgresEngine(s.db.url(), bootstrap=False, validate_schema=False)
     try:
@@ -624,6 +669,7 @@ def test_journal_audit_failure_rolls_back_and_reports_no_secret(provisioning_jou
 @pytest.mark.parametrize("invalid", ["expired", "secret", "original_roles", "release", "clock"])
 def test_journal_revalidates_before_reserving(provisioning_journal: Any, monkeypatch: Any, invalid: str) -> None:
     from datetime import UTC, datetime
+
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     s, journal, plan, context = provisioning_journal
     if invalid == "expired":
@@ -646,7 +692,11 @@ def test_journal_revalidates_before_reserving(provisioning_journal: Any, monkeyp
 
 def test_journal_restart_quarantine_after_expiry_never_releases_root(provisioning_journal: Any, monkeypatch: Any) -> None:
     from datetime import UTC, datetime
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningJournal, ProvisioningRefused
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningJournal,
+        ProvisioningRefused,
+    )
     s, journal, plan, context = provisioning_journal
     reserved = journal.reserve(plan, **context)
     engine = PostgresEngine(s.db.url(), bootstrap=False, validate_schema=False)
@@ -671,6 +721,7 @@ def test_journal_restart_quarantine_after_expiry_never_releases_root(provisionin
 @pytest.mark.parametrize("field", ["execution_id", "plan_digest", "event_id", "stage"])
 def test_journal_recovery_requires_exact_original_reservation(provisioning_journal: Any, field: str) -> None:
     from dataclasses import replace
+
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     _, journal, plan, context = provisioning_journal
     reserved = journal.reserve(plan, **context)
@@ -712,8 +763,11 @@ def test_journal_tampered_readback_fails_closed(provisioning_journal: Any) -> No
 
 
 def test_journal_refuses_memory_or_different_engine_audit(invitations: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningJournal,
+        ProvisioningRefused,
+    )
     from shared.audit.events import InMemoryAuditLog
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningJournal, ProvisioningRefused
     s = invitations
     with pytest.raises(ProvisioningRefused, match="PROVISIONING_JOURNAL_PERSISTENCE_REQUIRED"):
         ProvisioningJournal(engine=s.engine, audit_log=InMemoryAuditLog())
@@ -730,9 +784,13 @@ def _offline_custody_approval(plan: Any) -> Any:
     import hashlib
     from datetime import datetime, timedelta
     from types import SimpleNamespace
+
     import httpx
+
     from delivery_toolchain.release.provision_dev_smoke import (
-        AUTHORIZATION_ID, REPOSITORY, GitHubCustodyApprovalObserver,
+        AUTHORIZATION_ID,
+        REPOSITORY,
+        GitHubCustodyApprovalObserver,
     )
 
     created = (datetime.fromisoformat(plan["expires_at"]) - timedelta(minutes=30)).isoformat()
@@ -770,8 +828,13 @@ def _offline_source_approval(plan: Any) -> Any:
     """Pinned GitHub mock only, NOT independent live review/CI evidence."""
     from datetime import datetime, timedelta
     from types import SimpleNamespace
+
     import httpx
-    from delivery_toolchain.release.provision_dev_smoke import GitHubSourceApprovalObserver, REPOSITORY
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        REPOSITORY,
+        GitHubSourceApprovalObserver,
+    )
 
     head = "d" * 40
     candidate = plan["release_sha"]
@@ -835,10 +898,11 @@ def web_lifecycle(
     """
     from datetime import datetime, timedelta
     from uuid import UUID, uuid4
+
+    import delivery_toolchain.release.provision_dev_smoke as module
+    from delivery_toolchain.e2e.check_live_e2e_gate import HttpResponse
     from modules.opsboard.auth import Credentials
     from shared.identity.credential_service import CredentialService
-    from delivery_toolchain.e2e.check_live_e2e_gate import HttpResponse
-    import delivery_toolchain.release.provision_dev_smoke as module
 
     s = acceptance
     monkeypatch.setattr(module, "PRESERVED_ACCOUNT_ID", s.admin)
@@ -944,6 +1008,7 @@ def web_lifecycle(
 
 def test_web_executor_actual_router_lifecycle_provenance_and_session_cleanup(web_lifecycle: Any, monkeypatch: Any) -> None:
     import subprocess
+
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     s, web, executor, journal, plan, args = web_lifecycle
     before = _snapshot(s)
@@ -1076,11 +1141,13 @@ def test_web_executor_lost_reply_after_durable_commit_never_retries(web_lifecycl
 def consumed_dev_admission(tmp_path: Any) -> Any:
     """Offline canonical admission + real durable lease store; no cloud calls."""
     from datetime import UTC, datetime
+
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
     from delivery_toolchain.release.check_runtime_admission import admit_release
     from delivery_toolchain.release.release_lease import LeaseStateStore, build_lease
     from delivery_toolchain.release.release_manifest import compute_manifest_digest
-    from tests.release.test_release_profile import base_manifest, DEV_ADMIN, SHA, TASK_ID
+    from tests.release.test_release_profile import DEV_ADMIN, SHA, TASK_ID, base_manifest
     from tests.release.test_runtime_admission import build_registry
 
     manifest = base_manifest(release_profile=DEV_ADMIN)
@@ -1113,6 +1180,7 @@ def test_consumed_dev_admission_rechecks_canonical_predicates_read_only(
     consumed_dev_admission: Any, monkeypatch: Any,
 ) -> None:
     import subprocess
+
     from delivery_toolchain.release.provision_dev_smoke import verify_consumed_dev_admission
     args = consumed_dev_admission
     store = args["state_store"]
@@ -1153,8 +1221,13 @@ def test_consumed_dev_admission_uncertainty_never_authorizes(
     consumed_dev_admission: Any, monkeypatch: Any, fault: str,
 ) -> None:
     from datetime import timedelta
+
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, verify_consumed_dev_admission
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        verify_consumed_dev_admission,
+    )
     args = consumed_dev_admission
     if fault in {"sha", "digest", "task", "consumer"}:
         field = {"sha": "release_sha", "digest": "manifest_digest", "task": "task_id", "consumer": "consumed_by"}[fault]
@@ -1208,7 +1281,10 @@ def test_consumed_dev_admission_uncertainty_never_authorizes(
 
 @pytest.mark.parametrize("bad", [None, {}, {"admitted": True}, {"stage": "consumed-dev-admission-observed"}])
 def test_lifecycle_requires_observer_not_receipt(web_lifecycle: Any, bad: Any) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, WebInvitationExecutor
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        WebInvitationExecutor,
+    )
     s, web, executor, journal, _, _ = web_lifecycle
     with pytest.raises(ProvisioningRefused, match="PROVISIONING_DEV_ADMISSION_UNVERIFIED"):
         WebInvitationExecutor(web=web, web_origin="https://web.example.invalid", journal=journal,
@@ -1310,8 +1386,9 @@ def test_source_approval_fresh_pinned_review_ci_and_merge_tree(foreground_plan_i
     "check-skipped", "check-pending", "check-future", "candidate-ci-failure", "naive-now",
 ])
 def test_source_approval_uncertain_or_nonexact_evidence_refuses(foreground_plan_input: Any, fault: str) -> None:
-    from datetime import timedelta
     from copy import deepcopy
+    from datetime import timedelta
+
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     plan, args = foreground_plan_input
     evidence = _offline_source_approval(plan)
@@ -1423,7 +1500,10 @@ def test_source_approval_uncertain_or_nonexact_evidence_refuses(foreground_plan_
     ("required_checks", ()), ("required_checks", ("product", "product")), ("required_checks", ["product"]),
 ])
 def test_source_approval_requires_independent_nonempty_trust_pins(field: str, value: Any) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import GitHubSourceApprovalObserver, ProvisioningRefused
+    from delivery_toolchain.release.provision_dev_smoke import (
+        GitHubSourceApprovalObserver,
+        ProvisioningRefused,
+    )
     pins = dict(token="offline-token", pull_number=123, reviewed_head="d" * 40,
                 review_writer_login="canonical-writer", review_writer_id=789, workflow_id=456,
                 checks_app_id=42, required_checks=("orchestrator", "product"))
@@ -1434,7 +1514,10 @@ def test_source_approval_requires_independent_nonempty_trust_pins(field: str, va
 
 @pytest.mark.parametrize("bad", [None, {}, {"approved": True}, {"ci": "success"}])
 def test_lifecycle_source_receipt_cannot_authorize(web_lifecycle: Any, bad: Any) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import WebInvitationExecutor, ProvisioningRefused
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        WebInvitationExecutor,
+    )
     s, web, executor, journal, _, _ = web_lifecycle
     with pytest.raises(ProvisioningRefused, match="PROVISIONING_SOURCE_APPROVAL_UNVERIFIED"):
         WebInvitationExecutor(web=web, web_origin="https://web.example.invalid", journal=journal,
@@ -1493,6 +1576,7 @@ def test_custody_approval_requires_fresh_exact_comment_not_plan_boolean(
     foreground_plan_input: Any, monkeypatch: Any,
 ) -> None:
     import subprocess
+
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     plan, args = foreground_plan_input
     evidence = _offline_custody_approval(plan)
@@ -1518,6 +1602,7 @@ def test_custody_approval_requires_fresh_exact_comment_not_plan_boolean(
 ])
 def test_custody_approval_uncertainty_refuses_without_echo(foreground_plan_input: Any, fault: str) -> None:
     from datetime import timedelta
+
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     plan, args = foreground_plan_input
     evidence = _offline_custody_approval(plan)
@@ -1596,7 +1681,10 @@ def test_custody_approval_binds_every_plan_field(foreground_plan_input: Any, fie
     ("custodian_login", ""), ("custodian_id", True), ("custodian_id", -1),
 ])
 def test_custody_approval_pins_are_independent_nonempty_human_identity(field: str, value: Any) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import GitHubCustodyApprovalObserver, ProvisioningRefused
+    from delivery_toolchain.release.provision_dev_smoke import (
+        GitHubCustodyApprovalObserver,
+        ProvisioningRefused,
+    )
     pins = dict(token="offline-token", issue_number=456, comment_id=123,
                 custodian_login="offline-custodian", custodian_id=789)
     pins[field] = value
@@ -1606,7 +1694,10 @@ def test_custody_approval_pins_are_independent_nonempty_human_identity(field: st
 
 @pytest.mark.parametrize("bad", [None, {}, {"recipient_control": "owner-controlled"}, {"approved": True}])
 def test_lifecycle_custody_receipt_or_boolean_cannot_authorize(web_lifecycle: Any, bad: Any) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, WebInvitationExecutor
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        WebInvitationExecutor,
+    )
     s, web, executor, journal, _, _ = web_lifecycle
     with pytest.raises(ProvisioningRefused, match="PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED"):
         WebInvitationExecutor(web=web, web_origin="https://web.example.invalid", journal=journal,
@@ -1646,9 +1737,14 @@ def test_lifecycle_custody_loss_stops_next_side_effect_and_quarantines(web_lifec
 def encrypted_binding(web_lifecycle: Any) -> Any:
     """Actual sealed-box encryption/decryption + mocked GitHub, never a live token."""
     import base64
+
     import httpx
     from nacl.public import PrivateKey
-    from delivery_toolchain.release.provision_dev_smoke import DevCredentialBundleExecutor, GitHubDevSecretStore
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        DevCredentialBundleExecutor,
+        GitHubDevSecretStore,
+    )
 
     s, web, lifecycle, journal, plan, args = web_lifecycle
     private_key = PrivateKey.generate()
@@ -1737,8 +1833,13 @@ def test_binding_custody_loss_precedes_remote_requests_or_put(encrypted_binding:
 def test_binding_encrypts_one_matched_pair_without_bootstrap_fallback(encrypted_binding: Any, monkeypatch: Any) -> None:
     import base64
     import subprocess
+
     from nacl.public import SealedBox
-    from delivery_toolchain.release.provision_dev_smoke import DevCredentialBundleExecutor, ProvisioningRefused
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        DevCredentialBundleExecutor,
+        ProvisioningRefused,
+    )
     s, web, journal, binding, remote, private_key, plan, args = encrypted_binding
     before = _snapshot(s)
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("binding launched a process"))
@@ -1803,7 +1904,10 @@ def test_binding_preflight_failure_never_logs_in_or_creates(encrypted_binding: A
 
 @pytest.mark.parametrize("fault", ["refused", "lost-reply", "replaced", "custodian-lost"])
 def test_binding_uncertain_or_partial_remote_result_never_retries(encrypted_binding: Any, fault: str) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import DevCredentialBundleExecutor, ProvisioningRefused
+    from delivery_toolchain.release.provision_dev_smoke import (
+        DevCredentialBundleExecutor,
+        ProvisioningRefused,
+    )
     s, web, journal, binding, remote, _, plan, args = encrypted_binding
     before = _snapshot(s)
     remote.fault = fault
@@ -1815,8 +1919,13 @@ def test_binding_uncertain_or_partial_remote_result_never_retries(encrypted_bind
     assert len(remote.uploads) == (0 if fault in {"refused", "custodian-lost"} else 1)
     if remote.uploads:
         import base64
+
         from nacl.public import SealedBox
-        from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, credential_bundle_acknowledged
+
+        from delivery_toolchain.release.provision_dev_smoke import (
+            credential_bundle_acknowledged,
+            read_dev_credential_bundle,
+        )
         # Even a remote-committed secret from a lost reply must NOT activate a
         # quarantined root when a subsequent normal workflow sees the bundle.
         bundle = json.loads(SealedBox(encrypted_binding[5]).decrypt(
@@ -1848,7 +1957,10 @@ def test_binding_plan_cannot_choose_its_own_token_custodian(encrypted_binding: A
 @pytest.mark.parametrize("login,identity", [("", 789), ("private\\nlogin", 789),
                                              ("offline-custodian", True), ("offline-custodian", 0)])
 def test_binding_custodian_pin_must_be_nonempty_human_identity(login: str, identity: Any) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import GitHubDevSecretStore, ProvisioningRefused
+    from delivery_toolchain.release.provision_dev_smoke import (
+        GitHubDevSecretStore,
+        ProvisioningRefused,
+    )
     with pytest.raises(ProvisioningRefused, match="PROVISIONING_GITHUB_CONFIG_INVALID"):
         GitHubDevSecretStore(token="offline-token", custodian_login=login, custodian_id=identity)
 
@@ -1944,6 +2056,7 @@ def test_foreground_gate_invalid_inputs_refuse_before_lifecycle_or_put(
     encrypted_binding: Any, field: str, value: Any,
 ) -> None:
     from dataclasses import replace
+
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     s, web, journal, binding, remote, _, plan, args = encrypted_binding
     config = replace(_foreground_gate_template(binding, args), **{field: value})
@@ -1962,7 +2075,9 @@ def test_foreground_gate_receives_actual_matched_pair_after_durable_ack(
     import base64
     import os
     import subprocess
+
     from nacl.public import SealedBox
+
     from delivery_toolchain.e2e import check_live_e2e_gate as gate
     s, web, journal, binding, remote, private_key, plan, args = encrypted_binding
     before = dict(os.environ)
@@ -2048,6 +2163,7 @@ def test_foreground_actual_gate_failure_quarantines_without_retry(
     encrypted_binding: Any, monkeypatch: Any,
 ) -> None:
     import subprocess
+
     from delivery_toolchain.e2e import check_live_e2e_gate as gate
     from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
     s, web, journal, binding, remote, _, plan, args = encrypted_binding
@@ -2112,14 +2228,7 @@ def test_foreground_gate_uncertain_result_is_not_success(
 # Keep the exact declared provisioning selection; these cases exercise the
 # foreground HTTP journal without giving it a PostgreSQL engine/credential.
 from tests.integration.dev_smoke_remote_journal_cases import (  # noqa: E402, F401
-    remote_binding,
-    test_existing_recorded_consent_needs_no_new_github_comment,
-    test_foreground_remote_journal_composes_actual_router_binding_same_pair_and_gate,
-    test_remote_journal_lost_committed_reply_never_retries_or_replaces,
-    test_remote_journal_actual_auth_guard_precedes_any_ledger_write,
-    test_remote_journal_reserve_uses_server_account_tuple_and_global_single_use,
-    test_remote_gate_preflight_refuses_before_journal_session_login,
-    test_remote_journal_server_audit_failure_rolls_back_reservation_without_issue,
+    remote_binding as remote_binding,
 )
 
 
@@ -2135,8 +2244,12 @@ def test_foreground_rollout_real_socket_shell_boundary_and_remote_lifecycle(
     import os
     import subprocess
     from pathlib import Path
+
     from delivery_toolchain.e2e import check_live_e2e_gate as gate
-    from delivery_toolchain.release.provision_dev_smoke import ForegroundDevSmokeRollout, ProvisioningRefused
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ForegroundDevSmokeRollout,
+        ProvisioningRefused,
+    )
     s, web, journal, binding, github, _, plan, args = remote_binding
     config = _foreground_gate_template(binding, args)
     root = Path(__file__).resolve().parents[2]
@@ -2230,7 +2343,11 @@ def test_foreground_rollout_refuses_before_shell_or_live_login(
 ) -> None:
     import os
     import subprocess
-    from delivery_toolchain.release.provision_dev_smoke import ForegroundDevSmokeRollout, ProvisioningRefused
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ForegroundDevSmokeRollout,
+        ProvisioningRefused,
+    )
     _, web, journal, binding, github, _, plan, args = remote_binding
     config = _foreground_gate_template(binding, args)
     env = {"PATH": os.environ["PATH"], "ODAY_RELEASE_SHA": config.expected_sha,

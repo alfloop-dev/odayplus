@@ -192,6 +192,7 @@ def test_deploy_workflow_only_consumes_matched_bundle_never_provisions() -> None
 @pytest.mark.parametrize("case", ["valid", "malformed", "full", "staging"])
 def test_actual_deploy_bundle_preflight_refuses_before_cloud_without_decoding_shell(case: str) -> None:
     import shlex
+
     from delivery_toolchain.release.provision_dev_smoke import AUTHORIZATION_ID, TENANT_ID
     bundle = {"schema_version": 1, "authorization_id": AUTHORIZATION_ID,
               "execution_id": "747efb4e-230d-4864-9bb9-194bec13045b",

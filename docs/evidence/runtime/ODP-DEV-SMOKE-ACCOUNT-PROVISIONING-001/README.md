@@ -1,11 +1,35 @@
-# Dedicated dev smoke provisioning — implementation in progress
+# Dedicated dev smoke provisioning — source delivery
 
 Task: `ODP-DEV-SMOKE-ACCOUNT-PROVISIONING-001` · Pi / Codex
 
-**Not ready for review, activation, deployment or acceptance.** This is an
-intermediate source anchor, not provisioning evidence. Human authorization
-`HUMAN-ODP-DEV-SMOKE-20261010-001` permits the bounded future operation; it is
-not evidence that any account, credential binding or deployment changed.
+**Source delivery only; no activation, deployment or live acceptance claim.**
+Human authorization `HUMAN-ODP-DEV-SMOKE-20261010-001` permits the bounded future
+operation; it is not evidence that any account, credential binding or deployment
+changed. Exact-head required CI and independent Codex review remain mandatory.
+Earlier progress sections below are historical, not current readiness verdicts.
+
+## Product/tooling boundary repair (2026-10-10)
+
+The server journal API now depends only on shared product identity code.
+`shared/identity/dev_smoke_journal.py` owns the plan, preserved-account readback,
+reservation and local binding ledger. `shared/identity/invitation_provenance.py`
+owns the exact issue/accept/account predicate and identity snapshot. Foreground
+code explicitly reexports the shared contracts, adapting only remote HTTP
+storage. The unchanged canonical gate imports the same provenance predicate;
+its direct-script entrypoint retains repository import support. No duplicated
+policy, import bypass or boundary waiver was introduced. A regression asserts
+actual object identity across the foreground/shared/gate composition.
+
+Regenerated `docs/audits/code-boundary-inventory.csv` includes only task-created
+code. Task-scoped lint repairs sort imports, remove the unused local `os`, use
+explicit fixture reexports (retaining transitive PostgreSQL `stack`), and state
+zip length semantics. Boundary and lint preflights precede the unchanged five
+verification declarations. Final exact-head terminal receipts are retained in
+canonical `.orchestrator/evidence` and the task submission; this document does
+not label prior-head receipts as proof of the repair. No full-suite escalation
+or live account/GitHub-secret/IAM/traffic/source/model operation was performed.
+Independent source/CI/admission/custodian trust roots and the approved foreground
+invocation remain operational prerequisites, not new SMTP or consent ceremonies.
 
 ## Foreground rollout boundary increment (2026-10-10)
 

@@ -1695,7 +1695,10 @@ def credential_bundle_input() -> dict[str, Any]:
     ("password", None), ("initial_password", "private-bootstrap-never-use"),
 ])
 def test_matched_bundle_rejects_wrong_scope_shape_or_partial_pair(key: str, value: Any) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, read_dev_credential_bundle
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
     raw = credential_bundle_input()
     raw[key] = value
     with pytest.raises(ProvisioningRefused, match="^PROVISIONING_CREDENTIAL_BUNDLE_INVALID$") as error:
@@ -1706,7 +1709,10 @@ def test_matched_bundle_rejects_wrong_scope_shape_or_partial_pair(key: str, valu
 @pytest.mark.parametrize("raw", [" ", "null", "[]", "{private-password", "x" * 16385,
     '{"password":"private-duplicate","password":"another-private"}'])
 def test_matched_bundle_bad_json_never_becomes_legacy(raw: str) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, read_dev_credential_bundle
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
     with pytest.raises(ProvisioningRefused, match="^PROVISIONING_CREDENTIAL_BUNDLE_INVALID$"):
         read_dev_credential_bundle(raw, environment="dev", release_profile="dev-admin")
 
@@ -1724,7 +1730,10 @@ def test_matched_bundle_parser_keeps_exact_password_memory_only() -> None:
 @pytest.mark.parametrize("environment,profile", [("staging", "dev-admin"), ("dev", "full"),
                                                   ("production", "full")])
 def test_matched_bundle_never_admitted_outside_dev_admin(environment: str, profile: str) -> None:
-    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, read_dev_credential_bundle
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
     with pytest.raises(ProvisioningRefused):
         read_dev_credential_bundle(json.dumps(credential_bundle_input()), environment=environment,
                                    release_profile=profile)
@@ -1766,7 +1775,11 @@ def test_gate_cli_malformed_bundle_refuses_before_network_or_output(monkeypatch:
 
 
 def bundle_journal_events() -> list[dict[str, Any]]:
-    from delivery_toolchain.release.provision_dev_smoke import AUTHORIZATION_ID, ProvisioningJournal, DevCredentialBundleExecutor
+    from delivery_toolchain.release.provision_dev_smoke import (
+        AUTHORIZATION_ID,
+        DevCredentialBundleExecutor,
+        ProvisioningJournal,
+    )
     common = {"authorization_id": AUTHORIZATION_ID, "execution_id": credential_bundle_input()["execution_id"],
               "plan_digest": "sha256:" + "0" * 64, "release_sha": "b" * 40, "manifest_digest": "sha256:" + "a" * 64,
               "tenant_id": ADMIN_TENANT_ID, "execution_authorized": False, "secret_values_redacted": True}

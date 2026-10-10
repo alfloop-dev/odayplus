@@ -20,15 +20,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from shared.auth import Principal
-from shared.identity.invitation_service import InvitationRefused, InvitationService
-
 from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.user_role_management import (
     UserNotFound,
     UserRoleManagementService,
     UserRolePolicyError,
 )
+from shared.auth import Principal
+from shared.identity.invitation_service import InvitationRefused, InvitationService
 
 # ---------------------------------------------------------------------------
 # Request DTOs
@@ -293,13 +292,20 @@ def create_user_role_sub_router(
     def journal_operation(request: Request, body: dict[str, Any] | None) -> dict[str, Any]:
         # Reuse the existing verified identity and durable session. Never trust
         # headers/body for actor, tenant, source approval or admission authority.
-        from delivery_toolchain.release.provision_dev_smoke import (
-            AUTHORIZATION_ID, PRESERVED_ACCOUNT_ID, TENANT_ID, DevSmokeBindingJournal,
-            GitHubDevSecretStore, JournalReservation, ProvisioningJournal,
-            ProvisioningRefused, WebInvitationExecutor,
-        )
-        from delivery_toolchain.e2e.check_live_e2e_gate import _invitation_provenance
         from datetime import datetime
+
+        from shared.identity.dev_smoke_journal import (
+            AUTHORIZATION_ID,
+            CREDENTIAL_BUNDLE_SECRET_NAME,
+            PRESERVED_ACCOUNT_ID,
+            TENANT_ID,
+            DevSmokeBindingJournal,
+            JournalReservation,
+            ProvisioningJournal,
+            ProvisioningRefused,
+            original_account_readback,
+        )
+        from shared.identity.invitation_provenance import invitation_provenance
 
         invitations, principal = invitation_context(request)
         if os.environ.get("ODP_DEPLOY_ENV") != "dev" or os.environ.get("ODP_RELEASE_PROFILE") != "dev-admin":
@@ -309,7 +315,7 @@ def create_user_role_sub_router(
             actor, tenant = invitations._actor(principal)
             if actor != PRESERVED_ACCOUNT_ID or tenant != TENANT_ID:
                 raise ProvisioningRefused("PROVISIONING_SCOPE_MISMATCH")
-            original = WebInvitationExecutor._original([svc.get_user(actor, tenant_id=tenant)])
+            original = original_account_readback([svc.get_user(actor, tenant_id=tenant)])
             journal = ProvisioningJournal(engine=invitations._engine, audit_log=invitations._audit)
             binding = DevSmokeBindingJournal(journal=journal)
             if body is not None:
@@ -341,7 +347,7 @@ def create_user_role_sub_router(
                         if existing is not None:
                             raise ProvisioningRefused("PROVISIONING_BINDING_ALREADY_ATTEMPTED")
                         account = svc.get_user(body["account_id"], tenant_id=tenant)
-                        provenance = _invitation_provenance(account, svc.get_audit_trail(tenant_id=tenant))
+                        provenance = invitation_provenance(account, svc.get_audit_trail(tenant_id=tenant))
                         root = journal._events()[0]
                         if (provenance is None or provenance["issuer_account_id"] != actor
                                 or account.get("username") != "odp-dev-smoke"
@@ -351,7 +357,7 @@ def create_user_role_sub_router(
                             raise ProvisioningRefused("PROVISIONING_PROVENANCE_INVALID")
                         metadata = {
                             **root.metadata, "account_id": body["account_id"],
-                            "secret_name": GitHubDevSecretStore.NAME, "stage": "binding-intent",
+                            "secret_name": CREDENTIAL_BUNDLE_SECRET_NAME, "stage": "binding-intent",
                             "credential_binding_verified": False,
                         }
                     else:
@@ -386,7 +392,7 @@ def create_user_role_sub_router(
                          "required": ["action"]}}
                  }}})
     async def write_dev_smoke_journal(request: Request) -> JSONResponse:
-        from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+        from shared.identity.dev_smoke_journal import ProvisioningRefused
         try:
             parsed = await _invitation_body(request, limit=8192)
             result = await run_in_threadpool(journal_operation, request, parsed)

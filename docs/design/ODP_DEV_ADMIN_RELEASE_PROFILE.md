@@ -572,12 +572,15 @@ only consumes an already-staged bundle and cannot create accounts. The worker
 creates neither live approval/comment nor identity/configuration. No new
 mailbox-verification gate is imposed. Offline shell/socket/router composition is
 not activation approval, real traffic restoration or successful deployment.
-The current source is still **not publish-ready**: finalization's code-boundary
-preflight rejects the prior journal API router's product-to-delivery-tooling
-imports. Shared identity extraction of the server journal/provenance predicates,
-regenerated canonical boundary inventory, final-head lint/verification and
-independent review must precede use; passing targeted regressions do not waive
-that boundary.
+The journal router now imports only product code: `shared.identity.dev_smoke_journal`
+owns the exact plan/original-account validation, reservation and local binding
+ledger, and `shared.identity.invitation_provenance` owns the common account/audit
+predicate. Foreground tooling reexports the same contracts and adapts only the
+remote transport; the canonical gate shares the same provenance predicate.
+There is no duplicated ledger, dynamic import bypass or relaxed boundary policy.
+The canonical boundary inventory is regenerated. Final-head lint/declared
+verification receipts and independent exact-head review/CI must precede use;
+offline source verification still is not activation or deployment evidence.
 
 PR1445 deployment/inventory, admission, IAM and
 finite-role gates remain intact. Independent review is required before use; the
