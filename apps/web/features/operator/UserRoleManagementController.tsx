@@ -5,7 +5,7 @@
  * status toggle, and audit trail visualization for ODP-CAP-USER-ROLE-UI-001.
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import styles from "./governance.module.css";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
@@ -25,6 +25,7 @@ export type UserScope = {
 
 export type UserRecord = {
   subject_id: string;
+  username?: string;
   email?: string;
   name?: string;
   roles: string[];
@@ -98,6 +99,9 @@ export function UserRoleManagementController({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [invitedCredentials, setInvitedCredentials] = useState<{ username: string; password: string } | null>(null);
   const [copiedPassword, setCopiedPassword] = useState<boolean>(false);
+  const [isCopyingPassword, setIsCopyingPassword] = useState(false);
+  const [copyPasswordError, setCopyPasswordError] = useState<string | null>(null);
+  const copyAttempt = useRef(0);
 
   // Edit Form State
   const [isNewUser, setIsNewUser] = useState<boolean>(false);
@@ -189,6 +193,8 @@ export function UserRoleManagementController({
     loadData();
   }, [loadData]);
 
+  useEffect(() => () => { copyAttempt.current += 1; }, []);
+
   if (!fixturesAllowed && apiLoadState !== "ready") {
     return (
       <OperatorDataUnavailableGate
@@ -206,7 +212,10 @@ export function UserRoleManagementController({
     setEditName(user.name || "");
     setEditEmail(user.email || "");
     setEditInitialPassword("");
+    copyAttempt.current += 1;
     setCopiedPassword(false);
+    setIsCopyingPassword(false);
+    setCopyPasswordError(null);
     setEditRoles(user.roles || []);
     setEditTenantId(user.scope?.tenant_id || "tenant-default");
     setEditBrands((user.scope?.brand_ids || []).join(", "));
@@ -290,7 +299,9 @@ export function UserRoleManagementController({
           fetchUsers();
           setIsEditModalOpen(false);
           if (tempPassword) {
-            setInvitedCredentials({ username: updatedUser.subject_id, password: tempPassword });
+            // Identity-backed subject_id is an account UUID, not a login name.
+            setInvitedCredentials({ username: updatedUser.username || targetSubjectId, password: tempPassword });
+            setEditInitialPassword("");
           }
           showToast(`已成功建立並邀請 ${updatedUser.name || updatedUser.subject_id}，已產生一次性初始密碼`);
           if (onUserRoleChange) onUserRoleChange(updatedUser);
@@ -943,12 +954,25 @@ export function UserRoleManagementController({
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-                    navigator.clipboard.writeText(invitedCredentials.password);
+                disabled={isCopyingPassword}
+                onClick={async () => {
+                  const attempt = ++copyAttempt.current;
+                  setCopiedPassword(false);
+                  setCopyPasswordError(null);
+                  setIsCopyingPassword(true);
+                  try {
+                    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+                      throw new Error("Clipboard unavailable");
+                    }
+                    await navigator.clipboard.writeText(invitedCredentials.password);
+                    if (attempt === copyAttempt.current) setCopiedPassword(true);
+                  } catch {
+                    if (attempt === copyAttempt.current) {
+                      setCopyPasswordError("無法複製密碼，請手動選取上方密碼並複製；關閉後無法再次查看。");
+                    }
+                  } finally {
+                    if (attempt === copyAttempt.current) setIsCopyingPassword(false);
                   }
-                  setCopiedPassword(true);
-                  setTimeout(() => setCopiedPassword(false), 3000);
                 }}
                 style={{
                   padding: "6px 12px",
@@ -962,15 +986,23 @@ export function UserRoleManagementController({
                 }}
                 data-testid="copy-password-button"
               >
-                {copiedPassword ? "已複製 ✓" : "複製密碼"}
+                {isCopyingPassword ? "複製中…" : copiedPassword ? "已複製 ✓" : "複製密碼"}
               </button>
             </div>
+            {copyPasswordError ? (
+              <p role="alert" data-testid="copy-password-error" style={{ color: "#b91c1c", fontSize: "13px" }}>
+                {copyPasswordError}
+              </p>
+            ) : null}
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button
                 type="button"
                 onClick={() => {
+                  copyAttempt.current += 1;
                   setInvitedCredentials(null);
                   setCopiedPassword(false);
+                  setIsCopyingPassword(false);
+                  setCopyPasswordError(null);
                 }}
                 style={{
                   padding: "8px 16px",
