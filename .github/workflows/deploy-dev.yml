@@ -1420,9 +1420,12 @@ jobs:
           # Optional one-secret matched pair staged by the approved foreground
           # custodian. Consumer only: this step never creates accounts/bindings.
           # Only the admitted dev/dev-admin scope receives it; a populated dev
-          # secret must not change the normal full-profile path. When present,
-          # it suppresses ALL standing/initial-password fallbacks.
-          ODP_DEV_ADMIN_CREDENTIAL_BUNDLE: ${{ inputs.environment == 'dev' && needs.admission.outputs.release_profile == 'dev-admin' && secrets.ODP_DEV_ADMIN_CREDENTIAL_BUNDLE || '' }}
+          # secret must not change the normal full-profile path. The profile is
+          # the SAME effective admitted profile as ODP_RELEASE_PROFILE above:
+          # manual `admission` for phase=deploy, `automatic_admission` for
+          # phase=auto (the skipped job's output is empty). When present, it
+          # suppresses ALL standing/initial-password fallbacks.
+          ODP_DEV_ADMIN_CREDENTIAL_BUNDLE: ${{ inputs.environment == 'dev' && (needs.admission.outputs.release_profile || needs.automatic_admission.outputs.release_profile) == 'dev-admin' && secrets.ODP_DEV_ADMIN_CREDENTIAL_BUNDLE || '' }}
           ODP_DEV_ADMIN_USERNAME: ${{ vars.ODP_DEV_ADMIN_USERNAME }}
           ODP_DEV_ADMIN_PASSWORD: ${{ secrets.ODP_DEV_ADMIN_PASSWORD }}
           ODP_DEV_ADMIN_INITIAL_PASSWORD: ${{ secrets.ODP_DEV_ADMIN_INITIAL_PASSWORD }}
