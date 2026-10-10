@@ -65,18 +65,45 @@ const conflictError: IntakeApiError = {
 
 describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001)", () => {
   describe("AssignmentSlaSummary Component & SLA Logic", () => {
-    it("computes SLA states correctly based on time and flags", () => {
-      expect(computeSlaState({ ...sampleIntakeRecord, slaState: "PAUSED" })).toBe("PAUSED");
-      expect(computeSlaState({ ...sampleIntakeRecord, isBreached: true } as any)).toBe("BREACHED");
+    it.each(["ON_TRACK", "DUE_SOON", "OVERDUE", "BREACHED", "PAUSED", "COMPLETED"] as const)(
+      "preserves authoritative %s independently of browser time, deadlines and legacy flags",
+      (slaState) => {
+        for (const dueAt of [undefined, "invalid", "2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z"]) {
+          expect(computeSlaState({
+            ...sampleIntakeRecord, slaState, dueAt, isBreached: true, isSlaPaused: true,
+          } as any)).toBe(slaState);
+        }
+      },
+    );
 
-      const futureDue = new Date(Date.now() + 120 * 60 * 1000).toISOString();
-      expect(computeSlaState({ ...sampleIntakeRecord, dueAt: futureDue } as any)).toBe("ON_TRACK");
+    it.each([undefined, null, "", "UNKNOWN", "toString", "__proto__", "on_track"])(
+      "does not derive a state from deadlines or flags when authority is %s",
+      (slaState) => {
+        for (const dueAt of [undefined, "invalid", "2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z"]) {
+          expect(computeSlaState({
+            ...sampleIntakeRecord, slaState, dueAt, isBreached: true, isSlaPaused: true,
+          } as any)).toBe("UNAVAILABLE");
+        }
+      },
+    );
 
-      const soonDue = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-      expect(computeSlaState({ ...sampleIntakeRecord, dueAt: soonDue } as any)).toBe("DUE_SOON");
+    it.each([undefined, "", "invalid"])("shows an unavailable due time for %s", (slaDueAt) => {
+      const html = renderToString(<AssignmentSlaSummary record={{ ...sampleIntakeRecord, slaDueAt } as any} />);
+      expect(html).toContain("到期時間：UNAVAILABLE");
+      expect(html).not.toContain("Invalid Date");
+      expect(html).toContain("[✓ ON TRACK]");
+    });
 
-      const pastDue = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-      expect(computeSlaState({ ...sampleIntakeRecord, dueAt: pastDue } as any)).toBe("OVERDUE");
+    it.each(["BREACHED", "COMPLETED", "UNKNOWN", null])("does not offer Pause for %s even with a callback", (slaState) => {
+      const html = renderToString(<AssignmentSlaSummary
+        record={{ ...sampleIntakeRecord, slaState }} onOpenPause={vi.fn()} onResume={vi.fn()}
+      />);
+      expect(html).not.toContain("asg-btn-pause");
+      expect(html).not.toContain("asg-btn-resume");
+      if (slaState === "COMPLETED") {
+        expect(html).toContain("[✓ COMPLETED]");
+        expect(html).not.toContain('data-testid="sla-action-unavailable"');
+      }
     });
 
     it("verifies SLA text plus icon/pattern mapping for WCAG AA compliance", () => {
@@ -85,6 +112,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(SLA_STATE_MAP.OVERDUE.pattern).toBe("[‼ OVERDUE]");
       expect(SLA_STATE_MAP.BREACHED.pattern).toBe("[🔥 BREACHED]");
       expect(SLA_STATE_MAP.PAUSED.pattern).toBe("[⏸ PAUSED]");
+      expect(SLA_STATE_MAP.COMPLETED.pattern).toBe("[✓ COMPLETED]");
 
       expect(SLA_STATE_MAP.ON_TRACK.icon).toBe("✓");
       expect(SLA_STATE_MAP.DUE_SOON.icon).toBe("⚠");
