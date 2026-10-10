@@ -38,6 +38,21 @@ run_locked_python() {
 : "${ODP_SCHEDULER_CRON:?Error: ODP_SCHEDULER_CRON is required.}"
 : "${ODP_SCHEDULER_TIME_ZONE:?Error: ODP_SCHEDULER_TIME_ZONE is required.}"
 : "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
+
+# Service-level minimum instances for the API and Web services, applied after
+# promotion with the service update `--min` flag. A revision-level minimum
+# would also keep every tagged candidate revision warm. Dev defaults to 1 because the API cold start was
+# measured at ~24-29s (ODP-WEB-BOOTSTRAP-COLDSTART-001), longer than the Web
+# BFF's 10s upstream timeout. Other environments change only when
+# ODP_CLOUD_RUN_MIN_INSTANCES is set explicitly.
+CLOUD_RUN_MIN_INSTANCES="${ODP_CLOUD_RUN_MIN_INSTANCES:-}"
+if [ -z "${CLOUD_RUN_MIN_INSTANCES}" ] && [ "${ODP_DEPLOY_ENV}" = "dev" ]; then
+  CLOUD_RUN_MIN_INSTANCES=1
+fi
+if [ -n "${CLOUD_RUN_MIN_INSTANCES}" ] && [[ ! "${CLOUD_RUN_MIN_INSTANCES}" =~ ^[0-9]+$ ]]; then
+  echo "Error: ODP_CLOUD_RUN_MIN_INSTANCES must be a non-negative integer, got '${CLOUD_RUN_MIN_INSTANCES}'." >&2
+  exit 1
+fi
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
 : "${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT:?Error: ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT is required.}"
 
@@ -1117,6 +1132,17 @@ if [ "${WEB_SERVICE_PRESENCE}" = "absent" ]; then
   grant_service_invoker "${WEB_SERVICE}" "allUsers"
 fi
 promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
+
+if [ -n "${CLOUD_RUN_MIN_INSTANCES:-}" ]; then
+  for min_service in "${API_SERVICE}" "${WEB_SERVICE}"; do
+    echo "Keeping ${CLOUD_RUN_MIN_INSTANCES} warm instance(s) for ${min_service} (service-level minimum)..."
+    gcloud run services update "${min_service}" \
+      --min="${CLOUD_RUN_MIN_INSTANCES}" \
+      --region="${GCP_REGION}" \
+      --project="${GCP_PROJECT}" \
+      --quiet
+  done
+fi
 
 # ODP-LIVE-E2E-001: the release is serving but is not committed yet. The live
 # E2E gate drives the promoted release the way an operator would -- authenticate,
