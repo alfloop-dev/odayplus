@@ -31,6 +31,22 @@ or live account/GitHub-secret/IAM/traffic/source/model operation was performed.
 Independent source/CI/admission/custodian trust roots and the approved foreground
 invocation remain operational prerequisites, not new SMTP or consent ceremonies.
 
+The first extraction measurement at `7e89f487a56680c8ef120f531c87b8c63004b801`
+retains its real outcomes: diff exit0 / 0.016s / `65c37b021d337b2a`;
+provisioning exit1 / 267.336s / `9967571758b7749b`; gate exit0 / 44.637s /
+`d3cda8b9c5a4e692`; Web exit0 / 2.271s / `a1e504cf055182e0`; typecheck exit0 /
+6.755s / `e9c098051dc06fe8`. Explicit diagnostic retry on the same three Python
+files stopped at the first failure (`-x`, no broader selection), exit1 / 71.772s /
+`f73cc606dd1491e5`. The offline Web lifecycle fixture patched the old foreground
+module's randomized account/tenant constants but not the newly authoritative
+shared module. Production correctly refused that inconsistent original account
+before reservation. The fixture now patches both namespaces for the same offline
+UUID; production pins and refusal policy are unchanged. The later repaired head
+requires fresh declarations; none of these receipts is relabelled as its pass.
+Web tooling uses the existing Corepack pnpm9.15.9 and scratch-only launchers for
+existing Vitest/TypeScript package entrypoints because seeded `.bin` symlinks are
+absent. No install, dependency change or tracked launcher was introduced.
+
 ## Foreground rollout boundary increment (2026-10-10)
 
 `ForegroundDevSmokeRollout` now launches only the existing exact clean-candidate

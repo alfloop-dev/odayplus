@@ -902,11 +902,15 @@ def web_lifecycle(
     import delivery_toolchain.release.provision_dev_smoke as module
     from delivery_toolchain.e2e.check_live_e2e_gate import HttpResponse
     from modules.opsboard.auth import Credentials
+    from shared.identity import dev_smoke_journal as identity_contract
     from shared.identity.credential_service import CredentialService
 
     s = acceptance
-    monkeypatch.setattr(module, "PRESERVED_ACCOUNT_ID", s.admin)
-    monkeypatch.setattr(module, "TENANT_ID", TENANT)
+    # Offline PG uses a randomized account UUID. Patch the shared contract as
+    # well as the foreground's compatibility names; production pins never change.
+    for contracts in (identity_contract, module):
+        monkeypatch.setattr(contracts, "PRESERVED_ACCOUNT_ID", s.admin)
+        monkeypatch.setattr(contracts, "TENANT_ID", TENANT)
     admin_password = "Original-Admin-Credential-7632"
     s.engine.execute("UPDATE identity.accounts SET username = 'ajoe734' WHERE account_id = ?", (s.admin,))
     s.engine.execute("UPDATE identity.password_credentials SET phc_hash = ? WHERE account_id = ?",
