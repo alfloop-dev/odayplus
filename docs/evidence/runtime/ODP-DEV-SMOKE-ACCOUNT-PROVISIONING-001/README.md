@@ -1072,3 +1072,33 @@ and rollback-owned promoted-before-gate deploy hookup remain unfinished. The
 default workflow still only consumes a staged bundle. This increment is not
 review-ready or deployment/full-product/F11 acceptance. Verification pending at
 this source anchor; exact declarations will be measured next.
+
+### Exact source-approval boundary verification
+
+Source anchor `e255eb5e56aa1e3db2892bcf9b0d4823d35c9815` completed each of the
+five exact declared commands once through the canonical foreground verification
+module. Original terminal exit0; original JSON receipts bind source SHA, command,
+selection, exit code and duration. Existing uv, installed workspace binaries and
+a scratch-only Corepack pnpm9.15.9 launcher were reused. No tracked dependency
+changes, unsafe/background waiting, timeout/signal, count-only rerun or expanded
+suite occurred.
+
+| Exact declared command | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.017s | `6012c141c6da23a0` |
+| `uv run --frozen --python 3.12 pytest tests/security/test_dev_smoke_invitation.py tests/integration/test_dev_smoke_provisioning.py tests/contract/test_runtime_release_workflow.py -q` | 0 | 329.001s | `a0cdc62e3cd26de6` |
+| `uv run --frozen --python 3.12 pytest tests/e2e/test_live_e2e_gate_dev_admin.py tests/security/test_operator_read_authorization.py -q` | 0 | 48.194s | `4063c177fe568507` |
+| `pnpm --dir apps/web exec vitest run src/app/auth/invitations/__tests__/route.test.ts` | 0 | 4.868s | `b0fe28d75230ff4d` |
+| `pnpm --dir apps/web typecheck` | 0 | 9.888s | `fcbab7be25f56b3b` |
+
+Receipts remain in canonical `.orchestrator/evidence`; this later evidence-only
+commit is not the measured source SHA. All results are offline regression proof,
+not actual independent source approval/required CI, consent, mailbox control,
+secret-value readback or deployment success. The library now enforces fresh
+exact-source approval/CI observation, but trusted root acquisition and the
+rollback-owned promoted-before-gate deployment hookup remain unfinished. Actual
+mailbox verification remains foreground coordinator duty. Required exact-head CI
+and Codex review of the final complete delivery still precede activation.
+Task remains in progress; this is a committed increment, not review submission.
+No live login/account/GitHub comment/status/secret/config/IAM/traffic/source/model
+mutation, passing live gate, full-product or F11 acceptance is claimed.
