@@ -134,6 +134,31 @@ receipts do not prove the repair passed. All receipts above were produced by
   coverage remain pending. `USER-AUTHORIZATION-20261010.json` in this directory
   copies the supplied sanitized authorization, not execution evidence.
 
+## Anchor 4 measured verification / repair checkpoint
+
+Canonical `task_verification.py run` at `aa7ec8b292b68e53400218dfd659c64591493e44`
+finished all five declared commands (no background jobs or summary polling):
+
+| Selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.054s | `a4027f51296a12d1` |
+| Invitation/security + provisioning/integration + workflow contract pytest | 1 | 58.335s | `f80dc2ddac0ddbc5` |
+| Existing dev-admin gate + operator-read authorization pytest | 0 | 44.530s | `99ef23a2d648645c` |
+| Declared invitation Vitest | 127 | 0.001s | `9930d8da823f579d` |
+| Web typecheck | 127 | 0.001s | `5c404f7c1688e8cd` |
+
+The single pytest failure was a **test SQL** literal `%` passed to psycopg;
+replaced the LIKE pattern with a bound parameter. Web commands never launched:
+`pnpm` was absent from PATH, and this fresh worktree had no node dependencies.
+Project-standard `npm ci` completed exit 0; Corepack installed a pnpm shim only
+in the declared scratch directory. No tracked lock/config files changed.
+Additional source repair binds uppercase invitation UUID input to canonical
+lowercase receipts without misreporting successful creation as unavailable.
+Added an independent-PG-pool budget race regression. These changes need new-head
+receipts; the above passes do not attest the repair. Full command strings,
+head, exit, duration and output tails are in the canonical runner's existing
+`.orchestrator/evidence/verification-odp_dev_smoke_account_provisioning_001-*.json`.
+
 ## Remaining work (must precede review)
 
 1. Activate the bounded acceptance factory/Web adapter only after middleware
@@ -141,7 +166,8 @@ receipts do not prove the repair passed. All receipts above were produced by
    revocation are mounted; acceptance remains deliberately unmounted.
 2. Execute the canonical declared regressions at the new anchor and repair any
    findings. Focused Web checks are now declared; real middleware/composition
-   coverage and cross-instance throttle concurrency still need proof.
+   coverage remains pending and the new cross-instance throttle test needs a
+   measured pass.
 3. Implement explicit one-time Human-bound foreground provisioning and recovery
    within a normally signed/admitted dev rollout after route availability,
    before the unchanged finite live gate. Bind environment/repo/tenant/purpose,

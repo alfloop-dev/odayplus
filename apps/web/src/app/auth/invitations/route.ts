@@ -121,7 +121,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (typeof result[key] !== "string" || !UUID.test(result[key] as string)) throw new Error("invalid receipt");
         receipt[key] = result[key] as string;
       }
-      if (receipt.invitation_id !== payload.invitation_id) throw new Error("mismatched receipt");
+      if (receipt.invitation_id.toLowerCase() !== (payload.invitation_id as string).toLowerCase()) throw new Error("mismatched receipt");
       return NextResponse.json(receipt, { status: 201, headers: { "cache-control": "no-store" } });
     }
     const code = (result?.error as { code?: unknown } | undefined)?.code;

@@ -56,6 +56,11 @@ describe("bounded invitation capability acceptance BFF (no login or credential o
     });
   });
 
+  it("binds canonical UUID receipts to case-insensitive input identifiers", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(RECEIPT), { status: 201 })));
+    expect((await POST(request({ ...BODY, invitation_id: INVITATION.toUpperCase() }))).status).toBe(201);
+  });
+
   it.each([undefined, "https://attacker.example.com"])("refuses absent/foreign Origin before transport: %s", async (origin) => {
     const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
     const req = request();

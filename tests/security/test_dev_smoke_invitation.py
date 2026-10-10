@@ -263,7 +263,7 @@ def test_acceptance_budget_survives_refusal_resets_by_db_time_and_preserves_logi
               ("account:" + s.admin,)) == [(3,)]
     assert _q(s, "SELECT failure_count FROM identity.login_attempts WHERE attempt_key = 'invitation-accept:global'") == [(6,)]
     s.engine.execute("UPDATE identity.login_attempts SET window_started_at = now() - interval '16 minutes' "
-                     "WHERE attempt_key LIKE 'invitation-accept:%'")
+                     "WHERE attempt_key LIKE ?", ("invitation-accept:%",))
     assert _accept(s, issued).account_id != s.admin
 
 

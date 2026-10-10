@@ -204,6 +204,31 @@ def test_concurrent_accepts_across_pg_connections_create_exactly_one_account(inv
         other_engine.close()
 
 
+def test_acceptance_budget_serializes_across_independent_pg_pools(invitations: Any) -> None:
+    s = invitations
+    issued = _issue(s)
+    other_engine = PostgresEngine(s.db.url(), bootstrap=False, validate_schema=False)
+    try:
+        other = InvitationService(engine=other_engine, audit_log=DurableAuditLog(other_engine))
+
+        def reserve(service: InvitationService) -> str:
+            try:
+                service._reserve_acceptance(issued.invitation_id)
+                return "reserved"
+            except InvitationRefused as exc:
+                return exc.code
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(reserve, [s.invites, other] * 3))
+        assert outcomes.count("reserved") == 5
+        assert outcomes.count("INVITATION_RATE_LIMITED") == 1
+        assert _q(s, "SELECT failure_count FROM identity.login_attempts "
+                  "WHERE attempt_key = 'invitation-accept:global'") == [(6,)]
+        assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+    finally:
+        other_engine.close()
+
+
 def test_acceptance_router_creates_only_with_capability_and_no_session(acceptance: Any) -> None:
     s = acceptance
     issued = _issue(s)
