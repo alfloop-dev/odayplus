@@ -34,6 +34,8 @@ Runtime Release `38025605232` attempt 2（SHA `0dd210dbe04f…`）artifact `1166
 
 deploy script、workflow、IAM、secret、config、帳號／角色、業務資料、模型、Web `/operator` redirect probe 均未修改；未讀取任何 credential、未做任何 live 部署或 runtime mutation。沒有全域延長或取消 deadline。
 
+**與 ODP-DEV-CANDIDATE-SMOKE-COLDSTART-001（PR #1449，已併入 dev `31785c571`）的組合**：該 task 讓 deploy script 的 candidate smoke 傳 `--timeout ${CANDIDATE_SMOKE_TIMEOUT_SECONDS:-60}`。本 task base advance 後兩者疊加：per-attempt timeout 為 60s（整個交換的絕對時限），重試仍只限 `no_response`，且所有 API probe 共用的 180s 總預算不變、每次 attempt 夾到剩餘預算。兩者檔案不重疊，merge 無衝突。
+
 ## 4. 回歸測試（`tests/ops/test_cloud_run_live_deployment.py`）
 
 - 冷啟動後成功（read timeout / URLError / connection reset 三種）：全部原始 check 綠燈，失敗 attempt 保留於收據，backoff 依序 `2,4,2`。
