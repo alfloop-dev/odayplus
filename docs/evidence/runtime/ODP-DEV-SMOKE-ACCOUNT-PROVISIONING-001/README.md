@@ -949,3 +949,28 @@ control, exact-head source approval or promoted rollout/rollback ownership. Thos
 independent coordinator obligations and the deployment hook remain unfinished.
 This increment is not review-ready. No worker live identity/GitHub secret/config,
 IAM, traffic, source or model action occurred. Verification pending at anchor.
+
+### Exact token-owner boundary verification
+
+Source anchor `7de496462dcf53ed68d892574e5f2f01ad09a5e7` completed all five exact
+declared selections once via the canonical foreground verification module.
+Original terminal exit0; retained JSON receipts bind source SHA, exact command,
+selection, actual exit code and duration. Existing uv, scratch Corepack pnpm
+launcher and installed workspace binaries were reused; no dependency changes,
+background waits, count-only reruns or expanded suites.
+
+| Exact declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.017s | `872fbb831a7668a5` |
+| Invitation/provisioning/workflow pytest | 0 | 281.940s | `c2e218940769b20c` |
+| Gate/operator pytest | 0 | 44.924s | `f0d1b3c20b031445` |
+| Invitation Web Vitest | 0 | 2.407s | `3f4ebbc9a35ef986` |
+| Web typecheck | 0 | 6.541s | `b0f3434cef228889` |
+
+Original receipts remain in canonical `.orchestrator/evidence`; this subsequent
+evidence-only commit is not the tested source SHA. Next: independently authenticated
+exact-head source approval, approved mailbox custody/consent and rollback-owned
+promoted-before-gate deployment hookup. Token-owner authentication does not close
+those obligations. Required exact-head CI and independent Codex review remain
+before activation. Task remains in progress, not review-ready; no review submission
+or live provisioning/deployment/full-product/F11 acceptance is claimed.
