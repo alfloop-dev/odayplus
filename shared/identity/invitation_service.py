@@ -184,7 +184,8 @@ class InvitationService:
             raise InvitationRefused("INVITATION_SCOPE_INVALID")
         # The UI's historical placeholder means the verified issuer tenant;
         # no other tenant may be selected by the payload.
-        if requested.get("tenant_id", tenant) not in {tenant, "tenant-default"}:
+        requested_tenant = requested.get("tenant_id", tenant)
+        if not isinstance(requested_tenant, str) or requested_tenant not in {tenant, "tenant-default"}:
             raise InvitationRefused("INVITATION_SCOPE_INVALID")
         normalized = _scope(tenant)
         for axis in _SCOPE_AXES:

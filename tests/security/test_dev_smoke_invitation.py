@@ -9,6 +9,8 @@ acceptance factory/Web adapter are not yet activated; foreground binding is pend
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -383,6 +385,7 @@ def test_general_pending_expiry_revoke_invalid_capability_never_leaves_usable_cr
     ({"roles": ["foreign-role"]}, "INVITATION_ROLES_INVALID"),
     ({"roles": []}, "INVITATION_ROLES_INVALID"),
     ({"scope": {"tenant_id": OTHER_TENANT}}, "INVITATION_SCOPE_INVALID"),
+    ({"scope": {"tenant_id": [TENANT]}}, "INVITATION_SCOPE_INVALID"),
     ({"scope": {"brand_ids": "all"}}, "INVITATION_SCOPE_INVALID"),
     ({"scope": {"unknown_grant": ["x"]}}, "INVITATION_SCOPE_INVALID"),
     ({"scope": {"clearance": "ALL"}}, "INVITATION_SCOPE_INVALID"),
@@ -432,3 +435,98 @@ def test_general_pending_casefolded_username_email_reservation_and_pure_release_
     _general_accept(s, issued)
     with pytest.raises(InvitationRefused, match="INVITATION_ACCOUNT_EXISTS"):
         _general_issue(s, username=GENERAL_USERNAME.upper(), email="new@example.invalid")
+
+
+def test_general_expiry_is_rechecked_after_argon2_before_any_identity_insert(invitations: Any, monkeypatch: Any) -> None:
+    s = invitations
+    issued = _general_issue(s)
+    original = CredentialService.hash_password
+    def expire_while_hashing(self: Any, password: str) -> str:
+        phc = original(self, password)
+        s.engine.execute("UPDATE identity.invitations SET expires_at = now() WHERE invitation_id = ?", (issued.invitation_id,))
+        return phc
+    monkeypatch.setattr(CredentialService, "hash_password", expire_while_hashing)
+    with pytest.raises(InvitationRefused, match="INVITATION_UNAVAILABLE"):
+        _general_accept(s, issued)
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+    assert _q(s, "SELECT accepted_at FROM identity.invitations") == [(None,)]
+
+
+def test_general_actual_acceptance_web_login_password_rotation_and_api_boundary(invitations: Any) -> None:
+    """Production Web routes + real Pg stores, not manual JWT/password rotation.
+
+    Reuse the existing Node password-route tests and disposable Pg identity
+    fixture. All capability custody is memory-only and all data is offline.
+    npm/workspace dependencies are the repository's declared CI toolchain.
+    """
+    from fastapi.testclient import TestClient
+
+    from apps.api.app.routes.identity_invitations import create_invitation_acceptance_router
+    from apps.api.oday_api.security.dependencies import PASSWORD_CHANGE_REQUIRED
+    from modules.opsboard.auth import AuthBoundaryConfig, AuthenticationBoundary, SigningKey
+    from tests.identity.test_identity_user_role_management import (
+        AUDIENCE,
+        LOCAL_ISSUER,
+        LOCAL_KEY,
+        _app,
+    )
+
+    s = invitations
+    with s.db.connect(autocommit=True) as conn:
+        conn.execute(Path("infra/db/migrations/000012_identity_session_server_secrets.sql").read_text(encoding="utf-8"))
+    # Resolve the actual Web key id, retaining the existing API auth boundary.
+    s.boundary = AuthenticationBoundary(AuthBoundaryConfig(
+        local_issuer=LOCAL_ISSUER,
+        local_signing_keys={"local-default": SigningKey(kid="local-default", algorithm="HS256", secret=LOCAL_KEY.secret)},
+        local_audiences=frozenset({AUDIENCE}), principal_mappings={},
+        identity_store=s.identity, session_service=s.sessions,
+    ), audit_log=s.audit)
+    s.client = TestClient(_app(s, s.service))
+    s.client.app.include_router(create_invitation_acceptance_router(s.invites), prefix="/api/v1")
+
+    def web(phase: str) -> None:
+        proc = subprocess.run([
+            "npm", "test", "--workspace=@oday-plus/web", "--",
+            "src/lib/auth/__tests__/password.test.ts", "-t", "PostgreSQL invitation recipient production path",
+        ], env={**os.environ, "ODP_INVITATION_TEST_DB_URL": s.db.url(), "ODP_INVITATION_TEST_PHASE": phase,
+                "ODP_IDENTITY_TOKEN_SIGNING_KEY": LOCAL_KEY.secret.decode(),
+                "ODP_AUTH_LOCAL_AUDIENCES": AUDIENCE, "ODP_AUTH_LOCAL_ISSUER": LOCAL_ISSUER},
+            capture_output=True, text=True, timeout=90, check=False)
+        assert proc.returncode == 0, f"Web fixture terminal exit {proc.returncode}: {proc.stdout}\n{proc.stderr}"
+
+    def consume(issued: Any) -> Any:
+        return s.client.post("/api/v1/auth/invitations/accept", json={
+            "invitation_id": issued.invitation_id, "token": issued.token,
+            "username": GENERAL_USERNAME, "password": PASSWORD,
+        })
+
+    expired = _general_issue(s)
+    s.engine.execute("UPDATE identity.invitations SET expires_at = now() WHERE invitation_id = ?", (expired.invitation_id,))
+    assert consume(expired).status_code == 409
+    web("pending")  # expired capability has no username/password login or reset path
+    revoked = _general_issue(s)
+    s.invites.revoke(s.principal, invitation_id=revoked.invitation_id)
+    assert consume(revoked).status_code == 409
+    web("pending")
+    issued = _general_issue(s, roles=["operations_manager"], scope={"tenant_id": TENANT})
+    accepted = consume(issued)
+    assert accepted.status_code == 201, accepted.text
+    account_id = accepted.json()["account_id"]
+    assert accepted.headers["cache-control"] == "no-store"
+    web("login")  # real /login verifies acceptance password and persists Web bearer/session
+    (initial_bearer,), = _q(s, "SELECT access_token FROM identity.sessions WHERE account_id = %s "
+                               "AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1", (account_id,))
+    headers = {"authorization": f"Bearer {initial_bearer}"}
+    blocked = s.client.get("/api/v1/operator/bootstrap", headers=headers)
+    assert blocked.status_code == 403 and blocked.json()["detail"] == PASSWORD_CHANGE_REQUIRED
+    web("rotate")  # real /auth/password verifies current password, rotates hash/session
+    assert s.identity.password_must_change(account_id) is False
+    assert s.client.get("/api/v1/operator/bootstrap", headers=headers).status_code == 401
+    (bearer,), = _q(s, "SELECT access_token FROM identity.sessions WHERE account_id = %s "
+                       "AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1", (account_id,))
+    rotated_headers = {"authorization": f"Bearer {bearer}"}
+    assert s.client.get("/api/v1/operator/bootstrap", headers=rotated_headers).status_code == 200
+    assert s.client.get("/api/v1/operator/users", headers=rotated_headers).status_code == 403
+    assert consume(issued).status_code == 409
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(2,)]
+    assert s.audit.verify_chain().ok
