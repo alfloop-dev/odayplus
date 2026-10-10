@@ -14,8 +14,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 from modules.heatzone.application import merge_split_evidence
+from modules.heatzone.domain.composition import (
+    CompositionKind,
+    HeatZoneCompositionRecord,
+    generate_merged_zone_id,
+)
 from shared.infrastructure.persistence import build_persistence
 from tests.integration._heatzone_evidence import (
+    SPLIT_LEFT,
+    SPLIT_RIGHT,
+    add_barrier_evidence,
     build_evidence_repository,
     matured_receipt,
 )
@@ -45,6 +53,25 @@ def seed_generated_history(bundle) -> None:
     writer to it or submit caller-supplied maturity to the evaluate endpoint.
     """
     reference = build_evidence_repository(tenant_id="tenant-a")
+    mode = os.environ.get("NETWORK_SPATIAL_COMPOSITION", "merge")
+    if mode not in {"merge", "split"}:
+        raise RuntimeError("NETWORK_SPATIAL_COMPOSITION must be merge or split")
+    if mode == "split":
+        # Explicit synthetic parent and side-labelled history, not an observed
+        # production topology or a caller-supplied readiness verdict.
+        add_barrier_evidence(reference, tenant_id="tenant-a")
+        parent_id = generate_merged_zone_id((SPLIT_LEFT, SPLIT_RIGHT))
+        for cell_id in (SPLIT_LEFT, SPLIT_RIGHT):
+            bundle.heatzone_composition_repository.save_composition(
+                HeatZoneCompositionRecord(
+                    zone_id=parent_id,
+                    tenant_id="tenant-a",
+                    member_cell_id=cell_id,
+                    composition_kind=CompositionKind.MERGED,
+                    decided_by="explicit-split-parent-fixture",
+                    decision_policy_version_id="heatzone-merge-v1:tenant-a",
+                )
+            )
     for cell in reference.list_cells("tenant-a"):
         bundle.engine.execute(
             "INSERT INTO h3_cells (geo_cell_id, h3_index, centroid_latitude, "
@@ -106,7 +133,14 @@ def inspect(proposal_id: str) -> dict:
     proposal = bundle.heatzone_composition_repository.get_proposal(proposal_id, "tenant-a")
     if proposal is None:
         raise RuntimeError("Proposal not persisted")
-    records = bundle.heatzone_composition_repository.get_composition(proposal.zone_id, "tenant-a")
+    parent_records = bundle.heatzone_composition_repository.get_composition(proposal.zone_id, "tenant-a")
+    records = parent_records
+    if proposal.composition_kind == CompositionKind.SPLIT_CHILD:
+        records = [
+            record
+            for child_id in proposal.to_dict()["child_zone_ids"]
+            for record in bundle.heatzone_composition_repository.get_composition(child_id, "tenant-a")
+        ]
     events = [event.to_dict() for event in bundle.audit_log.list_events()
               if event.resource == f"heatzone/proposals/{proposal_id}"]
     chain = bundle.audit_log.verify_chain()
@@ -115,6 +149,7 @@ def inspect(proposal_id: str) -> dict:
         "fresh_process": True,
         "proposal": proposal.to_dict(),
         "compositions": [record.to_dict() for record in records],
+        "parent_compositions": [record.to_dict() for record in parent_records],
         "events": events,
         "audit_chain": chain.to_dict(),
     }

@@ -9,10 +9,16 @@ import path from "node:path";
 // NOT live maturity, PostgreSQL, deployed auth or independent visual approval.
 const endpoint = "/api/v1/heatzones/merge-split";
 const phase = process.env.NETWORK_PARITY_CAPTURE_PHASE ?? "after";
+const split = process.env.NETWORK_SPATIAL_COMPOSITION === "split";
+const selectedCase = process.env.NETWORK_SPATIAL_CASE;
+if (split && !/^(approve|reject)-(1440|390)$/.test(selectedCase ?? "")) {
+  throw new Error("Split runs require NETWORK_SPATIAL_CASE=approve|reject-1440|390 and a fresh scratch DB per case");
+}
 test.describe.configure({ mode: "serial" });
 for (const width of [1440, 390]) {
   for (const kind of ["approve", "reject"] as const) {
-    test(`Spatial SQLite ${kind} preview decision reload at ${width}`, async ({ page }, info) => {
+    if (split && selectedCase !== `${kind}-${width}`) continue;
+    test(`Spatial SQLite ${split ? "split " : ""}${kind} preview decision reload at ${width}`, async ({ page }, info) => {
       test.setTimeout(120_000);
       const subject = `spatial-durable-${kind}-${width}`;
       const headers = { "x-subject-id": subject, "x-roles": "expansion_user,site_reviewer", "x-tenant-id": "tenant-a" };
@@ -26,10 +32,17 @@ for (const width of [1440, 390]) {
       const generation = await evaluated.json();
       await save("generation", generation);
       expect(generation.abstained).toBe(false);
-      expect(generation.proposals).toHaveLength(1);
-      const proposal = generation.proposals[0];
-      expect(proposal.composition_kind).toBe("MERGED");
-      expect(proposal.member_cell_ids).toEqual(["cell-taipei-00", "cell-taipei-01"]);
+      const proposals = generation.proposals.filter((p: { composition_kind: string }) => p.composition_kind === (split ? "SPLIT_CHILD" : "MERGED"));
+      expect(proposals).toHaveLength(1);
+      const proposal = proposals[0];
+      expect(proposal.member_cell_ids).toEqual(split ? ["cell-kaohsiung-00", "cell-kaohsiung-01"] : ["cell-taipei-00", "cell-taipei-01"]);
+      if (split) {
+        expect(proposal.child_partitions).toEqual([["cell-kaohsiung-00"], ["cell-kaohsiung-01"]]);
+        expect(proposal.child_zone_ids).toHaveLength(2);
+        expect(new Set(proposal.child_zone_ids).size).toBe(2);
+        expect(proposal.parent_zone_id).toBe(proposal.zone_id);
+        expect(proposal.split_density_ratio).toBeGreaterThan(1);
+      }
       const id = proposal.proposal_id;
       const note = `本地 SQLite ${kind} ${width} 決策；測試生成歷史，不是正式上線核准。`;
       await page.setViewportSize({ width, height: 900 });
@@ -75,6 +88,40 @@ for (const width of [1440, 390]) {
         }
         // Baseline records violations; after repair must enforce all scoped AA rules.
         if (phase === "after") expect(axe.violations).toEqual([]);
+      }
+      if (split) {
+        // The staff UI offers preview but no decision. Exercise the actual API
+        // denial too; hiding a button is not server-side authorization proof.
+        await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-staff"));
+        await page.reload();
+        await page.getByTestId("network-tab-7").click();
+        await panel.getByTestId(`proposal-item-${id}`).click();
+        await expect(panel.getByTestId("split-children")).toBeVisible();
+        for (const childId of proposal.child_zone_ids) await expect(panel.getByTestId("split-children")).toContainText(childId);
+        await expect(panel.getByTestId("composition-decision-denied")).toBeVisible();
+        await expect(panel.getByTestId("btn-open-approve")).toHaveCount(0);
+        await expect(panel.getByTestId("btn-open-reject")).toHaveCount(0);
+        await capture("staff-permission");
+        const before = JSON.parse(execFileSync(path.resolve(".venv/bin/python"), ["-m", "tests.visual.spatial_durable_backend", "--inspect", id], { encoding: "utf8" }));
+        const denials = [];
+        for (const action of ["approve", "reject"]) {
+          const denied = await page.request.post(`${endpoint}/proposals/${id}/${action}`, {
+            headers: { ...headers, "x-roles": "expansion_user" },
+            data: action === "approve" ? { notes: note } : { reason: note },
+          });
+          expect(denied.status()).toBe(403);
+          denials.push({ action, status: denied.status(), response: await denied.json() });
+        }
+        const after = JSON.parse(execFileSync(path.resolve(".venv/bin/python"), ["-m", "tests.visual.spatial_durable_backend", "--inspect", id], { encoding: "utf8" }));
+        expect(after).toEqual(before);
+        expect(after.events).toEqual([]);
+        await save("permission-denials", { denials, before, after });
+        await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-manager"));
+        await page.reload();
+        await page.getByTestId("network-tab-7").click();
+        await panel.getByTestId(`proposal-item-${id}`).click();
+        await panel.getByTestId("btn-preview-proposal").click();
+        await expect(panel.getByTestId("preview-box")).toBeVisible();
       }
       await capture("preview");
       await panel.getByTestId(`btn-open-${kind}`).click();
@@ -126,19 +173,38 @@ for (const width of [1440, 390]) {
           expect(record.decision_policy_version_id).toBe(proposal.policy_version_id);
           expect(record.model_version).toBe(proposal.model_version);
         }
-        const lineage = await page.request.get(`/api/v1/heatzones/zones/${proposal.zone_id}/lineage`, { headers });
-        expect(lineage.status()).toBe(200);
-        const body = await lineage.json();
-        expect(body.is_active).toBe(true);
-        expect(body.member_cell_ids).toEqual(proposal.member_cell_ids);
-        await save("lineage", body);
-        // Explicit test cleanup: next case may evaluate the same fixture cells.
-        const rollback = await page.request.post(`/api/v1/heatzones/zones/${proposal.zone_id}/rollback`, { headers, data: { revert_reason: "Isolated browser test cleanup, not a production rollback" } });
-        expect(rollback.status()).toBe(200);
-        await save("cleanup-rollback", await rollback.json());
+        const lineageIds: string[] = split ? proposal.child_zone_ids : [proposal.zone_id];
+        const lineages = [];
+        for (const [index, zoneId] of lineageIds.entries()) {
+          const lineage = await page.request.get(`/api/v1/heatzones/zones/${zoneId}/lineage`, { headers });
+          expect(lineage.status()).toBe(200);
+          const body = await lineage.json();
+          expect(body.is_active).toBe(true);
+          expect(body.member_cell_ids).toEqual(split ? proposal.child_partitions[index] : proposal.member_cell_ids);
+          lineages.push(body);
+        }
+        await save("lineage", split ? lineages : lineages[0]);
+        if (split) {
+          expect(persisted.parent_compositions).toHaveLength(2);
+          expect(persisted.parent_compositions.every((record: { is_active: boolean }) => !record.is_active)).toBe(true);
+          for (const record of created) {
+            expect(record.parent_zone_id).toBe(proposal.zone_id);
+            expect(record.composition_kind).toBe("SPLIT_CHILD");
+          }
+          // A single fresh DB per split case; no fixture parent restoration or
+          // post-decision cleanup that could obscure the terminal topology.
+        } else {
+          const rollback = await page.request.post(`/api/v1/heatzones/zones/${proposal.zone_id}/rollback`, { headers, data: { revert_reason: "Isolated browser test cleanup, not a production rollback" } });
+          expect(rollback.status()).toBe(200);
+          await save("cleanup-rollback", await rollback.json());
+        }
       } else {
         expect(persisted.proposal.rejection_reason).toBe(note);
         expect(persisted.compositions.filter((record: { is_active: boolean }) => record.is_active)).toHaveLength(0);
+        if (split) {
+          expect(persisted.parent_compositions).toHaveLength(2);
+          expect(persisted.parent_compositions.every((record: { is_active: boolean }) => record.is_active)).toBe(true);
+        }
       }
     });
   }
