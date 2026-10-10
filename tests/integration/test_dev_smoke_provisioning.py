@@ -766,6 +766,64 @@ def _offline_custody_approval(plan: Any) -> Any:
     return evidence
 
 
+def _offline_source_approval(plan: Any) -> Any:
+    """Pinned GitHub mock only, NOT independent live review/CI evidence."""
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    import httpx
+    from delivery_toolchain.release.provision_dev_smoke import GitHubSourceApprovalObserver, REPOSITORY
+
+    head = "d" * 40
+    candidate = plan["release_sha"]
+    past = (datetime.fromisoformat(plan["expires_at"]) - timedelta(minutes=30)).isoformat()
+    repo = {"full_name": REPOSITORY}
+    docs: dict[str, Any] = {
+        "/pulls/123": {"number": 123, "merged": True, "state": "closed", "draft": False,
+                       "merge_commit_sha": candidate, "merged_at": past,
+                       "head": {"sha": head, "repo": repo}, "base": {"ref": "dev", "repo": repo}},
+        f"/commits/{head}/statuses?per_page=100": [
+            {"context": "task-review-gate", "state": "success", "created_at": past,
+             "url": f"https://api.github.com/repos/{REPOSITORY}/statuses/{head}",
+             "creator": {"login": "canonical-writer", "id": 789}}],
+    }
+    for index, sha in enumerate(dict.fromkeys((head, candidate))):
+        docs[f"/git/commits/{sha}"] = {"sha": sha, "tree": {"sha": "e" * 40}}
+        suite = 100 + index
+        docs[f"/actions/workflows/456/runs?head_sha={sha}&per_page=100"] = {
+            "total_count": 1, "workflow_runs": [
+                {"id": 500 + index, "workflow_id": 456, "head_sha": sha,
+                 "path": ".github/workflows/ci.yml", "event": "push", "repository": repo,
+                 "head_repository": repo, "status": "completed", "conclusion": "success",
+                 "check_suite_id": suite, "updated_at": past}],
+        }
+        docs[f"/check-suites/{suite}/check-runs?filter=latest&per_page=100"] = {
+            "total_count": 2, "check_runs": [
+                {"name": name, "head_sha": sha, "app": {"id": 42}, "check_suite": {"id": suite},
+                 "status": "completed", "conclusion": "success", "completed_at": past}
+                for name in ("orchestrator", "product")],
+        }
+    evidence = SimpleNamespace(docs=docs, calls=[], observations=0, failed_at=0,
+                               status=200, headers={}, head=head)
+
+    def request(req: Any) -> Any:
+        assert req.method == "GET" and req.headers["authorization"].startswith("Bearer ")
+        path = str(req.url).removeprefix(f"https://api.github.com/repos/{REPOSITORY}")
+        evidence.calls.append(path)
+        if path == "/pulls/123":
+            evidence.observations += 1
+            if evidence.observations == evidence.failed_at:
+                raise RuntimeError("private-source-token-error")
+        return httpx.Response(evidence.status, json=evidence.docs[path], headers=evidence.headers)
+
+    evidence.observer = GitHubSourceApprovalObserver(
+        token="offline-read-token", pull_number=123, reviewed_head=head,
+        review_writer_login="canonical-writer", review_writer_id=789, workflow_id=456,
+        checks_app_id=42, required_checks=("orchestrator", "product"),
+        transport=httpx.MockTransport(request),
+    )
+    return evidence
+
+
 @pytest.fixture
 def web_lifecycle(
     acceptance: Any, foreground_plan_input: Any, consumed_dev_admission: Any, monkeypatch: Any,
@@ -871,15 +929,17 @@ def web_lifecycle(
 
     web = MemoryBff()
     web.custody_evidence = _offline_custody_approval(plan)
+    web.source_evidence = _offline_source_approval(plan)
     executor = module.WebInvitationExecutor(
         web=web, web_origin="https://web.example.invalid", journal=journal, admission=admission,
-        custody=web.custody_evidence.observer,
+        custody=web.custody_evidence.observer, source=web.source_evidence.observer,
     )
     try:
         yield s, web, executor, journal, plan, dict(admin_password=admin_password, new_password=PASSWORD,
             release_sha=plan["release_sha"], manifest_digest=plan["manifest_digest"])
     finally:
         web.custody_evidence.observer.close()
+        web.source_evidence.observer.close()
 
 
 def test_web_executor_actual_router_lifecycle_provenance_and_session_cleanup(web_lifecycle: Any, monkeypatch: Any) -> None:
@@ -892,6 +952,7 @@ def test_web_executor_actual_router_lifecycle_provenance_and_session_cleanup(web
     assert receipt["stage"] == "web-lifecycle-verified"
     assert receipt["serving_release_observed"] is True and web.release_reads == 3
     assert receipt["custody_approval_observed"] is True and len(web.custody_evidence.calls) == 6
+    assert receipt["source_approval_observed"] is True and web.source_evidence.observations == 6
     assert receipt["issuer_account_id"] == s.admin
     assert receipt["account_id"] != s.admin and receipt["tenant_id"] == TENANT
     assert not receipt["credential_binding_verified"] and not receipt["deployment_success"]
@@ -1151,7 +1212,7 @@ def test_lifecycle_requires_observer_not_receipt(web_lifecycle: Any, bad: Any) -
     s, web, executor, journal, _, _ = web_lifecycle
     with pytest.raises(ProvisioningRefused, match="PROVISIONING_DEV_ADMISSION_UNVERIFIED"):
         WebInvitationExecutor(web=web, web_origin="https://web.example.invalid", journal=journal,
-                              admission=bad, custody=executor._custody)
+                              admission=bad, custody=executor._custody, source=executor._source)
     assert not web.calls and journal.inspect() is None
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
 
@@ -1220,6 +1281,212 @@ def test_lifecycle_actual_admission_refusal_precedes_login(
         executor.execute(plan, **args)
     assert not web.calls and journal.inspect() is None
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+
+
+def test_source_approval_fresh_pinned_review_ci_and_merge_tree(foreground_plan_input: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    plan, args = foreground_plan_input
+    evidence = _offline_source_approval(plan)
+    try:
+        assert evidence.observer.observe(release_sha=plan["release_sha"], now=args["now"]) is None
+        assert len(evidence.calls) == 8
+        evidence.status = 404
+        with pytest.raises(ProvisioningRefused, match="PROVISIONING_SOURCE_APPROVAL_UNVERIFIED"):
+            evidence.observer.observe(release_sha=plan["release_sha"], now=args["now"])
+        assert evidence.observations == 2  # Never cache a pass.
+    finally:
+        evidence.observer.close()
+
+
+@pytest.mark.parametrize("fault", [
+    "redirect", "unauthorized", "unavailable", "pagination", "pull-number", "pull-bool",
+    "unmerged", "draft", "open", "base", "foreign-base", "foreign-head", "head", "candidate",
+    "future-merge", "naive-merge", "different-tree", "commit-sha", "missing-tree",
+    "missing-review", "failed-review", "newer-pending-review", "ambiguous-review",
+    "review-writer", "review-login", "review-bool-writer", "review-url", "future-review",
+    "run-missing", "run-partial", "run-pending", "run-failure", "run-workflow", "run-path",
+    "run-event", "run-repository", "run-foreign-head", "run-sha", "run-newer-failed",
+    "check-missing", "check-duplicate", "check-partial", "check-app", "check-sha", "check-suite",
+    "check-skipped", "check-pending", "check-future", "candidate-ci-failure", "naive-now",
+])
+def test_source_approval_uncertain_or_nonexact_evidence_refuses(foreground_plan_input: Any, fault: str) -> None:
+    from datetime import timedelta
+    from copy import deepcopy
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    plan, args = foreground_plan_input
+    evidence = _offline_source_approval(plan)
+    docs = evidence.docs
+    head, candidate = evidence.head, plan["release_sha"]
+    pull = docs["/pulls/123"]
+    gates = docs[f"/commits/{head}/statuses?per_page=100"]
+    runs = docs[f"/actions/workflows/456/runs?head_sha={head}&per_page=100"]
+    run = runs["workflow_runs"][0]
+    checks = docs["/check-suites/100/check-runs?filter=latest&per_page=100"]
+    check = checks["check_runs"][0]
+    now = args["now"]
+    if fault in {"redirect", "unauthorized"}:
+        evidence.status = 302 if fault == "redirect" else 401
+    elif fault == "unavailable":
+        evidence.failed_at = 1
+    elif fault == "pagination":
+        evidence.headers["link"] = '<https://api.github.com/next>; rel="next"'
+    elif fault in {"pull-number", "pull-bool", "unmerged", "draft", "open", "candidate"}:
+        key, value = {"pull-number": ("number", 999), "pull-bool": ("number", True),
+                      "unmerged": ("merged", False), "draft": ("draft", True), "open": ("state", "open"),
+                      "candidate": ("merge_commit_sha", "f" * 40)}[fault]
+        pull[key] = value
+    elif fault in {"base", "foreign-base", "foreign-head", "head"}:
+        if fault == "base":
+            pull["base"]["ref"] = "production"
+        elif fault == "head":
+            pull["head"]["sha"] = "f" * 40
+        else:
+            # Repo objects are shared in the fixture; replacing is deliberate.
+            pull["base" if fault == "foreign-base" else "head"]["repo"] = {"full_name": "foreign/repo"}
+    elif fault in {"future-merge", "naive-merge"}:
+        pull["merged_at"] = (now + timedelta(seconds=1) if fault == "future-merge"
+                             else now.replace(tzinfo=None)).isoformat()
+    elif fault in {"different-tree", "commit-sha", "missing-tree"}:
+        commit = docs[f"/git/commits/{candidate}"]
+        if fault == "commit-sha":
+            commit["sha"] = "f" * 40
+        else:
+            commit["tree"] = {} if fault == "missing-tree" else {"sha": "f" * 40}
+    elif fault.startswith("review-") or fault in {"missing-review", "failed-review", "newer-pending-review",
+                                               "ambiguous-review", "future-review"}:
+        if fault == "missing-review":
+            gates.clear()
+        elif fault == "failed-review":
+            gates[0]["state"] = "failure"
+        elif fault in {"newer-pending-review", "ambiguous-review"}:
+            latest = deepcopy(gates[0])
+            if fault == "newer-pending-review":
+                latest.update(state="pending", created_at=(now + timedelta(microseconds=1)).isoformat())
+                now += timedelta(seconds=1)
+            gates.append(latest)
+        elif fault == "review-url":
+            gates[0]["url"] = "https://api.github.com/repos/foreign/repo/statuses/" + head
+        elif fault == "future-review":
+            gates[0]["created_at"] = (now + timedelta(seconds=1)).isoformat()
+        else:
+            key, value = {"review-writer": ("id", 999), "review-login": ("login", "foreign"),
+                          "review-bool-writer": ("id", True)}[fault]
+            gates[0]["creator"][key] = value
+    elif fault.startswith("run-"):
+        if fault == "run-missing":
+            runs.update(total_count=0, workflow_runs=[])
+        elif fault == "run-partial":
+            runs["total_count"] = 2
+        elif fault == "run-newer-failed":
+            runs["workflow_runs"].append({**run, "id": 999, "conclusion": "failure"})
+            runs["total_count"] = 2
+        elif fault in {"run-repository", "run-foreign-head"}:
+            run["repository" if fault == "run-repository" else "head_repository"] = {"full_name": "foreign/repo"}
+        else:
+            key, value = {"run-pending": ("status", "in_progress"), "run-failure": ("conclusion", "failure"),
+                          "run-workflow": ("workflow_id", 999), "run-path": ("path", ".github/workflows/foreign.yml"),
+                          "run-event": ("event", "workflow_dispatch"), "run-sha": ("head_sha", "f" * 40)}[fault]
+            run[key] = value
+    elif fault.startswith("check-"):
+        if fault == "check-missing":
+            checks["check_runs"].pop(0)
+            checks["total_count"] -= 1
+        elif fault == "check-duplicate":
+            checks["check_runs"].append(dict(check))
+            checks["total_count"] += 1
+        elif fault == "check-partial":
+            checks["total_count"] += 1
+        elif fault == "check-app":
+            check["app"]["id"] = 999
+        elif fault == "check-suite":
+            check["check_suite"]["id"] = 999
+        else:
+            key, value = {"check-sha": ("head_sha", "f" * 40), "check-skipped": ("conclusion", "skipped"),
+                          "check-pending": ("status", "in_progress"),
+                          "check-future": ("completed_at", (now + timedelta(seconds=1)).isoformat())}[fault]
+            check[key] = value
+    elif fault == "candidate-ci-failure":
+        docs[f"/actions/workflows/456/runs?head_sha={candidate}&per_page=100"]["workflow_runs"][0]["conclusion"] = "failure"
+    else:
+        now = now.replace(tzinfo=None)
+    try:
+        with pytest.raises(ProvisioningRefused, match="PROVISIONING_SOURCE_APPROVAL_UNVERIFIED") as error:
+            evidence.observer.observe(release_sha=candidate, now=now)
+        assert error.value.__cause__ is None and "private" not in str(error.value)
+    finally:
+        evidence.observer.close()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("token", ""), ("token", "private\r\ninput"), ("pull_number", True), ("reviewed_head", "not-sha"),
+    ("review_writer_login", ""), ("review_writer_id", True), ("workflow_id", 0), ("checks_app_id", -1),
+    ("required_checks", ()), ("required_checks", ("product", "product")), ("required_checks", ["product"]),
+])
+def test_source_approval_requires_independent_nonempty_trust_pins(field: str, value: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import GitHubSourceApprovalObserver, ProvisioningRefused
+    pins = dict(token="offline-token", pull_number=123, reviewed_head="d" * 40,
+                review_writer_login="canonical-writer", review_writer_id=789, workflow_id=456,
+                checks_app_id=42, required_checks=("orchestrator", "product"))
+    pins[field] = value
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_SOURCE_APPROVAL_CONFIG_INVALID"):
+        GitHubSourceApprovalObserver(**pins)
+
+
+@pytest.mark.parametrize("bad", [None, {}, {"approved": True}, {"ci": "success"}])
+def test_lifecycle_source_receipt_cannot_authorize(web_lifecycle: Any, bad: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import WebInvitationExecutor, ProvisioningRefused
+    s, web, executor, journal, _, _ = web_lifecycle
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_SOURCE_APPROVAL_UNVERIFIED"):
+        WebInvitationExecutor(web=web, web_origin="https://web.example.invalid", journal=journal,
+                              admission=executor._admission, custody=executor._custody, source=bad)
+    assert not web.calls and journal.inspect() is None
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+
+
+@pytest.mark.parametrize("changed_at", range(1, 7))
+def test_lifecycle_source_loss_stops_next_mutation_and_quarantines(web_lifecycle: Any, changed_at: int) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    before = _snapshot(s)
+    web.source_evidence.failed_at = changed_at
+    with pytest.raises(ProvisioningRefused):
+        executor.execute(plan, **args)
+    assert web.source_evidence.observations == changed_at
+    assert web.calls.count(("POST", PATH)) == int(changed_at >= 4)
+    assert web.calls.count(("POST", "/auth/invitations")) == int(changed_at >= 5)
+    assert _snapshot(s)["password_credentials"] == before["password_credentials"]
+    assert all(existing in _snapshot(s)["sessions"] for existing in before["sessions"])
+    if changed_at <= 2:
+        assert journal.inspect() is None
+    else:
+        assert journal.inspect().stage == "recovery-required"
+        mutations = [c for c in web.calls if c[0] == "POST" and c[1] in {PATH, "/auth/invitations"}]
+        web.source_evidence.failed_at = 0
+        with pytest.raises(ProvisioningRefused):
+            executor.execute(plan, **args)
+        assert [c for c in web.calls if c[0] == "POST" and c[1] in {PATH, "/auth/invitations"}] == mutations
+    assert s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("changed_at", [1, 8])
+def test_binding_source_loss_precedes_preflight_or_put(encrypted_binding: Any, changed_at: int) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, journal, binding, remote, _, plan, args = encrypted_binding
+    before = _snapshot(s)
+    web.source_evidence.failed_at = changed_at
+    with pytest.raises(ProvisioningRefused):
+        binding.execute(plan, **args)
+    assert not remote.uploads and web.source_evidence.observations == changed_at
+    assert _snapshot(s)["password_credentials"] == before["password_credentials"]
+    if changed_at == 1:
+        assert not web.calls and not remote.calls and journal.inspect() is None
+    else:
+        assert journal.inspect().stage == binding.inspect()["stage"] == "recovery-required"
+        calls = list(remote.calls)
+        web.source_evidence.failed_at = 0
+        with pytest.raises(ProvisioningRefused):
+            binding.execute(plan, **args)
+        assert remote.calls == calls
 
 
 def test_custody_approval_requires_fresh_exact_comment_not_plan_boolean(
@@ -1343,7 +1610,7 @@ def test_lifecycle_custody_receipt_or_boolean_cannot_authorize(web_lifecycle: An
     s, web, executor, journal, _, _ = web_lifecycle
     with pytest.raises(ProvisioningRefused, match="PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED"):
         WebInvitationExecutor(web=web, web_origin="https://web.example.invalid", journal=journal,
-                              admission=executor._admission, custody=bad)
+                              admission=executor._admission, custody=bad, source=executor._source)
     assert not web.calls and journal.inspect() is None
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
 
@@ -1730,6 +1997,26 @@ def test_foreground_gate_receives_actual_matched_pair_after_durable_ack(
     assert dict(os.environ) == before and journal.inspect().stage == "reserved"
     for secret in (args["new_password"], args["admin_password"], "stale-standing-password", "offline-service-token"):
         assert secret not in json.dumps(result)
+
+
+def test_foreground_gate_cannot_claim_success_after_source_loss(encrypted_binding: Any, monkeypatch: Any) -> None:
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    _, web, journal, binding, remote, _, plan, args = encrypted_binding
+
+    def offline_evaluator(config: Any, **kwargs: Any) -> Any:
+        web.source_evidence.status = 404
+        return [gate.CheckResult(True, "offline", "not live evidence")], {
+            "ok": True, "expected_release_sha": config.expected_sha, "expected_deployment": "dev",
+        }
+
+    monkeypatch.setattr(gate, "evaluate_gate", offline_evaluator)
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_GATE_RECOVERY_REQUIRED"):
+        binding.execute_and_check_gate(
+            plan, gate_config=_foreground_gate_template(binding, args), worker_job="offline-worker",
+            gcp_region="asia-east1", gcp_project="offline-project", **args,
+        )
+    assert journal.inspect().stage == "recovery-required" and len(remote.uploads) == 1
 
 
 def test_foreground_gate_cannot_claim_success_after_admission_loss(

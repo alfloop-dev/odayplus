@@ -1038,3 +1038,37 @@ promoted-before-gate deploy wiring remain unfinished. The default workflow still
 only consumes a staged bundle. Task remains in progress, not review-ready; no
 review submission, live consent record, login/account/GitHub secret/config/IAM/
 traffic/source/model action, passing live gate, deployment or F11 is claimed.
+
+## Anchor 19 — fresh exact-source review and CI boundary
+
+`WebInvitationExecutor` now also requires `GitHubSourceApprovalObserver`; plan
+booleans or passing receipts cannot replace it. The trusted foreground coordinator
+independently pins the merged PR/reviewed head, canonical review-gate writer and
+required CI workflow/app/job names. Every existing admission/custody boundary
+re-reads the source evidence before login, reservation, issue, acceptance, fresh
+login, final lifecycle success, GitHub preflight/PUT and final gate return.
+
+The PR must be merged into this repository's `dev`, bind the candidate merge SHA,
+and retain the pinned reviewed head. Candidate and reviewed source must have
+identical complete Git trees. A changed merge-composition tree requires its own
+exact-source review, not an ancestry shortcut. Latest `task-review-gate` must be
+success from the pinned canonical writer (whose policy owns independent reviewer
+approval), with no newer pending/failure or ambiguous timestamp. Both head and
+candidate require successful latest runs of the pinned CI workflow, with all
+pinned required jobs successful exactly once in the run's exact suite/SHA/app.
+Skipped or missing checks, foreign source/workflow, partial pagination, changed
+review/CI and unavailable evidence refuse. Loss after reservation quarantines;
+no later mutation or PUT/retry occurs. Only this execution's sessions are cleaned
+up. Static exceptions and identifier-only receipts do not expose secrets.
+
+Offline mocked GitHub records are not live source approval or CI evidence. Added
+shape/pin/PR/tree/review/CI uncertainty regressions, receipt-substitution refusal,
+six lifecycle and both binding loss boundaries, and loss after a stubbed positive
+gate. They compose actual PostgreSQL/router sessions and canonical consumed
+admission. No worker live login, account, GitHub comment/status/secret/config,
+IAM, traffic, source or model action occurs. Source approval/CI observation is
+now enforced, but independent trust-root acquisition, actual mailbox verification
+and rollback-owned promoted-before-gate deploy hookup remain unfinished. The
+default workflow still only consumes a staged bundle. This increment is not
+review-ready or deployment/full-product/F11 acceptance. Verification pending at
+this source anchor; exact declarations will be measured next.

@@ -6,7 +6,8 @@ it after an uncertain result. Neither authenticates the custodian, verifies
 release human approval, proves mailbox ownership, or authorizes a cloud mutation.
 The Web lifecycle below requires a consumed-dev-admission observer pinned by
 the trusted foreground coordinator and rechecks it before mutations. Independent
-source approval, actual mailbox control and rollback ownership are still coordinator duties.
+source approval is freshly observed through independently pinned GitHub PR/review/CI
+roots. Actual mailbox control and rollback ownership are still coordinator duties.
 A separately pinned GitHub custodian comment is re-read for exact-plan consent;
 that authenticated attestation is not a mailbox-delivery check. The optional encrypted bundle writer below
 composes the same lifecycle/password in one call but cannot prove the stored
@@ -340,6 +341,152 @@ class GitHubCustodyApprovalObserver:
             raise ProvisioningRefused("PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED") from None
 
 
+class GitHubSourceApprovalObserver:
+    """Fresh exact-source review/CI observation, not rollout authority.
+
+    The coordinator independently pins the merged PR, its reviewed head, the
+    canonical task-review-gate writer and required CI workflow/app/job names.
+    None is selected from a plan or passing receipt. A merge SHA is accepted
+    only when its entire Git tree equals the reviewed head; merge composition
+    that changes that tree needs its own exact-source approval. Required CI
+    must succeed on BOTH the reviewed head and candidate, without skipped jobs.
+    The trusted canonical gate writer enforces assigned independent review;
+    this reader does not post an approval, rerun CI or waive branch protection.
+    """
+
+    def __init__(
+        self, *, token: str, pull_number: int, reviewed_head: str,
+        review_writer_login: str, review_writer_id: int, workflow_id: int,
+        checks_app_id: int, required_checks: tuple[str, ...], transport: Any = None,
+    ) -> None:
+        import httpx
+
+        if (not isinstance(token, str) or not token or any(c in token for c in "\r\n")
+                or any(type(v) is not int or v <= 0 for v in
+                       (pull_number, review_writer_id, workflow_id, checks_app_id))
+                or type(reviewed_head) is not str or not _SHA.fullmatch(reviewed_head)
+                or type(review_writer_login) is not str
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9\[\]-]{0,99}", review_writer_login)
+                or type(required_checks) is not tuple or not required_checks
+                or any(type(v) is not str or not v.strip() or len(v) > 100 for v in required_checks)
+                or len(set(required_checks)) != len(required_checks)):
+            raise ProvisioningRefused("PROVISIONING_SOURCE_APPROVAL_CONFIG_INVALID")
+        self._pull = pull_number
+        self._head = reviewed_head
+        self._writer = review_writer_login
+        self._writer_id = review_writer_id
+        self._workflow = workflow_id
+        self._app = checks_app_id
+        self._checks = required_checks
+        self._client = httpx.Client(
+            base_url="https://api.github.com", transport=transport, timeout=20,
+            follow_redirects=False, headers={
+                "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+
+    def close(self) -> None:
+        self._client.close()
+
+    def _get(self, path: str) -> Any:
+        response = self._client.get(f"/repos/{REPOSITORY}/{path}")
+        # A bounded single page is intentional: incomplete evidence refuses,
+        # never silently picks a convenient approval/check from a partial list.
+        if response.status_code != 200 or 'rel="next"' in response.headers.get("link", ""):
+            raise ValueError
+        return response.json()
+
+    @staticmethod
+    def _past(value: Any, now: datetime) -> datetime:
+        at = datetime.fromisoformat(value)
+        if not _aware(at) or at > now:
+            raise ValueError
+        return at
+
+    def _ci(self, sha: str, now: datetime) -> None:
+        runs = self._get(f"actions/workflows/{self._workflow}/runs?head_sha={sha}&per_page=100")
+        records = runs["workflow_runs"]
+        if (type(runs.get("total_count")) is not int or not isinstance(records, list)
+                or not records or len(records) != runs["total_count"] or len(records) > 100
+                or any(type(r.get("id")) is not int or r["id"] <= 0 for r in records)):
+            raise ValueError
+        # Newer pending/failed attempts supersede older success. Never search
+        # for any passing run or permit a run of a different workflow/event.
+        run = max(records, key=lambda r: r["id"])
+        if (run.get("head_sha") != sha or run.get("workflow_id") != self._workflow
+                or run.get("path") != ".github/workflows/ci.yml"
+                or run.get("event") not in {"push", "pull_request", "merge_group"}
+                or run.get("repository", {}).get("full_name") != REPOSITORY
+                or run.get("head_repository", {}).get("full_name") != REPOSITORY
+                or run.get("status") != "completed" or run.get("conclusion") != "success"
+                or type(run.get("check_suite_id")) is not int or run["check_suite_id"] <= 0):
+            raise ValueError
+        self._past(run["updated_at"], now)
+        checks = self._get(f"check-suites/{run['check_suite_id']}/check-runs?filter=latest&per_page=100")
+        records = checks["check_runs"]
+        if (type(checks.get("total_count")) is not int or not isinstance(records, list)
+                or len(records) != checks["total_count"] or len(records) > 100):
+            raise ValueError
+        for name in self._checks:
+            selected = [c for c in records if c.get("name") == name]
+            if len(selected) != 1:
+                raise ValueError
+            check = selected[0]
+            if (check.get("head_sha") != sha or check.get("app", {}).get("id") != self._app
+                    or check.get("check_suite", {}).get("id") != run["check_suite_id"]
+                    or check.get("status") != "completed" or check.get("conclusion") != "success"):
+                raise ValueError
+            self._past(check["completed_at"], now)
+
+    def observe(self, *, release_sha: str, now: datetime) -> None:
+        """Re-read all pinned evidence each time; missing/changed evidence refuses."""
+        try:
+            if type(release_sha) is not str or not _SHA.fullmatch(release_sha) or not _aware(now):
+                raise ValueError
+            pull = self._get(f"pulls/{self._pull}")
+            if (type(pull.get("number")) is not int or pull["number"] != self._pull
+                    or pull.get("merged") is not True or pull.get("state") != "closed"
+                    or pull.get("draft") is not False or pull.get("merge_commit_sha") != release_sha
+                    or pull.get("head", {}).get("sha") != self._head
+                    or pull.get("head", {}).get("repo", {}).get("full_name") != REPOSITORY
+                    or pull.get("base", {}).get("ref") != "dev"
+                    or pull.get("base", {}).get("repo", {}).get("full_name") != REPOSITORY):
+                raise ValueError
+            self._past(pull["merged_at"], now)
+            trees = []
+            for sha in dict.fromkeys((self._head, release_sha)):
+                commit = self._get(f"git/commits/{sha}")
+                tree = commit.get("tree", {}).get("sha")
+                if (commit.get("sha") != sha or type(tree) is not str or not _SHA.fullmatch(tree)):
+                    raise ValueError
+                trees.append(tree)
+            if len(set(trees)) != 1:
+                raise ValueError
+            statuses = self._get(f"commits/{self._head}/statuses?per_page=100")
+            if not isinstance(statuses, list) or len(statuses) >= 100:
+                raise ValueError
+            gates = [s for s in statuses if s.get("context") == "task-review-gate"]
+            if not gates:
+                raise ValueError
+            times = [self._past(s["created_at"], now) for s in gates]
+            latest = max(times)
+            if times.count(latest) != 1:
+                raise ValueError
+            gate = gates[times.index(latest)]
+            author = gate.get("creator", {})
+            if (gate.get("state") != "success"
+                    or gate.get("url") != f"https://api.github.com/repos/{REPOSITORY}/statuses/{self._head}"
+                    or type(author.get("id")) is not int or author["id"] != self._writer_id
+                    or type(author.get("login")) is not str
+                    or author["login"].casefold() != self._writer.casefold()):
+                raise ValueError
+            for sha in dict.fromkeys((self._head, release_sha)):
+                self._ci(sha, now)
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_SOURCE_APPROVAL_UNVERIFIED") from None
+
+
 class ConsumedDevAdmissionObserver:
     """Pinned admission material plus fresh reads of the Supervisor-owned store.
 
@@ -544,9 +691,9 @@ class WebInvitationExecutor:
     """Execute the supported lifecycle through Web, never directly mutate SQL.
 
     This is a foreground library entrypoint, NOT an admission/approval service.
-    The coordinator must verify independent source approval, promotion and
-    actual mailbox control, and supply independently pinned admission roots and
-    custodian consent evidence. Consumed exact-dev admission and the custodian's
+    The coordinator must verify promotion and actual mailbox control, and
+    supply independently pinned source/review/CI, admission roots and custodian
+    consent evidence. Consumed exact-dev admission and the custodian's
     authenticated full-plan attestation are rechecked before side effects. A journal or
     matching string is not that proof. No workflow or CLI calls this entrypoint.
 
@@ -561,6 +708,7 @@ class WebInvitationExecutor:
     def __init__(
         self, *, web: Any, web_origin: str, journal: ProvisioningJournal,
         admission: ConsumedDevAdmissionObserver, custody: GitHubCustodyApprovalObserver,
+        source: GitHubSourceApprovalObserver,
     ) -> None:
         from urllib.parse import urlsplit
 
@@ -573,6 +721,9 @@ class WebInvitationExecutor:
             raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED")
         if type(custody) is not GitHubCustodyApprovalObserver:
             raise ProvisioningRefused("PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED")
+        if type(source) is not GitHubSourceApprovalObserver:
+            raise ProvisioningRefused("PROVISIONING_SOURCE_APPROVAL_UNVERIFIED")
+        self._source = source
         self._web = web
         self._origin = web_origin
         self._journal = journal
@@ -586,6 +737,7 @@ class WebInvitationExecutor:
         now = self._journal._now()
         self._admission.observe(release_sha=release_sha, manifest_digest=manifest_digest, now=now)
         self._custody.observe(plan, now=now)
+        self._source.observe(release_sha=release_sha, now=now)
 
     def _request(
         self, method: str, path: str, *, cookie: str = "", body: Any = None, status: int = 200,
@@ -750,6 +902,7 @@ class WebInvitationExecutor:
             self._observe_admission(plan, release_sha=release_sha, manifest_digest=manifest_digest)
             result = {**checked.to_receipt(), "stage": "web-lifecycle-verified",
                       "serving_release_observed": True, "custody_approval_observed": True,
+                      "source_approval_observed": True,
                       "account_id": account, **provenance, "credential_binding_verified": False,
                       "deployment_success": False, "live_gate_passed": False}
         except Exception:

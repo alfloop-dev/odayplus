@@ -503,10 +503,35 @@ proof or `recipient_control` alone is still insufficient. Any changed plan field
 foreign/bot author, edited/deleted/expired record, redirect, missing/uncertain
 readback refuses. Loss after reservation quarantines without later mutation or
 PUT/retry; cleanup still revokes only this execution's sessions. Offline mocked
-GitHub records are not actual consent. Independent exact-head source approval,
-required CI, trust-root acquisition, actual mailbox verification and rollback-owned
-promoted-before-gate deployment wiring remain outstanding; the worker creates
-neither the comment nor live identity/configuration.
+GitHub records are not actual consent. The mandatory
+`GitHubSourceApprovalObserver` now additionally re-reads independently pinned
+source trust roots at every lifecycle/admission/binding/gate boundary: merged
+same-repository PR into `dev`, its exact reviewed head, canonical
+`task-review-gate` writer login/numeric ID, CI workflow ID, checks app ID and
+non-empty required job names. The coordinator obtains these pins from trusted
+review/control-plane and branch-policy records, not a proposed plan or receipt.
+The latest review status must be success from the pinned canonical writer, whose
+existing policy enforces the assigned independent review. A newer pending/failed
+status or ambiguous timestamp refuses. The candidate must be that PR's merge
+commit, with an entire Git tree identical to the reviewed head. Merge composition
+that changes the tree is deliberately unsupported without new exact-source
+review; ancestry or a passing PR alone cannot bless unreviewed source.
+
+The latest run of the pinned `.github/workflows/ci.yml` must complete successfully
+on both reviewed head and candidate. Each pinned required job must occur exactly
+once in that run's own check suite, for the exact SHA/app, completed with success;
+skipped/neutral/pending/failed or missing jobs never count as CI. Foreign PRs,
+wrong trees/SHAs/workflows/writers/apps, incomplete pagination, unavailable or
+changed evidence refuse, with post-reservation quarantine and no later mutation,
+PUT or retry. No approvals/statuses/comments are posted and CI is never triggered
+by this observer. It observes existing source approval and CI, not a release
+lease, mailbox proof or traffic/rollback capability; no cached pass is accepted.
+Offline mocks are regression inputs, not actual review/CI receipts.
+
+Independent trust-root acquisition, actual mailbox verification and rollback-owned
+promoted-before-gate deployment wiring remain outstanding. No CLI/workflow invokes
+this foreground entrypoint yet; the worker creates neither live approval/comment
+nor identity/configuration. This source increment is not activation approval.
 
 PR1445 deployment/inventory, admission, IAM and
 finite-role gates remain intact. Independent review is required before use; the
