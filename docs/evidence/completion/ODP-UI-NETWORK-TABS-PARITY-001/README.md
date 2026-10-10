@@ -403,6 +403,24 @@ creation, cross-store identity transaction or live/VDC acceptance.** Scoped targ
 directory/UI binding and genuine Transfer/Pause success pairs remain next;
 **not ready for full-scope review resubmission**.
 
+## Assignment directory / typed UI binding increment
+
+[`assignment-directory/README.md`](assignment-directory/README.md) records backend
+anchor `2890a31b32b1` and UI/SQL-test anchor `9c29cae2ca6d`: the additive minimal-label
+recipient directory enforces transfer actor/ownership/workflow and tenant/resource
+scope, using existing fresh identity grants. The live container no longer accepts
+static targets; typed reads bind exact client/resource/version and invalidate old
+authority on refresh or context change. Retain draft, revoke stale consent, and
+never substitute directory versions for authoritative action tokens.
+Original receipts: directory41, Assignment writes102, contracts75, PostgreSQL4,
+focused mounted Web51 and typecheck/lint/ruff/drift/boundaries/diff exit0.
+Initial timeout and repaired Web/typecheck failures are disclosed and retained.
+SQL directory disable/re-enable and actual transfer use explicit test accounts;
+mounted UI HTTP responses remain mocked. **No new visual pairs or independent VDC,
+Operator shared provisioning/read-model, genuine SLA creation or cloud acceptance.**
+These gaps and actual Transfer/Pause browser success pairs remain next;
+**not ready for full-scope review resubmission**.
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped

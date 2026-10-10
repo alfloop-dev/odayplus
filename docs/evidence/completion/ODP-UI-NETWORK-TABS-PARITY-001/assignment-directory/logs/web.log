@@ -1,0 +1,502 @@
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web
+
+stderr | features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > loads only for an enabled transfer and binds a minimal typed response to the resource
+Warning: Attempted to synchronously unmount a root while React was already rendering. React cannot finish unmounting the root until the current render has completed, which may lead to a race condition.
+    at TestComponent (/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/node_modules/@testing-library/react/dist/pure.js:328:5)
+
+ ❯ features/operator/network/intake/__tests__/TransferTargets.test.tsx (16 tests | 16 failed) 251ms
+     × loads only for an enabled transfer and binds a minimal typed response to the resource 94ms
+     × fails closed on foreign resource rather than retaining recipients 4ms
+     × fails closed on stale version rather than retaining recipients 10ms
+     × fails closed on display actor rather than retaining recipients 6ms
+     × fails closed on duplicate actor rather than retaining recipients 10ms
+     × fails closed on queue role rather than retaining recipients 10ms
+     × fails closed on malformed list rather than retaining recipients 19ms
+     × fails closed on denied rather than retaining recipients 10ms
+     × fails closed on unavailable rather than retaining recipients 10ms
+     × drops old results on refetch and ignores late reads after a resource or client change 9ms
+     × does not invent a target when no directory results exist, despite a valid resource token 10ms
+     × rejects display IDs, queues, ambiguous UUIDs and incomplete target metadata 7ms
+     × keeps a disappearing selection unavailable instead of silently transferring to the first remaining person 5ms
+     × requires new consent when the selected target name changes 6ms
+     × requires new consent when the selected target role changes 5ms
+     × binds consent and payload to the exact selected target, retaining draft through same-target resource refresh 5ms
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16) {
+  errno: -111,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 3000
+}
+stderr | features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > transfers with the authoritative assignment resource version
+Warning: Attempted to synchronously unmount a root while React was already rendering. React cannot finish unmounting the root until the current render has completed, which may lead to a race condition.
+    at AssistedIntakeSection (/tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/apps/web/features/operator/network/intake/AssistedIntakeSection.tsx:59:34)
+
+ ❯ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx (35 tests | 15 failed) 4824ms
+     × transfers with the authoritative assignment resource version 189ms
+     × does not transfer to static actors when resource authority exists but no scoped target directory is provided 3ms
+     × pauses with the authoritative SLA resource version 2ms
+     × supersedes a cached claim receipt after a real container 409 refresh without losing the transfer draft 2ms
+     × supersedes a cached resume receipt after an SLA 409 refresh and preserves editable pause inputs 6ms
+     × rejects resource receipts for a different ID instead of borrowing their versions 1ms
+     × resumes with the authoritative SLA resource version 5ms
+     × fails assignment and SLA controls closed when resource versions are missing 6ms
+     × accepts positive integer resource versions only 69ms
+     × fails claim, transfer, pause and resume closed for zero resource versions 8ms
+     × fails claim, transfer, pause and resume closed for negative resource versions 6ms
+     × fails claim, transfer, pause and resume closed for fraction resource versions 8ms
+     × fails claim, transfer, pause and resume closed for string resource versions 8ms
+     × fails claim, transfer, pause and resume closed for null resource versions 5ms
+     × fails claim, transfer, pause and resume closed for undefined resource versions 2ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 31 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > transfers with the authoritative assignment resource version
+ReferenceError: safePromotionCall is not defined
+ ❯ Object.transferTargets features/operator/network/intake/intakeClient.ts:287:5
+    285|
+    286|   transferTargets(client: OdpApiClient, assignmentId: string): Promise…
+    287|     return safePromotionCall(async () => {
+       |     ^
+    288|       const value = await client.listAssignmentTransferTargets(assignm…
+    289|       // The generated DTO is a compile-time contract, not a runtime v…
+ ❯ features/operator/network/intake/TransferIntakeDialog.tsx:41:20
+ ❯ commitHookEffectListMount ../../node_modules/react-dom/cjs/react-dom.development.js:23189:26
+ ❯ commitPassiveMountOnFiber ../../node_modules/react-dom/cjs/react-dom.development.js:24970:11
+ ❯ commitPassiveMountEffects_complete ../../node_modules/react-dom/cjs/react-dom.development.js:24930:9
+ ❯ commitPassiveMountEffects_begin ../../node_modules/react-dom/cjs/react-dom.development.js:24917:7
+ ❯ commitPassiveMountEffects ../../node_modules/react-dom/cjs/react-dom.development.js:24905:3
+ ❯ flushPassiveEffectsImpl ../../node_modules/react-dom/cjs/react-dom.development.js:27078:3
+ ❯ flushPassiveEffects ../../node_modules/react-dom/cjs/react-dom.development.js:27023:14
+ ❯ commitRootImpl ../../node_modules/react-dom/cjs/react-dom.development.js:26974:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > transfers with the authoritative assignment resource version
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > does not transfer to static actors when resource authority exists but no scoped target directory is provided
+Error: Should not already be working.
+ ❯ performSyncWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:26112:11
+ ❯ flushSyncCallbacks ../../node_modules/react-dom/cjs/react-dom.development.js:12042:22
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ ../../node_modules/@testing-library/react/dist/pure.js:306:28
+ ❯ Proxy.cleanup ../../node_modules/@testing-library/react/dist/pure.js:302:22
+ ❯ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx:117:3
+    115| beforeEach(() => nav.reset());
+    116| afterEach(() => {
+    117|   cleanup();
+       |   ^
+    118|   vi.unstubAllGlobals();
+    119| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > does not transfer to static actors when resource authority exists but no scoped target directory is provided
+Error: Should not already be working.
+ ❯ performSyncWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:26112:11
+ ❯ flushSyncCallbacks ../../node_modules/react-dom/cjs/react-dom.development.js:12042:22
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ Proxy.render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx:618:5
+    616|     stubActionFetch(record, requests);
+    617|     nav.reset(`selected=${record.id}&dialog=detail`);
+    618|     render(<AssistedIntakeSection activeRoleId="expansion-manager" act…
+       |     ^
+    619|     fireEvent.click(await screen.findByTestId("asg-btn-transfer"));
+    620|     expect(await screen.findByTestId("transfer-record-version")).toHav…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > pauses with the authoritative SLA resource version
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ Proxy.render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx:636:5
+    634|     stubActionFetch(record, requests);
+    635|     nav.reset(`selected=${record.id}&dialog=detail`);
+    636|     render(<AssistedIntakeSection activeRoleId="expansion-manager" act…
+       |     ^
+    637|     fireEvent.click(await screen.findByTestId("asg-btn-pause"));
+    638|     expect(await screen.findByTestId("pause-record-version")).toHaveTe…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > pauses with the authoritative SLA resource version
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > supersedes a cached claim receipt after a real container 409 refresh without losing the transfer draft
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > supersedes a cached resume receipt after an SLA 409 refresh and preserves editable pause inputs
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > rejects resource receipts for a different ID instead of borrowing their versions
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > resumes with the authoritative SLA resource version
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails assignment and SLA controls closed when resource versions are missing
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > accepts positive integer resource versions only
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails claim, transfer, pause and resume closed for zero resource versions
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails claim, transfer, pause and resume closed for negative resource versions
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails claim, transfer, pause and resume closed for fraction resource versions
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails claim, transfer, pause and resume closed for string resource versions
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails claim, transfer, pause and resume closed for null resource versions
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails claim, transfer, pause and resume closed for undefined resource versions
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ ../../node_modules/@testing-library/react/dist/pure.js:306:28
+ ❯ Proxy.cleanup ../../node_modules/@testing-library/react/dist/pure.js:302:22
+ ❯ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx:117:3
+    115| beforeEach(() => nav.reset());
+    116| afterEach(() => {
+    117|   cleanup();
+       |   ^
+    118|   vi.unstubAllGlobals();
+    119| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > supersedes a cached claim receipt after a real container 409 refresh without losing the transfer draft
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ Proxy.render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx:689:5
+    687|     }));
+    688|     nav.reset(`selected=${record.id}&dialog=detail`);
+    689|     render(<AssistedIntakeSection activeRoleId="expansion-manager" act…
+       |     ^
+    690|     fireEvent.click(await screen.findByTestId("asg-btn-claim"));
+    691|     await waitFor(() => expect(screen.getByTestId("asg-owner")).toHave…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > supersedes a cached resume receipt after an SLA 409 refresh and preserves editable pause inputs
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ Proxy.render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx:748:5
+    746|     }));
+    747|     nav.reset(`selected=${record.id}&dialog=detail`);
+    748|     render(<AssistedIntakeSection activeRoleId="expansion-manager" act…
+       |     ^
+    749|     fireEvent.click(await screen.findByTestId("asg-btn-resume"));
+    750|     fireEvent.click(await screen.findByTestId("asg-btn-pause"));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > resumes with the authoritative SLA resource version
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ Proxy.render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx:785:5
+    783|     stubActionFetch(record, requests);
+    784|     nav.reset(`selected=${record.id}&dialog=detail`);
+    785|     render(<AssistedIntakeSection activeRoleId="expansion-manager" act…
+       |     ^
+    786|     fireEvent.click(await screen.findByTestId("asg-btn-resume"));
+    787|     const path = `/api/v1/sla-instances/${record.slaInstanceId}/action…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails assignment and SLA controls closed when resource versions are missing
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ Proxy.render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx:811:5
+    809|     }));
+    810|     nav.reset(`selected=${record.id}&dialog=assignmentSla&decision=tra…
+    811|     render(<AssistedIntakeSection activeRoleId="expansion-manager" act…
+       |     ^
+    812|     expect(await screen.findByTestId("assignment-resource-version-unav…
+    813|     expect(screen.getByTestId("sla-resource-version-unavailable")).toH…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails claim, transfer, pause and resume closed for zero resource versions
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails claim, transfer, pause and resume closed for negative resource versions
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails claim, transfer, pause and resume closed for fraction resource versions
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails claim, transfer, pause and resume closed for string resource versions
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails claim, transfer, pause and resume closed for null resource versions
+ FAIL  features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx > AssistedIntakeSection production container > fails claim, transfer, pause and resume closed for undefined resource versions
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ Proxy.render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx:876:7
+    874|       }));
+    875|       nav.reset(`selected=${record.id}&dialog=assignmentSla&decision=t…
+    876|       render(<AssistedIntakeSection activeRoleId="expansion-manager" a…
+       |       ^
+    877|
+    878|       expect(await screen.findByTestId("assignment-resource-version-un…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > loads only for an enabled transfer and binds a minimal typed response to the resource
+ReferenceError: safePromotionCall is not defined
+ ❯ Object.transferTargets features/operator/network/intake/intakeClient.ts:287:5
+    285|
+    286|   transferTargets(client: OdpApiClient, assignmentId: string): Promise…
+    287|     return safePromotionCall(async () => {
+       |     ^
+    288|       const value = await client.listAssignmentTransferTargets(assignm…
+    289|       // The generated DTO is a compile-time contract, not a runtime v…
+ ❯ features/operator/network/intake/TransferIntakeDialog.tsx:41:20
+ ❯ commitHookEffectListMount ../../node_modules/react-dom/cjs/react-dom.development.js:23189:26
+ ❯ commitPassiveMountOnFiber ../../node_modules/react-dom/cjs/react-dom.development.js:24970:11
+ ❯ commitPassiveMountEffects_complete ../../node_modules/react-dom/cjs/react-dom.development.js:24930:9
+ ❯ commitPassiveMountEffects_begin ../../node_modules/react-dom/cjs/react-dom.development.js:24917:7
+ ❯ commitPassiveMountEffects ../../node_modules/react-dom/cjs/react-dom.development.js:24905:3
+ ❯ flushPassiveEffectsImpl ../../node_modules/react-dom/cjs/react-dom.development.js:27078:3
+ ❯ flushPassiveEffects ../../node_modules/react-dom/cjs/react-dom.development.js:27023:14
+ ❯ ../../node_modules/react-dom/cjs/react-dom.development.js:26808:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > loads only for an enabled transfer and binds a minimal typed response to the resource
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on foreign resource rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on stale version rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on display actor rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on duplicate actor rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on queue role rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on malformed list rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on denied rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on unavailable rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > drops old results on refetch and ignores late reads after a resource or client change
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Transfer target authority fail-closed boundary > does not invent a target when no directory results exist, despite a valid resource token
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Transfer target authority fail-closed boundary > rejects display IDs, queues, ambiguous UUIDs and incomplete target metadata
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Transfer target authority fail-closed boundary > keeps a disappearing selection unavailable instead of silently transferring to the first remaining person
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Transfer target authority fail-closed boundary > requires new consent when the selected target name changes
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Transfer target authority fail-closed boundary > requires new consent when the selected target role changes
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Transfer target authority fail-closed boundary > binds consent and payload to the exact selected target, retaining draft through same-target resource refresh
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ ../../node_modules/@testing-library/react/dist/pure.js:306:28
+ ❯ cleanup ../../node_modules/@testing-library/react/dist/pure.js:302:22
+ ❯ features/operator/network/intake/__tests__/TransferTargets.test.tsx:16:19
+     14|   record: { id: "IN-TARGET-FIXTURE", version: 71, assignmentId: "00000…
+     15| };
+     16| afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals()…
+       |                   ^
+     17|
+     18| const assignmentId = props.record.assignmentId!;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on foreign resource rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on stale version rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on display actor rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on duplicate actor rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on queue role rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on malformed list rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on denied rather than retaining recipients
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > fails closed on unavailable rather than retaining recipients
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ renderHook ../../node_modules/@testing-library/react/dist/pure.js:339:7
+ ❯ features/operator/network/intake/__tests__/TransferTargets.test.tsx:54:24
+     52|     vi.stubGlobal("fetch", vi.fn(async () => response()));
+     53|     const client = new OdpApiClient({ baseUrl: "http://localhost" });
+     54|     const { result } = renderHook(() => useAssignmentTransferTargets(c…
+       |                        ^
+     55|     await waitFor(() => expect(result.current.state).toBe("error"));
+     56|     expect(result.current.options).toEqual([]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Typed resource-bound directory reads > drops old results on refetch and ignores late reads after a resource or client change
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ renderHook ../../node_modules/@testing-library/react/dist/pure.js:339:7
+ ❯ features/operator/network/intake/__tests__/TransferTargets.test.tsx:66:34
+     64|     vi.stubGlobal("fetch", fetcher);
+     65|     const client = new OdpApiClient({ baseUrl: "http://localhost" });
+     66|     const { result, rerender } = renderHook(({ version, activeClient }…
+       |                                  ^
+     67|       useAssignmentTransferTargets(activeClient, assignmentId, version…
+     68|     { initialProps: { version: 14, activeClient: client } });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Transfer target authority fail-closed boundary > does not invent a target when no directory results exist, despite a valid resource token
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ features/operator/network/intake/__tests__/TransferTargets.test.tsx:91:5
+     89| describe("Transfer target authority fail-closed boundary", () => {
+     90|   it("does not invent a target when no directory results exist, despit…
+     91|     render(<TransferIntakeDialog {...props} />);
+       |     ^
+     92|     expect(screen.getByTestId("transfer-record-version")).toHaveTextCo…
+     93|     expect(screen.getByTestId("transfer-targets-unavailable")).toHaveT…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Transfer target authority fail-closed boundary > rejects display IDs, queues, ambiguous UUIDs and incomplete target metadata
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ features/operator/network/intake/__tests__/TransferTargets.test.tsx:109:5
+    107|     expect(usableTransferTargets([targets[0], { ...targets[0], name: "…
+    108|     expect(usableTransferTargets(targets)).toEqual(targets);
+    109|     render(<TransferIntakeDialog {...props} targetOptions={[{ ...targe…
+       |     ^
+    110|     expect(screen.getByTestId("transfer-submit-btn")).toBeDisabled();
+    111|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Transfer target authority fail-closed boundary > keeps a disappearing selection unavailable instead of silently transferring to the first remaining person
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ features/operator/network/intake/__tests__/TransferTargets.test.tsx:114:26
+    112|
+    113|   it("keeps a disappearing selection unavailable instead of silently t…
+    114|     const { rerender } = render(<TransferIntakeDialog {...props} targe…
+       |                          ^
+    115|     fireEvent.change(screen.getByTestId("transfer-target-select"), { t…
+    116|     fillDraft();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Transfer target authority fail-closed boundary > requires new consent when the selected target name changes
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Transfer target authority fail-closed boundary > requires new consent when the selected target role changes
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ features/operator/network/intake/__tests__/TransferTargets.test.tsx:134:26
+    132|
+    133|   it.each(["name", "role"] as const)("requires new consent when the se…
+    134|     const { rerender } = render(<TransferIntakeDialog {...props} targe…
+       |                          ^
+    135|     fillDraft();
+    136|     rerender(<TransferIntakeDialog {...props} targetOptions={[{ ...tar…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/60]⎯
+
+ FAIL  features/operator/network/intake/__tests__/TransferTargets.test.tsx > Transfer target authority fail-closed boundary > binds consent and payload to the exact selected target, retaining draft through same-target resource refresh
+Error: Should not already be working.
+ ❯ performConcurrentWorkOnRoot ../../node_modules/react-dom/cjs/react-dom.development.js:25742:11
+ ❯ flushActQueue ../../node_modules/react/cjs/react.development.js:2667:24
+ ❯ act ../../node_modules/react/cjs/react.development.js:2582:11
+ ❯ ../../node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ renderRoot ../../node_modules/@testing-library/react/dist/pure.js:189:26
+ ❯ render ../../node_modules/@testing-library/react/dist/pure.js:291:10
+ ❯ features/operator/network/intake/__tests__/TransferTargets.test.tsx:144:26
+    142|
+    143|   it("binds consent and payload to the exact selected target, retainin…
+    144|     const { rerender } = render(<TransferIntakeDialog {...props} targe…
+       |                          ^
+    145|     fillDraft();
+    146|     fireEvent.change(screen.getByTestId("transfer-target-select"), { t…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/60]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  31 failed | 20 passed (51)
+   Start at  00:26:47
+   Duration  15.76s (transform 7.40s, setup 0ms, import 10.32s, tests 5.07s, environment 3.35s)
+
