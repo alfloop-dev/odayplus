@@ -202,7 +202,8 @@ def _segment(start_marker: str, end_marker: str, text: str | None = None) -> str
         text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     start = text.index(start_marker)
     end = text.index(end_marker, start)
-    end = text.index("\n", end) + 1
+    # End markers can span lines (the gate argv plus its closing fi).
+    end = text.index("\n", end + len(end_marker)) + 1
     return text[start:end]
 
 

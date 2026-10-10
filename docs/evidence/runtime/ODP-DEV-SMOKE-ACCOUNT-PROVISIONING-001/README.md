@@ -36,6 +36,27 @@ Canonical scope and verification declarations now include only the six affected
 regression files, not a full-suite local rerun. New-head terminal receipts and
 required CI are still pending at this anchor.
 
+Canonical runner at `d4d667368fb2184f5f033953fb6b3fb807024012` completed
+with original exit1. The six original declarations passed once: diff0/0.052s
+`ac89b0273ed62fc5`, provisioning0/349.860s `51cd7e6bb6168d01`, gate0/39.759s
+`75ec2ce8958b085b`, Web0/2.770s `f85872f93ded0714`, typecheck0/6.521s
+`7fd5deac7b694ad9`, security0/75.020s `9d6a9da2f1de51cc`. The additional
+exact six-file selection failed1/162.162s `ce43693612d7a668` (nine failures).
+An explicit same-head/same-selection diagnostic retry, authorized in the
+canonical task note, also returned original terminal exit1. Its full log
+revealed two remaining test-contract defects hidden by the runner's short tail:
+`_segment` stopped at the first newline *within* the multiline marker, and the
+fixed preflight stdlib socket descriptor check still used `python3 -c`.
+
+The extractor now advances past the complete marker before choosing its end
+line. The descriptor check is spelled as the existing stdlib heredoc idiom,
+without semantic changes. All four bare inline blocks have explicit stdlib
+comments and AST import validation; bare `python3 -c` remains forbidden.
+No production validator is moved off the locked interpreter. These corrections
+need new-head verification; none of the failed receipts is converted to pass.
+Final receipts are retained in canonical `.orchestrator/evidence` and task
+submission, so no post-review evidence commit is required.
+
 Current canonical coordinator context reports a **separate** audited removal of
 operations_manager from ajoe734 at08:42; the historical three-role preservation
 record is not a fresh live baseline. This worker does not restore roles, log in,

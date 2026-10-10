@@ -70,7 +70,8 @@ if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then
     echo "Error: PROVISIONING_FOREGROUND_SCOPE_INVALID" >&2
     exit 1
   fi
-  python3 -c '
+  # This descriptor check imports only Python's standard library.
+  python3 - <<'PY'
 import os, socket, sys
 try:
     s = socket.socket(fileno=int(os.environ["ODP_DEV_SMOKE_FOREGROUND_FD"]))
@@ -78,7 +79,7 @@ try:
     s.detach()
 except Exception:
     sys.exit("Error: PROVISIONING_FOREGROUND_CHANNEL_INVALID")
-'
+PY
 fi
 case "${ODP_RELEASE_PROFILE}" in
   full)
@@ -1234,6 +1235,7 @@ if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then
   # canonical same-process gate. Only minted service tokens cross this socket;
   # admin/new-account/GitHub credentials never enter this shell or a file.
   export LIVE_E2E_API_URL LIVE_E2E_WEB_URL LIVE_E2E_DEPLOYMENT_MODE WORKER_CANDIDATE_JOB
+  # This socket acknowledgement imports only Python's standard library.
   python3 - <<'PY'
 import json, os, socket, sys
 try:
