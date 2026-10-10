@@ -209,6 +209,20 @@ export type AssignmentTransferRequest = {
   target_owner_subject_id: string;
 };
 
+/** AssignmentTransferTarget */
+export type AssignmentTransferTarget = {
+  id: string;
+  name: string;
+  role: "site-reviewer" | "executive" | "data-steward" | "expansion-staff";
+};
+
+/** AssignmentTransferTargets */
+export type AssignmentTransferTargets = {
+  assignment_id: string;
+  assignment_version: number;
+  items: AssignmentTransferTarget[];
+};
+
 /** Write body for POST /operator/store-ops/issues/{issue_id}/attachments. */
 export type AttachmentUploadRequest = {
   actorName?: string | null;
@@ -831,6 +845,7 @@ export type IntakeDetail = {
   assigned_to?: string | null;
   assignment_id?: string | null;
   assignment_status?: string | null;
+  assignment_version?: number | null;
   audit: AuditReference[];
   canonical_url: string | null;
   due_at?: string | null;
@@ -848,6 +863,7 @@ export type IntakeDetail = {
   sla_instance_id?: string | null;
   sla_receipt?: string | null;
   sla_state?: string | null;
+  sla_version?: number | null;
   source_id?: string | null;
   source_snapshot_id?: string | null;
   state: IntakeState;
@@ -2048,6 +2064,7 @@ export const API_PATHS = {
   "/api/v1/assignments/{assignment_id}/actions/claim": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/complete": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/transfer": ["POST"],
+  "/api/v1/assignments/{assignment_id}/transfer-targets": ["GET"],
   "/api/v1/audit/events": ["GET"],
   "/api/v1/audit/evidence/export": ["POST"],
   "/api/v1/audit/evidence/exports": ["GET"],

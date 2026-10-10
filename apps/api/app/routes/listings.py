@@ -493,6 +493,16 @@ else:
         version: int
         audit_event_id: UuidString
 
+    class AssignmentTransferTarget(BaseModel):
+        id: UuidString
+        name: str = Field(..., min_length=1)
+        role: Literal["site-reviewer", "executive", "data-steward", "expansion-staff"]
+
+    class AssignmentTransferTargets(BaseModel):
+        assignment_id: UuidString
+        assignment_version: int = Field(..., ge=1)
+        items: list[AssignmentTransferTarget]
+
     class AssignmentTransferRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
         target_owner_subject_id: UuidString
@@ -1753,11 +1763,9 @@ else:
             # Assignment and SLA share the same linked-resource scope boundary.
             require_sla_scope(principal, value)
 
-        def require_assignment_target(
-            request: Request, subject_id: str, role_id: str, resource: dict[str, Any],
-        ) -> None:
-            # Resolve fresh grants through the authentication identity store even
-            # on retries: disabled or revoked targets cannot receive work.
+        def assignment_target_principal(request: Request, subject_id: str) -> Principal:
+            # Shared directory/write resolver. Fresh identity grants, never a
+            # directory receipt or the requested role, authorize a recipient.
             bundle = getattr(request.app.state, "persistence_bundle", None)
             identities = getattr(bundle, "identity_store", None)
             if identities is None:
@@ -1766,6 +1774,19 @@ else:
             tenant_id = get_principal(request).tenant_id
             if account is None or not account.is_active or str(account.tenant_id) != tenant_id:
                 raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
+            target = Principal(
+                subject_id=subject_id,
+                roles=identities.get_account_roles(subject_id),
+                scope=identities.get_account_scope(subject_id),
+            )
+            if target.tenant_id != tenant_id:
+                raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
+            return target
+
+        def require_assignment_target(
+            request: Request, subject_id: str, role_id: str, resource: dict[str, Any],
+        ) -> None:
+            target = assignment_target_principal(request, subject_id)
             role_grants = {
                 "reviewer": (Role.SITE_REVIEWER,),
                 "site-reviewer": (Role.SITE_REVIEWER,),
@@ -1782,12 +1803,8 @@ else:
                 "expansionStaff": (Role.EXPANSION_USER,),
                 "expansion_user": (Role.EXPANSION_USER,),
             }
-            roles = identities.get_account_roles(subject_id)
-            target_scope = identities.get_account_scope(subject_id)
-            target = Principal(subject_id=subject_id, roles=roles, scope=target_scope)
             if (
                 not target.has_role(*role_grants.get(role_id, ()))
-                or target.tenant_id != tenant_id
                 or not intake_resource_in_scope(target, resource)
             ):
                 raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
@@ -4050,6 +4067,72 @@ else:
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version_after"]}"'
             return TransitionReceipt(**val)
+
+        @router.get(
+            "/assignments/{assignment_id}/transfer-targets",
+            operation_id="listAssignmentTransferTargets",
+            response_model=AssignmentTransferTargets,
+            responses=api_error_responses(403, 404, 409, 503),
+        )
+        def list_assignment_transfer_targets(
+            assignment_id: UuidString,
+            request: Request,
+            response: Response,
+            tenant_id: str = Depends(require_actor),
+        ) -> AssignmentTransferTargets:
+            # Not a general identity directory: disclose minimal recipient
+            # labels only to an actor allowed to transfer this exact resource.
+            response.headers["Cache-Control"] = "no-store"
+            current = active.assignments.get(assignment_id)
+            if current is None:
+                raise HTTPException(404, "assignment not found")
+            intake = linked_intake(current)
+            assignment_tenant = current.get("tenant_id") or (
+                intake.get("scope", {}).get("tenant_id") if intake else None
+            )
+            if assignment_tenant != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+            principal = get_principal(request)
+            require_assignment_scope(principal, current)
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE)
+            is_staff = principal.has_role(Role.EXPANSION_USER) and not is_manager
+            if not (is_manager or is_staff or principal.has_role(Role.DATA_OWNER)):
+                raise HTTPException(403, "ROLE_DENIED")
+            if is_staff and current.get("owner_subject_id") != principal.subject_id:
+                raise HTTPException(403, "OWNERSHIP_REQUIRED")
+            if current.get("status") not in {"ASSIGNED", "CLAIMED"}:
+                raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+            identities = getattr(getattr(request.app.state, "persistence_bundle", None), "identity_store", None)
+            if identities is None:
+                raise HTTPException(503, "identity directory unavailable")
+            resource = intake or current
+            targets = []
+            canonical_roles = (
+                (Role.SITE_REVIEWER, "site-reviewer"),
+                (Role.EXECUTIVE, "executive"),
+                (Role.DATA_OWNER, "data-steward"),
+                (Role.EXPANSION_USER, "expansion-staff"),
+            )
+            for account in identities.list_active_accounts(tenant_id):
+                subject_id = str(account.account_id)
+                # A transfer to the current owner is not a recipient change.
+                if subject_id == current.get("owner_subject_id"):
+                    continue
+                try:
+                    target = assignment_target_principal(request, subject_id)
+                except HTTPException as exc:
+                    if exc.status_code != 403:
+                        raise
+                    continue
+                if not intake_resource_in_scope(target, resource):
+                    continue
+                role_id = next((label for role, label in canonical_roles if target.has_role(role)), None)
+                name = account.display_name.strip() or account.username.strip()
+                if role_id and name:
+                    targets.append(AssignmentTransferTarget(id=subject_id, name=name, role=role_id))
+            return AssignmentTransferTargets(
+                assignment_id=assignment_id, assignment_version=current["version"], items=targets,
+            )
 
         @router.post(
             "/assignments/{assignment_id}/actions/claim",

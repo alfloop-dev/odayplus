@@ -281,3 +281,117 @@ def test_target_role_alias_is_backed_by_canonical_identity_grant(resources, role
     resources[2].set_account_roles(TARGET, [grant])
     result = assign(resources, role=role)
     assert result.status_code == 200, result.text
+
+
+def directory(resources, assignment_id, headers=None):
+    return resources[0].get(
+        f"/api/v1/assignments/{assignment_id}/transfer-targets",
+        headers={**HEADERS, **(headers or {})},
+    )
+
+
+def test_directory_returns_minimal_fresh_resource_bound_targets(resources):
+    _, store, identities, _ = resources
+    identities.save_account(replace(identities.find_account_by_id(TARGET), display_name="Source reviewer"))
+    created = assign(resources, subject=ACTOR)
+    assignment_id = created.json()["assignment_id"]
+    before = snapshot(store)
+    result = directory(resources, assignment_id)
+    assert result.status_code == 200, result.text
+    assert result.headers["Cache-Control"] == "no-store"
+    assert result.json() == {
+        "assignment_id": assignment_id, "assignment_version": 2,
+        "items": [{"id": TARGET, "name": "Source reviewer", "role": "site-reviewer"}],
+    }
+    assert snapshot(store) == before
+    identities.save_account(replace(identities.find_account_by_id(TARGET), status="disabled"))
+    assert directory(resources, assignment_id).json()["items"] == []
+    assert snapshot(store) == before
+
+
+@pytest.mark.parametrize("defect", ["disabled", "locked", "invited", "foreign-tenant", "foreign-scope-tenant", "no-role", "blank-name"])
+def test_directory_does_not_disclose_ineligible_identity(resources, defect):
+    _, store, identities, _ = resources
+    created = assign(resources, subject=ACTOR)
+    account = identities.find_account_by_id(TARGET)
+    if defect in {"disabled", "locked", "invited"}:
+        identities.save_account(replace(account, status=defect))
+    elif defect == "foreign-tenant":
+        identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+    elif defect == "foreign-scope-tenant":
+        identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+    elif defect == "no-role":
+        identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+    else:
+        identities.save_account(replace(account, display_name=" ", username=" "))
+    before = snapshot(store)
+    result = directory(resources, created.json()["assignment_id"])
+    assert result.status_code == 200, result.text
+    assert result.json()["items"] == []
+    assert snapshot(store) == before
+
+
+@pytest.mark.parametrize("axis,scope_axis,header", AXES)
+@pytest.mark.parametrize("metadata", [OUTSIDE, None, ALLOWED])
+def test_directory_filters_recipient_on_each_scope_axis(resources, axis, scope_axis, header, metadata):
+    _, store, identities, intake_id = resources
+    created = assign(resources, subject=ACTOR)
+    store.intakes[intake_id]["scope"][axis] = metadata
+    identities.set_account_scope(TARGET, Scope(tenant_id=TENANT, **{scope_axis: frozenset({ALLOWED})}))
+    before = snapshot(store)
+    result = directory(resources, created.json()["assignment_id"])
+    assert result.status_code == 200, result.text
+    assert [item["id"] for item in result.json()["items"]] == ([TARGET] if metadata == ALLOWED else [])
+    assert snapshot(store) == before
+
+
+@pytest.mark.parametrize("axis,scope_axis,header", AXES)
+def test_directory_denies_actor_outside_linked_resource_scope(resources, axis, scope_axis, header):
+    _, store, _, intake_id = resources
+    created = assign(resources, subject=ACTOR)
+    store.intakes[intake_id]["scope"][axis] = OUTSIDE
+    before = snapshot(store)
+    result = directory(resources, created.json()["assignment_id"], {header: ALLOWED})
+    assert result.status_code == 403, result.text
+    assert snapshot(store) == before
+
+
+@pytest.mark.parametrize("defect,status", [("dangling", 403), ("foreign-link", 403), ("completed", 409), ("transferred", 409), ("missing-store", 503)])
+def test_directory_denies_invalid_resources_or_unavailable_authority(resources, defect, status):
+    client, store, _, intake_id = resources
+    created = assign(resources, subject=ACTOR)
+    assignment_id = created.json()["assignment_id"]
+    if defect == "dangling":
+        store.assignments[assignment_id]["intake_id"] = str(uuid4())
+    elif defect == "foreign-link":
+        store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+    elif defect == "missing-store":
+        client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+    else:
+        store.assignments[assignment_id]["status"] = defect.upper()
+    before = snapshot(store)
+    result = directory(resources, assignment_id)
+    assert result.status_code == status, result.text
+    assert snapshot(store) == before
+
+
+@pytest.mark.parametrize("role,owned,status", [("auditor", True, 403), ("platform_admin", True, 403), ("expansion_user", False, 403), ("expansion_user", True, 200), ("data_owner", False, 200)])
+def test_directory_requires_transfer_action_authority(resources, role, owned, status):
+    _, store, _, _ = resources
+    created = assign(resources, subject=ACTOR if owned else TARGET)
+    before = snapshot(store)
+    result = directory(resources, created.json()["assignment_id"], {"x-roles": role})
+    assert result.status_code == status, result.text
+    assert snapshot(store) == before
+
+
+@pytest.mark.parametrize("role,grant", [("executive", Role.EXECUTIVE), ("data-steward", Role.DATA_OWNER), ("expansion-staff", Role.EXPANSION_USER)])
+def test_directory_canonical_role_is_accepted_by_real_transfer(resources, role, grant):
+    created = assign(resources, subject=ACTOR)
+    resources[2].set_account_roles(TARGET, [grant])
+    result = directory(resources, created.json()["assignment_id"])
+    assert result.status_code == 200, result.text
+    assert result.json()["items"][0]["role"] == role
+    transferred = command(resources, created.json()["assignment_id"], "transfer", role=role)
+    assert transferred.status_code == 200, transferred.text
+    assert transferred.json()["owner_subject_id"] == TARGET
