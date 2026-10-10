@@ -72,13 +72,43 @@ quarantined root cannot bind. Source line citations are in design §2.
 
 ## Verification and review boundary
 
-Task declares **Verification: none**. No tests, build, lint suite, browser,
-cloud, secret, database or account operations were run by this worker. Git source
-reads and docs-only diff inspection are not runtime verification. Commit and PR
-publication are delivery actions only. Independent Codex2 review must be pinned
-to the submitted exact PR head; no approval is asserted in this packet.
+Task declares **Verification: none**. No test/build suites, browser, cloud,
+secret, database or account operations were run by this worker. Git source reads
+and docs-only diff inspection are not runtime verification. Mandatory commit/PR
+wrapper policy preflights are delivery checks, not incident acceptance. Independent
+Codex2 review must be pinned to the submitted exact PR head; no approval is
+asserted in this packet. The remote PR/head and atomic review submission are
+recorded by `task_finalize.sh` via the live canonical status root, not a mutable
+self-approval field here.
 
-Review focus: truthful API gap; preserved original account and old immutable
-incident lineage; conditional same-target rotation authority; custody/deadline
-failure boundaries; distinct future bundle lineage with fail-closed gate; no
-execution authority from docs, review, CI or a GitHub comment.
+Docs inspection checks (repeat on the committed submission head):
+- `git diff --check origin/dev...HEAD`: whitespace/error check only.
+- `git diff --name-status origin/dev...HEAD`: exactly the two task artifact
+  Markdown additions; no runtime source/endpoint/workflow/lockfile or frozen
+  evidence changes.
+- `git status --short`: clean after private-index commits, before publication.
+- Requested source-doc cache SHA-256 matches canonical Git bytes (table above).
+
+Anchor `e2d5d4e4c963` preserved factual inventory across the two files before the
+conditional protocol was added. The final submitted head includes design §§4–7;
+exact-head diff/remote proof belongs to the PR delivery receipt, not this anchor.
+No temporary probe/script was added to the repo; source snapshots/message files
+stay in orchestrator scratch. No global work summary/activity history was scanned.
+
+## Acceptance mapping for independent review
+
+| Acceptance | Location / disposition |
+| --- | --- |
+| Actual active account, quarantine, NULL binding and no false rollback/consent gap | Facts above and design §1; attributed supplied observations, raw collector availability limitation explicit |
+| Official deployed API or concrete gap | Design §2 immutable source links; same-account reset missing; old root/reader/ACK cannot recover |
+| Narrow new-target decision, original preserved | §4 ungranted request; target-session revocation explicit, original/other sessions excluded |
+| No rewriting/replay/admission weakening | §5 distinct recovery root/capability/rotation/intent/ACK, new strict versioned consumer, full source/current admission/custody requirements |
+| Finite budget and memory custody under timeout | §6 absolute 2400-second proposal, receipts before effects, unknown/quarantine matrix; parent-loss gap retained |
+| Docs only, exact-head diff and independent Codex2 review | This packet, §7 and canonical remote PR submission; review pending, no runtime authority |
+
+Special review concern: the deployed CLI uses a secret environment input; the
+proposal bans plaintext-env/argv custody, including its future fresh consumer.
+A reviewed memory-only consumer adapter is another pre-effect prerequisite, not
+an already available feature. No v1 decoder bypass or same-job refresh is proposed.
+Source implementation/tests/deployment/owner execution authorization all remain
+separate future gates. Independent #1447/UI/data lanes are not suspended.

@@ -103,7 +103,7 @@ reuse an accepted invitation as a recovery capability. Bootstrap is not recovery
 - [WebInvitationExecutor L864–974](https://github.com/alfloop-dev/odayplus/blob/d50cd331a53b7aba3a6f2f8fe8919423620f0754/delivery_toolchain/release/provision_dev_smoke.py#L864-L974)
   refuses existing username/email, rechecks source/admission/custody and owns
   single-attempt invitation/acceptance. It does not recover an existing identity.
-- [Bundle writer L1343–1400](https://github.com/alfloop-dev/odayplus/blob/d50cd331a53b7aba3a6f2f8fe8919423620f0754/delivery_toolchain/release/provision_dev_smoke.py#L1343-L1400)
+- [Bundle writer L1337–1400](https://github.com/alfloop-dev/odayplus/blob/d50cd331a53b7aba3a6f2f8fe8919423620f0754/delivery_toolchain/release/provision_dev_smoke.py#L1337-L1400)
   composes successful creation and durable intent before one encrypted PUT.
   [GitHub store L977–1079](https://github.com/alfloop-dev/odayplus/blob/d50cd331a53b7aba3a6f2f8fe8919423620f0754/delivery_toolchain/release/provision_dev_smoke.py#L977-L1079)
   requires authenticated pinned custodian, absent metadata, correct repo/key,
@@ -115,6 +115,11 @@ reuse an accepted invitation as a recovery capability. Bootstrap is not recovery
   not repair provenance. [Gate L2106–2138](https://github.com/alfloop-dev/odayplus/blob/d50cd331a53b7aba3a6f2f8fe8919423620f0754/delivery_toolchain/e2e/check_live_e2e_gate.py#L2106-L2138)
   requires that predicate for bundle consumers; [L3347–3400](https://github.com/alfloop-dev/odayplus/blob/d50cd331a53b7aba3a6f2f8fe8919423620f0754/delivery_toolchain/e2e/check_live_e2e_gate.py#L3347-L3400)
   refuses malformed nonempty bundles without per-field/legacy fallback.
+- [Source/admission observers L338–558](https://github.com/alfloop-dev/odayplus/blob/d50cd331a53b7aba3a6f2f8fe8919423620f0754/delivery_toolchain/release/provision_dev_smoke.py#L338-L558)
+  require full reviewed/candidate tree equality, fresh canonical review writer
+  and latest CI, bounded complete evidence, and fresh current deployment history
+  or genuine consumed-lease state. A passing local receipt is not authority.
+  Standing automatic-dev policy does not require replaying a consumed lease.
 
 **Conclusion:** an authenticated same-tenant original admin can issue invitations
 and inspect/quarantine the original journal, but at this SHA cannot recover the
@@ -132,3 +137,222 @@ reviewing or merging these documents. Do not resume the original creation task,
 rewrite old audit records, invent an ACK, or reinterpret broad “continue” as reset
 permission. A future implementation must use a new task/PR, independent security
 review, tests/CI and normal deployment admission, never edit frozen deliveries.
+
+## 4. Proposed narrow owner decision (NOT a granted authorization)
+
+Owner may choose **hold** (default) or request a separately scoped supported
+recovery implementation and, after it is independently approved/deployed, approve
+one foreground execution. The following is permission-request text, not a receipt:
+
+> Request a NEW recovery authorization, not an extension of AUTH001, bound to an
+> exact non-secret recovery-plan digest, fresh execution UUID, expiry, approved
+> full source tree and current admitted dev release. Permit the authenticated
+> original admin `17e9cb99-db46-4a07-8e61-6bf9b22cf5d2`, in tenant
+> `e34f2117-de4b-478c-82fd-13c4ef428d42`, to issue ONE fresh short-lived recovery
+> capability and consume it ONCE to rotate ONLY the existing `odp-dev-smoke`
+> credential, UUID `13faae19-21c6-4663-8e89-b93ea7f1107d`, to a new random
+> password held exclusively in the trusted foreground custodian's memory.
+> Explicitly permit atomic revocation of this TARGET account's pre-recovery
+> sessions (including its possibly interrupted session), not any other account's
+> sessions. Preserve target username/email/UUID/tenant, active status, exact
+> `[platform_admin]` roles and existing clearance/scope; no replacement activation.
+> Permit a distinct durable recovery audit/intent and ONE encrypted create-only-
+> in-policy staging attempt to `alfloop-dev/odayplus` environment `dev`, secret
+> `ODP_DEV_ADMIN_CREDENTIAL_BUNDLE`, ONLY if fresh metadata proves absence and
+> concurrent external writers are excluded. Permit own-session verification,
+> full canonical dev-admin gate and a separate normally admitted fresh-job
+> consumer proof, subject to their ordinary authority boundaries.
+> Preserve AUTH001 reservation/quarantine, invitation issue/acceptance and ACK
+> absence forever. Preserve original account password, status, roles, scope,
+> clearance and every pre-existing original/other-account session; collectors may
+> log out only sessions they themselves create. No IAM, source activation,
+> backfill, fixture, business/model mutations, role widening, gate relaxation,
+> second rollout, account creation/deletion, invitation reissue/replay, secret
+> read/delete/overwrite or retry after uncertainty. Any uncertain effect stops
+> and quarantines the NEW execution. A future attempt requires another decision.
+
+The real owner must approve the **completed exact plan**, including custodian,
+expiry and session-revocation choice, through the genuine foreground approval
+channel. Do not populate a fake authorization ID, approved boolean, user reply,
+SMTP/mailbox proof or GitHub comment. AUTH001 remains valid historical creation
+consent; recipient alias remains metadata, not proven mailbox control. No new
+SMTP/social ceremony is required merely to design recovery. If the owner does
+not explicitly permit target-session revocation or encrypted staging, hold that
+step; do not silently substitute account disablement or original-session revocation.
+
+## 5. Conditional supported recovery contract — future separate implementation
+
+These are requirements for a future official API, **not existing route names or
+worker-executable instructions**. No direct SQL/ORM/internal hash helper may be
+used by the foreground as an API substitute.
+
+1. **Fresh preflight and new reservation:** trusted foreground pins new owner
+   approval/custodian, entire reviewed Git tree, independent review gate and
+   latest required CI on reviewed and candidate heads. Obtain current canonical
+   release admission/history and actual Web AND API own SHA/profile/digest;
+   source approval is not deployment admission. Reconcile original selected
+   identity fields/roles/scope and genuine password authentication, target
+   account + invitation issue/acceptance, old exact quarantine and NULL binding,
+   bundle absence, and interrupted-session uncertainty. Stop on drift. Never
+   restore the historical three-role upper bound (`operations_manager` is not
+   an actual role baseline). Reserve a distinct recovery root referencing old
+   execution, plan digest, quarantine and issue/accept event IDs; never re-reserve
+   AUTH001. Identifier-only receipts grant no execution authority.
+2. **Capability issuance:** official authenticated Web/BFF/API boundary must
+   revalidate persisted same-tenant active original admin, non-must-change
+   credential, live durable session and permission on every call, not selected
+   persona or caller actor/tenant headers. Target must be the fixed existing UUID,
+   same tenant and active pureadmin; no email/username account lookup substitution.
+   Serialize issuance with identity administration and recovery reservation.
+   Generate 256-bit CSPRNG capability, return it once in a bounded no-store
+   response, persist only its hash in dedicated recovery storage (not audit).
+   Bind to new authorization, target/tenant, issuer, new execution/plan and DB-time
+   expiry (proposed maximum 10 minutes). One issuance per execution; no rotation
+   of a pending/unknown capability. Durable issuance audit commits atomically.
+3. **Single consumption and rotation:** same trusted issuer session plus matching
+   capability through HTTPS/CSRF/service IAM transport; bounded JSON only, no
+   query/URL token, redirects, retries or user/tenant header bypass. Durable abuse
+   budget must commit even on refusal, before expensive hashing; validate hash,
+   target and expiry cheaply, then recheck under write lock. Apply existing NFKC
+   password policy and Argon2id (memory ≥65536 KiB, time ≥3, parallelism 1), not a
+   caller-supplied PHC. In one production same-engine transaction, consume the
+   capability, update ONLY target credential/rotation metadata, revoke ONLY
+   authorized target pre-recovery sessions, and append durable recovery audit.
+   Audit/commit failure must roll back all these effects. Concurrent consume
+   accepts at most once; stale role/scope/status/session or source-plan drift
+   refuses. No new account, invitation or privilege grant; target remains active.
+   Return safe identifiers only after commit. The capability hash and Argon2
+   PHC stay in credential storage; neither enters audit, evidence or error output.
+4. **Reconciliation before staging:** use the retained same random pair for ONE
+   fresh target login, principal/tenant/roles and original-account comparison,
+   genuine original issue/accept provenance AND new rotation audit. Required
+   durable phase receipts and serving/source/admission/custody rechecks must
+   succeed before next effect. Any missing/ambiguous reply, audit or collector
+   persistence failure stops, even if a later GET proves rotation committed.
+   Read-only reconciliation may resolve truth, not reopen execution authority.
+5. **Distinct binding intent then PUT:** append new lineage intent before any
+   encrypted upload; exclude external writers because GitHub lacks a conditional
+   create-only PUT. Recheck absence, pinned repository/environment/public key and
+   authenticated human custodian. Encrypt in memory with sealed-box public key,
+   single PUT, exact 201 required. Timeout/204/other response is uncertain, no
+   overwrite/retry/delete compensation. ACK append requires the real PUT receipt;
+   append failure leaves intent/unknown, never manufacture ACK from metadata.
+6. **Gate, fresh consumer and cleanup:** preserve complete canonical dev-admin
+   evaluation, true invitation provenance, denied-role probes, own-session
+   cleanup and current admitted Web/API identity binding. A same-process gate
+   may use the new pair in memory but cannot prove GitHub decrypted value. No
+   same-job secret refresh assumption: a separately normally admitted fresh job
+   must consume the matched bundle and pass the full gate to establish binding.
+   No extra rollout is authorized by deployed-release observation alone. Persist
+   only redacted gate/phase results and original terminal exit/completion receipt.
+   Logout every newly created own session with 200 followed by session 401; failure
+   is recovery-required, not permission to revoke other sessions.
+
+### Future lineage/decoder integration is mandatory, not a gate exception
+
+The current schema 1 reader/ACK cannot express this recovery. A separate reviewed
+implementation must introduce a strict versioned recovery envelope/projection:
+new authorization + execution/plan, same target/tenant, exact original creation
+provenance and immutable quarantine reference, new issuance/rotation, distinct
+binding intent and real ACK. Preserve old schema-1 behavior exactly, including
+rejection of this quarantined root. New lineage can be accepted only through the
+new validated contract; never omit bundle identifiers to skip ACK checking or
+reuse old event names/correlation IDs to hide quarantine. Tenant audit projection
+must expose the new safe events; the current projection includes only identity
+and old release journal types, so new types need explicit reviewed integration.
+
+The full gate's business/auth/transport checks remain mandatory. Only an
+independently reviewed strict provenance extension may distinguish historical
+creation quarantine from a successful separately authorized recovery. Malformed,
+nonempty, duplicate-key, wrong-version/tenant/account/authorization or unmatched
+bundles must fail closed, with no per-field mixing or original/bootstrap fallback.
+An ACK or metadata timestamp is not decrypted-value proof. The current gate CLI
+reads its bundle from an environment variable (L3355); that is **not** a no-env
+custody adapter. Under this proposal's no-plaintext-env/argv rule, the future
+ordinary fresh-job consumer also needs a separately reviewed trusted memory-only
+secret-input boundary feeding the strict decoder and canonical evaluator; it
+cannot just invoke today's CLI with a plaintext environment. This additional
+custody integration must exist before effects, not be improvised by this worker.
+Before any rotation, future declared verification must demonstrate all these
+paths (including audit rollback, concurrency, timeout-after-commit, replay refusal, original-session
+preservation and legacy rejection). This task adds no such implementation/tests.
+
+## 6. Finite budget, non-secret receipts and custody across child timeout
+
+Proposed execution limit: **2400 seconds wall-clock total**, within an owner
+approval window of at most one hour, never an automatic extension. Start one
+monotonic absolute deadline before preflight; nested calls/children inherit
+remaining time, not a new per-phase deadline. Proposed ceilings, subject to
+future measured preflight and owner review:
+
+| Phase | Ceiling (seconds) | Receipt before the next effect |
+| --- | ---: | --- |
+| Full source/CI/admission/custody and account preflight | 600 | exact tree/release tuple, decision/plan refs, unchanged-account comparison, old incident refs, bundle absence, no execution authority |
+| New reservation + capability issuance | 60 | distinct root, issue event/target/expiry; no capability/hash |
+| Capability consumption/rotation | 120 | rotation event/commit observed or UNKNOWN; target-only session-revocation result |
+| Fresh target verification / unchanged original comparison | 120 | login/principal/provenance checks; no cookies/passwords |
+| Binding intent / encrypted PUT / ACK | 120 | real intent and response classification, ACK event only if committed |
+| Full gate and separately admitted fresh consumer proof | 1080 | separate gate reports/job refs; no same-job refreshed-secret claim |
+| Own-session cleanup | 180 | own session refs, logout/session status, terminal outcome |
+| Bounded uncertainty reconciliation/quarantine reserve | 120 | append-only new recovery-required/unknown outcome |
+
+Ceilings sum to 2400, not eight independent clocks. No effect starts unless its
+worst-case downstream gate/cleanup/quarantine budget remains; if source observers
+cannot finish within preflight, **refuse before rotation**. If a fresh consumer
+cannot be admitted and finish in the allocated window, hold before effects and
+revise the plan through review, not stretch the timer or reduce the gate. Original
+observer rechecks, pagination refusal and latest-attempt semantics remain; do
+not replace them with cached pass flags to fit the budget. Need measured safe
+bounds and orchestrator cancellation support before this proposal is executable.
+
+Custody proposal: the trusted foreground parent/supervisor, not a disposable
+600-second child, owns the new random password and recovery capability in memory.
+Credential-bearing HTTP/encryption/gate work stays in that trusted process.
+Non-secret source observers/children receive only public identifiers and bounded
+remaining deadlines; no password, capability, token, cookie or secret bundle in
+child argv/env/stdin/artifacts. A child timeout cannot erase the parent's password,
+but still triggers a stop/quarantine if an effect has begun. If a child cannot
+operate without credentials, it is not part of this design: hold for a separately
+reviewed custody boundary, not a plaintext handoff. Foreground-approved credentials
+are never handed to this background worker.
+
+Disable body/debug tracing, shell echo, crash/core dumps and secret-bearing report
+serialization; control swap/debug access under the approved custodian runtime.
+No plaintext files, browser state, logs, audit credential blobs, password digest
+receipts, clipboard, environment or command-line transport. Dedicated capability
+hash and Argon2 credential storage are necessary server state, not evidence. The
+intended GitHub sealed ciphertext is the only bundle persistence. Memory cleanup
+is best effort in managed runtimes, not a claim of provable zeroization.
+
+Receipts are allowlisted identifiers, phase start/end monotonic durations, deadline
+remaining, response/commit classification and audit refs. Persist a non-secret
+phase-start receipt **before** each effect and its terminal receipt after; if
+receipt storage fails, do not proceed. A phase-start without completion is UNKNOWN,
+not failed creation. The original process terminal status/exit code or original
+job handle receipt decides completion; no grep-based wait or process-name guess.
+
+| Uncertain boundary | Required treatment |
+| --- | --- |
+| Reservation/issuance reply missing | New root/issuance may have committed; inspect once under authority, quarantine/hold, never repeat or issue replacement |
+| Consumption reply/child completion lost after commit | Same target may have rotated; retain parent password only in memory while reconciling, quarantine; no automatic consume/PUT continuation |
+| Parent dies or custody memory lost | New credential cannot be recovered from a hash or a longer timeout. Record unknown/quarantine via authorized collector; any further same-account rotation requires another narrow decision |
+| PUT reply lost / 204 / ACK append failed | Intent remains, GitHub may contain a value; metadata cannot prove it. Quarantine, no read/delete/overwrite/retry |
+| Gate/fresh consumer fails or times out | Preserve real intent/ACK; append separate failure/quarantine, no account/password rollback or old-journal change |
+| Logout or quarantine call unavailable | Preserve committed root/intent as no-retry boundary; cleanup/quarantine completion remains UNKNOWN; no blanket session revocation |
+
+For a future reconciliation collector, use one bounded own session and a finite
+attempt budget; outages end with UNKNOWN and an owner blocker, not endless polling.
+Original interrupted original-admin sessions remain UNKNOWN unless their exact
+ownership and a supported narrowly authorized cleanup are independently proven;
+revoking target sessions cannot be represented as cleanup of original sessions.
+
+## 7. Review and disposition
+
+Codex2 should independently review the submitted exact docs head for factual API
+inventory, explicit gaps, preservation/no-replay semantics, narrow proposed owner
+scope, distinct lineage, finite budget and custody failure truth. Docs review/CI
+or merge is not runtime permission. This task can deliver a reviewed plan while
+recovery stays held; it cannot claim that recovery happened. Subsequent capability
+implementation, its declared verification, normal deployment, exact owner consent
+and foreground execution receipts are separate gates. Keep independent source/UI/
+data lanes moving and preserve all archived delivery/failure history.
