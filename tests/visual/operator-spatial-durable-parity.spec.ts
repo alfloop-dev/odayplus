@@ -34,7 +34,14 @@ for (const width of [1440, 390]) {
       expect(generation.abstained).toBe(false);
       const proposals = generation.proposals.filter((p: { composition_kind: string }) => p.composition_kind === (split ? "SPLIT_CHILD" : "MERGED"));
       expect(proposals).toHaveLength(1);
-      const proposal = proposals[0];
+      const generatedProposal = proposals[0];
+      const generatedRead = await page.request.get(`${endpoint}/proposals/${generatedProposal.proposal_id}`, { headers });
+      expect(generatedRead.status()).toBe(200);
+      const proposal = await generatedRead.json();
+      await save("generated-readback", proposal);
+      expect(proposal.composition_kind).toBe(generatedProposal.composition_kind);
+      expect(proposal.member_cell_ids).toEqual(generatedProposal.member_cell_ids);
+      expect(proposal.child_partitions).toEqual(generatedProposal.child_partitions);
       expect(proposal.member_cell_ids).toEqual(split ? ["cell-kaohsiung-00", "cell-kaohsiung-01"] : ["cell-taipei-00", "cell-taipei-01"]);
       if (split) {
         expect(proposal.child_partitions).toEqual([["cell-kaohsiung-00"], ["cell-kaohsiung-01"]]);
@@ -47,7 +54,7 @@ for (const width of [1440, 390]) {
       const note = `本地 SQLite ${kind} ${width} 決策；測試生成歷史，不是正式上線核准。`;
       await page.setViewportSize({ width, height: 900 });
       await page.addInitScript(({ subject }) => {
-        sessionStorage.setItem("oday.operator.role", "expansion-manager");
+        sessionStorage.setItem("oday.operator.role", new URL(location.href).searchParams.get("spatial-test-role") === "pm-audit" ? "pm-audit" : "expansion-manager");
         sessionStorage.setItem("oday.operator.subject", subject);
         sessionStorage.setItem("oday.operator.tenant", "tenant-a");
       }, { subject });
@@ -90,23 +97,25 @@ for (const width of [1440, 390]) {
         if (phase === "after") expect(axe.violations).toEqual([]);
       }
       if (split) {
-        // The staff UI offers preview but no decision. Exercise the actual API
-        // denial too; hiding a button is not server-side authorization proof.
-        await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-staff"));
-        await page.reload();
+        // The actual PM/auditor persona has no heatzone VIEW or OVERRIDE.
+        // Assert its genuine denied read state, not an invented read-only role.
+        const deniedListResponse = page.waitForResponse((r) => r.url().endsWith(`${endpoint}/proposals`) && r.status() === 403);
+        await page.goto("/operator?ws=network&tab=composition&spatial-test-role=pm-audit");
         await page.getByTestId("network-tab-7").click();
-        await panel.getByTestId(`proposal-item-${id}`).click();
-        await expect(panel.getByTestId("split-children")).toBeVisible();
-        for (const childId of proposal.child_zone_ids) await expect(panel.getByTestId("split-children")).toContainText(childId);
-        await expect(panel.getByTestId("composition-decision-denied")).toBeVisible();
+        const deniedListHTTP = await deniedListResponse;
+        await expect(panel.getByRole("alert")).toContainText("HTTP 403");
+        await expect(panel.getByTestId("proposal-detail")).toHaveCount(0);
         await expect(panel.getByTestId("btn-open-approve")).toHaveCount(0);
         await expect(panel.getByTestId("btn-open-reject")).toHaveCount(0);
-        await capture("staff-permission");
+        await capture("auditor-permission");
+        const deniedReadback = await page.request.get(`${endpoint}/proposals`, { headers: { ...headers, "x-roles": "auditor" } });
+        expect(deniedReadback.status()).toBe(403);
+        await save("permission-read", { browserStatus: deniedListHTTP.status(), independentStatus: deniedReadback.status(), response: await deniedReadback.json() });
         const before = JSON.parse(execFileSync(path.resolve(".venv/bin/python"), ["-m", "tests.visual.spatial_durable_backend", "--inspect", id], { encoding: "utf8" }));
         const denials = [];
         for (const action of ["approve", "reject"]) {
           const denied = await page.request.post(`${endpoint}/proposals/${id}/${action}`, {
-            headers: { ...headers, "x-roles": "expansion_user" },
+            headers: { ...headers, "x-roles": "auditor" },
             data: action === "approve" ? { notes: note } : { reason: note },
           });
           expect(denied.status()).toBe(403);
@@ -116,10 +125,11 @@ for (const width of [1440, 390]) {
         expect(after).toEqual(before);
         expect(after.events).toEqual([]);
         await save("permission-denials", { denials, before, after });
-        await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-manager"));
-        await page.reload();
+        await page.goto("/operator?ws=network&tab=composition");
         await page.getByTestId("network-tab-7").click();
         await panel.getByTestId(`proposal-item-${id}`).click();
+        await expect(panel.getByTestId("split-children")).toBeVisible();
+        for (const childId of proposal.child_zone_ids) await expect(panel.getByTestId("split-children")).toContainText(childId);
         await panel.getByTestId("btn-preview-proposal").click();
         await expect(panel.getByTestId("preview-box")).toBeVisible();
       }

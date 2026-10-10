@@ -69,6 +69,7 @@ def seed_generated_history(bundle) -> None:
                     member_cell_id=cell_id,
                     composition_kind=CompositionKind.MERGED,
                     decided_by="explicit-split-parent-fixture",
+                    override_reason="Synthetic isolated browser-test parent, not a production decision",
                     decision_policy_version_id="heatzone-merge-v1:tenant-a",
                 )
             )
