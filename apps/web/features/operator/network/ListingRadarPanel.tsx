@@ -5,6 +5,8 @@ import type { ReactNode } from "react";
 import type { Listing, ListingSource } from "../types";
 import type { ListingRadarRow } from "../networkFindAreasViewModel";
 import type { OperatorRoleId } from "../navigation";
+import type { OperatorLoadFailure } from "../operatorDataMode";
+import { OperatorDataUnavailableGate } from "../OperatorDataUnavailableGate";
 import styles from "../networkFindAreas.module.css";
 import { AssistedIntakeSection } from "./intake/AssistedIntakeSection";
 import { MERGE_DENIED_NOTE, canMergeListing } from "./listingPermissions";
@@ -46,6 +48,7 @@ export function ListingRadarPanel({
   busyListingId,
   intakeDetailOpen = false,
   listings,
+  listingsReadFailure = null,
   onArchive,
   onConvert,
   onMerge,
@@ -65,6 +68,12 @@ export function ListingRadarPanel({
    */
   intakeDetailOpen?: boolean;
   listings: NetworkListingDetail[];
+  /**
+   * Set when the listing collection itself was refused or unreachable. The
+   * source cards, counts and inbox are then replaced by that typed failure:
+   * an unread collection is not "0 筆" and not "no listings match".
+   */
+  listingsReadFailure?: OperatorLoadFailure | null;
   onArchive?: (listingId: string) => void;
   onConvert?: (listingId: string) => void;
   onMerge?: (sourceListingId: string, targetListingId: string) => void;
@@ -137,239 +146,249 @@ export function ListingRadarPanel({
         targetListings={listings.map(toTargetListingData)}
       />
 
-      <div className={styles.sourceSummaryGrid} aria-label="Listing sources">
-        {sources.map((source) => (
-          <article className={styles.sourceCard} key={source.id}>
-            <div className={styles.sourceCardHead}>
-              <strong>{source.name}</strong>
-              <span className={styles.toneBadge} data-tone={source.status === "connected" ? "good" : "watch"}>
-                {sourceStatusLabel(source.status)}
-              </span>
-            </div>
-            <small className={styles.muted}>{source.lastSyncedAt ? `最近收件 ${source.lastSyncedAt}` : "人工匯入"}</small>
-            <p>{source.complianceNote}</p>
-            <small className={styles.muted}>新增 {rows.filter((row) => row.sourceId === source.id).length} · 合規模式</small>
-          </article>
-        ))}
-      </div>
-
-      <div className={styles.radarLayout}>
-        <aside className={styles.sourceFilterPanel} aria-label="來源篩選">
-          <div className={styles.filterTitle}>來源篩選</div>
-          <div className={styles.sourceFilterList}>
-            {sourceFilterOptions.map((option) => (
-              <button
-                aria-pressed={sourceFilter === option.id}
-                key={option.id}
-                onClick={() => setSourceFilter(option.id)}
-                type="button"
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <button
-            className={styles.zoneFilterChip}
-            data-testid="listing-zone-filter-chip"
-            onClick={() => setFilterMode(filterMode === "selected" ? "all" : "selected")}
-            type="button"
-          >
-            {filterMode === "selected" ? `${selectedHeatZoneId ?? "ALL"} · ${selectedZoneLabel ?? "All zones"}` : "全部區域"}
-          </button>
-          <button
-            className={styles.filterClearButton}
-            data-testid="listing-filter-all"
-            onClick={() => setFilterMode("all")}
-            type="button"
-          >
-            顯示全部物件
-          </button>
-        </aside>
-
-        <section className={styles.radarInbox}>
-          <div className={styles.radarInboxHeader}>
-            <div>
-              <h3>物件收件匣</h3>
-              <span>{sourceFilteredRows.length} 筆</span>
-            </div>
-            <div className={styles.radarViewToggle} aria-label="Radar view">
-              <button aria-pressed type="button">清單</button>
-              <button aria-pressed={false} type="button">地圖</button>
-            </div>
-          </div>
-          {sourceFilteredRows.length ? (
-            <div className={styles.radarRows} data-testid="network-listing-table">
-              {sourceFilteredRows.map((row) => {
-                const listing = listingById.get(row.id);
-                const evidence = listing?.sourceEvidence ?? [];
-                const isBusy = busyListingId === row.id;
-                const mergeTarget = listing?.duplicateOfId ?? row.duplicateOfId;
-                const canConvert =
-                  row.id === "L-2024" &&
-                  !row.candidateId &&
-                  !row.isDuplicate &&
-                  row.hardRuleFailures.length === 0 &&
-                  row.status !== "archived";
-                // Merge needs listing:UPDATE plus the service's actor allowlist;
-                // hiding it for roles that cannot clear both keeps the console
-                // from offering a button that is guaranteed to 403/422. Once
-                // `mergedIntoId` is set the merge is terminal, so the entry
-                // point must retire rather than mint a second request.
-                const canMerge =
-                  row.id === "L-2029" &&
-                  Boolean(mergeTarget) &&
-                  !listing?.mergedIntoId &&
-                  canMergeListing(activeRoleId);
-                const canArchive =
-                  row.id === "L-2030" &&
-                  row.status !== "archived" &&
-                  (row.status === "hardfail" || row.hardRuleFailures.length > 0);
-
-                return (
-                  <article
-                    className={styles.radarRow}
-                    data-active={selectedRow?.id === row.id ? "true" : undefined}
-                    data-testid={`listing-row-${row.id}`}
-                    data-tone={row.tone}
-                    key={row.id}
-                    onClick={() => setSelectedListingId(row.id)}
-                  >
-                    <div className={styles.radarRowHead}>
-                      <span>{sourceShortLabel(row.sourceName)}</span>
-                      <strong>{row.id} · {listingTitle(row)}</strong>
-                      <ToneBadge tone={row.tone}>{row.statusLabel}</ToneBadge>
-                    </div>
-                    <div className={styles.radarRowMeta}>
-                      <span>{row.address}</span>
-                      <span>{row.rentLabel} · {row.areaPing} ping</span>
-                      <span className={styles.zoneMini}>{row.zoneLabel} {row.heatZoneId}</span>
-                      <span>Fit {listing?.fitScore ?? "—"}</span>
-                      <span>{rowRecommendation(row, mergeTarget)}</span>
-                    </div>
-                    <div className={styles.radarEvidence}>
-                      {row.isDuplicate ? <span className={styles.flag}>Dup {mergeTarget ?? ""}</span> : null}
-                      {row.hardRuleFailures.length ? (
-                        <span className={styles.flagRisk}>{row.hardRuleFailures.join("; ")}</span>
-                      ) : null}
-                      {!row.isDuplicate && !row.hardRuleFailures.length ? <span className={styles.muted}>Clean</span> : null}
-                      {listing?.mergedIntoId ? <small>merged into {listing.mergedIntoId}</small> : null}
-                      {listing?.archivedReason ? <small>{listing.archivedReason}</small> : null}
-                      <small data-testid={`listing-evidence-${row.id}`}>
-                        {evidence.length} evidence refs{evidence.length ? ` · ${evidence.join(", ")}` : ""}
-                      </small>
-                    </div>
-                    <div className={styles.rowActions}>
-                      {canConvert ? (
-                        <button
-                          data-testid="convert-L-2024"
-                          disabled={isBusy}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onConvert?.(row.id);
-                          }}
-                          type="button"
-                        >
-                          轉為候選點
-                        </button>
-                      ) : null}
-                      {canMerge && mergeTarget ? (
-                        <button
-                          data-testid="merge-L-2029"
-                          disabled={isBusy}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onMerge?.(row.id, mergeTarget);
-                          }}
-                          type="button"
-                        >
-                          標記重複
-                        </button>
-                      ) : null}
-                      {canArchive ? (
-                        <button
-                          data-testid="archive-L-2030"
-                          disabled={isBusy}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onArchive?.(row.id);
-                          }}
-                          type="button"
-                        >
-                          封存
-                        </button>
-                      ) : null}
-                      {!canConvert && !canMerge && !canArchive ? (
-                        <span className={styles.muted}>{isBusy ? "寫入中…" : "查看詳情"}</span>
-                      ) : null}
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          ) : (
-            <div className={styles.emptyState}>No listings match the selected filter</div>
-          )}
-        </section>
-
-        <aside className={styles.listingDetailPanel} aria-label="Listing detail">
-          {selectedRow ? (
-            <>
-              <div>
-                <div className={styles.detailIdLine}>
-                  <span>{selectedRow.id}</span>
-                  <ToneBadge tone={selectedRow.tone}>{selectedRow.statusLabel}</ToneBadge>
-                </div>
-                <h3>{listingTitle(selectedRow)}</h3>
-                <p>{selectedRow.sourceName} · {selectedListing?.sourceUrl ?? "source evidence retained"}</p>
+      {listingsReadFailure ? (
+        <OperatorDataUnavailableGate
+          failure={listingsReadFailure}
+          onRetry={() => window.location.reload()}
+          status="error"
+        />
+      ) : (
+        <>
+        <div className={styles.sourceSummaryGrid} aria-label="Listing sources">
+          {sources.map((source) => (
+            <article className={styles.sourceCard} key={source.id}>
+              <div className={styles.sourceCardHead}>
+                <strong>{source.name}</strong>
+                <span className={styles.toneBadge} data-tone={source.status === "connected" ? "good" : "watch"}>
+                  {sourceStatusLabel(source.status)}
+                </span>
               </div>
-              <div className={styles.listingPhotoPlaceholder}>物件照片 placeholder</div>
-              <dl className={styles.listingDetailRows}>
-                <DetailRow label="正規化地址">{selectedRow.address}</DetailRow>
-                <DetailRow label="租金／坪數">{selectedRow.rentLabel} · {selectedRow.areaPing} ping</DetailRow>
-                <DetailRow label="樓層／面寬">{selectedListing?.floor ?? "—"} · {selectedListing?.frontageMeters ? `${selectedListing.frontageMeters}m` : "—"}</DetailRow>
-                <DetailRow label="首見">{selectedListing?.firstSeenAt ?? "—"}</DetailRow>
-                <DetailRow label="Geocode">{selectedRow.geocodeConfidenceLabel}</DetailRow>
-                <DetailRow label="重複檢查">{selectedRow.isDuplicate ? `重複 ${selectedRow.duplicateOfId ?? ""}` : "唯一物件"}</DetailRow>
-                <DetailRow label="硬規則">{selectedListing?.hardRuleSummary ?? (selectedRow.hardRuleFailures.length ? selectedRow.hardRuleFailures.join("; ") : "3/3 通過")}</DetailRow>
-                <DetailRow label="HeatZone">{selectedRow.zoneLabel} · 適配 {selectedListing?.fitScore ?? "—"}</DetailRow>
-                <DetailRow label="候選點">{selectedRow.candidateId ?? "—"}</DetailRow>
-                <DetailRow label="Evidence">{(selectedListing?.sourceEvidence ?? []).join(", ") || "—"}</DetailRow>
-              </dl>
-              <button
-                className={styles.detailPrimaryButton}
-                data-testid="listing-detail-primary"
-                disabled={
-                  !selectedRow ||
-                  selectedRow.status === "archived" ||
-                  Boolean(detailMergedIntoId) ||
-                  detailMergeDenied
-                }
-                onClick={() => {
-                  if (!selectedRow || detailMergedIntoId || detailMergeDenied) return;
-                  const mergeTarget = selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId;
-                  if (selectedRow.id === "L-2024" && !selectedRow.candidateId && !selectedRow.isDuplicate) {
-                    onConvert?.(selectedRow.id);
-                  } else if (selectedRow.id === "L-2029" && mergeTarget) {
-                    onMerge?.(selectedRow.id, mergeTarget);
-                  } else if (selectedRow.id === "L-2030") {
-                    onArchive?.(selectedRow.id);
+              <small className={styles.muted}>{source.lastSyncedAt ? `最近收件 ${source.lastSyncedAt}` : "人工匯入"}</small>
+              <p>{source.complianceNote}</p>
+              <small className={styles.muted}>新增 {rows.filter((row) => row.sourceId === source.id).length} · 合規模式</small>
+            </article>
+          ))}
+        </div>
+
+        <div className={styles.radarLayout}>
+          <aside className={styles.sourceFilterPanel} aria-label="來源篩選">
+            <div className={styles.filterTitle}>來源篩選</div>
+            <div className={styles.sourceFilterList}>
+              {sourceFilterOptions.map((option) => (
+                <button
+                  aria-pressed={sourceFilter === option.id}
+                  key={option.id}
+                  onClick={() => setSourceFilter(option.id)}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <button
+              className={styles.zoneFilterChip}
+              data-testid="listing-zone-filter-chip"
+              onClick={() => setFilterMode(filterMode === "selected" ? "all" : "selected")}
+              type="button"
+            >
+              {filterMode === "selected" ? `${selectedHeatZoneId ?? "ALL"} · ${selectedZoneLabel ?? "All zones"}` : "全部區域"}
+            </button>
+            <button
+              className={styles.filterClearButton}
+              data-testid="listing-filter-all"
+              onClick={() => setFilterMode("all")}
+              type="button"
+            >
+              顯示全部物件
+            </button>
+          </aside>
+
+          <section className={styles.radarInbox}>
+            <div className={styles.radarInboxHeader}>
+              <div>
+                <h3>物件收件匣</h3>
+                <span>{sourceFilteredRows.length} 筆</span>
+              </div>
+              <div className={styles.radarViewToggle} aria-label="Radar view">
+                <button aria-pressed type="button">清單</button>
+                <button aria-pressed={false} type="button">地圖</button>
+              </div>
+            </div>
+            {sourceFilteredRows.length ? (
+              <div className={styles.radarRows} data-testid="network-listing-table">
+                {sourceFilteredRows.map((row) => {
+                  const listing = listingById.get(row.id);
+                  const evidence = listing?.sourceEvidence ?? [];
+                  const isBusy = busyListingId === row.id;
+                  const mergeTarget = listing?.duplicateOfId ?? row.duplicateOfId;
+                  const canConvert =
+                    row.id === "L-2024" &&
+                    !row.candidateId &&
+                    !row.isDuplicate &&
+                    row.hardRuleFailures.length === 0 &&
+                    row.status !== "archived";
+                  // Merge needs listing:UPDATE plus the service's actor allowlist;
+                  // hiding it for roles that cannot clear both keeps the console
+                  // from offering a button that is guaranteed to 403/422. Once
+                  // `mergedIntoId` is set the merge is terminal, so the entry
+                  // point must retire rather than mint a second request.
+                  const canMerge =
+                    row.id === "L-2029" &&
+                    Boolean(mergeTarget) &&
+                    !listing?.mergedIntoId &&
+                    canMergeListing(activeRoleId);
+                  const canArchive =
+                    row.id === "L-2030" &&
+                    row.status !== "archived" &&
+                    (row.status === "hardfail" || row.hardRuleFailures.length > 0);
+
+                  return (
+                    <article
+                      className={styles.radarRow}
+                      data-active={selectedRow?.id === row.id ? "true" : undefined}
+                      data-testid={`listing-row-${row.id}`}
+                      data-tone={row.tone}
+                      key={row.id}
+                      onClick={() => setSelectedListingId(row.id)}
+                    >
+                      <div className={styles.radarRowHead}>
+                        <span>{sourceShortLabel(row.sourceName)}</span>
+                        <strong>{row.id} · {listingTitle(row)}</strong>
+                        <ToneBadge tone={row.tone}>{row.statusLabel}</ToneBadge>
+                      </div>
+                      <div className={styles.radarRowMeta}>
+                        <span>{row.address}</span>
+                        <span>{row.rentLabel} · {row.areaPing} ping</span>
+                        <span className={styles.zoneMini}>{row.zoneLabel} {row.heatZoneId}</span>
+                        <span>Fit {listing?.fitScore ?? "—"}</span>
+                        <span>{rowRecommendation(row, mergeTarget)}</span>
+                      </div>
+                      <div className={styles.radarEvidence}>
+                        {row.isDuplicate ? <span className={styles.flag}>Dup {mergeTarget ?? ""}</span> : null}
+                        {row.hardRuleFailures.length ? (
+                          <span className={styles.flagRisk}>{row.hardRuleFailures.join("; ")}</span>
+                        ) : null}
+                        {!row.isDuplicate && !row.hardRuleFailures.length ? <span className={styles.muted}>Clean</span> : null}
+                        {listing?.mergedIntoId ? <small>merged into {listing.mergedIntoId}</small> : null}
+                        {listing?.archivedReason ? <small>{listing.archivedReason}</small> : null}
+                        <small data-testid={`listing-evidence-${row.id}`}>
+                          {evidence.length} evidence refs{evidence.length ? ` · ${evidence.join(", ")}` : ""}
+                        </small>
+                      </div>
+                      <div className={styles.rowActions}>
+                        {canConvert ? (
+                          <button
+                            data-testid="convert-L-2024"
+                            disabled={isBusy}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onConvert?.(row.id);
+                            }}
+                            type="button"
+                          >
+                            轉為候選點
+                          </button>
+                        ) : null}
+                        {canMerge && mergeTarget ? (
+                          <button
+                            data-testid="merge-L-2029"
+                            disabled={isBusy}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onMerge?.(row.id, mergeTarget);
+                            }}
+                            type="button"
+                          >
+                            標記重複
+                          </button>
+                        ) : null}
+                        {canArchive ? (
+                          <button
+                            data-testid="archive-L-2030"
+                            disabled={isBusy}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onArchive?.(row.id);
+                            }}
+                            type="button"
+                          >
+                            封存
+                          </button>
+                        ) : null}
+                        {!canConvert && !canMerge && !canArchive ? (
+                          <span className={styles.muted}>{isBusy ? "寫入中…" : "查看詳情"}</span>
+                        ) : null}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className={styles.emptyState}>No listings match the selected filter</div>
+            )}
+          </section>
+
+          <aside className={styles.listingDetailPanel} aria-label="Listing detail">
+            {selectedRow ? (
+              <>
+                <div>
+                  <div className={styles.detailIdLine}>
+                    <span>{selectedRow.id}</span>
+                    <ToneBadge tone={selectedRow.tone}>{selectedRow.statusLabel}</ToneBadge>
+                  </div>
+                  <h3>{listingTitle(selectedRow)}</h3>
+                  <p>{selectedRow.sourceName} · {selectedListing?.sourceUrl ?? "source evidence retained"}</p>
+                </div>
+                <div className={styles.listingPhotoPlaceholder}>物件照片 placeholder</div>
+                <dl className={styles.listingDetailRows}>
+                  <DetailRow label="正規化地址">{selectedRow.address}</DetailRow>
+                  <DetailRow label="租金／坪數">{selectedRow.rentLabel} · {selectedRow.areaPing} ping</DetailRow>
+                  <DetailRow label="樓層／面寬">{selectedListing?.floor ?? "—"} · {selectedListing?.frontageMeters ? `${selectedListing.frontageMeters}m` : "—"}</DetailRow>
+                  <DetailRow label="首見">{selectedListing?.firstSeenAt ?? "—"}</DetailRow>
+                  <DetailRow label="Geocode">{selectedRow.geocodeConfidenceLabel}</DetailRow>
+                  <DetailRow label="重複檢查">{selectedRow.isDuplicate ? `重複 ${selectedRow.duplicateOfId ?? ""}` : "唯一物件"}</DetailRow>
+                  <DetailRow label="硬規則">{selectedListing?.hardRuleSummary ?? (selectedRow.hardRuleFailures.length ? selectedRow.hardRuleFailures.join("; ") : "3/3 通過")}</DetailRow>
+                  <DetailRow label="HeatZone">{selectedRow.zoneLabel} · 適配 {selectedListing?.fitScore ?? "—"}</DetailRow>
+                  <DetailRow label="候選點">{selectedRow.candidateId ?? "—"}</DetailRow>
+                  <DetailRow label="Evidence">{(selectedListing?.sourceEvidence ?? []).join(", ") || "—"}</DetailRow>
+                </dl>
+                <button
+                  className={styles.detailPrimaryButton}
+                  data-testid="listing-detail-primary"
+                  disabled={
+                    !selectedRow ||
+                    selectedRow.status === "archived" ||
+                    Boolean(detailMergedIntoId) ||
+                    detailMergeDenied
                   }
-                }}
-                type="button"
-              >
-                {detailPrimaryLabel(selectedRow, canMergeListing(activeRoleId), detailMergedIntoId)}
-              </button>
-              {detailMergeDenied ? (
-                <p className={styles.muted} data-testid="listing-detail-merge-denied">
-                  {MERGE_DENIED_NOTE}
-                </p>
-              ) : null}
-            </>
-          ) : (
-            <div className={styles.emptyState}>No listing selected</div>
-          )}
-        </aside>
-      </div>
+                  onClick={() => {
+                    if (!selectedRow || detailMergedIntoId || detailMergeDenied) return;
+                    const mergeTarget = selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId;
+                    if (selectedRow.id === "L-2024" && !selectedRow.candidateId && !selectedRow.isDuplicate) {
+                      onConvert?.(selectedRow.id);
+                    } else if (selectedRow.id === "L-2029" && mergeTarget) {
+                      onMerge?.(selectedRow.id, mergeTarget);
+                    } else if (selectedRow.id === "L-2030") {
+                      onArchive?.(selectedRow.id);
+                    }
+                  }}
+                  type="button"
+                >
+                  {detailPrimaryLabel(selectedRow, canMergeListing(activeRoleId), detailMergedIntoId)}
+                </button>
+                {detailMergeDenied ? (
+                  <p className={styles.muted} data-testid="listing-detail-merge-denied">
+                    {MERGE_DENIED_NOTE}
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <div className={styles.emptyState}>No listing selected</div>
+            )}
+          </aside>
+        </div>
+        </>
+      )}
     </div>
   );
 }
