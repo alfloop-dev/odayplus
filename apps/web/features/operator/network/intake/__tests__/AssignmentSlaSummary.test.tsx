@@ -89,7 +89,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
 
     it.each([undefined, "", "invalid"])("shows an unavailable due time for %s", (slaDueAt) => {
       const html = renderToString(<AssignmentSlaSummary record={{ ...sampleIntakeRecord, slaDueAt } as any} />);
-      expect(html).toContain("到期時間：UNAVAILABLE");
+      expect(html).toMatch(/到期時間：(?:<!-- -->)?UNAVAILABLE/);
       expect(html).not.toContain("Invalid Date");
       expect(html).toContain("[✓ ON TRACK]");
     });
