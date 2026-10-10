@@ -386,6 +386,23 @@ only the new security-test row. Provisioning/scoped directory/server target
 validation and full Transfer/Pause success UI pairs remain next.
 **Still not ready for full-scope resubmission.**
 
+## Assignment recipient authority prerequisite increment
+
+[`assignment-target-authority/README.md`](assignment-target-authority/README.md)
+records product anchor `2dd6b26ad1c9`: assign/transfer recipients now require fresh
+active same-tenant identity, matching canonical business role and five-axis
+resource grants before writes/replay; claim/transfer/complete reject invalid
+linked Intake scope; transfer reason/handoff are nonblank. Final original-product
+negative replay fails35 as expected; Assignment security102, contracts70,
+SLA security32 and local PostgreSQL4 pass with original exit receipts. The SQL
+probe uses explicit test identity accounts, actual transfer, app restart,
+revoked-target replay denial and independent owner reload. Initial timeout and
+frozen-test-bundle diagnostics are retained and not claimed successful.
+**No new UI pairs, Operator directory/shared resource provisioning, genuine SLA
+creation, cross-store identity transaction or live/VDC acceptance.** Scoped target
+directory/UI binding and genuine Transfer/Pause success pairs remain next;
+**not ready for full-scope review resubmission**.
+
 ## Remaining owner work before formal `task_finalize.sh` resubmission
 
 1. Field correction/receipt decision baseline pairs, geometry/focus and scoped

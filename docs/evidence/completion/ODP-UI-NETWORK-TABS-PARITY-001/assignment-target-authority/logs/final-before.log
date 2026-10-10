@@ -1,0 +1,1664 @@
+FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF                                      [100%]
+=================================== FAILURES ===================================
+________ test_target_requires_fresh_identity_authority[missing-assign] _________
+
+resources = (<starlette.testclient.TestClient object at 0x799dd998f080>, <apps.api.app.routes.listings.AssistedIntakeStore object ...bf380>, <shared.identity.store.InMemoryIdentityStore object at 0x799dda4e3e30>, 'c6c762ec-cbe5-4f06-83fd-10362b9b1fb3')
+operation = 'assign', defect = 'missing'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"1cc67b41-406a-4a88-8677-dc57b93ea19d","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"901dc2fa-3677-4b60-9e74-fac886b7f2b2"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:01:47 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:01:47 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:01:53.107138+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "76633979-cfe7-4a76-b590-ea38f462abde", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:01:53.127861+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "dea5ad6f-b070-423b-91e7-ebff1485cf01", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+_______ test_target_requires_fresh_identity_authority[missing-transfer] ________
+
+resources = (<starlette.testclient.TestClient object at 0x799dd82aad20>, <apps.api.app.routes.listings.AssistedIntakeStore object ...0c7a0>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd8521550>, '8fd235c4-db5a-4d96-b692-ebd782c692b9')
+operation = 'transfer', defect = 'missing'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"a869e79c-a3c0-495b-b779-bbfb5df8c5d1","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"aea18296-bc31-4e59-a90e-319a9e722ebe"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:01:54 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:01:54 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:02:01.393818+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "f76f63dd-7665-46df-a3c8-fec1df90cdc7", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:02:01.425687+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1ebee288-dd27-457f-87d0-8f09234ccd28", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:02:01.448366+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7c8fc05e-313e-4ca9-b7a4-62be9c454159", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+________ test_target_requires_fresh_identity_authority[disabled-assign] ________
+
+resources = (<starlette.testclient.TestClient object at 0x799dd2772000>, <apps.api.app.routes.listings.AssistedIntakeStore object ...a0f50>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd3023e30>, 'a90ce2fe-552d-4958-8002-6b6980f7a828')
+operation = 'assign', defect = 'disabled'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"83d43094-ebfb-4e2b-b980-63c39beea38f","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"ac98b07c-334e-4783-9c8b-da64005c1b91"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:02:02 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:02:02 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:02:09.580798+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b4556f33-d803-4dbd-b641-6c2a699f476f", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:02:09.599858+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "8a05e914-d3d2-4f4d-aa67-8e58bbef1da6", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+_______ test_target_requires_fresh_identity_authority[disabled-transfer] _______
+
+resources = (<starlette.testclient.TestClient object at 0x799dd98083b0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...5ec60>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd9808ec0>, 'ca5bcb13-1dfa-4f02-9aa3-66194b313cd2')
+operation = 'transfer', defect = 'disabled'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"30364a83-6bd0-4c9b-8c65-fc32eab06074","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"a3e1a47f-3142-456d-9b1c-133bda192fd4"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:02:10 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:02:10 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:02:16.238876+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1682ec57-2b80-4fcc-8649-5dc3dce7a3f6", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:02:16.249455+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "74aadb2f-2285-4d2d-a658-0ce18cfb8c08", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:02:16.258605+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "39d5a9ea-64fb-47cf-8c11-520ef7c6cd1d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+_________ test_target_requires_fresh_identity_authority[locked-assign] _________
+
+resources = (<starlette.testclient.TestClient object at 0x799dd1270470>, <apps.api.app.routes.listings.AssistedIntakeStore object ...805f0>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd1273aa0>, 'c518dcfe-a41b-49ab-8119-51f8901ea819')
+operation = 'assign', defect = 'locked'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"e9a03c16-dedc-4f98-92d1-d8f526275fd6","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"06c50dbb-bb8e-4bb9-bd76-4ef468528675"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:02:17 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:02:17 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:02:21.033468+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d67d48ab-2f4a-4c06-ac99-58962260b78b", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:02:21.043258+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b22ae05d-779e-4447-9776-16d68208c3d1", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+________ test_target_requires_fresh_identity_authority[locked-transfer] ________
+
+resources = (<starlette.testclient.TestClient object at 0x799dd1fbfec0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...1e210>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd2478530>, 'bf3b3285-fecb-43d8-b7e0-7bc2b7f0d6b7')
+operation = 'transfer', defect = 'locked'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"cf803011-380e-4e65-94b7-1529d4e056d3","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"ba4fecf8-34cf-451c-9a9a-cc19d1343357"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:02:21 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:02:21 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:02:25.461725+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "91ae00d1-dd11-469e-9e92-ed5efc502b2f", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:02:25.471585+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2ed12814-601f-431b-8a82-7d2a1dd9804b", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:02:25.480099+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "07fb981a-84a3-43b8-87c9-e1bf8cb1912e", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+________ test_target_requires_fresh_identity_authority[invited-assign] _________
+
+resources = (<starlette.testclient.TestClient object at 0x799dd1800bc0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...6ec00>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd18011c0>, '66f5bd59-6ec7-4f69-8042-1cfd4e2b2563')
+operation = 'assign', defect = 'invited'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"77431cbb-7ab8-4ed9-ab9f-08b343e93197","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"85096cfc-6ac1-4381-b6f0-73cd79525e75"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:02:25 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:02:25 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:02:29.554819+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1051f899-bb7b-4657-aaa8-d17db199547d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:02:29.564803+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "47c8cf37-9922-4a9a-9863-c36176b60304", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+_______ test_target_requires_fresh_identity_authority[invited-transfer] ________
+
+resources = (<starlette.testclient.TestClient object at 0x799dd0af4fb0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...2e5d0>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd0af5250>, '1c88da84-668a-4166-a4ca-583566005412')
+operation = 'transfer', defect = 'invited'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"1debcc9d-34d4-499d-b32a-df60db2e0381","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"a979e19c-7d1f-4552-8a5d-9136601c4942"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:02:29 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:02:29 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:02:34.100174+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "0bf93979-5581-4348-b643-e5593e6771e3", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:02:34.111498+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "a513abd1-81a1-4781-bc5e-bb0d1fc6989f", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:02:34.121303+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "74a96c2f-89dd-4a25-b5e2-a3bf267a479a", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+_____ test_target_requires_fresh_identity_authority[foreign-tenant-assign] _____
+
+resources = (<starlette.testclient.TestClient object at 0x799dd90ea660>, <apps.api.app.routes.listings.AssistedIntakeStore object ...b3500>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd90e81a0>, '1ce14b19-9779-4f36-800e-d350ba60c29c')
+operation = 'assign', defect = 'foreign-tenant'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"4deb0e56-138d-4f28-a159-9d06e5dc6980","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"fe5302eb-6c26-4c01-ae95-9d2b06d592a2"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:02:34 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:02:34 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:02:38.664372+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "bcd42ee9-4fd7-4842-9a0e-246bfdae91d5", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:02:38.675164+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "42dd3498-9910-4b40-835a-bd00e4ebe9b4", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+____ test_target_requires_fresh_identity_authority[foreign-tenant-transfer] ____
+
+resources = (<starlette.testclient.TestClient object at 0x799dd0d6d670>, <apps.api.app.routes.listings.AssistedIntakeStore object ...a2510>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd0d6f650>, '2623f5b2-c4bc-4232-91ac-6059a347071b')
+operation = 'transfer', defect = 'foreign-tenant'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"0b0eccba-1cb3-4059-9538-35e142537cca","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"c2f1d1b1-4589-4210-a4e8-9c6c7488eba5"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:02:38 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:02:39 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:02:42.628568+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "bd4ee961-3257-4368-ab4d-12b34315f202", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:02:42.637955+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "71fe9068-9fcc-47d4-9262-76442fb65137", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:02:42.646966+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d21924b3-d5e0-47f1-96fc-208f56d8455a", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+__ test_target_requires_fresh_identity_authority[foreign-scope-tenant-assign] __
+
+resources = (<starlette.testclient.TestClient object at 0x799dcb8635f0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...7cf80>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd07ce510>, '4ffae372-9b1e-44cf-929b-f624cd0dfb7d')
+operation = 'assign', defect = 'foreign-scope-tenant'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"a22a4af1-44c7-446b-aec4-ae0354886fbc","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"2f4d4ac2-fecb-4a6e-a870-6ac0451655e2"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:02:42 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:02:42 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:02:47.399558+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "fc088d77-e64c-4fe6-8cb3-8f54cff5609a", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:02:47.412807+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "01944e8a-e8f8-4258-a2da-25d8a46d436a", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+_ test_target_requires_fresh_identity_authority[foreign-scope-tenant-transfer] _
+
+resources = (<starlette.testclient.TestClient object at 0x799dcbc6b0b0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...b1640>, <shared.identity.store.InMemoryIdentityStore object at 0x799dcbc6a120>, '552323ce-d09d-4118-917a-e71da5e3f0b2')
+operation = 'transfer', defect = 'foreign-scope-tenant'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"4e9c3fa9-a9a0-4e64-9058-054a37901c07","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"b9555c63-da92-4d0b-83c5-b6656e416e91"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:02:47 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:02:47 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:02:51.359483+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1fe3abba-bc44-4a52-81ff-052d91beba5d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:02:51.369812+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "fbd090ce-9bfe-4ca7-9f58-4e155e05fd5a", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:02:51.379290+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2f907bbe-baf1-475b-96ed-f502e22774b0", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+____ test_target_requires_fresh_identity_authority[no-business-role-assign] ____
+
+resources = (<starlette.testclient.TestClient object at 0x799dd18ba450>, <apps.api.app.routes.listings.AssistedIntakeStore object ...5e5a0>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd18b9580>, '790e5c1b-3a7c-42e9-9f98-d6e57bc69c59')
+operation = 'assign', defect = 'no-business-role'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"c48548ed-028e-4f68-b92c-5039d6be4bce","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"aa1f9bc2-03e4-449a-a5d6-e465689408b4"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:02:51 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:02:51 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:02:55.568873+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "a09e5f6d-719a-422d-996c-bcb918e4add6", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:02:55.580075+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "55c8a2b8-8f15-494f-a475-6648b1252935", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+___ test_target_requires_fresh_identity_authority[no-business-role-transfer] ___
+
+resources = (<starlette.testclient.TestClient object at 0x799dca38b110>, <apps.api.app.routes.listings.AssistedIntakeStore object ...c40e0>, <shared.identity.store.InMemoryIdentityStore object at 0x799dca38bd40>, '850ae0ff-dcd8-4140-b955-41c2a40b5134')
+operation = 'transfer', defect = 'no-business-role'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"11d0b7b1-2cec-4044-978c-833c04e87a08","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"21d684b4-ca4e-488b-b9e2-3149b4716cbe"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:02:56 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:02:56 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:01.016320+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "e934058e-8c5a-4e98-aeda-e96841d7e2de", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:01.026633+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7bb7723d-b8b1-4817-bd18-7e099152d9ab", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:03:01.036718+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2dc2877c-8451-402f-a98b-00cd664b36f3", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+_____ test_target_requires_fresh_identity_authority[role-mismatch-assign] ______
+
+resources = (<starlette.testclient.TestClient object at 0x799dd0ddbb00>, <apps.api.app.routes.listings.AssistedIntakeStore object ...e2f90>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd1776510>, '35e8c8c2-e1e3-4420-8cf8-d3199986204c')
+operation = 'assign', defect = 'role-mismatch'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"1675cf94-42df-459e-b6d7-5d508957aa7d","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"0703baca-1520-415c-aa81-7095e036e09f"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:01 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:01 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:05.199238+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "becc8962-6cbc-4b51-9d90-20a1434b2abd", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:05.209241+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "631e4a18-040f-4e40-979e-7c2dcc09f627", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+____ test_target_requires_fresh_identity_authority[role-mismatch-transfer] _____
+
+resources = (<starlette.testclient.TestClient object at 0x799dcb8e2900>, <apps.api.app.routes.listings.AssistedIntakeStore object ...b6540>, <shared.identity.store.InMemoryIdentityStore object at 0x799dcb8e30b0>, '96ba20a7-8593-4c2d-b552-ef60ebf99764')
+operation = 'transfer', defect = 'role-mismatch'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"2fa4bd3c-56da-478f-9aa0-fb708c949066","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"66fa968d-20bc-48cb-93cd-21bbdddc5489"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:06 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:06 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:10.171754+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "cc403c78-3223-4ec1-98ca-31b2beb84f0d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:10.182943+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "69462d8b-0aab-4200-8985-d01acf7bf7ff", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:03:10.192991+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "0934649d-0de6-4162-8e5b-9f206907c6e9", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+______ test_target_requires_fresh_identity_authority[unknown-role-assign] ______
+
+resources = (<starlette.testclient.TestClient object at 0x799dd13530b0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...2b200>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd1350170>, '08d10f0c-429b-44d6-b914-ecb696decfc1')
+operation = 'assign', defect = 'unknown-role'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"7c108d67-6486-46e7-b56d-315cc2b77681","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"13ea0abf-42f0-4fea-b3e5-3a5a8a42f246"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:10 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:10 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:14.385064+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "cdb32413-6687-4f37-b435-393ed43defd9", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:14.396937+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1fd365dc-8f52-41fb-a65b-decfc74378f6", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+_____ test_target_requires_fresh_identity_authority[unknown-role-transfer] _____
+
+resources = (<starlette.testclient.TestClient object at 0x799dcad619d0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...f6270>, <shared.identity.store.InMemoryIdentityStore object at 0x799dcad61190>, '6815f522-5383-4695-9d5e-812a67761c75')
+operation = 'transfer', defect = 'unknown-role'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"6694dc5d-b7be-405a-a7da-4a04946fa12b","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"b0fedd2e-6beb-4bb7-af84-636a4a67f7e4"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:14 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:14 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:19.136318+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "5a416ff8-6f26-489f-ab15-0aca1ccfd1a8", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:19.147980+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "95443bd8-a58a-4a51-9484-6692c4203b4c", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:03:19.159349+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "c4fdbe59-dc36-44fe-961f-2c2d745fc4e1", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+_____ test_target_requires_fresh_identity_authority[missing-store-assign] ______
+
+resources = (<starlette.testclient.TestClient object at 0x799dcaffa630>, <apps.api.app.routes.listings.AssistedIntakeStore object ...38800>, <shared.identity.store.InMemoryIdentityStore object at 0x799dcaffa360>, '09623d9a-f4a1-4475-a598-24a56d79ff5d')
+operation = 'assign', defect = 'missing-store'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"edee81ff-b8e6-48ce-bf46-02395fc45169","status":"ASSIGNED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":2,"audit_event_id":"de6d87be-4a5b-4513-99c7-a1fadd47b494"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:19 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:19 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:22.969292+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "044bb10a-068f-420e-a706-3eb2d758a857", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:22.980083+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4e24d83a-e28a-4e84-b8ca-2fb6834ba327", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+____ test_target_requires_fresh_identity_authority[missing-store-transfer] _____
+
+resources = (<starlette.testclient.TestClient object at 0x799dcacc3b00>, <apps.api.app.routes.listings.AssistedIntakeStore object ...22000>, <shared.identity.store.InMemoryIdentityStore object at 0x799dcacc2e40>, '3ad0392e-6928-4c0a-904b-09b4655ba3f4')
+operation = 'transfer', defect = 'missing-store'
+
+    @pytest.mark.parametrize("operation", ["assign", "transfer"])
+    @pytest.mark.parametrize("defect", ["missing", "disabled", "locked", "invited", "foreign-tenant",
+                                        "foreign-scope-tenant", "no-business-role", "role-mismatch",
+                                        "unknown-role", "missing-store"])
+    def test_target_requires_fresh_identity_authority(resources, operation, defect):
+        client, store, identities, intake_id = resources
+        # Transfer setup is a genuine assignment endpoint, not a seeded child row.
+        created = assign(resources) if operation == "transfer" else None
+        if created is not None:
+            assert created.status_code == 200, created.text
+        role = "reviewer"
+        account = identities.find_account_by_id(TARGET)
+        if defect == "missing":
+            identities._accounts.pop(UUID(TARGET))
+        elif defect in {"disabled", "locked", "invited"}:
+            identities.save_account(replace(account, status=defect))
+        elif defect == "foreign-tenant":
+            identities.save_account(replace(account, tenant_id=UUID(OUTSIDE)))
+        elif defect == "foreign-scope-tenant":
+            identities.set_account_scope(TARGET, Scope(tenant_id=OUTSIDE))
+        elif defect == "no-business-role":
+            identities.set_account_roles(TARGET, [Role.PLATFORM_ADMIN, Role.AUDITOR])
+        elif defect == "role-mismatch":
+            identities.set_account_roles(TARGET, [Role.EXPANSION_USER])
+        elif defect == "unknown-role":
+            role = "gov-queue"
+        else:
+            client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
+        before = snapshot(store)
+        result = assign(resources, role=role) if operation == "assign" else command(
+            resources, created.json()["assignment_id"], "transfer", role=role,
+        )
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"8ae42f43-ddc9-494e-819b-d567fc008ad3","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"b7f0ac54-1b0a-4107-b17c-6ce70bace85f"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:113: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:23 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:23 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:28.159039+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "8f13b01a-eb6c-4c82-85f2-396d36fa4a3c", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:28.170354+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "f5f4d8e2-dfb2-4179-a106-2c34a2bcc86c", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:03:28.179755+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2f325c50-23ab-4653-ba13-aee89c53fab6", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+_ test_assignment_child_tenant_does_not_authorize_invalid_link[dangling-claim] _
+
+resources = (<starlette.testclient.TestClient object at 0x799dca1e8a40>, <apps.api.app.routes.listings.AssistedIntakeStore object ...48650>, <shared.identity.store.InMemoryIdentityStore object at 0x799dca1e9280>, '856abbcb-60f9-4193-a7b4-ae6f41a72b23')
+action = 'claim', link = 'dangling'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"325a6113-e994-46d6-a63e-6571e1725522","status":"CLAIMED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"27677d35-5211-4532-8d08-2dd3481b972e"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:28 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:28 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:31.975355+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "60bdb0c6-cd5c-4f42-9390-d375c5f56e67", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:31.985390+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4dc1e158-d6f4-4b0c-9f28-302273156fc2", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:03:31.994377+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "fb168509-58a7-4491-b360-52052df66d4a", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/claim ok"}
+_ test_assignment_child_tenant_does_not_authorize_invalid_link[dangling-transfer] _
+
+resources = (<starlette.testclient.TestClient object at 0x799dc9a79cd0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...59370>, <shared.identity.store.InMemoryIdentityStore object at 0x799dc9a79e20>, 'ffe626c4-06f5-46a8-bb06-96395fe5bb7d')
+action = 'transfer', link = 'dangling'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"e3277c0b-af8c-4c79-9f4e-e039b9ed8865","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"27c4d658-20f3-40c6-b7b3-b01f6079b7a3"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:32 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:32 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:35.711225+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "beb66882-2eb7-4ad6-9d49-88e51e396611", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:35.722266+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "20153c78-7edc-4245-9566-9e9f4c8f1552", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:03:35.731524+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d590038b-297f-4392-9dc5-c8b939a0b622", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+_ test_assignment_child_tenant_does_not_authorize_invalid_link[dangling-complete] _
+
+resources = (<starlette.testclient.TestClient object at 0x799dc7e41670>, <apps.api.app.routes.listings.AssistedIntakeStore object ...57da0>, <shared.identity.store.InMemoryIdentityStore object at 0x799dc7a561b0>, 'f945aa1c-f689-450e-8bfd-13b2eecb3a1e')
+action = 'complete', link = 'dangling'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"47c10b34-32ea-42e1-80a7-f9adddf93f31","status":"COMPLETED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":4,"audit_event_id":"bb6c939b-3a70-45a4-b917-8c5fb5fcc746"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:36 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:36 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:40.742052+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "c72a41de-f39e-49af-8c2e-b82f022c04c5", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:40.752285+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "53dcd5cf-436c-4ddb-9806-2d7100318a5c", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:03:40.761320+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d809b442-5b67-48b8-89cc-983b31b13647", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/claim ok"}
+{"timestamp": "2026-10-10T00:03:40.770806+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "e9058eaa-7afd-4782-a830-d3eeb2b4112a", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/complete ok"}
+_ test_assignment_child_tenant_does_not_authorize_invalid_link[foreign-tenant-claim] _
+
+resources = (<starlette.testclient.TestClient object at 0x799dcaf51130>, <apps.api.app.routes.listings.AssistedIntakeStore object ...31fd0>, <shared.identity.store.InMemoryIdentityStore object at 0x799dcaebddf0>, 'ce400c8d-9bc8-41ed-9b62-e9a100fc2832')
+action = 'claim', link = 'foreign-tenant'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"8ad6167d-b8b7-49ef-b235-02b1f5ce680c","status":"CLAIMED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"d3c6740d-f46c-4ea0-80da-790f9ddf46ed"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:41 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:41 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:44.708779+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "72669d29-1ae4-451c-9d27-2bfff1d535ff", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:44.719140+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7ac3c458-a3a6-40dd-98e7-f6afb95452f6", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:03:44.730524+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2262164f-8d45-4b03-85c1-2a3c88cf2bdc", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/claim ok"}
+_ test_assignment_child_tenant_does_not_authorize_invalid_link[foreign-tenant-transfer] _
+
+resources = (<starlette.testclient.TestClient object at 0x799dc90081a0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...695b0>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd9013410>, 'fd94fba5-3432-4ae7-92cd-c6076a7523fb')
+action = 'transfer', link = 'foreign-tenant'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"63c2d2d6-29cc-41f8-9e60-46a167ec5292","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"1e69d5e2-491e-432a-8fed-71d945093ab5"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:45 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:45 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:48.507493+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "47bacc9f-f39e-43cb-9012-e0bd9a224cf2", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:48.518751+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "19fb8ee1-eaca-4c93-ad3d-23a362ae2f8d", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:03:48.528030+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d1c33ee7-9dab-4bbb-a711-0be900b3f97c", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+_ test_assignment_child_tenant_does_not_authorize_invalid_link[foreign-tenant-complete] _
+
+resources = (<starlette.testclient.TestClient object at 0x799dc6d94920>, <apps.api.app.routes.listings.AssistedIntakeStore object ...c0620>, <shared.identity.store.InMemoryIdentityStore object at 0x799dc6d94380>, '6b70287d-6eec-4ac0-b319-bb093bdf55d6')
+action = 'complete', link = 'foreign-tenant'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"a1da167f-76d3-4e88-a324-5e2333c90bd7","status":"COMPLETED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":4,"audit_event_id":"0393eee7-b84f-4300-aaaa-c4511a87f882"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:49 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:50 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:53.439315+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7f84384d-5521-4b52-8ece-ce42161ad2ce", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:53.448603+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "6c99c2b6-3f30-49ad-8dee-62e2147936ac", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:03:53.459425+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1ea82a6e-6558-4ee2-8122-4184954f863c", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/claim ok"}
+{"timestamp": "2026-10-10T00:03:53.468260+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "9549f5b3-ca7f-4754-8d99-9c40a533257b", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/complete ok"}
+_ test_assignment_child_tenant_does_not_authorize_invalid_link[standalone-missing-axis-claim] _
+
+resources = (<starlette.testclient.TestClient object at 0x799dc82f65d0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...a4500>, <shared.identity.store.InMemoryIdentityStore object at 0x799dc82f6270>, 'cb0f8571-707f-4aad-9e2f-509a6fbba3a9')
+action = 'claim', link = 'standalone-missing-axis'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"20a24c3e-4c19-4291-a562-d0d942624f56","status":"CLAIMED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"a027ab0a-458f-4d9c-b7c9-96c880c0e86a"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:53 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:53 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:03:57.569975+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "806bbbd9-6a81-4873-acd2-6ff6aac902db", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:03:57.580472+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "edaf87e2-2941-46d0-9078-cf5090ef0a1a", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:03:57.589206+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "fa19df61-680a-4961-ac81-28f001958a64", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/claim ok"}
+_ test_assignment_child_tenant_does_not_authorize_invalid_link[standalone-missing-axis-transfer] _
+
+resources = (<starlette.testclient.TestClient object at 0x799dc7957560>, <apps.api.app.routes.listings.AssistedIntakeStore object ...e72c0>, <shared.identity.store.InMemoryIdentityStore object at 0x799dc7955070>, '56108b74-00ad-4fec-bae5-441334d5a2f0')
+action = 'transfer', link = 'standalone-missing-axis'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"384a4323-ff09-48b6-b759-5fce122dc623","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"f6c911dc-873a-4299-81e1-e5e75cc97a36"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:03:57 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:03:57 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:04:01.485198+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4e13c2c1-7cb9-4694-bb30-58d23eeabb68", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:04:01.495568+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "522103e0-331e-4074-a26f-aef44495feee", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:04:01.505884+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d2d9b7cd-5c16-4574-8ecf-e4e802e91ba6", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+_ test_assignment_child_tenant_does_not_authorize_invalid_link[standalone-missing-axis-complete] _
+
+resources = (<starlette.testclient.TestClient object at 0x799dc7f58920>, <apps.api.app.routes.listings.AssistedIntakeStore object ...3dfd0>, <shared.identity.store.InMemoryIdentityStore object at 0x799dc7f586e0>, '102d9c1d-a08b-4afe-b50c-288538a7f085')
+action = 'complete', link = 'standalone-missing-axis'
+
+    @pytest.mark.parametrize("action", ["claim", "transfer", "complete"])
+    @pytest.mark.parametrize("link", ["dangling", "foreign-tenant", "standalone-missing-axis"])
+    def test_assignment_child_tenant_does_not_authorize_invalid_link(resources, action, link):
+        _, store, _, intake_id = resources
+        created = assign(resources)
+        assert created.status_code == 200
+        assignment_id = created.json()["assignment_id"]
+        if action == "complete":
+            assert command(resources, assignment_id, "claim").status_code == 200
+        scope = {}
+        if link == "dangling":
+            store.assignments[assignment_id]["intake_id"] = str(uuid4())
+        elif link == "foreign-tenant":
+            store.intakes[intake_id]["scope"]["tenant_id"] = OUTSIDE
+        else:
+            store.assignments[assignment_id].pop("intake_id")
+            scope = {"x-brand-ids": ALLOWED}
+        before = snapshot(store)
+        result = command(resources, assignment_id, action,
+                         version=store.assignments[assignment_id]["version"], scope=scope)
+>       assert result.status_code == 403, result.text
+E       AssertionError: {"assignment_id":"1cc2a308-d586-46fa-a3a9-9289e2f5e6b5","status":"COMPLETED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":4,"audit_event_id":"3ef4dd3a-d98d-47d9-8d4b-f2b475e92299"}
+E       assert 200 == 403
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:157: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:04:03 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:04:03 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:04:06.681879+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "cf39d420-44f1-426f-a19d-02fd0de0ef25", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:04:06.692002+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ed99d005-5623-4746-84c1-6de4109e19af", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:04:06.701232+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2f4e89da-18ed-4667-aebc-e87beff90a8f", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/claim ok"}
+{"timestamp": "2026-10-10T00:04:06.709567+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "8175fe0e-15c7-418e-a221-b3765c7b915b", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/complete ok"}
+________ test_transfer_requires_nonblank_reason_and_handoff[   -reason] ________
+
+resources = (<starlette.testclient.TestClient object at 0x799dcbb6dfa0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...aab40>, <shared.identity.store.InMemoryIdentityStore object at 0x799dcb72b470>, 'a4df6c2f-b9c8-4168-9ffd-e6777f64ef4a')
+field = 'reason', value = '   '
+
+    @pytest.mark.parametrize("field", ["reason", "handoff_note"])
+    @pytest.mark.parametrize("value", ["   ", "\n\t ", " a "])
+    def test_transfer_requires_nonblank_reason_and_handoff(resources, field, value):
+        _, store, _, _ = resources
+        created = assign(resources)
+        body = {"target_owner_subject_id": TARGET, "target_owner_role": "reviewer",
+                "reason": "Route source review", "handoff_note": "Check source evidence", field: value}
+        before = snapshot(store)
+        result = resources[0].post(
+            f"/api/v1/assignments/{created.json()['assignment_id']}/actions/transfer", json=body,
+            headers={**HEADERS, "If-Match": created.headers["ETag"], "Idempotency-Key": f"blank-transfer-{uuid4()}"},
+        )
+>       assert result.status_code == 422, result.text
+E       AssertionError: {"assignment_id":"8da5b044-5623-407a-b8be-0682bb3e3964","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"259c98b8-5255-42d9-a4d5-e112e97eb5db"}
+E       assert 200 == 422
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:270: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:04:07 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:04:07 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:04:10.557617+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "95fcb499-8b8d-4298-850b-8c0505413886", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:04:10.568531+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "74ab3c28-bc79-4ce7-95ce-b1016c17936d", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:04:10.580560+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d62256c7-5b8d-4fca-949f-50676baa9d2e", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+_____ test_transfer_requires_nonblank_reason_and_handoff[   -handoff_note] _____
+
+resources = (<starlette.testclient.TestClient object at 0x799dd0e3f860>, <apps.api.app.routes.listings.AssistedIntakeStore object ...17ef0>, <shared.identity.store.InMemoryIdentityStore object at 0x799dd07623c0>, 'b4a8847e-ac7f-4cce-8702-68faddd0b9eb')
+field = 'handoff_note', value = '   '
+
+    @pytest.mark.parametrize("field", ["reason", "handoff_note"])
+    @pytest.mark.parametrize("value", ["   ", "\n\t ", " a "])
+    def test_transfer_requires_nonblank_reason_and_handoff(resources, field, value):
+        _, store, _, _ = resources
+        created = assign(resources)
+        body = {"target_owner_subject_id": TARGET, "target_owner_role": "reviewer",
+                "reason": "Route source review", "handoff_note": "Check source evidence", field: value}
+        before = snapshot(store)
+        result = resources[0].post(
+            f"/api/v1/assignments/{created.json()['assignment_id']}/actions/transfer", json=body,
+            headers={**HEADERS, "If-Match": created.headers["ETag"], "Idempotency-Key": f"blank-transfer-{uuid4()}"},
+        )
+>       assert result.status_code == 422, result.text
+E       AssertionError: {"assignment_id":"21c5c83b-262f-4fbe-a9b8-15ccabc04c32","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"39982981-aad8-4c7f-af30-83314d7bc8c9"}
+E       assert 200 == 422
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:270: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:04:10 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:04:10 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:04:15.915518+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "5546524a-2e27-4faa-8c2a-e14cff7deeac", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:04:15.926701+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "fe2665d6-27f6-4273-b03a-f64e784268f6", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:04:15.936425+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2a4cacab-2535-43e9-82ea-6a63be18200b", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+_______ test_transfer_requires_nonblank_reason_and_handoff[\n\t -reason] _______
+
+resources = (<starlette.testclient.TestClient object at 0x799dc6caa6c0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...7c170>, <shared.identity.store.InMemoryIdentityStore object at 0x799dc6caa3f0>, '15d0e8cf-18f0-4cfa-bde5-7a19d1504cb1')
+field = 'reason', value = '\n\t '
+
+    @pytest.mark.parametrize("field", ["reason", "handoff_note"])
+    @pytest.mark.parametrize("value", ["   ", "\n\t ", " a "])
+    def test_transfer_requires_nonblank_reason_and_handoff(resources, field, value):
+        _, store, _, _ = resources
+        created = assign(resources)
+        body = {"target_owner_subject_id": TARGET, "target_owner_role": "reviewer",
+                "reason": "Route source review", "handoff_note": "Check source evidence", field: value}
+        before = snapshot(store)
+        result = resources[0].post(
+            f"/api/v1/assignments/{created.json()['assignment_id']}/actions/transfer", json=body,
+            headers={**HEADERS, "If-Match": created.headers["ETag"], "Idempotency-Key": f"blank-transfer-{uuid4()}"},
+        )
+>       assert result.status_code == 422, result.text
+E       AssertionError: {"assignment_id":"c5299e4a-8f77-47dd-bda7-89d336fcef9a","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"0075505b-df1c-4e3a-8d27-27e82f027e7a"}
+E       assert 200 == 422
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:270: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:04:16 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:04:16 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:04:19.908322+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2d76acd7-d2ef-4895-be68-f93e124f9098", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:04:19.918904+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "608c6511-dd10-4548-a513-b9af54c999cf", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:04:19.927829+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "1ec12d8b-876d-45c5-b45e-f2898a4635c4", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+____ test_transfer_requires_nonblank_reason_and_handoff[\n\t -handoff_note] ____
+
+resources = (<starlette.testclient.TestClient object at 0x799dc7a57b90>, <apps.api.app.routes.listings.AssistedIntakeStore object ...4f260>, <shared.identity.store.InMemoryIdentityStore object at 0x799dc6801520>, 'edb25610-3f7f-4f73-90e9-67595fd84db5')
+field = 'handoff_note', value = '\n\t '
+
+    @pytest.mark.parametrize("field", ["reason", "handoff_note"])
+    @pytest.mark.parametrize("value", ["   ", "\n\t ", " a "])
+    def test_transfer_requires_nonblank_reason_and_handoff(resources, field, value):
+        _, store, _, _ = resources
+        created = assign(resources)
+        body = {"target_owner_subject_id": TARGET, "target_owner_role": "reviewer",
+                "reason": "Route source review", "handoff_note": "Check source evidence", field: value}
+        before = snapshot(store)
+        result = resources[0].post(
+            f"/api/v1/assignments/{created.json()['assignment_id']}/actions/transfer", json=body,
+            headers={**HEADERS, "If-Match": created.headers["ETag"], "Idempotency-Key": f"blank-transfer-{uuid4()}"},
+        )
+>       assert result.status_code == 422, result.text
+E       AssertionError: {"assignment_id":"e17c9373-6fc3-4e5c-8cdb-50172e643c89","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"5391826a-94cb-412f-86b5-e7ba85e5daa2"}
+E       assert 200 == 422
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:270: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:04:20 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:04:20 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:04:24.464531+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "7f94d79b-3da6-4fef-96db-86a21a2cbe4a", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:04:24.479487+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "705e57f0-bfaa-4b4c-a0af-64bd45e9c349", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:04:24.492364+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "9578978b-f5f1-4dfc-ad03-bb7ea09ca808", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+________ test_transfer_requires_nonblank_reason_and_handoff[ a -reason] ________
+
+resources = (<starlette.testclient.TestClient object at 0x799dc50210d0>, <apps.api.app.routes.listings.AssistedIntakeStore object ...2e690>, <shared.identity.store.InMemoryIdentityStore object at 0x799dc4c09c40>, '2379790c-5279-4a73-8faf-b30f88908bf1')
+field = 'reason', value = ' a '
+
+    @pytest.mark.parametrize("field", ["reason", "handoff_note"])
+    @pytest.mark.parametrize("value", ["   ", "\n\t ", " a "])
+    def test_transfer_requires_nonblank_reason_and_handoff(resources, field, value):
+        _, store, _, _ = resources
+        created = assign(resources)
+        body = {"target_owner_subject_id": TARGET, "target_owner_role": "reviewer",
+                "reason": "Route source review", "handoff_note": "Check source evidence", field: value}
+        before = snapshot(store)
+        result = resources[0].post(
+            f"/api/v1/assignments/{created.json()['assignment_id']}/actions/transfer", json=body,
+            headers={**HEADERS, "If-Match": created.headers["ETag"], "Idempotency-Key": f"blank-transfer-{uuid4()}"},
+        )
+>       assert result.status_code == 422, result.text
+E       AssertionError: {"assignment_id":"62b06f09-0286-4470-9a93-cc1da8d41918","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"0afda3b8-9cff-4b8f-99df-a75846047274"}
+E       assert 200 == 422
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:270: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:04:24 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:04:24 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:04:29.453186+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "a51cb90e-8c05-4c37-be64-8fab23cc6f60", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:04:29.466483+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "072f2bf4-3caf-4792-8f46-e3af8a7ebbf5", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:04:29.480964+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "53432ae4-b50f-4d9d-8a70-de75d1a78106", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+_____ test_transfer_requires_nonblank_reason_and_handoff[ a -handoff_note] _____
+
+resources = (<starlette.testclient.TestClient object at 0x799dc5261130>, <apps.api.app.routes.listings.AssistedIntakeStore object ...9d7f0>, <shared.identity.store.InMemoryIdentityStore object at 0x799dc3c78a70>, '9fd7a308-1550-4f56-a3ca-3d7a0e9c2a00')
+field = 'handoff_note', value = ' a '
+
+    @pytest.mark.parametrize("field", ["reason", "handoff_note"])
+    @pytest.mark.parametrize("value", ["   ", "\n\t ", " a "])
+    def test_transfer_requires_nonblank_reason_and_handoff(resources, field, value):
+        _, store, _, _ = resources
+        created = assign(resources)
+        body = {"target_owner_subject_id": TARGET, "target_owner_role": "reviewer",
+                "reason": "Route source review", "handoff_note": "Check source evidence", field: value}
+        before = snapshot(store)
+        result = resources[0].post(
+            f"/api/v1/assignments/{created.json()['assignment_id']}/actions/transfer", json=body,
+            headers={**HEADERS, "If-Match": created.headers["ETag"], "Idempotency-Key": f"blank-transfer-{uuid4()}"},
+        )
+>       assert result.status_code == 422, result.text
+E       AssertionError: {"assignment_id":"53a7a8b2-52c1-436f-81d5-26b0ef66c4f9","status":"TRANSFERRED","owner_subject_id":"00000000-0000-0000-0000-000000000102","due_at":"2027-01-10T12:00:00Z","version":3,"audit_event_id":"92b8b47f-a0f6-4e95-ae27-38c1815ba2bf"}
+E       assert 200 == 422
+E        +  where 200 = <Response [200 OK]>.status_code
+
+tests/security/test_assisted_assignment_authority.py:270: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026/10/10 00:04:29 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/10/10 00:04:29 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-10-10T00:04:34.967805+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "c5fd6d55-4310-4dc4-ab51-89b952144356", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/intakes/url ok"}
+------------------------------ Captured log setup ------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-10-10T00:04:34.978724+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "6a0b16ea-ec5a-46d3-b32f-eb3b2fbe2bab", "resource": "HTTP", "action": "PUT", "result": "ok", "error_code": null, "message": "HTTP PUT /api/v1/intakes/{intake_id}/assignment ok"}
+{"timestamp": "2026-10-10T00:04:34.987304+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "8017959e-ce5a-4299-9ffc-2c0a90b187b7", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/assignments/{assignment_id}/actions/transfer ok"}
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[missing-assign]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[missing-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[disabled-assign]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[disabled-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[locked-assign]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[locked-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[invited-assign]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[invited-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[foreign-tenant-assign]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[foreign-tenant-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[foreign-scope-tenant-assign]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[foreign-scope-tenant-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[no-business-role-assign]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[no-business-role-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[role-mismatch-assign]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[role-mismatch-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[unknown-role-assign]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[unknown-role-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[missing-store-assign]
+FAILED tests/security/test_assisted_assignment_authority.py::test_target_requires_fresh_identity_authority[missing-store-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_assignment_child_tenant_does_not_authorize_invalid_link[dangling-claim]
+FAILED tests/security/test_assisted_assignment_authority.py::test_assignment_child_tenant_does_not_authorize_invalid_link[dangling-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_assignment_child_tenant_does_not_authorize_invalid_link[dangling-complete]
+FAILED tests/security/test_assisted_assignment_authority.py::test_assignment_child_tenant_does_not_authorize_invalid_link[foreign-tenant-claim]
+FAILED tests/security/test_assisted_assignment_authority.py::test_assignment_child_tenant_does_not_authorize_invalid_link[foreign-tenant-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_assignment_child_tenant_does_not_authorize_invalid_link[foreign-tenant-complete]
+FAILED tests/security/test_assisted_assignment_authority.py::test_assignment_child_tenant_does_not_authorize_invalid_link[standalone-missing-axis-claim]
+FAILED tests/security/test_assisted_assignment_authority.py::test_assignment_child_tenant_does_not_authorize_invalid_link[standalone-missing-axis-transfer]
+FAILED tests/security/test_assisted_assignment_authority.py::test_assignment_child_tenant_does_not_authorize_invalid_link[standalone-missing-axis-complete]
+FAILED tests/security/test_assisted_assignment_authority.py::test_transfer_requires_nonblank_reason_and_handoff[   -reason]
+FAILED tests/security/test_assisted_assignment_authority.py::test_transfer_requires_nonblank_reason_and_handoff[   -handoff_note]
+FAILED tests/security/test_assisted_assignment_authority.py::test_transfer_requires_nonblank_reason_and_handoff[\n\t -reason]
+FAILED tests/security/test_assisted_assignment_authority.py::test_transfer_requires_nonblank_reason_and_handoff[\n\t -handoff_note]
+FAILED tests/security/test_assisted_assignment_authority.py::test_transfer_requires_nonblank_reason_and_handoff[ a -reason]
+FAILED tests/security/test_assisted_assignment_authority.py::test_transfer_requires_nonblank_reason_and_handoff[ a -handoff_note]

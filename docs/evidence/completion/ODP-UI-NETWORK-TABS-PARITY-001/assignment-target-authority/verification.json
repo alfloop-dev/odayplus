@@ -1,0 +1,33 @@
+{
+  "task_id": "ODP-UI-NETWORK-TABS-PARITY-001",
+  "owner": "Pi",
+  "reviewer": "Codex2",
+  "mode": "backend_prerequisite_increment_not_full_acceptance",
+  "source_head": "ca871b6b643acabe070c511ccf2b61d93a0f15de",
+  "product_anchor": "2dd6b26ad1c9",
+  "canonical_base": "10eb6224fa31010fbf3c6f27612ca7d17ba4401e",
+  "tested_source_binding": "source.sha256",
+  "original_receipts": {
+    "final_before": {"exit": 1, "tests": 35, "failures": 35, "purpose": "original_product_negative_regression"},
+    "final_assignment": {"exit": 0, "tests": 102, "skipped": 0},
+    "final_contract": {"exit": 0, "tests": 70, "skipped": 0},
+    "final_sla": {"exit": 0, "tests": 32, "skipped": 0},
+    "postgresql": {"exit": 0, "tests": 4, "skipped": 0},
+    "ruff": {"exit": 0},
+    "boundaries": {"exit": 0, "files": 1213},
+    "inventory": {"exit": 0, "tests": 125, "files": 18, "execution": false},
+    "diff": {"exit": 0},
+    "initial_combined_focused": {"completion": "tool_timeout_600s", "exit_receipt": null, "success_claim": false},
+    "missing_store_diagnostic": {"exit": 1, "failures": 2, "cause": "frozen_test_bundle_mutation", "fixed": true}
+  },
+  "limits": [
+    "explicit synthetic identity accounts; real HTTP assignment/actions",
+    "local PostgreSQL fixture with canonical relation stubs and provider validation helper",
+    "unchanged real identity migration; no real-user provisioning or credentials",
+    "SLA fixture explicitly seeded; no genuine SLA provisioning",
+    "fresh boundary identity checks; no cross-store identity locking claim",
+    "no Operator directory/shared read-model or browser success evidence",
+    "no new layout or screen captures, web suite/build, full API suite, remote CI, cloud acceptance or VDC approval"
+  ],
+  "ready_for_review": false
+}

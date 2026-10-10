@@ -105,7 +105,7 @@ def test_target_requires_fresh_identity_authority(resources, operation, defect):
     elif defect == "unknown-role":
         role = "gov-queue"
     else:
-        client.app.state.persistence_bundle.identity_store = None
+        client.app.state.persistence_bundle = replace(client.app.state.persistence_bundle, identity_store=None)
     before = snapshot(store)
     result = assign(resources, role=role) if operation == "assign" else command(
         resources, created.json()["assignment_id"], "transfer", role=role,
