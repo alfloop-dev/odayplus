@@ -296,3 +296,23 @@ replaced by the normal deployment migration command plus the real PostgreSQL
 persistence factory, with its own closed pool and same-database genuine auth
 boundary. This correction supersedes the hybrid approach, not the negative
 receipts, and still needs exact-head verification.
+
+At exact `7a42a09aefec93c7726ef319df86018a8e1c3bb2` the five declarations
+completed: diff exit0/0.014s (`27ffe731abb95804`), invitation / provisioning /
+workflow exit1/80.660s (`b409bbf19231d307`), gate / operator exit0/43.902s
+(`c5d9db4945dafbda`), Web exit0/2.328s (`1b971be28b01598c`), typecheck
+exit0/5.819s (`155d5a66ecdf7a89`). A single explicit diagnostic retry of the
+same declared pytest selection/head (full scratch log because the canonical
+2000-character output tail hid the cause) exited 1, real 86.878s: bundled
+`pgserver` has **no PostGIS**, so full domain Alembic setup could not run.
+No host-wide tool search, install, guard relaxation or wider suite followed.
+
+The fixture now reuses the project's existing
+`test_assisted_listing_postgresql_runtime._install_canonical_runtime` helper
+for unrelated **offline core/workflow relation test inputs**, with actual
+identity/runtime migrations and actual PostgreSQL persistence factory. This
+is not proof of full canonical domain migration support or business readiness;
+those remain separate. Invitation issue/accept/replay/preservation use the real
+production route/boundary/PG transaction/audit, without permission overrides.
+The normal deployment migrations must still succeed before live use. New-head
+verification is pending; none of these earlier failures is re-labelled success.

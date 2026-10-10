@@ -307,12 +307,14 @@ def pg_runtime(invitations: Any, monkeypatch: Any) -> Any:
     from apps.api.oday_api.security import dependencies
     from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
     from shared.infrastructure.persistence.factory import build_persistence
-    from tests.integration.test_postgresql_persistence import _provision_canonical_schema
+    from tests.integration.test_assisted_listing_postgresql_runtime import _install_canonical_runtime
 
     s = invitations
-    # Normal deployment migrations and real PG factory: no memory-backed
-    # non-identity adapters and no bypass of the global persistence guard.
-    _provision_canonical_schema(s.db)
+    # Existing offline fixture supplies unrelated core/workflow relations;
+    # bundled pgserver has no PostGIS for full domain migrations. These are
+    # test inputs, not live schema or healthy business-operation evidence.
+    # Identity/runtime migrations, PG factory and global guard remain real.
+    _install_canonical_runtime(s.db.url())
     apply_upgrade_to_database(s.db.url())
     monkeypatch.setenv("ODAY_DATABASE_URL", s.db.url())
     monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
