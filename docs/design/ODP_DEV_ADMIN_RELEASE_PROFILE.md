@@ -345,6 +345,16 @@ full-product/F11 acceptance.
 
 ### 5.7 Invitation-created pure administrator (ODP-DEV-SMOKE-ACCOUNT-PROVISIONING-001)
 
+The normal expand-only migration `0022` creates the dedicated
+`identity.invitation_acceptance_budget`. Acceptance reserves its global (50)
+and existing-invitation (5) budgets per 15-minute database-time window in an
+independent committed transaction before policy/Argon2 work. Invalid capabilities,
+replay and failed acceptance still consume budget; random UUIDs cannot create
+per-invitation rows. Migration replay/downgrade preserves counters; missing budget
+schema fails closed before hashing. This is not a second login throttle:
+`apps/web/src/lib/auth/loginThrottle.ts` remains the only writer of
+`identity.login_attempts`; account login counters and original sessions are untouched.
+
 A separate pure `platform_admin` can be created through the authenticated,
 server-tenant-bound invitation lifecycle (§7.1/7.3 of the password-first
 contract), not by rerunning first-administrator bootstrap. It must satisfy all

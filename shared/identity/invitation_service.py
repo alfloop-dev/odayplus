@@ -225,8 +225,8 @@ class InvitationService:
     def _reserve_acceptance(self, invitation_id: str) -> None:
         """Durable abuse budget before policy/Argon2, independent of consumption.
 
-        Reuse identity.login_attempts with a separate namespace, never changing
-        an account's login counters or sessions. All submissions cost budget,
+        Use the dedicated identity.invitation_acceptance_budget, never writing
+        identity.login_attempts or changing account sessions. All submissions cost budget,
         including valid capabilities, so possession cannot amplify hashing work.
         Only existing invitation UUIDs get per-invitation rows; random input
         cannot manufacture unbounded throttle rows. Reservations commit even
@@ -249,11 +249,11 @@ class InvitationService:
                 budgets.append(("invitation-accept:" + hashlib.sha256(ref.encode()).hexdigest(), 5))
             for key, limit in budgets:
                 self._engine.execute(
-                    "INSERT INTO identity.login_attempts (attempt_key, window_started_at, failure_count) "
+                    "INSERT INTO identity.invitation_acceptance_budget (attempt_key, window_started_at, failure_count) "
                     "VALUES (?, ?, 0) ON CONFLICT (attempt_key) DO NOTHING", (key, now),
                 )
                 row = self._engine.query_one(
-                    "SELECT window_started_at, failure_count FROM identity.login_attempts "
+                    "SELECT window_started_at, failure_count FROM identity.invitation_acceptance_budget "
                     "WHERE attempt_key = ? FOR UPDATE", (key,),
                 )
                 start = datetime.fromisoformat(row["window_started_at"])
@@ -262,7 +262,7 @@ class InvitationService:
                     start, count = now, 0
                 denied = denied or count >= limit
                 self._engine.execute(
-                    "UPDATE identity.login_attempts SET window_started_at = ?, failure_count = ? "
+                    "UPDATE identity.invitation_acceptance_budget SET window_started_at = ?, failure_count = ? "
                     "WHERE attempt_key = ?", (start, min(count + 1, limit), key),
                 )
         # Raise OUTSIDE the reservation transaction, otherwise refusal rolls

@@ -30,7 +30,8 @@ from tests.identity.test_identity_user_role_management import (
     _q,
     _sign_in,
 )
-from tests.identity.test_identity_user_role_management import stack as stack
+from tests.security.test_dev_smoke_invitation import identity_stack as identity_stack
+from tests.security.test_dev_smoke_invitation import stack as stack
 from tests.security.test_dev_smoke_invitation import (
     EMAIL,  # noqa: F401
     PASSWORD,
@@ -233,7 +234,7 @@ def test_acceptance_budget_serializes_across_independent_pg_pools(invitations: A
             outcomes = list(pool.map(reserve, [s.invites, other] * 3))
         assert outcomes.count("reserved") == 5
         assert outcomes.count("INVITATION_RATE_LIMITED") == 1
-        assert _q(s, "SELECT failure_count FROM identity.login_attempts "
+        assert _q(s, "SELECT failure_count FROM identity.invitation_acceptance_budget "
                   "WHERE attempt_key = 'invitation-accept:global'") == [(6,)]
         assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
     finally:
@@ -296,6 +297,21 @@ def test_acceptance_router_wrong_capability_does_not_hash_and_durably_limits(acc
     assert _q(s, "SELECT accepted_at FROM identity.invitations") == [(None,)]
 
 
+def test_acceptance_router_missing_budget_schema_fails_closed_before_hashing(acceptance: Any, monkeypatch: Any) -> None:
+    s = acceptance
+    issued = _issue(s)
+    before = _snapshot(s)
+    s.engine.execute("DROP TABLE identity.invitation_acceptance_budget")
+    monkeypatch.setattr("shared.identity.invitation_service.CredentialService",
+                        lambda: pytest.fail("missing budget reached Argon2"))
+    response = s.accept_client.post(ACCEPT, json=_accept_body(issued))
+    assert response.status_code == 503
+    assert response.json() == {"error": {"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"}}
+    assert _snapshot(s) == before
+    assert _q(s, "SELECT accepted_at FROM identity.invitations") == [(None,)]
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+
+
 def test_acceptance_router_audit_failure_has_safe_error_and_atomic_recovery(acceptance: Any, monkeypatch: Any) -> None:
     s = acceptance
     issued = _issue(s)
@@ -307,7 +323,7 @@ def test_acceptance_router_audit_failure_has_safe_error_and_atomic_recovery(acce
     assert _snapshot(s) == before
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
     assert _q(s, "SELECT accepted_at FROM identity.invitations") == [(None,)]
-    assert _q(s, "SELECT failure_count FROM identity.login_attempts "
+    assert _q(s, "SELECT failure_count FROM identity.invitation_acceptance_budget "
               "WHERE attempt_key = 'invitation-accept:global'") == [(1,)]
     assert s.accept_client.post(ACCEPT, json=_accept_body(issued)).status_code == 201
 

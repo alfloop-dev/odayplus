@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -29,11 +30,21 @@ from tests.identity.test_identity_user_role_management import (
     _sign_in,
 )
 from tests.identity.test_identity_user_role_management import (
-    stack as stack,  # existing PostgreSQL/auth-boundary pytest fixture
+    stack as identity_stack,  # existing PostgreSQL/auth-boundary pytest fixture
 )
 
 PASSWORD = "Independent-Smoke-Credential-7319"
 EMAIL = "dedicated.smoke@example.invalid"
+
+
+BUDGET_MIGRATION = Path("infra/db/migrations/000028_identity_invitation_acceptance_budget.sql")
+
+
+@pytest.fixture
+def stack(identity_stack: Any) -> Any:
+    with identity_stack.db.connect(autocommit=True) as conn:
+        conn.execute(BUDGET_MIGRATION.read_text(encoding="utf-8"))
+    return identity_stack
 
 
 @pytest.fixture
@@ -263,8 +274,18 @@ def test_acceptance_budget_survives_refusal_resets_by_db_time_and_preserves_logi
     assert _snapshot(s) == before
     assert _q(s, "SELECT failure_count FROM identity.login_attempts WHERE attempt_key = %s",
               ("account:" + s.admin,)) == [(3,)]
-    assert _q(s, "SELECT failure_count FROM identity.login_attempts WHERE attempt_key = 'invitation-accept:global'") == [(6,)]
-    s.engine.execute("UPDATE identity.login_attempts SET window_started_at = now() - interval '16 minutes' "
+    assert _q(s, "SELECT failure_count FROM identity.invitation_acceptance_budget "
+                 "WHERE attempt_key = 'invitation-accept:global'") == [(6,)]
+    # Reapplying the expand migration never clears the durable budget.
+    with s.db.connect(autocommit=True) as conn:
+        conn.execute(BUDGET_MIGRATION.read_text(encoding="utf-8"))
+    with pytest.raises(InvitationRefused, match="INVITATION_RATE_LIMITED"):
+        _accept(s, issued)
+    assert _q(s, "SELECT attempt_key, failure_count FROM identity.login_attempts") == [
+        ("account:" + s.admin, 3)
+    ]
+    s.engine.execute("UPDATE identity.invitation_acceptance_budget "
+                     "SET window_started_at = now() - interval '16 minutes' "
                      "WHERE attempt_key LIKE ?", ("invitation-accept:%",))
     assert _accept(s, issued).account_id != s.admin
 
@@ -280,7 +301,8 @@ def test_random_invitation_ids_cannot_grow_budget_rows_or_construct_hasher(invit
     with pytest.raises(InvitationRefused, match="INVITATION_RATE_LIMITED"):
         s.invites.accept(invitation_id="invalid-private-input", token="a" * 43,
                          username="release.smoke", password=PASSWORD)
-    assert _q(s, "SELECT attempt_key, failure_count FROM identity.login_attempts") == [
+    assert _q(s, "SELECT attempt_key, failure_count FROM identity.invitation_acceptance_budget") == [
         ("invitation-accept:global", 50)
     ]
+    assert _q(s, "SELECT count(*) FROM identity.login_attempts") == [(0,)]
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
