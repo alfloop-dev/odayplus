@@ -1,6 +1,7 @@
 """Incremental real-router/PG invitation proof, NOT live provisioning evidence.
 
-Acceptance HTTP/BFF, foreground encrypted binding and deploy/gate orchestration
+Acceptance factory is exercised here but remains unmounted in runtime pending
+Web middleware scope approval. Foreground binding and deploy/gate orchestration
 remain to be implemented. No fake principal or permission dependency override:
 all issuer/revoker requests use the existing production auth/session stack.
 """
@@ -15,6 +16,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from apps.api.app.routes.identity_invitations import create_invitation_acceptance_router
 from apps.api.app.routes.operator_modules.users_roles import create_user_role_sub_router
 from modules.opsboard.application.user_role_management import UserRoleManagementService
 from shared.auth import Role
@@ -29,6 +31,21 @@ from tests.security.test_dev_smoke_invitation import (
 )
 
 PATH = "/api/v1/operator/users/invitations"
+ACCEPT = "/api/v1/auth/invitations/accept"
+
+
+@pytest.fixture
+def acceptance(invitations: Any) -> Any:
+    s = invitations
+    app = FastAPI()
+    app.include_router(create_invitation_acceptance_router(s.invites), prefix="/api/v1")
+    s.accept_client = TestClient(app)
+    return s
+
+
+def _accept_body(issued: Any) -> dict[str, str]:
+    return {"invitation_id": issued.invitation_id, "token": issued.token,
+            "username": "release.smoke", "password": PASSWORD}
 
 
 def _headers(s: Any) -> dict[str, str]:
@@ -185,3 +202,75 @@ def test_concurrent_accepts_across_pg_connections_create_exactly_one_account(inv
         assert s.audit.verify_chain().ok
     finally:
         other_engine.close()
+
+
+def test_acceptance_router_creates_only_with_capability_and_no_session(acceptance: Any) -> None:
+    s = acceptance
+    issued = _issue(s)
+    before = _snapshot(s)
+    response = s.accept_client.post(ACCEPT, json=_accept_body(issued), headers={
+        "x-tenant-id": OTHER_TENANT, "x-subject-id": s.admin, "x-roles": "operations_manager",
+    })
+    assert response.status_code == 201, response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert "set-cookie" not in response.headers
+    assert response.json()["tenant_id"] == TENANT
+    assert _snapshot(s) == before
+    for secret in (issued.token, PASSWORD):
+        assert secret not in response.text
+    assert s.accept_client.post(ACCEPT, json=_accept_body(issued)).status_code == 409
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(2,)]
+    assert _q(s, "SELECT count(*) FROM identity.sessions WHERE account_id = %s",
+              (response.json()["account_id"],)) == [(0,)]
+
+
+@pytest.mark.parametrize("change", ["token", "password", "actor", "tenant", "roles", "array"])
+def test_acceptance_router_rejects_bad_input_without_secret_echo(acceptance: Any, change: str) -> None:
+    s = acceptance
+    issued = _issue(s)
+    body: Any = _accept_body(issued)
+    if change in {"token", "password"}:
+        body[change] = ["private-request-secret"]
+    elif change == "array":
+        body = ["private-request-secret"]
+    else:
+        body[change] = "private-request-secret"
+    response = s.accept_client.post(ACCEPT, json=body)
+    assert response.status_code == 422
+    for secret in (issued.token, PASSWORD, "private-request-secret"):
+        assert secret not in response.text
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+
+
+def test_acceptance_router_wrong_capability_does_not_hash_and_durably_limits(acceptance: Any, monkeypatch: Any) -> None:
+    s = acceptance
+    issued = _issue(s)
+    body = {**_accept_body(issued), "token": "a" * 43 if issued.token != "a" * 43 else "b" * 43}
+
+    def forbidden_hasher() -> Any:
+        pytest.fail("invalid capability reached Argon2")
+
+    monkeypatch.setattr("shared.identity.invitation_service.CredentialService", forbidden_hasher)
+    for _ in range(5):
+        assert s.accept_client.post(ACCEPT, json=body).status_code == 409
+    response = s.accept_client.post(ACCEPT, json=_accept_body(issued))
+    assert response.status_code == 429
+    assert response.json() == {"error": {"code": "INVITATION_RATE_LIMITED"}}
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+    assert _q(s, "SELECT accepted_at FROM identity.invitations") == [(None,)]
+
+
+def test_acceptance_router_audit_failure_has_safe_error_and_atomic_recovery(acceptance: Any, monkeypatch: Any) -> None:
+    s = acceptance
+    issued = _issue(s)
+    before = _snapshot(s)
+    with monkeypatch.context() as patch:
+        patch.setattr(s.audit, "record", lambda event: (_ for _ in ()).throw(RuntimeError(PASSWORD)))
+        response = s.accept_client.post(ACCEPT, json=_accept_body(issued))
+    assert response.status_code == 503 and PASSWORD not in response.text
+    assert _snapshot(s) == before
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+    assert _q(s, "SELECT accepted_at FROM identity.invitations") == [(None,)]
+    assert _q(s, "SELECT failure_count FROM identity.login_attempts "
+              "WHERE attempt_key = 'invitation-accept:global'") == [(1,)]
+    assert s.accept_client.post(ACCEPT, json=_accept_body(issued)).status_code == 201

@@ -217,10 +217,59 @@ class InvitationService:
             )
         return {"status": "revoked", "invitation_id": invitation_id, "audit_event_id": event.event_id}
 
+    def _reserve_acceptance(self, invitation_id: str) -> None:
+        """Durable abuse budget before policy/Argon2, independent of consumption.
+
+        Reuse identity.login_attempts with a separate namespace, never changing
+        an account's login counters or sessions. All submissions cost budget,
+        including valid capabilities, so possession cannot amplify hashing work.
+        Only existing invitation UUIDs get per-invitation rows; random input
+        cannot manufacture unbounded throttle rows. Reservations commit even
+        when the subsequent acceptance transaction rolls back.
+        """
+        denied = False
+        with self._engine.lock:
+            self._engine.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(?))", ("identity-invitation-accept-budget",)
+            )
+            now = self._now()
+            budgets = [("invitation-accept:global", 50)]
+            try:
+                ref = str(UUID(invitation_id))
+            except (ValueError, TypeError, AttributeError):
+                ref = None
+            if ref and self._engine.query_one(
+                "SELECT invitation_id FROM identity.invitations WHERE invitation_id = ?", (ref,)
+            ) is not None:
+                budgets.append(("invitation-accept:" + hashlib.sha256(ref.encode()).hexdigest(), 5))
+            for key, limit in budgets:
+                self._engine.execute(
+                    "INSERT INTO identity.login_attempts (attempt_key, window_started_at, failure_count) "
+                    "VALUES (?, ?, 0) ON CONFLICT (attempt_key) DO NOTHING", (key, now),
+                )
+                row = self._engine.query_one(
+                    "SELECT window_started_at, failure_count FROM identity.login_attempts "
+                    "WHERE attempt_key = ? FOR UPDATE", (key,),
+                )
+                start = datetime.fromisoformat(row["window_started_at"])
+                count = int(row["failure_count"])
+                if now >= start + timedelta(minutes=15):
+                    start, count = now, 0
+                denied = denied or count >= limit
+                self._engine.execute(
+                    "UPDATE identity.login_attempts SET window_started_at = ?, failure_count = ? "
+                    "WHERE attempt_key = ?", (start, min(count + 1, limit), key),
+                )
+        # Raise OUTSIDE the reservation transaction, otherwise refusal rolls
+        # back its own budget and attackers get unlimited retries.
+        if denied:
+            raise InvitationRefused("INVITATION_RATE_LIMITED")
+
     def accept(
         self, *, invitation_id: str, token: str, username: str, password: str,
         display_name: str = "",
     ) -> InvitationAccepted:
+        self._reserve_acceptance(invitation_id)
         invitation_id = _uuid(invitation_id, "INVITATION_UNAVAILABLE")
         if not _TOKEN_RE.fullmatch(token):
             raise InvitationRefused("INVITATION_UNAVAILABLE")

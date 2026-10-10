@@ -101,15 +101,47 @@ constructed. The repaired anchor needs its own exact-head receipts; these prior
 receipts do not prove the repair passed. All receipts above were produced by
 `task_verification.py` under `.orchestrator/evidence/`, not handwritten evidence.
 
+## Anchor 4: bounded acceptance adapters (not activated)
+
+- Added `apps/api/app/routes/identity_invitations.py`, an **unmounted** factory
+  for capability-only `POST /api/v1/auth/invitations/accept`. It uses the same
+  invitation transaction service, strict bounded DTO validation without secret
+  echo, generic infrastructure errors, a threadpool and identifier-only receipts.
+  No request identity headers, account creation without a capability, password
+  reset, session creation or cookie issuance are supported.
+- Added durable acceptance reservations using existing `identity.login_attempts`
+  under a distinct namespace. Every attempted service acceptance costs budget
+  before Argon2: 50 globally and 5 per existing invitation in 15 minutes, measured
+  using DB time and serialized by a PostgreSQL advisory lock across instances.
+  The reservation commits separately, surviving refusal/audit rollback. Random
+  invitation ids cannot grow per-invitation rows; original login counters and
+  account sessions are not changed. Valid capabilities also cost budget. These
+  are new acceptance abuse limits, not a change to the existing login policy.
+- Added `apps/web/src/app/auth/invitations/route.ts` and declared-path Vitest
+  regressions. It requires same-origin JSON, rejects query capabilities, bounds
+  request/upstream bodies, strips every browser identity/cookie header and uses
+  the canonical Cloud Run transport resolver/header builder. It does not read,
+  create or rotate a Web session. Responses project only UUID receipts or static
+  approved error codes; arbitrary upstream fields, redirects, secrets and errors
+  are never passed through. Password/token custody remains memory-only.
+- API and Web source regressions now cover acceptance, safe input/infrastructure
+  errors, replay, no cookies/sessions, reservation persistence and DB-time reset.
+  **Not yet executed at this anchor.** No pass or live-proof claim is made.
+- The runtime factory is intentionally not mounted: middleware currently sends
+  anonymous `/auth/invitations` callers to login. Canonical note requests exact
+  `apps/web/src/middleware.ts` owned-path expansion before activation; it is not
+  edited here. Main composition, OpenAPI/inventory generation and real middleware
+  coverage remain pending. `USER-AUTHORIZATION-20261010.json` in this directory
+  copies the supplied sanitized authorization, not execution evidence.
+
 ## Remaining work (must precede review)
 
-1. Complete token-only acceptance via the existing Web/BFF trust boundary.
-   Strict DTOs must not echo passwords/tokens in validation responses; no-store
-   responses, origin/CSRF policy, bounded bodies and durable acceptance abuse
-   controls are required. Issuance/revocation are now mounted as above.
-2. Execute the canonical declared regressions, repair any findings, and extend
-   actual acceptance-router coverage. Declare focused Web checks with the
-   coordinator before implementing/executing those adapters.
+1. Activate the bounded acceptance factory/Web adapter only after middleware
+   scope approval and complete routing/OpenAPI inventory integration. Issuance/
+   revocation are mounted; acceptance remains deliberately unmounted.
+2. Execute the canonical declared regressions at the new anchor and repair any
+   findings. Focused Web checks are now declared; real middleware/composition
+   coverage and cross-instance throttle concurrency still need proof.
 3. Implement explicit one-time Human-bound foreground provisioning and recovery
    within a normally signed/admitted dev rollout after route availability,
    before the unchanged finite live gate. Bind environment/repo/tenant/purpose,

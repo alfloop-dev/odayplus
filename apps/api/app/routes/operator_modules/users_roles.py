@@ -84,7 +84,7 @@ class InvitationIssuePayload(BaseModel):
     lifetime_seconds: int = Field(default=3600, ge=1, le=259200)
 
 
-async def _invitation_body(request: Request) -> dict[str, Any]:
+async def _invitation_body(request: Request, *, limit: int = 4096) -> dict[str, Any]:
     # Do not let FastAPI's default validation handler echo input. Even an
     # unexpected field or malformed request could contain a password/token.
     if request.headers.get("content-type", "").split(";", 1)[0].strip() != "application/json":
@@ -92,7 +92,7 @@ async def _invitation_body(request: Request) -> dict[str, Any]:
     body = bytearray()
     async for chunk in request.stream():
         body.extend(chunk)
-        if len(body) > 4096:
+        if len(body) > limit:
             raise HTTPException(413, detail={"code": "INVITATION_BODY_TOO_LARGE"})
     try:
         parsed = json.loads(body)
@@ -108,7 +108,7 @@ def _invitation_error(exc: InvitationRefused) -> JSONResponse:
     http_status = 403 if code in {
         "INVITATION_ADMIN_REQUIRED", "INVITATION_TENANT_REQUIRED",
         "INVITATION_SESSION_REQUIRED", "INVITATION_ADMIN_SESSION_INVALID",
-    } else 404 if code == "INVITATION_NOT_FOUND" else 409 if code in {
+    } else 429 if code == "INVITATION_RATE_LIMITED" else 404 if code == "INVITATION_NOT_FOUND" else 409 if code in {
         "INVITATION_ACCOUNT_EXISTS", "INVITATION_PENDING_EXISTS", "INVITATION_UNAVAILABLE",
     } else 422
     return JSONResponse({"error": {"code": code}}, status_code=http_status,

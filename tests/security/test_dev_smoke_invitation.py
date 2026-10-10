@@ -3,7 +3,7 @@
 Reuse the existing real identity/auth/session stack rather than introduce a
 parallel auth harness. This file tests the internal transaction service; actual
 issuer/revoker router coverage lives in test_dev_smoke_provisioning.py. The
-acceptance Web/BFF and foreground binding adapters are not yet implemented.
+acceptance factory/Web adapter are not yet activated; foreground binding is pending.
 """
 
 from __future__ import annotations
@@ -245,3 +245,40 @@ def test_foreign_tenant_revoke_is_indistinguishable_from_missing(invitations: An
     with pytest.raises(InvitationRefused, match="INVITATION_NOT_FOUND"):
         s.invites.revoke(s.principal, invitation_id=issued.invitation_id)
     assert _q(s, "SELECT revoked_at FROM identity.invitations") == [(None,)]
+
+
+def test_acceptance_budget_survives_refusal_resets_by_db_time_and_preserves_login_counters(invitations: Any) -> None:
+    s = invitations
+    issued = _issue(s)
+    s.engine.execute("INSERT INTO identity.login_attempts (attempt_key, failure_count) VALUES (?, 3)",
+                     ("account:" + s.admin,))
+    before = _snapshot(s)
+    for _ in range(5):
+        with pytest.raises(InvitationRefused, match="INVITATION_UNAVAILABLE"):
+            _accept(s, issued, token="!")
+    with pytest.raises(InvitationRefused, match="INVITATION_RATE_LIMITED"):
+        _accept(s, issued)
+    assert _snapshot(s) == before
+    assert _q(s, "SELECT failure_count FROM identity.login_attempts WHERE attempt_key = %s",
+              ("account:" + s.admin,)) == [(3,)]
+    assert _q(s, "SELECT failure_count FROM identity.login_attempts WHERE attempt_key = 'invitation-accept:global'") == [(6,)]
+    s.engine.execute("UPDATE identity.login_attempts SET window_started_at = now() - interval '16 minutes' "
+                     "WHERE attempt_key LIKE 'invitation-accept:%'")
+    assert _accept(s, issued).account_id != s.admin
+
+
+def test_random_invitation_ids_cannot_grow_budget_rows_or_construct_hasher(invitations: Any, monkeypatch: Any) -> None:
+    s = invitations
+    monkeypatch.setattr("shared.identity.invitation_service.CredentialService",
+                        lambda: pytest.fail("random ids reached Argon2"))
+    for _ in range(50):
+        with pytest.raises(InvitationRefused, match="INVITATION_UNAVAILABLE"):
+            s.invites.accept(invitation_id=str(uuid4()), token="a" * 43,
+                             username="release.smoke", password=PASSWORD)
+    with pytest.raises(InvitationRefused, match="INVITATION_RATE_LIMITED"):
+        s.invites.accept(invitation_id="invalid-private-input", token="a" * 43,
+                         username="release.smoke", password=PASSWORD)
+    assert _q(s, "SELECT attempt_key, failure_count FROM identity.login_attempts") == [
+        ("invitation-accept:global", 50)
+    ]
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
