@@ -1,7 +1,7 @@
 # ODP-OPERATOR-AUTHORITY-UI-PRESENTATION-001 — 實際頁面授權拒絕與操作權限呈現
 
 - **Task ID**: `ODP-OPERATOR-AUTHORITY-UI-PRESENTATION-001`
-- **Owner / Reviewer**: `Claude` / `Codex`
+- **Owner / Reviewer**: `Pi` / `Codex`（前段 source implementation：`Claude`）
 - **採集基準（collection baseline）**: `dev` 31785c571e062b9bef4512ec3d848391c47621d3（RuntimeRelease 38044574206 部署的 SHA）
 - **缺陷來源**: `support/handoffs/dev-live-31785c57-20261010/README.md`「New UI presentation defects」三項
 - **範圍**: 只修 UI 呈現。沒有改 IAM／RBAC／ABAC grant，沒有新增 viewer／業務角色，沒有修改既有帳號，也沒有改 API write guard。fixture、source、model、backfill 都沒碰，也沒有使用 live credential。
@@ -61,6 +61,16 @@ task 宣告的三條命令（`git diff --check`、四個 vitest 檔、`pnpm --di
 | 被拒或無法取得的集合不偽裝成權威的 0 | 同上，header 的 `— …（未授權）` 與 Listing Radar gate、沒有「No listings match」也沒有「0 筆」。"keeps a genuine authorized empty 200 as an authoritative zero"、`resolveNetworkCountState` 單元測試。 |
 | persona 不能宣稱業務決策權限，帳號設定權限保留 | `GovernanceWorkspace.test.tsx` 的 Console mount 三案：auditor+platform_admin 拿到 denied 且沒有核准按鈕，Users／Feature Flags 分頁仍可用；operations_manager 拿到 granted；未驗證時為 unverified。API 對照測試見 3.2。 |
 | 實際寫入 | 所有新測試都斷言沒有非 GET 請求，也沒有 users／roles grant 請求。 |
+
+## 3.4 Required-CI bundle recovery（Pi 接手）
+
+- 原始 PR #1451 head `6d9c566eafde0d0da49b205f1b32227d97fd9eae` 的 CI `38053549581`／product-node job `114217385830` 在原有 `/operator` gzip **300.0 kB** 門檻失敗（300.4 kB）。原始 log `/tmp/odp-read-auth-integration-20261009/pr1451-product-node-failed.log` 和 GitHub comment `6097894899` 是保留的失敗收據，不是成功證據。
+- `OperatorConsole.tsx` 用 `next/dynamic` 隔離只在選中時才掛載的 Governance workspace，含其 admin controllers；載入期間只顯示工作區載入訊息，不宣稱 action authority。既有 typed 403／correlation、withheld counts、server authority 與 account/config controls 都保留。
+- 第一個 anchor `1c18c50755c3` 的三條原宣告驗證都通過（exit 0；diff 0.023s、四檔 vitest 10.097s、typecheck 56.986s）。補充 build 成功，但 budget 命令 **exit 1，301.3 kB**；不能把該 anchor 當成 budget repair 完成。
+- 根因是 canonical `operator/page.tsx` 從 barrel 引入 client components；barrel 同時重新匯出 Governance，抵消 dormant module isolation。改為三個明確的 leaf imports，沒有更動 business／admin／password routing、cookie/session、release notice 或 API auth path。canonical task metadata 已新增這兩個 auth-page source/test 路徑與驗證命令。
+- 新增 production Console Today → Govern 導航測試：Today 不掛載 Governance、不讀 snapshot；選中後合法 scoped rows 保留、server-verified read-admin 仍沒有核准控制項、Users／Feature Flags 入口仍可用，全程沒有寫入。auth-page 測試仍檢查 admin 的 server release status 與 password/business 路由。
+- 最終 head 的全部宣告驗證由 `task_verification.py run` 產生 exact-command／SHA／exit code／duration receipts，包括原三條、單一 `operatorReleasePage.test.ts`、`npm run build --workspace=@oday-plus/web` 和 `npm run bundle:budget --workspace=@oday-plus/web`。送審 note 記錄確切最終 head 與量測結果；本文件不以預測結果取代收據。新增的執行不重跑全庫測試。
+- **未提高 budget、刪功能、放寬 gate 或更動 roles/grants。** Required exact-head CI 和獨立 Codex review 仍是合併前提；本機 source 測試不是部署／完整產品 acceptance。
 
 ## 4. 未完成、不在本 task 範圍
 

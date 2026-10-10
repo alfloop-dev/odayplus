@@ -3,11 +3,11 @@ import { cookies } from "next/headers";
 import { readOperatorReleaseStatus } from "../../lib/auth/operatorReleaseStatus";
 import { readDeploymentEnvironment } from "../../../features/operator/operatorEnvironment";
 import { webSessionCookieName } from "../../lib/auth/session";
-import {
-  OperatorAdminConsole,
-  OperatorConsole,
-  OperatorPasswordChange,
-} from "../../../features/operator";
+// Keep the client boundary narrow: the barrel also re-exports dormant
+// workspaces and would pull them back into the initial route chunks.
+import { OperatorAdminConsole } from "../../../features/operator/OperatorAdminConsole";
+import { OperatorConsole } from "../../../features/operator/OperatorConsole";
+import { OperatorPasswordChange } from "../../../features/operator/OperatorPasswordChange";
 import {
   MarketIntelligencePanel,
   shouldShowMarketIntelligence,
