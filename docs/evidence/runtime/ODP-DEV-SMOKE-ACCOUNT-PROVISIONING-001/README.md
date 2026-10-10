@@ -1102,3 +1102,106 @@ and Codex review of the final complete delivery still precede activation.
 Task remains in progress; this is a committed increment, not review submission.
 No live login/account/GitHub comment/status/secret/config/IAM/traffic/source/model
 mutation, passing live gate, full-product or F11 acceptance is claimed.
+
+## Recorded-consent correction and real foreground HTTP journal (2026-10-10)
+
+This section supersedes the earlier **mandatory new GitHub consent/comment and
+mailbox-verification** statements. The user's explicit consent already exists
+in `USER-AUTHORIZATION-20261010.json`. Contract §7.1/7.3 does not require another
+social/SMTP ceremony. `RecordedUserAuthorization` accepts that canonical record
+plus the trusted foreground owner's approved scoped plan, snapshots it and
+refuses changes/expiry/incompatible scope. This is NOT a public receipt upload
+or a worker self-approval. New username is fixed to `odp-dev-smoke`; recipient
+and GitHub custodian selection remain foreground-owned. An explicitly understood
+private alias is metadata/private capability custody, not verified deliverability.
+The existing authenticated GitHub-token-owner check and independent exact-head
+source/review/CI and consumed admission observers remain enforced. Optional
+GitHub consent evidence still works but is not a prerequisite.
+
+Source anchors `c760b5e5478b50cf5cd82c64cb5e2830f51525e5` and repair
+`1159cff1dd5946abb2d707bb40a12e2a1ba350b9` add the concrete missing journal
+transport. Foreground `RemoteProvisioningJournal` holds **no PG engine or database
+credential**. Its GET/POST `/api/v1/operator/users/dev-smoke-journal` calls use the
+existing canonical Web/BFF/session path. The actual API permission guard and
+session-backed platform-admin check bind the original actor/tenant/full three-role
+snapshot; caller headers/account receipts do not choose those facts. Server
+reservation binds its actual serving SHA/digest, fresh identity readback and DB
+time to the global single-use audit root/advisory lock. Binding intent additionally
+requires real pure-admin invitation provenance, fixed username and issuance after
+reservation. Terminal records bind the same account/execution/plan; the ledger
+is not admission authority or decrypted GitHub secret verification.
+
+The extracted `DevSmokeBindingJournal` provides the same local server transaction
+and remote foreground interface. The real remote ledger now composes with the
+existing lifecycle, one encrypted same-password bundle PUT and canonical gate in
+one foreground operation. Nested calls share one extra execution-owned journal
+admin session; all three execution-owned sessions are cleaned up without changing
+the original password/roles/scope/status or revoking other sessions. Source,
+recorded consent and consumed-admission observation precede journal login; invalid
+gate configuration refuses before login or GitHub access. Replies are bounded,
+non-secret and no-store. Lost committed reservation/intent/ACK replies do not
+permit replay, reset, replacement, deletion or repeated PUT. Root/intent remain
+durable no-retry boundaries; uncertainty quarantines when possible. Logout
+uncertainty never returns success. No secret enters journal payloads, subprocess
+arguments, logs, reports or local files.
+
+Added cases are imported by the **unchanged exact declared provisioning selection**
+from `tests/integration/dev_smoke_remote_journal_cases.py`. They use the actual
+production router/auth/session stack and real PostgreSQL, memory BFF adapter,
+actual sealed-box encryption/decryption and mocked GitHub/source/admission/gate
+inputs. Covered: recorded consent without network ceremony; plan changes;
+remote same-pair binding/gate composition; lost committed replies at reserve,
+intent and ACK; anonymous/header forgery/wrong role/revoked/must-change/foreign
+admin denial; server tuple mismatch; concurrent global reservation; invalid gate
+inputs before journal login; and real server audit rollback with no invitation.
+The positive gate evaluator in this composition case is deliberately stubbed:
+its passing report proves argument/ledger composition, **not a real live gate**.
+The separately declared gate regressions still exercise canonical policies.
+OpenAPI and generated types were refreshed through the existing exporters.
+
+### Original terminal verification receipts
+
+Every result below comes from the live canonical `verification_evidence.py`
+foreground module and its original subprocess return code, with head, exact
+command, selection and duration recorded in canonical `.orchestrator/evidence`.
+No background polling, unsafe waiting, full-suite escalation, timeout/signal or
+count-only rerun occurred. No test output count is inferred from missing summaries.
+
+- At `c760b5e5478b`, the exact provisioning declaration exited **1** in 355.758s,
+  receipt `fd4a7aafb5637cab`. Three failures exposed replay-error ordering after
+  the new username pin and a missing `correlation_id` in the remote binding
+  receipt (affecting two cases). They were repaired, not relabelled as passes.
+- At `1159cff1dd59`, Web Vitest initially exited **254**, 1.050s,
+  `27b3a126e0b2ed3c`; typecheck initially exited **1**, 1.068s,
+  `396dd48942456192`. The existing repository `node_modules/.bin` was absent
+  from the worker PATH. Explicit recorded retry reasons allowed the exact same
+  commands/head after adding that existing directory to PATH. No package install
+  or tracked dependency change occurred. The scratch pnpm launcher uses existing
+  Corepack pnpm9.15.9; uv uses its existing `/home/lupin/.local/bin` installation.
+
+Final measured **source** head: `1159cff1dd5946abb2d707bb40a12e2a1ba350b9`.
+This later evidence-only commit is not that measured head.
+
+| Exact declared command | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.046s | `1af8e8ae14ca4a74` |
+| `uv run --frozen --python 3.12 pytest tests/security/test_dev_smoke_invitation.py tests/integration/test_dev_smoke_provisioning.py tests/contract/test_runtime_release_workflow.py -q` | 0 | 351.459s | `5ffe7dc490c0bc20` |
+| `uv run --frozen --python 3.12 pytest tests/e2e/test_live_e2e_gate_dev_admin.py tests/security/test_operator_read_authorization.py -q` | 0 | 41.834s | `8d68e132c31710ba` |
+| `pnpm --dir apps/web exec vitest run src/app/auth/invitations/__tests__/route.test.ts` | 0 | 3.642s | `117563c2bfc37dc3` |
+| `pnpm --dir apps/web typecheck` | 0 | 15.381s | `765ff3cd7612e1ff` |
+
+**Concrete remaining boundary:** `deploy_cloud_run_waji.sh` still invokes only
+its normal canonical gate after promotion; it does not invoke the foreground
+provisioning executor. The new transport and same-process bundle/gate compose
+without foreground DB access, but the rollout owner must wire an explicit,
+non-default trusted-foreground promoted-before-gate invocation inside that
+script's existing rollback/`DEPLOYMENT_COMMITTED` boundary. It must not accept a
+caller-supplied passing gate receipt, preload stale same-job secrets, expose
+passwords in shell/argv/files, waive source/CI/admission, or repeat uncertain
+mutations. Independent roots come from the existing review/release authority,
+not an invented new Human/GitHub approval ceremony. Source/API engineering is
+possible; missing original DB credentials or SMTP proof is no longer the blocker.
+Task stays `in_progress`, not review-ready. Exact final-head required CI and
+independent Codex review still precede activation. This worker made no live
+login, account, GitHub comment/status/secret/config, IAM, traffic, source or model
+change; no successful deployment, full-product or F11 acceptance is claimed.
