@@ -867,3 +867,35 @@ foreground custody/source approval, mandatory exact-dev observation enforcement,
 and rollback-owned promoted-before-gate hookup. The helper remains read-only and
 unwired; no live control-plane approval, gate pass or deployment is claimed.
 Task remains in progress, not review-ready; no review submission was attempted.
+
+## Anchor 16 — admission enforcement in actual executors
+
+`WebInvitationExecutor` now requires an exact `ConsumedDevAdmissionObserver`,
+not an `admitted=true` flag, callback or observation receipt. The coordinator
+must independently obtain its key, Supervisor store, registry, rollout consumer
+and admission documents. The observer snapshots documents while re-reading
+actual lease state through canonical admission predicates on every check.
+Its return value is not execution authority; source/custody authentication and
+rollback-owned promoted-before-gate wiring remain unfinished.
+
+Checks precede the admin login, journal reservation, invitation issue, acceptance,
+new-account login and final lifecycle success. Bundle execution additionally
+checks before any GitHub request and immediately before its single encrypted
+PUT, after durable binding intent. The canonical gate result is rechecked against
+admission before return. Missing, expired, issued, revoked, mismatched or
+unavailable evidence refuses. After reservation, uncertainty quarantines without
+retry, reset, replacement, delete or rollback. Cleanup still logs out only the
+sessions made here, even when admission becomes unavailable.
+
+Offline executor fixtures now use actual canonical `admit_release`, generated
+Ed25519 material and a real temporary durable Supervisor store, not a passing
+receipt. Added admission document snapshot coverage, receipt-substitution refusal,
+pre-login tuple/issued/expiry negatives, store-loss injection at all six lifecycle
+boundaries, both binding boundaries and after a stubbed positive gate. Assertions
+cover no later mutation/PUT, durable quarantine, preserved existing credentials/
+sessions and no replay. The gate positive stub is a composition spy only, not a
+live gate. Existing actual-router/PostgreSQL lifecycle and refusal tests remain.
+
+This is an incremental source anchor, not review-ready or deployment evidence.
+No worker live login, identity/secret/config, IAM, traffic, sources or model action.
+Verification pending at this anchor; exact declarations will be measured next.

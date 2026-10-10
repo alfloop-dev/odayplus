@@ -458,8 +458,19 @@ expired evidence without issuing or consuming a lease again; receipt says
 `execution_authorized=false`. Its key/store/registry/consumer trust roots must
 come independently from the coordinator, never the plan or an `admitted=true`
 receipt. This observation is not authentication of source approval/custody,
-proof of who called admission, or promotion/rollback ownership. It is not yet
-wired into the executor or a deploy hook. PR1445 deployment/inventory, admission, IAM and
+proof of who called admission, or promotion/rollback ownership. It now backs the mandatory `ConsumedDevAdmissionObserver` supplied to
+`WebInvitationExecutor`. The coordinator independently pins its key/store/registry/
+consumer and admission documents (snapshotted, not plan-loaded); every observation
+reuses canonical predicates and fresh Supervisor state, never a cached pass or
+caller receipt. Lifecycle checks precede login, reservation, issue, acceptance,
+fresh login and final success. The binding executor also checks before any
+GitHub request and immediately before the single PUT; the canonical gate's result
+cannot be returned as successful after admission becomes uncertain. Loss after
+reservation quarantines the root without retry; only this execution's sessions
+are still cleaned up. This enforces admission observation inside the actual
+library but is **not** authenticated source/custody approval or a rollback-owned
+deploy hook; trust-root acquisition and that hook remain unfinished.
+PR1445 deployment/inventory, admission, IAM and
 finite-role gates remain intact. Independent review is required before use; the
 background worker creates no live account or secrets. Parsing/staging a bundle
 is not standing-binding activation or deployment proof.

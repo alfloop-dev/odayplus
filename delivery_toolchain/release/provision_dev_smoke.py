@@ -3,10 +3,10 @@
 The pure validator checks a custodian's NON-SECRET proposed execution binding.
 The optional PostgreSQL journal reserves that exact plan once and can quarantine
 it after an uncertain result. Neither authenticates the custodian, verifies
-release admission/human approval, proves mailbox ownership, or authorizes a cloud
-mutation. The Web lifecycle below is callable only by the trusted foreground
-coordinator after source approval and exact release admission; it does not
-implement those control-plane checks. The optional encrypted bundle writer below
+release human approval, proves mailbox ownership, or authorizes a cloud mutation.
+The Web lifecycle below requires a consumed-dev-admission observer pinned by
+the trusted foreground coordinator and rechecks it before mutations. Independent
+source approval, custody and rollback ownership are still coordinator duties. The optional encrypted bundle writer below
 composes the same lifecycle/password in one call but cannot prove the stored
 secret value. The release workflow consumes an already staged bundle through the
 strict memory-only reader; it never invokes the lifecycle/writer. There is
@@ -241,6 +241,44 @@ def verify_consumed_dev_admission(
         raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED") from None
 
 
+class ConsumedDevAdmissionObserver:
+    """Pinned admission material plus fresh reads of the Supervisor-owned store.
+
+    The coordinator must obtain these trust roots independently, never from a
+    plan or a caller's passing receipt. Documents are snapshotted, not reloaded
+    from the plan; lease state is read anew on EVERY observation. This object is
+    not authenticated source/custody approval or a deploy/rollback capability.
+    There is no callback, cached pass boolean or receipt-based alternative.
+    """
+
+    def __init__(
+        self, *, manifest: Any, registry: Any, lease: Any, public_key: Any,
+        state_store: Any, task_id: str, consumed_by: str, component_images: Any,
+    ) -> None:
+        from copy import deepcopy
+        from delivery_toolchain.release.release_lease import LeaseStateStore
+
+        if not isinstance(state_store, LeaseStateStore):
+            raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED")
+        try:
+            self._material = deepcopy(dict(manifest=manifest, registry=registry, lease=lease,
+                                           component_images=component_images))
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED") from None
+        self._key = public_key
+        self._store = state_store
+        self._task = task_id
+        self._consumer = consumed_by
+
+    def observe(self, *, release_sha: str, manifest_digest: str, now: datetime) -> None:
+        # Discard the evidence receipt: it is not an execution authority token.
+        verify_consumed_dev_admission(
+            **self._material, public_key=self._key, state_store=self._store,
+            task_id=self._task, consumed_by=self._consumer, release_sha=release_sha,
+            manifest_digest=manifest_digest, now=now,
+        )
+
+
 @dataclass(frozen=True)
 class JournalReservation:
     """Internal bookkeeping only; never a bearer capability or approval proof."""
@@ -407,8 +445,9 @@ class WebInvitationExecutor:
     """Execute the supported lifecycle through Web, never directly mutate SQL.
 
     This is a foreground library entrypoint, NOT an admission/approval service.
-    The coordinator must verify independent source approval, exact dev release
-    admission/promotion, and recipient custody before calling it. A journal or
+    The coordinator must verify independent source approval, promotion and
+    recipient custody, and supply independently pinned admission roots. Consumed
+    exact-dev admission is rechecked before side effects. A journal or
     matching string is not that proof. No workflow or CLI calls this entrypoint.
 
     All HTTP side effects are single-attempt. Once reserved, ANY uncertainty
@@ -419,7 +458,10 @@ class WebInvitationExecutor:
 
     _COOKIE = "__Host-oday_web_session"
 
-    def __init__(self, *, web: Any, web_origin: str, journal: ProvisioningJournal) -> None:
+    def __init__(
+        self, *, web: Any, web_origin: str, journal: ProvisioningJournal,
+        admission: ConsumedDevAdmissionObserver,
+    ) -> None:
         from urllib.parse import urlsplit
 
         origin = urlsplit(web_origin)
@@ -427,9 +469,19 @@ class WebInvitationExecutor:
                 or origin.path or origin.query or origin.fragment
                 or not isinstance(journal, ProvisioningJournal)):
             raise ProvisioningRefused("PROVISIONING_TRANSPORT_INVALID")
+        if type(admission) is not ConsumedDevAdmissionObserver:
+            raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED")
         self._web = web
         self._origin = web_origin
         self._journal = journal
+        self._admission = admission
+
+    def _observe_admission(self, plan: Any, *, release_sha: str, manifest_digest: str) -> None:
+        if (not isinstance(plan, dict) or plan.get("release_sha") != release_sha
+                or plan.get("manifest_digest") != manifest_digest):
+            raise ProvisioningRefused("PROVISIONING_RELEASE_MISMATCH")
+        self._admission.observe(release_sha=release_sha, manifest_digest=manifest_digest,
+                                now=self._journal._now())
 
     def _request(
         self, method: str, path: str, *, cookie: str = "", body: Any = None, status: int = 200,
@@ -532,6 +584,7 @@ class WebInvitationExecutor:
                     or not isinstance(new_password, str) or not 12 <= len(new_password) <= 1024
                     or admin_password == new_password):
                 raise ProvisioningRefused("PROVISIONING_CREDENTIAL_INPUT_INVALID")
+            self._observe_admission(plan, release_sha=release_sha, manifest_digest=manifest_digest)
             admin_cookie = self._login("ajoe734", admin_password)
             self._session(admin_cookie, "ajoe734")
             self._principal(admin_cookie, PRESERVED_ACCOUNT_ID, sorted(PRESERVED_ROLES))
@@ -546,8 +599,10 @@ class WebInvitationExecutor:
                 raise ProvisioningRefused("PROVISIONING_ACCOUNT_EXISTS")
             # Observe the serving pair before consuming the single-use root.
             self._promoted_release(admin_cookie, checked)
+            self._observe_admission(plan, release_sha=release_sha, manifest_digest=manifest_digest)
             reservation = self._journal.reserve(plan, original_account=original,
                                                 release_sha=release_sha, manifest_digest=manifest_digest)
+            self._observe_admission(plan, release_sha=release_sha, manifest_digest=manifest_digest)
             issued = self._request("POST", "/api/v1/operator/users/invitations", cookie=admin_cookie,
                                    body={"email": checked.email, "lifetime_seconds": 3600}, status=201).payload
             invitation = issued.get("invitation_id")
@@ -559,6 +614,7 @@ class WebInvitationExecutor:
             # A rollback/mixed-revision transition after issue cannot authorize
             # acceptance. Leave the invitation reserved for explicit recovery.
             self._promoted_release(admin_cookie, checked)
+            self._observe_admission(plan, release_sha=release_sha, manifest_digest=manifest_digest)
             accepted = self._request("POST", "/auth/invitations", body={
                 "invitation_id": invitation, "token": token, "username": checked.username,
                 "password": new_password,
@@ -568,6 +624,7 @@ class WebInvitationExecutor:
                     or accepted.get("tenant_id") != TENANT_ID or not isinstance(account, str)
                     or str(UUID(account)) != account or account == PRESERVED_ACCOUNT_ID):
                 raise ProvisioningRefused("PROVISIONING_ACCEPTANCE_INVALID")
+            self._observe_admission(plan, release_sha=release_sha, manifest_digest=manifest_digest)
             new_cookie = self._login(checked.username, new_password)
             self._session(new_cookie, checked.username)
             self._principal(new_cookie, account, ["platform_admin"])
@@ -586,6 +643,7 @@ class WebInvitationExecutor:
                     or provenance["accept_event_id"] != accepted.get("audit_event_id")):
                 raise ProvisioningRefused("PROVISIONING_PROVENANCE_INVALID")
             self._promoted_release(new_cookie, checked)
+            self._observe_admission(plan, release_sha=release_sha, manifest_digest=manifest_digest)
             result = {**checked.to_receipt(), "stage": "web-lifecycle-verified",
                       "serving_release_observed": True,
                       "account_id": account, **provenance, "credential_binding_verified": False,
@@ -948,6 +1006,9 @@ class DevCredentialBundleExecutor:
             )
             # Only the canonical evaluator's complete result counts, not an
             # acknowledged upload, point-in-time readback or truthy status value.
+            self._lifecycle._observe_admission(
+                plan, release_sha=config.expected_sha, manifest_digest=config.expected_manifest_digest,
+            )
             passed = bool(checks) and all(c.ok is True for c in checks)
             if (type(report.get("ok")) is not bool or report["ok"] != passed
                     or report.get("expected_release_sha") != config.expected_sha
@@ -978,6 +1039,9 @@ class DevCredentialBundleExecutor:
         try:
             # Fail before account mutation if a staged binding already exists,
             # journal is unavailable, repository/key is wrong, or auth is refused.
+            self._lifecycle._observe_admission(
+                plan, release_sha=credentials["release_sha"], manifest_digest=credentials["manifest_digest"],
+            )
             if self.inspect() is not None:
                 raise ProvisioningRefused("PROVISIONING_BINDING_ALREADY_ATTEMPTED")
             prepared = self._store.prepare()
@@ -1000,6 +1064,9 @@ class DevCredentialBundleExecutor:
                       "environment": "dev", "tenant_id": TENANT_ID,
                       "account_id": lifecycle["account_id"], "username": plan["username"],
                       "password": credentials["new_password"]}
+            self._lifecycle._observe_admission(
+                plan, release_sha=credentials["release_sha"], manifest_digest=credentials["manifest_digest"],
+            )
             self._store.write(prepared, bundle)
             event = self._append(metadata, "binding-acknowledged")
             return {**lifecycle, "stage": "binding-acknowledged", "binding_audit_event_id": event.event_id,

@@ -726,7 +726,9 @@ def test_journal_refuses_memory_or_different_engine_audit(invitations: Any) -> N
 
 
 @pytest.fixture
-def web_lifecycle(acceptance: Any, foreground_plan_input: Any, monkeypatch: Any) -> Any:
+def web_lifecycle(
+    acceptance: Any, foreground_plan_input: Any, consumed_dev_admission: Any, monkeypatch: Any,
+) -> Any:
     """Offline memory BFF adapter, real PG/router/session boundary, NOT Next.
 
     No request actor or permission override. The actual Next forwarding tests
@@ -748,6 +750,12 @@ def web_lifecycle(acceptance: Any, foreground_plan_input: Any, monkeypatch: Any)
                      (CredentialService().hash_password(admin_password), s.admin))
     plan, _ = foreground_plan_input
     plan["actor_account_id"], plan["tenant_id"] = s.admin, TENANT
+    plan["release_sha"] = consumed_dev_admission["release_sha"]
+    plan["manifest_digest"] = consumed_dev_admission["manifest_digest"]
+    admission = module.ConsumedDevAdmissionObserver(**{
+        key: value for key, value in consumed_dev_admission.items()
+        if key not in {"release_sha", "manifest_digest", "now"}
+    })
     now = datetime.fromisoformat(s.engine.query_one("SELECT clock_timestamp() AS now")["now"])
     plan["expires_at"] = (now + timedelta(minutes=30)).isoformat()
     journal = module.ProvisioningJournal(engine=s.engine, audit_log=s.audit)
@@ -821,7 +829,9 @@ def web_lifecycle(acceptance: Any, foreground_plan_input: Any, monkeypatch: Any)
             return HttpResponse(response.status_code, response.json())
 
     web = MemoryBff()
-    executor = module.WebInvitationExecutor(web=web, web_origin="https://web.example.invalid", journal=journal)
+    executor = module.WebInvitationExecutor(
+        web=web, web_origin="https://web.example.invalid", journal=journal, admission=admission,
+    )
     return s, web, executor, journal, plan, dict(admin_password=admin_password, new_password=PASSWORD,
         release_sha=plan["release_sha"], manifest_digest=plan["manifest_digest"])
 
@@ -1010,6 +1020,20 @@ def test_consumed_dev_admission_rechecks_canonical_predicates_read_only(
         assert value not in json.dumps(receipt)
 
 
+def test_admission_observer_snapshots_documents_but_not_store(consumed_dev_admission: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ConsumedDevAdmissionObserver
+    args = consumed_dev_admission
+    observer = ConsumedDevAdmissionObserver(**{
+        key: value for key, value in args.items() if key not in {"release_sha", "manifest_digest", "now"}
+    })
+    args["manifest"]["created_by_workflow"] = "changed-after-pinning"
+    args["registry"]["release"]["decision"] = "NO-GO"
+    args["lease"]["nonce"] = "changed-after-pinning"
+    args["component_images"].clear()
+    observer.observe(release_sha=args["release_sha"], manifest_digest=args["manifest_digest"], now=args["now"])
+    assert "nonce" not in repr(observer) and "signature" not in repr(observer)
+
+
 @pytest.mark.parametrize("fault", [
     "sha", "digest", "task", "consumer", "wrong-key", "bad-signature", "lease-environment",
     "lease-action", "lease-extra", "manifest-tamper", "manifest-profile", "sources", "image",
@@ -1072,6 +1096,82 @@ def test_consumed_dev_admission_uncertainty_never_authorizes(
     with pytest.raises(ProvisioningRefused, match="PROVISIONING_DEV_ADMISSION_UNVERIFIED") as error:
         verify_consumed_dev_admission(**args)
     assert error.value.__cause__ is None and "private-input" not in str(error.value)
+
+
+@pytest.mark.parametrize("bad", [None, {}, {"admitted": True}, {"stage": "consumed-dev-admission-observed"}])
+def test_lifecycle_requires_observer_not_receipt(web_lifecycle: Any, bad: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, WebInvitationExecutor
+    s, web, _, journal, _, _ = web_lifecycle
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_DEV_ADMISSION_UNVERIFIED"):
+        WebInvitationExecutor(web=web, web_origin="https://web.example.invalid", journal=journal, admission=bad)
+    assert not web.calls and journal.inspect() is None
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+
+
+@pytest.mark.parametrize("changed_at", range(1, 7))
+def test_lifecycle_rechecks_real_store_before_each_mutation_and_final_success(
+    web_lifecycle: Any, consumed_dev_admission: Any, monkeypatch: Any, changed_at: int,
+) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    before = _snapshot(s)
+    store = consumed_dev_admission["state_store"]
+    get = store.get
+    reads = 0
+
+    def unavailable_at_stage(lease_id: str) -> Any:
+        nonlocal reads
+        reads += 1
+        if reads == changed_at:
+            raise RuntimeError("private-supervisor-error")
+        return get(lease_id)
+
+    monkeypatch.setattr(store, "get", unavailable_at_stage)
+    with pytest.raises(ProvisioningRefused) as error:
+        executor.execute(plan, **args)
+    assert "private" not in str(error.value) and error.value.__cause__ is None
+    assert reads == changed_at
+    assert web.calls.count(("POST", PATH)) == int(changed_at >= 4)
+    assert web.calls.count(("POST", "/auth/invitations")) == int(changed_at >= 5)
+    assert web.calls.count(("POST", "/login")) == (0 if changed_at == 1 else 2 if changed_at == 6 else 1)
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(2 if changed_at >= 5 else 1,)]
+    assert _snapshot(s)["password_credentials"] == before["password_credentials"]
+    if changed_at <= 2:
+        assert journal.inspect() is None
+    else:
+        assert journal.inspect().stage == "recovery-required"
+        mutations = [c for c in web.calls if c[0] == "POST" and c[1] in {PATH, "/auth/invitations"}]
+        monkeypatch.setattr(store, "get", get)
+        with pytest.raises(ProvisioningRefused):
+            executor.execute(plan, **args)
+        assert [c for c in web.calls if c[0] == "POST" and c[1] in {PATH, "/auth/invitations"}] == mutations
+    assert all(existing in _snapshot(s)["sessions"] for existing in before["sessions"])
+    assert s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("fault", ["issued", "expired", "tuple", "plan-tuple"])
+def test_lifecycle_actual_admission_refusal_precedes_login(
+    web_lifecycle: Any, consumed_dev_admission: Any, monkeypatch: Any, fault: str,
+) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    if fault == "issued":
+        store = consumed_dev_admission["state_store"]
+        record = store.get(consumed_dev_admission["lease"]["lease_id"])
+        record["state"] = "issued"
+        monkeypatch.setattr(store, "get", lambda *a: record)
+    elif fault == "expired":
+        from datetime import timedelta
+        now = journal._now()
+        monkeypatch.setattr(journal, "_now", lambda: now + timedelta(days=2))
+    elif fault == "tuple":
+        plan["release_sha"] = args["release_sha"] = "f" * 40
+    else:
+        plan["manifest_digest"] = "sha256:" + "f" * 64
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_LIFECYCLE_REFUSED"):
+        executor.execute(plan, **args)
+    assert not web.calls and journal.inspect() is None
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
 
 
 @pytest.fixture
@@ -1254,6 +1354,41 @@ def test_binding_audit_commit_failure_never_claims_ack_or_retries(
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(2,)]
 
 
+@pytest.mark.parametrize("changed_at", [1, 8])
+def test_binding_admission_loss_precedes_remote_calls_or_put(
+    encrypted_binding: Any, consumed_dev_admission: Any, monkeypatch: Any, changed_at: int,
+) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, journal, binding, remote, _, plan, args = encrypted_binding
+    store = consumed_dev_admission["state_store"]
+    get = store.get
+    reads = 0
+
+    def unavailable_at_stage(lease_id: str) -> Any:
+        nonlocal reads
+        reads += 1
+        if reads == changed_at:
+            raise RuntimeError("private-admission-error")
+        return get(lease_id)
+
+    monkeypatch.setattr(store, "get", unavailable_at_stage)
+    with pytest.raises(ProvisioningRefused):
+        binding.execute(plan, **args)
+    assert reads == changed_at and not remote.uploads
+    assert not any(method == "PUT" for method, _ in remote.calls)
+    if changed_at == 1:
+        assert not web.calls and not remote.calls
+        assert journal.inspect() is None and binding.inspect() is None
+    else:
+        assert binding.inspect()["stage"] == journal.inspect().stage == "recovery-required"
+        assert _q(s, "SELECT count(*) FROM identity.accounts") == [(2,)]
+        calls = list(web.calls), list(remote.calls)
+        monkeypatch.setattr(store, "get", get)
+        with pytest.raises(ProvisioningRefused):
+            binding.execute(plan, **args)
+        assert (web.calls, remote.calls) == calls
+
+
 def _foreground_gate_template(binding: Any, args: Any) -> Any:
     from delivery_toolchain.e2e.check_live_e2e_gate import GateConfig
     return GateConfig(
@@ -1332,6 +1467,31 @@ def test_foreground_gate_receives_actual_matched_pair_after_durable_ack(
     assert dict(os.environ) == before and journal.inspect().stage == "reserved"
     for secret in (args["new_password"], args["admin_password"], "stale-standing-password", "offline-service-token"):
         assert secret not in json.dumps(result)
+
+
+def test_foreground_gate_cannot_claim_success_after_admission_loss(
+    encrypted_binding: Any, consumed_dev_admission: Any, monkeypatch: Any,
+) -> None:
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    _, _, journal, binding, remote, _, plan, args = encrypted_binding
+    store = consumed_dev_admission["state_store"]
+
+    def offline_evaluator(config: Any, **kwargs: Any) -> Any:
+        record = store.get(consumed_dev_admission["lease"]["lease_id"])
+        record["state"] = "revoked"
+        monkeypatch.setattr(store, "get", lambda *a: record)
+        return [gate.CheckResult(True, "offline", "not live evidence")], {
+            "ok": True, "expected_release_sha": config.expected_sha, "expected_deployment": "dev",
+        }
+
+    monkeypatch.setattr(gate, "evaluate_gate", offline_evaluator)
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_GATE_RECOVERY_REQUIRED"):
+        binding.execute_and_check_gate(
+            plan, gate_config=_foreground_gate_template(binding, args), worker_job="offline-worker",
+            gcp_region="asia-east1", gcp_project="offline-project", **args,
+        )
+    assert journal.inspect().stage == "recovery-required" and len(remote.uploads) == 1
 
 
 def test_foreground_actual_gate_failure_quarantines_without_retry(
