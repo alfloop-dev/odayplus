@@ -20,12 +20,15 @@ Runtime Release `38025605232` attempt 2（SHA `0dd210dbe04f…`）artifact `1166
 ## 2. 修補內容（`product_ops/deployment/validate_cloud_run_live_deployment.py`）
 
 - candidate smoke 的四個 API GET（`/platform/version`、`/platform/health`、`/readiness`、`/api/v1/operator/bootstrap`）改走既有的 `probe_with_bounded_retry` / `ProbeRetryPolicy`（與 compatibility gate 同一套分類），沒有新框架。
-- 只有 `no_response`（逾時、URLError、連線重設等完全沒收到回應）可重試。任何**收到的回應**——401/403、5xx、非 JSON、非 object JSON、錯誤 release SHA、不健康 readiness/DB/provider/model——第一次就定案、零重試；無法建立的 URL（`invalid_request`）亦零重試。
+- 只有 `no_response`（在收到 status line 之前逾時、URLError、連線重設等完全沒收到回應）可重試。任何**收到的回應**——401/403、5xx、非 JSON、非 object JSON、錯誤 release SHA、不健康 readiness/DB/provider/model——第一次就定案、零重試；無法建立的 URL（`invalid_request`）與非 HTTP status line（`malformed_response`）亦零重試。
+- **已收到的 status 不會被抹掉**：status line 到了之後，body（或其後的 headers）讀取失敗、停住或超過時限，`_request` 改拋帶有該 status 的 `ResponseBodyError`（provenance `unreadable_body`），為終局、零重試。例如 401/403/503 的 body 讀到一半逾時，收據記錄 `status=401`、`transient=false`，不會被下一次健康回答取代。
+- **時限是整個交換的絕對 wall clock**：`_request` 的 `timeout` 從連線建立起涵蓋 status line、headers 與 body 每個 byte，而非每次 socket read 的閒置時限。到期時一個 watchdog 會 shutdown 該交換開的 socket，喚醒被卡住的 read；到期後讀到的內容一律視為截斷、不予判定。TCP connect 與 TLS handshake 本身仍由 socket timeout（≤ 剩餘預算）約束。
 - `smoke` CLI 預設：`attempts=4`、per-attempt timeout 沿用 `--timeout`（15s）、backoff `2s` 指數、上限 `8s`、總預算 `180s`。總預算是**全部 API probe 共用一個**（`deadline_scope=shared_by_api_probes`），每次 attempt 的 timeout 夾到剩餘預算；預算用完就不送出請求並 fail closed。新增 `--smoke-retry-*` 旗標；NaN/inf/負值/0 次一律以 `smoke:retry_policy` fail closed。
 - 直接呼叫 `smoke_checks()` 而未給 policy 時維持單次嘗試（原行為）。
 - 每個原本的 smoke check 名稱與判定不變，且只依真實回答判定；沒有回答一律 fail（例如 version 用盡重試時 `release_sha` 檢查為 `actual=<missing>`）。
-- report 新增 `probe_retry_policy` 與各 probe 的 `*_probe` 收據（每次 attempt 的 status、error、elapsed、provenance、transient），失敗的 attempt 全部保留不覆寫。headers（transport token、bearer）從不進入收據。
-- `_json_request` 對無法解析的 body 改拋 `ResponseBodyError(ValueError)`，攜帶收到的 status 與 provenance；`probe_json_endpoint` 改經由它，compatibility gate 行為不變。
+- report 新增 `probe_retry_policy` 與各 probe 的 `*_probe` 收據（每次 attempt 的 status、error、elapsed、provenance、transient），失敗的 attempt 全部保留不覆寫。
+- **遮蔽**：headers 本身不寫入收據，但 exception 訊息可能引用 token（例如含 CR/LF 的 token 會讓 http.client 以 bytes repr 把整個 header value 放進 `Invalid header value ...`）。`smoke_checks`、`compatibility_smoke_checks` 回傳前與 CLI `_finalize` 寫出／印出前，都會把 bearer、API/Web invoker token 的原文、strip 後、str/bytes repr、JSON 跳脫形式，以及控制字元之間 ≥8 字元的片段替換為 `<redacted>`。Web `/operator` probe 遇到無法送出的 token 改為 fail closed，不再以 traceback 印出 token。
+- `_json_request` 對無法解析的 body 改拋 `ResponseBodyError(ValueError)`，攜帶收到的 status 與 provenance；`probe_json_endpoint` 改經由它。compatibility gate 共用同一個 `_request`，因此同樣得到「已收到 status 不可重試」、整個交換的絕對時限與 token 遮蔽；其餘判定不變。
 
 ## 3. 未變更
 
@@ -40,6 +43,13 @@ deploy script、workflow、IAM、secret、config、帳號／角色、業務資�
 - 無法建立的 URL 零重試；未給 policy 時單次嘗試。
 - CLI 預設 policy 寫入報告；不合法 policy fail closed。
 - 每個情境都檢查 bearer、API/Web invoker token 不出現在 report 與 check detail。
+- 第一輪審查修正（真實 localhost server，非 stub）：
+  - 401/403/503/200 的 body 停住、逐 byte 慢送、無 content-length 逐 byte 慢送：`_request` 保留收到的 status、`unreadable_body`、於 1s 內結束（時限 0.2s）。
+  - headers 逐行慢送：時限內結束，保留已收到的 status，不判為 200。
+  - `timeout=deadline=0.1s` 逐 byte 慢送 200：`probe_with_bounded_retry` 0.5s 內結束、`rejected`、不可重試，不是 `answered/200`。
+  - 候選 smoke 第一個 `/platform/version` 回 401/403/503 後 body 停住或慢送、之後的請求都健康：version 只被請求一次、零 backoff，收據 `status=[401]`／`unreadable_body`，version 兩個 check fail，其餘 check 仍依真實回答綠燈。
+  - 非 HTTP status line：一次 attempt、`malformed_response`、不重試。
+  - 含 CR/LF 的 dummy bearer／API invoker／Web invoker token：smoke 與 compatibility 的 report、check detail，以及 CLI 的 report 檔與 stdout/stderr 都不含 token 原文、片段、repr 或 JSON 形式，診斷保留為 `<redacted>`。
 
 ## 5. 驗證
 

@@ -6946,3 +6946,319 @@ def test_smoke_cli_fails_closed_on_an_unbounded_retry_policy(
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["ok"] is False
     assert [check["name"] for check in report["checks"]] == ["smoke:retry_policy"]
+
+
+class _MisbehavingCandidateHandler(DeterministicRuntimeHandler):
+    """The deterministic candidate, except the first `/platform/version`.
+
+    That first request receives `stall_status` and its headers, then a body
+    that stalls part-way (`mode="stall"`), trickles one byte at a time
+    (`mode="trickle"`), or never stops trickling without a declared length
+    (`mode="trickle-until-close"`). Every later request is answered healthily,
+    so a retry would turn the authentic first answer into a pass.
+    """
+
+    stall_status = 401
+    mode = "stall"
+    version_hits = 0
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib handler contract
+        cls = type(self)
+        if self.path == "/platform/version":
+            cls.version_hits += 1
+            if cls.version_hits == 1:
+                self._misbehave()
+                return
+        super().do_GET()
+
+    def _misbehave(self) -> None:
+        body = json.dumps({"detail": "refused", "padding": "x" * 64}).encode()
+        self.send_response(self.stall_status)
+        self.send_header("content-type", "application/json")
+        if self.mode != "trickle-until-close":
+            self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        try:
+            if self.mode == "stall":
+                self.wfile.write(body[:5])
+                self.wfile.flush()
+                time.sleep(2.0)
+                return
+            for byte in body:
+                self.wfile.write(bytes([byte]))
+                self.wfile.flush()
+                time.sleep(0.03)
+        except OSError:
+            return
+
+
+def _start_misbehaving_server(status: int, mode: str) -> tuple[ThreadingHTTPServer, str]:
+    handler = type(
+        "_Handler",
+        (_MisbehavingCandidateHandler,),
+        {"stall_status": status, "mode": mode, "version_hits": 0},
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address
+    return server, f"http://{host}:{port}"
+
+
+@pytest.mark.parametrize("mode", ["stall", "trickle", "trickle-until-close"])
+@pytest.mark.parametrize("status", [401, 403, 503, 200])
+def test_request_keeps_a_received_status_when_its_body_never_completes(
+    status: int, mode: str
+) -> None:
+    server, url = _start_misbehaving_server(status, mode)
+    try:
+        started = time.monotonic()
+        with pytest.raises(validator.ResponseBodyError) as raised:
+            validator._request(f"{url}/platform/version", headers={}, timeout=0.2)
+        elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+
+    # The status that arrived is kept, and the bound covers the body too: a
+    # peer trickling one byte per read cannot hold the exchange open.
+    assert raised.value.status == status
+    assert raised.value.provenance == "unreadable_body"
+    assert f"answered status {status}" in str(raised.value)
+    assert elapsed < 1.0
+
+
+def test_request_bounds_a_peer_that_never_finishes_its_headers() -> None:
+    class SlowHeaders(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            try:
+                self.wfile.write(b"HTTP/1.1 200 OK\r\n")
+                for _ in range(100):
+                    self.wfile.write(b"x-pad: 1\r\n")
+                    self.wfile.flush()
+                    time.sleep(0.03)
+            except OSError:
+                return
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SlowHeaders)
+    Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address
+    try:
+        started = time.monotonic()
+        with pytest.raises(validator.ResponseBodyError) as raised:
+            validator._request(f"http://{host}:{port}/platform/version", headers={}, timeout=0.2)
+        elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+    # The status line arrived, so it stays on the record; the cut-short headers
+    # make the response a final refusal rather than a 200 to judge.
+    assert raised.value.status == 200
+    assert raised.value.provenance == "unreadable_body"
+    assert "was not complete within 0.2s" in str(raised.value)
+    assert elapsed < 1.0
+
+
+def test_probe_retry_cannot_outrun_its_deadline_on_a_slow_body() -> None:
+    server, url = _start_misbehaving_server(200, "trickle")
+    try:
+        started = time.monotonic()
+        result = validator.probe_with_bounded_retry(
+            f"{url}/platform/version",
+            headers={},
+            policy=_smoke_policy(timeout_seconds=0.1, deadline_seconds=0.1),
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+
+    assert elapsed < 0.5
+    assert result.outcome == "rejected"
+    assert len(result.attempts) == 1
+    assert result.final.status == 200
+    assert result.final.provenance == "unreadable_body"
+    assert validator.probe_failure_is_transient(result.final) is False
+
+
+@pytest.mark.parametrize("mode", ["stall", "trickle"])
+@pytest.mark.parametrize("status", [401, 403, 503])
+def test_candidate_smoke_never_retries_away_a_refusal_whose_body_failed(
+    status: int, mode: str
+) -> None:
+    server, url = _start_misbehaving_server(status, mode)
+    sleeper = _RecordingSleep()
+    try:
+        checks, report = validator.smoke_checks(
+            api_url=url,
+            web_url=url,
+            expected_sha=EXPECTED_SHA,
+            bearer_token=SMOKE_BEARER,
+            operator_role="ops-lead",
+            operator_subject="smoke-operator",
+            operator_tenant="tenant-live",
+            correlation_id="corr-candidate-partial-refusal",
+            timeout=0.3,
+            web_invoker_token=SMOKE_WEB_INVOKER,
+            api_invoker_token=SMOKE_API_INVOKER,
+            retry_policy=_smoke_policy(timeout_seconds=0.3, deadline_seconds=30.0),
+            sleep=sleeper,
+        )
+        version_hits = server.RequestHandlerClass.version_hits
+    finally:
+        server.shutdown()
+
+    # The healthy answer that a second request would get is never requested.
+    assert version_hits == 1
+    assert sleeper.delays == []
+    version_probe = report["version_probe"]
+    assert version_probe["outcome"] == "rejected"
+    assert [a["status"] for a in version_probe["attempts"]] == [status]
+    assert [a["provenance"] for a in version_probe["attempts"]] == ["unreadable_body"]
+    assert [a["transient"] for a in version_probe["attempts"]] == [False]
+    by_name = {c.name: c for c in checks}
+    version_http = by_name["smoke:/platform/version:http"]
+    assert version_http.ok is False
+    assert f"answered status {status}" in version_http.detail
+    assert by_name["smoke:/platform/version:release_sha"].ok is False
+    assert "version" not in report
+    # Every other probe still judged the healthy candidate on its own answer.
+    assert [c.name for c in checks if not c.ok] == [
+        "smoke:/platform/version:http",
+        "smoke:/platform/version:release_sha",
+    ]
+    _assert_smoke_redacted(checks, report)
+
+
+def test_probe_json_endpoint_never_retries_a_malformed_status_line() -> None:
+    class NotHttp(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.wfile.write(b"NOT-HTTP garbage\r\n\r\n")
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), NotHttp)
+    Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address
+    try:
+        result = validator.probe_with_bounded_retry(
+            f"http://{host}:{port}/platform/version",
+            headers={},
+            policy=_smoke_policy(timeout_seconds=2.0, deadline_seconds=10.0),
+            sleep=_RecordingSleep(),
+        )
+    finally:
+        server.shutdown()
+
+    assert len(result.attempts) == 1
+    assert result.final.status is None
+    assert result.final.provenance == "malformed_response"
+    assert result.outcome == "rejected"
+
+
+# Dummy credentials shaped to trip http.client's header validation, whose
+# error quotes the rejected header value as a bytes repr.
+_CRLF_SECRET = "dummy-crlf-secret-head\r\nX-Injected: dummy-crlf-secret-tail"
+_CRLF_SECRET_LEAKS = (
+    _CRLF_SECRET,
+    "dummy-crlf-secret-head",
+    "dummy-crlf-secret-tail",
+    repr(_CRLF_SECRET.encode())[2:-1],
+    json.dumps(_CRLF_SECRET)[1:-1],
+)
+
+
+def _assert_no_crlf_secret(text: str) -> None:
+    for leak in _CRLF_SECRET_LEAKS:
+        assert leak not in text
+
+
+@pytest.mark.parametrize("carrier", ["bearer", "api_invoker", "web_invoker"])
+def test_smoke_redacts_a_token_quoted_by_a_transport_exception(carrier: str) -> None:
+    tokens = {
+        "bearer": SMOKE_BEARER,
+        "api_invoker": SMOKE_API_INVOKER,
+        "web_invoker": SMOKE_WEB_INVOKER,
+    }
+    tokens[carrier] = _CRLF_SECRET
+    server, url = start_server()
+    try:
+        checks, report = validator.smoke_checks(
+            api_url=url,
+            web_url=url,
+            expected_sha=EXPECTED_SHA,
+            bearer_token=tokens["bearer"],
+            operator_role="ops-lead",
+            operator_subject="smoke-operator",
+            operator_tenant="tenant-live",
+            correlation_id="corr-candidate-redaction",
+            timeout=2.0,
+            web_invoker_token=tokens["web_invoker"],
+            api_invoker_token=tokens["api_invoker"],
+            retry_policy=_smoke_policy(timeout_seconds=2.0, deadline_seconds=30.0),
+            sleep=_RecordingSleep(),
+        )
+    finally:
+        server.shutdown()
+
+    failed = [c for c in checks if not c.ok]
+    assert failed, "a token http.client refuses to send must fail the smoke"
+    # The diagnostic survives -- only the secret inside it is replaced.
+    assert any("<redacted>" in c.detail for c in failed)
+    _assert_no_crlf_secret(json.dumps(report) + json.dumps([[c.name, c.detail] for c in checks]))
+    _assert_smoke_redacted(checks, report)
+
+
+def test_compatibility_redacts_a_token_quoted_by_a_transport_exception() -> None:
+    server, url = start_server()
+    try:
+        checks, report = validator.compatibility_smoke_checks(
+            api_url=url,
+            web_url=url,
+            correlation_id="corr-compat-redaction",
+            timeout=2.0,
+            retry_policy=_smoke_policy(timeout_seconds=2.0, deadline_seconds=30.0),
+            sleep=_RecordingSleep(),
+            api_invoker_token=_CRLF_SECRET,
+        )
+    finally:
+        server.shutdown()
+
+    assert not any(c.ok for c in checks)
+    assert any("<redacted>" in c.detail for c in checks)
+    _assert_no_crlf_secret(json.dumps(report) + json.dumps([[c.name, c.detail] for c in checks]))
+
+
+def test_smoke_cli_redacts_a_token_quoted_by_a_transport_exception(tmp_path: Path) -> None:
+    server, url = start_server()
+    report_path = tmp_path / "cloud-run-smoke.json"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(VALIDATOR_PATH),
+                "smoke",
+                "--api-url",
+                url,
+                "--web-url",
+                url,
+                "--expected-sha",
+                EXPECTED_SHA,
+                "--output",
+                str(report_path),
+            ],
+            cwd=ROOT,
+            env={**_smoke_cli_env(), "ODP_OPERATOR_SMOKE_BEARER_TOKEN": _CRLF_SECRET},
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        server.shutdown()
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ok"] is False
+    assert report["secret_values_redacted"] is True
+    _assert_no_crlf_secret(report_path.read_text(encoding="utf-8"))
+    _assert_no_crlf_secret(result.stdout + result.stderr)

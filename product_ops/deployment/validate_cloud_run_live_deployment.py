@@ -17,7 +17,9 @@ import json
 import math
 import os
 import re
+import socket
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -1701,31 +1703,140 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class _ExchangeDeadline:
+    """Wall-clock bound for one HTTP exchange, enforced from another thread.
+
+    A socket timeout only bounds each blocking read, so a peer that trickles
+    one byte per read can hold a response open indefinitely. When the bound
+    expires this shuts down every socket the exchange opened, which wakes the
+    blocked read; `expired` then lets the caller refuse whatever was read.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        self._lock = threading.Lock()
+        self._sockets: list[Any] = []
+        self.expired = threading.Event()
+        self._timer = threading.Timer(seconds, self._expire)
+        self._timer.daemon = True
+
+    def register(self, sock: Any) -> None:
+        with self._lock:
+            self._sockets.append(sock)
+            if self.expired.is_set():
+                self._shutdown(sock)
+
+    def _expire(self) -> None:
+        with self._lock:
+            self.expired.set()
+            for sock in self._sockets:
+                self._shutdown(sock)
+
+    @staticmethod
+    def _shutdown(sock: Any) -> None:
+        with contextlib.suppress(OSError):
+            sock.shutdown(socket.SHUT_RDWR)
+
+    def __enter__(self) -> _ExchangeDeadline:
+        self._timer.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._timer.cancel()
+
+
+def _deadline_connection(base: type, deadline: _ExchangeDeadline) -> type:
+    class _DeadlineConnection(base):  # type: ignore[misc, valid-type]
+        def connect(self) -> None:
+            super().connect()
+            deadline.register(self.sock)
+
+    return _DeadlineConnection
+
+
+class _DeadlineHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, deadline: _ExchangeDeadline) -> None:
+        super().__init__()
+        self._deadline = deadline
+
+    def http_open(self, req):  # noqa: ANN001
+        return self.do_open(_deadline_connection(http.client.HTTPConnection, self._deadline), req)
+
+
+class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, deadline: _ExchangeDeadline) -> None:
+        super().__init__()
+        self._deadline = deadline
+
+    def https_open(self, req):  # noqa: ANN001
+        return self.do_open(
+            _deadline_connection(http.client.HTTPSConnection, self._deadline),
+            req,
+            context=self._context,
+        )
+
+
 def _request(
     url: str,
     *,
     headers: Mapping[str, str],
     timeout: float,
 ) -> tuple[int, str, str]:
+    """GET ``url`` within ``timeout`` seconds of wall clock, end to end.
+
+    ``timeout`` bounds the whole exchange -- connect, status line, headers and
+    every byte of the body -- not each socket read. Once a status line has
+    arrived that status is the answer: a body that then fails, stalls or
+    outlives the bound raises ``ResponseBodyError`` carrying the received
+    status, never a no-response error a retry could replace.
+    """
+
     # Every caller probes the private API with its Cloud Run transport token
     # (and, for the operator bootstrap, the application bearer). urllib copies
     # those headers onto any redirect target, so a redirect is never followed:
     # the 3xx is returned as the probe's own non-200 verdict instead.
     request = urllib.request.Request(url, headers=dict(headers))
-    opener = urllib.request.build_opener(_NoRedirect)
-    try:
-        with opener.open(request, timeout=timeout) as response:  # noqa: S310
-            return (
-                response.status,
-                response.headers.get("content-type", ""),
-                response.read().decode("utf-8", errors="replace"),
-            )
-    except urllib.error.HTTPError as exc:
-        return (
-            exc.code,
-            exc.headers.get("content-type", ""),
-            exc.read().decode("utf-8", errors="replace"),
+    with _ExchangeDeadline(timeout) as deadline:
+        opener = urllib.request.build_opener(
+            _NoRedirect, _DeadlineHTTPHandler(deadline), _DeadlineHTTPSHandler(deadline)
         )
+        try:
+            response = opener.open(request, timeout=timeout)  # noqa: S310
+        except urllib.error.HTTPError as exc:
+            response = exc
+            status = exc.code
+        except (TimeoutError, urllib.error.URLError, OSError, http.client.HTTPException):
+            if deadline.expired.is_set():
+                raise TimeoutError(f"no response within {timeout}s") from None
+            raise
+        else:
+            status = response.status
+        with contextlib.closing(response):
+            content_type = response.headers.get("content-type", "")
+            try:
+                body = response.read()
+            except (OSError, ValueError, http.client.HTTPException) as exc:
+                reason = (
+                    f"body not complete within {timeout}s"
+                    if deadline.expired.is_set()
+                    else f"{type(exc).__name__}: {exc}"
+                )
+                raise ResponseBodyError(
+                    f"{url} answered status {status} but its body could not be read: {reason}",
+                    status=status,
+                    provenance=PROBE_UNREADABLE_BODY,
+                ) from exc
+            if deadline.expired.is_set():
+                # Shutting the socket down ends the stream cleanly, so a
+                # read-until-close body -- or headers still arriving after the
+                # status line -- can look complete. It is a truncation, not an
+                # answer, but the status that arrived stays on the record.
+                raise ResponseBodyError(
+                    f"{url} answered status {status} but the response was not complete "
+                    f"within {timeout}s",
+                    status=status,
+                    provenance=PROBE_UNREADABLE_BODY,
+                )
+    return status, content_type, body.decode("utf-8", errors="replace")
 
 
 def _request_without_redirect(
@@ -1884,7 +1995,7 @@ def _redact_location(location: str | None) -> str:
 
 
 class ResponseBodyError(ValueError):
-    """A response arrived, but its body is not a JSON object.
+    """A response arrived, but its body is unreadable or not a JSON object.
 
     Carries the received status and probe provenance so a bounded retry can
     tell this final answer apart from a request that never got one.
@@ -2214,6 +2325,69 @@ def _api_transport_headers(api_invoker_token: str) -> dict[str, str]:
     return {"x-serverless-authorization": f"Bearer {token}"} if token else {}
 
 
+REDACTED_SECRET = "<redacted>"
+
+
+def _secret_spellings(secrets: Iterator[str] | tuple[str, ...]) -> list[str]:
+    """Every way a diagnostic may spell one of ``secrets``, longest first.
+
+    Exceptions do not quote a header value verbatim: http.client rejects a
+    token holding CR/LF with ``Invalid header value b'Bearer ...\\r\\n...'``,
+    i.e. the bytes repr. Redacting only the raw string would miss exactly the
+    diagnostic that leaks it, so each secret is matched raw, stripped, as a
+    str/bytes repr and as JSON, plus any long fragment between control
+    characters that a message may print on its own.
+    """
+
+    spellings: set[str] = set()
+    for secret in secrets:
+        for value in {secret, secret.strip()}:
+            if not value:
+                continue
+            spellings.update(
+                {
+                    value,
+                    repr(value)[1:-1],
+                    json.dumps(value)[1:-1],
+                    repr(value.encode("utf-8", "backslashreplace"))[2:-1],
+                    repr(value.encode("latin-1", "backslashreplace"))[2:-1],
+                }
+            )
+            spellings.update(
+                part for part in re.split(r"[\s\x00-\x1f\x7f]+", value) if len(part) >= 8
+            )
+    return sorted((spelling for spelling in spellings if spelling), key=len, reverse=True)
+
+
+def _redact_secret_values(value: Any, spellings: list[str]) -> Any:
+    if isinstance(value, str):
+        for spelling in spellings:
+            value = value.replace(spelling, REDACTED_SECRET)
+        return value
+    if isinstance(value, CheckResult):
+        return replace(
+            value,
+            name=_redact_secret_values(value.name, spellings),
+            detail=_redact_secret_values(value.detail, spellings),
+        )
+    if isinstance(value, Mapping):
+        return {key: _redact_secret_values(item, spellings) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_secret_values(item, spellings) for item in value]
+    return value
+
+
+def _redact_known_secrets(
+    checks: list[CheckResult], report: dict[str, Any], *secrets: str
+) -> tuple[list[CheckResult], dict[str, Any]]:
+    """Scrub every known token from checks and report before they leave."""
+
+    spellings = _secret_spellings(secrets)
+    if not spellings:
+        return checks, report
+    return _redact_secret_values(checks, spellings), _redact_secret_values(report, spellings)
+
+
 def _missing_api_invoker_check(prefix: str) -> CheckResult:
     return CheckResult(
         False,
@@ -2494,10 +2668,20 @@ def smoke_checks(
                 ),
             )
         )
-    except (OSError, TimeoutError, urllib.error.URLError) as exc:
-        checks.append(CheckResult(False, "smoke:web:/operator", str(exc)))
+    except (
+        OSError,
+        TimeoutError,
+        ValueError,
+        http.client.HTTPException,
+        urllib.error.URLError,
+    ) as exc:
+        # ValueError covers a token http.client refuses to put on the wire; it
+        # used to escape as a traceback that printed the token itself.
+        checks.append(CheckResult(False, "smoke:web:/operator", f"{type(exc).__name__}: {exc}"))
 
-    return checks, report
+    return _redact_known_secrets(
+        checks, report, bearer_token, web_invoker_token, api_invoker_token
+    )
 
 
 # The migration compatibility gate is the first request the deployment sends to
@@ -2518,6 +2702,8 @@ COMPATIBILITY_PROBE_DEADLINE_SECONDS = 120.0
 # with a body we could not parse.
 PROBE_NO_RESPONSE = "no_response"  # transport failure or timeout: nothing came back
 PROBE_INVALID_REQUEST = "invalid_request"  # the request could not be built: a defective URL
+PROBE_MALFORMED_RESPONSE = "malformed_response"  # bytes came back, but no HTTP status line
+PROBE_UNREADABLE_BODY = "unreadable_body"  # a status arrived; the rest failed or ran late
 PROBE_UNPARSEABLE_BODY = "unparseable_body"  # a response arrived; its body was not JSON
 PROBE_NON_OBJECT_BODY = "non_object_body"  # a response arrived; its JSON was not an object
 PROBE_JSON_OBJECT = "json_object"  # a response arrived with a JSON object body
@@ -2525,6 +2711,8 @@ PROBE_PROVENANCES = frozenset(
     {
         PROBE_NO_RESPONSE,
         PROBE_INVALID_REQUEST,
+        PROBE_MALFORMED_RESPONSE,
+        PROBE_UNREADABLE_BODY,
         PROBE_UNPARSEABLE_BODY,
         PROBE_NON_OBJECT_BODY,
         PROBE_JSON_OBJECT,
@@ -2533,7 +2721,9 @@ PROBE_PROVENANCES = frozenset(
 # Nothing came back, so there is no status to record. These two differ only in
 # whether a retry could ever change the answer: a cold start can be outlasted, a
 # URL we cannot turn into a request cannot.
-PROBE_NO_STATUS_PROVENANCES = frozenset({PROBE_NO_RESPONSE, PROBE_INVALID_REQUEST})
+PROBE_NO_STATUS_PROVENANCES = frozenset(
+    {PROBE_NO_RESPONSE, PROBE_INVALID_REQUEST, PROBE_MALFORMED_RESPONSE}
+)
 # Positive allowlist rather than a substring probe: `"unhealthy" in text` is
 # true for the literal dependency value `"unhealthy"`, so a substring test
 # would pass the very verdict this gate exists to catch.
@@ -2719,7 +2909,11 @@ def probe_failure_is_transient(attempt: ProbeAttempt) -> bool:
     A request we could not even build (`invalid_request`) also received no
     response, but it is not transient: nothing was sent, so there is no cold
     start to outlast, and every retry would rebuild the identical broken
-    request and burn the deadline before failing the same way.
+    request and burn the deadline before failing the same way. The same holds
+    for a peer that answered without an HTTP status line
+    (`malformed_response`), and for a status whose body then failed, stalled
+    or outlived the exchange bound (`unreadable_body`): that status -- a 401,
+    403 or 503 included -- was received and is the answer.
     """
 
     return attempt.provenance == PROBE_NO_RESPONSE
@@ -2738,8 +2932,10 @@ def probe_json_endpoint(
     try:
         status, payload = _json_request(url, headers=headers, timeout=timeout)
     except ResponseBodyError as exc:
-        # A response exists -- `_request` converts HTTPError into a status and
-        # body -- so this is a received, final answer that is never retried.
+        # A status line arrived -- `_request` converts HTTPError into a status
+        # and body, and turns a body that fails, stalls or outlives the bound
+        # into this error -- so this is a received, final answer that is never
+        # retried and never loses its status.
         return ProbeAttempt(
             status=exc.status,
             payload=None,
@@ -2771,6 +2967,17 @@ def probe_json_endpoint(
             error=str(exc) or type(exc).__name__,
             elapsed_seconds=monotonic() - started,
             provenance=PROBE_NO_RESPONSE,
+        )
+    except http.client.HTTPException as exc:
+        # The peer answered with something that is not an HTTP status line
+        # (`BadStatusLine`, `LineTooLong`). That is not a cold start a retry can
+        # outlast, and before this arm it escaped as a traceback with no report.
+        return ProbeAttempt(
+            status=None,
+            payload=None,
+            error=f"{url} sent a malformed HTTP response: {type(exc).__name__}: {exc}",
+            elapsed_seconds=monotonic() - started,
+            provenance=PROBE_MALFORMED_RESPONSE,
         )
     return ProbeAttempt(
         status=status,
@@ -2932,7 +3139,7 @@ def compatibility_smoke_checks(
             )
         )
 
-    return checks, report
+    return _redact_known_secrets(checks, report, api_invoker_token)
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:
@@ -4083,7 +4290,9 @@ def _finalize(
     report: dict[str, Any],
     output: Path | None,
     label: str,
+    secrets: tuple[str, ...] = (),
 ) -> int:
+    checks, report = _redact_known_secrets(checks, report, *secrets)
     report.update(
         {
             "schema_version": 1,
@@ -4356,6 +4565,14 @@ def main() -> int:
             "Cloud Run live deployment smoke"
             if args.command == "smoke"
             else "Cloud Run migration compatibility smoke"
+        ),
+        secrets=tuple(
+            os.environ.get(name, "")
+            for name in (
+                "ODP_OPERATOR_SMOKE_BEARER_TOKEN",
+                API_INVOKER_TOKEN_ENV,
+                "ODP_WEB_CANDIDATE_INVOKER_TOKEN",
+            )
         ),
     )
 
