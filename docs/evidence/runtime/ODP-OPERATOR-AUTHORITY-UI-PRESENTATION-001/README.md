@@ -76,9 +76,26 @@ task 宣告的六條命令（`git diff --check`、四個 vitest 檔、`pnpm --di
 
 - 保留原始 Codex 對 exact `7e9f2ff6a998ae1c8e899a987bcccad5bfdf2440` 的實質 reopen（2026-10-10 14:10:42 UTC）。問題不是 API scope 洩漏，而是 ready listing snapshot 的 count state 被誤用到 withheld HeatZones，造成權威 `0 HeatZones`。
 - 在 unapproved task branch 以正常 merge 合成 `origin/dev` `898630feee855ad8e66024e0272c0dac50417413`；保留所有 task commits 與舊失敗收據，沒有 reset、rebase 或 force push。合併無衝突。
-- 現在 HeatZone count 與其 average confidence 使用独立 state：有授權 scoped rows、沒有 HeatZones 的 ready snapshot 顯示 `— …（未授權）`／`data-count-state=withheld`，不是已知零。listing、candidate、review 的 snapshot counts 仍是已讀取的結果，合法 row 不隱藏。
+- 現在 HeatZone count 與其 average confidence 使用獨立 state：有授權 scoped rows、沒有 HeatZones 的 ready snapshot 顯示 `— …（未授權）`／`data-count-state=withheld`，不是已知零。listing、candidate、review 的 snapshot counts 仍是已讀取的結果，合法 row 不隱藏。
 - Production Console regression 更新原本接受 fake zero 的測試；另外在有 scoped candidate/review rows、HeatZones withheld、scoring 403 的兩個實際 tab mounts 中確認 known row counts 與 withheld aggregates 分開。scoring 拒絕仍展示原始 403/correlation gate，不製造 score cards。完全空的合法 200 仍顯示 known zero。
-- 此段是 source/offline repair，不執行帳號／credential／bundle／journal recovery，也不聲稱新 bundle consumer、decrypted binding、部署或 F11 通過。後续以新 exact-head 六條宣告收據、required CI 與 Codex 獨立 review 決定 source 是否可合併。
+- 此段是 source/offline repair，不執行帳號／credential／bundle／journal recovery，也不聲稱新 bundle consumer、decrypted binding、部署或 F11 通過。後續以新 exact-head 六條宣告收據、required CI 與 Codex 獨立 review 決定 source 是否可合併。
+
+### P2 anchor 實測收據
+
+保留 source anchor `881572f906e0b6acf61f424873515b7c85021271` 的量測；以下每條命令的實際 exit 都是 0，並非依摘要猜測成功：
+
+| 命令／selection | duration (s) | verification receipt ID |
+|---|---:|---|
+| `git diff --check` | 0.015 | `90e5b5e73dd63ddc` |
+| 四檔 production/operator vitest（task 原宣告 selection） | 11.406 | `e44faa290f15d3ea` |
+| `pnpm --dir apps/web typecheck` | 17.456 | `9632449f58d1b070` |
+| `operatorReleasePage.test.ts` | 1.812 | `3fd7bc168e912d2b` |
+| `npm run build --workspace=@oday-plus/web` | 117.971 | `da59b0845e2b8729` |
+| `npm run bundle:budget --workspace=@oday-plus/web` | 0.678 | `c45c217274e9ed79` |
+
+`/operator` gzip **273.1 kB ≤ 300.0 kB**；沒有放寬門檻。runner 第一輪 wrapper exit 1 是因 build/budget 的 selection fingerprint 相同而拒絕執行 budget；不是 build/test 失敗，也不是已測得 budget 通過。之後以既有 verification policy API、明確 retry reason 只執行原宣告 budget，產生其自身 exit/duration receipt，沒有重跑前五項。offline tests 使用 `NODE_ENV=test`（各 production mounts 自行設定 production mode），build 仍是 Next production build。
+
+本 evidence commit 之後，正式 review head 的六項宣告驗證還需重新量測並通過 `task_finalize.sh` 的 exact-head gate；成功收據與 head 由 canonical submission/note 保存，不以這個 anchor 的結果替代新 head。
 
 ## 4. 未完成、不在本 task 範圍
 
