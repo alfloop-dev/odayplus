@@ -22,7 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -794,6 +794,92 @@ class DevCredentialBundleExecutor:
                 occurred_at=self._journal._now(), metadata={**metadata, "stage": stage},
             ))
         return event
+
+    def execute_and_check_gate(
+        self, plan: Any, *, gate_config: Any, worker_job: str,
+        gcp_region: str, gcp_project: str, **credentials: Any,
+    ) -> dict[str, Any]:
+        """Foreground-only same-process staging -> unchanged final live gate.
+
+        The caller must already hold authenticated custody/source approval and
+        exact dev admission, and own the promoted rollout's rollback boundary.
+        This library does NOT promote traffic or commit deployment. It avoids
+        GitHub's stale same-job secret context by passing the newly accepted pair
+        directly to the canonical evaluator in memory, never to shell/env/argv.
+        It does not verify GitHub's decrypted value: a later ordinary consumer
+        must still do that. No caller gate callback or passing receipt is accepted.
+        """
+        from delivery_toolchain.e2e import check_live_e2e_gate as gate
+
+        # Validate every known gate input before login, reservation or PUT. The
+        # template's standing/initial credentials are never used or inherited.
+        try:
+            if (type(gate_config) is not gate.GateConfig or not isinstance(plan, dict)
+                    or gate_config.expected_sha != credentials["release_sha"]
+                    or gate_config.expected_manifest_digest != credentials["manifest_digest"]
+                    or gate_config.release_profile != "dev-admin"
+                    or gate_config.expected_deployment != "dev"
+                    or gate_config.allow_http is not False
+                    or gate_config.external_provider_mode != "disabled"
+                    or gate_config.web_url != self._lifecycle._origin
+                    or any(not isinstance(v, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", v)
+                           for v in (worker_job, gcp_region, gcp_project))):
+                raise ValueError
+            config = replace(
+                gate_config, dev_admin_username=plan["username"],
+                dev_admin_password=credentials["new_password"],
+                dev_admin_initial_password="", bootstrap_admin_username="",
+                bootstrap_admin_password="", dev_admin_bundle_account_id="",
+                dev_admin_bundle_tenant_id="", dev_admin_bundle_execution_id="",
+            )
+            if not all(c.ok for c in gate.validate_config(config)):
+                raise ValueError
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_GATE_CONFIG_INVALID") from None
+
+        receipt = self.execute(plan, **credentials)
+        try:
+            config = replace(
+                config, dev_admin_bundle_account_id=receipt["account_id"],
+                dev_admin_bundle_tenant_id=TENANT_ID,
+                dev_admin_bundle_execution_id=receipt["execution_id"],
+            )
+            correlation = f"corr-dev-smoke-{receipt['execution_id']}"
+            http = gate.UrllibHttpClient(
+                gate._normalize_origin(config.api_url, allow_http=False), timeout=config.timeout,
+                bearer_token=config.bearer_token, operator_role=config.operator_role,
+                operator_subject=config.operator_subject, operator_tenant=config.operator_tenant,
+                correlation_id=correlation, transport_token=config.api_transport_token,
+            )
+            worker = gate.CloudRunWorkerDriver(
+                job=worker_job, region=gcp_region, project=gcp_project,
+                max_jobs=len(config.snapshot_provider_ids) + 4,
+                timeout=max(config.worker_deadline_seconds, 60.0),
+            )
+            checks, report = gate.evaluate_gate(
+                config, http=http, worker_driver=worker, correlation_id=correlation,
+                now=self._journal._now().isoformat(),
+                web_http=gate._web_client(config, correlation),
+            )
+            # Only the canonical evaluator's complete result counts, not an
+            # acknowledged upload, point-in-time readback or truthy status value.
+            passed = bool(checks) and all(c.ok is True for c in checks)
+            if (type(report.get("ok")) is not bool or report["ok"] != passed
+                    or report.get("expected_release_sha") != config.expected_sha
+                    or report.get("expected_deployment") != "dev"):
+                raise ValueError
+            if not passed:
+                self._journal.require_recovery(self._journal.inspect())
+            return {"provisioning": {**receipt, "live_gate_passed": passed,
+                                     "deployment_success": False,
+                                     "credential_binding_verified": False},
+                    "gate": report}
+        except Exception:
+            try:
+                self._journal.require_recovery(self._journal.inspect())
+            except Exception:
+                pass  # Reserved root/binding ACK still prevent lifecycle retry.
+            raise ProvisioningRefused("PROVISIONING_GATE_RECOVERY_REQUIRED") from None
 
     def execute(self, plan: Any, **credentials: Any) -> dict[str, Any]:
         """Same password goes to acceptance/fresh-login AND encrypted bundle.

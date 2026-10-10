@@ -760,3 +760,30 @@ validator, but proves only observation at those three points, not control-plane
 authority. Explicit remote reconciliation remains coordinator-owned. No worker
 live account/login/session, GitHub token/secret/config, IAM, deployment, source or
 model action. This is incremental source, not review-ready.
+
+## Anchor 14 — same-process canonical gate composition
+
+Added foreground-only `DevCredentialBundleExecutor.execute_and_check_gate`: the
+actual Web lifecycle and sealed-box binding ACK now compose with the existing
+canonical evaluator, HTTP clients and Cloud Run worker driver without reloading
+GitHub's stale same-job secret context. The same new password remains in process
+memory; no shell/env/argv/file transfer or caller-supplied passing gate receipt.
+Before lifecycle mutation, the method refuses mismatched SHA/digest, non-dev or
+full profile, different Web origin, HTTP, sources enabled or missing canonical
+inputs. Standing, initial and bootstrap credentials are cleared. The new subject,
+tenant and execution are required by the unchanged principal/invitation/journal
+checks; every session/business/model/persistence/worker check remains in place.
+
+Red or uncertain gate results quarantine the root. There is no auto retry, secret
+replacement/deletion, identity reset or other-session revocation. Even a positive
+evaluator result cannot claim GitHub decrypted-value readback or deployment success.
+The actual rollout owner must keep rollback armed and only commit after the final
+gate; this method itself does neither traffic promotion nor deployment commit.
+
+Offline coverage: real PG/router/session lifecycle and actual sealed-box staging,
+pre-mutation configuration negatives, a labelled evaluator composition spy (NOT
+live gate proof), actual canonical evaluator with unavailable HTTP and no worker
+process, and malformed/exception results. Verification pending at source anchor.
+Still missing: authenticated foreground custody/source approval/exact admission
+and promoted/rollback-owned wiring. No CLI/workflow hookup or live action; not
+review-ready. This increment resolves memory handoff, not rollout authority.

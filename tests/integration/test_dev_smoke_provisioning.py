@@ -1132,3 +1132,148 @@ def test_binding_audit_commit_failure_never_claims_ack_or_retries(
     assert web.calls.count(("POST", PATH)) == calls.count(("POST", PATH))
     assert len(remote.uploads) == (1 if failure == "binding-acknowledged" else 0)
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(2,)]
+
+
+def _foreground_gate_template(binding: Any, args: Any) -> Any:
+    from delivery_toolchain.e2e.check_live_e2e_gate import GateConfig
+    return GateConfig(
+        api_url="https://offline-api.example", web_url=binding._lifecycle._origin,
+        expected_sha=args["release_sha"], expected_manifest_digest=args["manifest_digest"],
+        expected_deployment="dev", release_profile="dev-admin", bearer_token="offline-service-token",
+        api_transport_token="offline-transport-token", operator_role="ops-lead",
+        external_provider_mode="disabled", required_provider_ids=(), dev_admin_denied_role="cs-lead",
+        dev_admin_username="ajoe734", dev_admin_password="stale-standing-password",
+        dev_admin_initial_password="stale-initial-password", bootstrap_admin_username="ajoe734",
+        bootstrap_admin_password="stale-bootstrap-password",
+    )
+
+
+@pytest.mark.parametrize("field,value", [
+    ("expected_sha", "f" * 40), ("expected_manifest_digest", "sha256:" + "f" * 64),
+    ("expected_deployment", "production"), ("release_profile", "full"),
+    ("allow_http", True), ("external_provider_mode", "live"),
+    ("web_url", "https://foreign-web.example"), ("api_url", "http://offline-api.example"),
+    ("api_transport_token", ""), ("bearer_token", ""), ("dev_admin_denied_role", ""),
+])
+def test_foreground_gate_invalid_inputs_refuse_before_lifecycle_or_put(
+    encrypted_binding: Any, field: str, value: Any,
+) -> None:
+    from dataclasses import replace
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, journal, binding, remote, _, plan, args = encrypted_binding
+    config = replace(_foreground_gate_template(binding, args), **{field: value})
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_GATE_CONFIG_INVALID"):
+        binding.execute_and_check_gate(plan, gate_config=config, worker_job="offline-worker",
+                                      gcp_region="asia-east1", gcp_project="offline-project", **args)
+    assert not web.calls and not remote.calls
+    assert journal.inspect() is None and binding.inspect() is None
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+
+
+def test_foreground_gate_receives_actual_matched_pair_after_durable_ack(
+    encrypted_binding: Any, monkeypatch: Any,
+) -> None:
+    """Composition spy only; the stub verdict is NOT live/independent gate evidence."""
+    import base64
+    import os
+    import subprocess
+    from nacl.public import SealedBox
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
+    s, web, journal, binding, remote, private_key, plan, args = encrypted_binding
+    before = dict(os.environ)
+    seen = []
+
+    def offline_evaluator(config: Any, **kwargs: Any) -> Any:
+        assert binding.inspect()["stage"] == "binding-acknowledged"
+        bundle = json.loads(SealedBox(private_key).decrypt(base64.b64decode(remote.uploads[0]["encrypted_value"])))
+        assert config.dev_admin_username == bundle["username"] == plan["username"]
+        assert config.dev_admin_password == bundle["password"] == args["new_password"]
+        assert config.dev_admin_bundle_account_id == bundle["account_id"]
+        assert config.dev_admin_bundle_tenant_id == bundle["tenant_id"]
+        assert config.dev_admin_bundle_execution_id == plan["execution_id"]
+        assert not config.dev_admin_initial_password and not config.bootstrap_admin_password
+        assert not config.bootstrap_admin_username
+        assert kwargs["worker_driver"]._job == "offline-worker"
+        seen.append(config)
+        return [gate.CheckResult(True, "offline:composition-only", "not live evidence")], {
+            "ok": True, "expected_release_sha": config.expected_sha, "expected_deployment": "dev",
+        }
+
+    monkeypatch.setattr(gate, "evaluate_gate", offline_evaluator)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("composition launched a process"))
+    result = binding.execute_and_check_gate(
+        plan, gate_config=_foreground_gate_template(binding, args), worker_job="offline-worker",
+        gcp_region="asia-east1", gcp_project="offline-project", **args,
+    )
+    assert len(seen) == len(remote.uploads) == 1
+    assert result["provisioning"]["live_gate_passed"] is True
+    assert result["provisioning"]["credential_binding_verified"] is False
+    assert result["provisioning"]["deployment_success"] is False
+    assert dict(os.environ) == before and journal.inspect().stage == "reserved"
+    for secret in (args["new_password"], args["admin_password"], "stale-standing-password", "offline-service-token"):
+        assert secret not in json.dumps(result)
+
+
+def test_foreground_actual_gate_failure_quarantines_without_retry(
+    encrypted_binding: Any, monkeypatch: Any,
+) -> None:
+    import subprocess
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, journal, binding, remote, _, plan, args = encrypted_binding
+
+    class UnavailableHTTP:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def request(self, *a: Any, **k: Any) -> Any:
+            return gate.HttpResponse(503, {"error": "offline unavailable"})
+
+    # Real canonical evaluator; only its HTTP boundary is an offline unavailable
+    # runtime. No evaluator override, success fixture, gate skip or cloud call.
+    monkeypatch.setattr(gate, "UrllibHttpClient", UnavailableHTTP)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("failed HTTP reached worker process"))
+    result = binding.execute_and_check_gate(
+        plan, gate_config=_foreground_gate_template(binding, args), worker_job="offline-worker",
+        gcp_region="asia-east1", gcp_project="offline-project", **args,
+    )
+    assert result["gate"]["ok"] is False and result["gate"]["blockers"]
+    assert result["gate"]["full_acceptance"]["status"] == "NOT_ADMITTED"
+    assert result["provisioning"]["live_gate_passed"] is False
+    assert result["provisioning"]["deployment_success"] is False
+    assert journal.inspect().stage == "recovery-required"
+    calls = list(web.calls), list(remote.calls)
+    with pytest.raises(ProvisioningRefused):
+        binding.execute_and_check_gate(
+            plan, gate_config=_foreground_gate_template(binding, args), worker_job="offline-worker",
+            gcp_region="asia-east1", gcp_project="offline-project", **args,
+        )
+    assert (web.calls, remote.calls) == calls
+    assert len(remote.uploads) == 1
+
+
+@pytest.mark.parametrize("fault", ["exception", "truthy-ok", "wrong-sha", "empty-checks", "inconsistent"])
+def test_foreground_gate_uncertain_result_is_not_success(
+    encrypted_binding: Any, monkeypatch: Any, fault: str,
+) -> None:
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, journal, binding, remote, _, plan, args = encrypted_binding
+
+    def uncertain(config: Any, **kwargs: Any) -> Any:
+        if fault == "exception":
+            raise RuntimeError(args["new_password"])
+        report = {"ok": 1 if fault == "truthy-ok" else True,
+                  "expected_release_sha": "f" * 40 if fault == "wrong-sha" else config.expected_sha,
+                  "expected_deployment": "dev"}
+        checks = [] if fault == "empty-checks" else [gate.CheckResult(fault != "inconsistent", "offline", "offline")]
+        return checks, report
+
+    monkeypatch.setattr(gate, "evaluate_gate", uncertain)
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_GATE_RECOVERY_REQUIRED") as error:
+        binding.execute_and_check_gate(
+            plan, gate_config=_foreground_gate_template(binding, args), worker_job="offline-worker",
+            gcp_region="asia-east1", gcp_project="offline-project", **args,
+        )
+    assert error.value.__cause__ is None and args["new_password"] not in str(error.value)
+    assert journal.inspect().stage == "recovery-required" and len(remote.uploads) == 1

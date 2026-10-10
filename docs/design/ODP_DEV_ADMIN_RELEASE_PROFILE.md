@@ -436,7 +436,19 @@ cannot authorize recovery. No decoded pair enters shell, arguments, files or
 workflow outputs. Standing bundle creation provenance is not relabelled when a
 later admitted candidate uses it. Without a bundle the existing binding is unchanged.
 
-Approved-foreground promoted-before-unchanged-gate orchestration and actual live
+`DevCredentialBundleExecutor.execute_and_check_gate` additionally composes the
+acknowledged lifecycle/binding with the canonical `evaluate_gate` in the **same
+foreground process**, using the newly accepted pair rather than reloading a
+GitHub job's stale secret context. Before any login/reservation/PUT it requires
+matching SHA/digest, dev-only profile, the same HTTPS Web origin, sources disabled,
+and all canonical gate inputs. It suppresses standing/initial/bootstrap credentials,
+binds the new account/tenant/execution, and uses the existing HTTP and Cloud Run
+worker drivers. A red or uncertain gate quarantines the root without retry or
+secret/account rollback; the rollout owner must restore traffic. A passing result
+still says `deployment_success=false` and `credential_binding_verified=false`:
+this is not a readback of GitHub's encrypted secret or a deployment commit.
+No CLI/workflow calls this method. Authenticated-foreground custody/source approval,
+exact admission and rollback-owned promoted-before-gate wiring, and actual live
 gate proof remain unfinished. PR1445 deployment/inventory, admission, IAM and
 finite-role gates remain intact. Independent review is required before use; the
 background worker creates no live account or secrets. Parsing/staging a bundle
