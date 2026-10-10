@@ -33,9 +33,43 @@ The pre-promotion/traffic restoration shell layer and final gate verdict are
 explicit spies, **not Cloud Run or live acceptance evidence**. Cases distinguish
 red gate, source loss, wrong context and a shell failure after gate success;
 preflight rejects foreign scope, credential-bearing environment, injected Bash
-init, dirty checkout or wrong SHA before shell/login. Declared verification has
-not yet run for this increment. Required exact-final-head CI/Codex review and
-foreground trust-root acquisition/activation remain pending.
+init, dirty checkout or wrong SHA before shell/login. Declared verification
+results follow. Required exact-final-head CI/Codex review and foreground
+trust-root acquisition/activation remain pending.
+
+### Original exit receipts at the rollout source anchor
+
+Measured head: `ddc845643a07535a022bd8e1292895c99c47b639`. This evidence-only
+update is not the measured source head. Completion is proven by original
+subprocess terminal exit codes, not log polling or inferred summary counts.
+
+| Exact declared command | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.019s | `ff9bb089ee1b2d1c` |
+| `uv run --frozen --python 3.12 pytest tests/security/test_dev_smoke_invitation.py tests/integration/test_dev_smoke_provisioning.py tests/contract/test_runtime_release_workflow.py -q` | 0 | 358.950s | `c2169fd81dd44de1` |
+| `uv run --frozen --python 3.12 pytest tests/e2e/test_live_e2e_gate_dev_admin.py tests/security/test_operator_read_authorization.py -q` | 0 | 41.661s | `e93930ec89b6eb80` |
+| `pnpm --dir apps/web exec vitest run src/app/auth/invitations/__tests__/route.test.ts` | 0 | 2.828s | `4f495c2f77c0ce52` |
+| `pnpm --dir apps/web typecheck` | 0 | 6.559s | `7be87a575f20167f` |
+
+Web first attempts exited **127**, each 0.001s: `c5f0cea719ec815c` and
+`0e9a909ad8c2a311`. The worker PATH lacked pnpm. An explicitly recorded same-head
+retry reason used the **existing** Corepack pnpm9.15.9 launcher plus repository
+`node_modules/.bin`, with no install or dependency change. Only those two failed
+selections were retried. Successful Python selections were not rerun.
+
+`task_finalize.sh --dry-run` exited **1** at the same source anchor. Its code
+boundary preflight found the prior remote journal router importing
+`delivery_toolchain.release.provision_dev_smoke` and
+`delivery_toolchain.e2e.check_live_e2e_gate` from product-system code
+(`apps/api/app/routes/operator_modules/users_roles.py`). Passing targeted tests
+does **not** waive that product/tooling boundary. No PR/review submission was
+made. The next task-owned increment must extract the server-side plan/journal
+and invitation-provenance predicates into shared identity code, compose the
+foreground tooling against it (no duplicate implementation or import bypass),
+and regenerate the existing boundary inventory. Then resolve lint preflight,
+run the unchanged exact declarations at final head and formally submit via
+`task_finalize.sh`. The inherited-socket rollout boundary itself is now present;
+this is an engineering follow-up, not a new Human/SMTP/DB-credential blocker.
 
 ## Anchor 1: internal invitation transaction layer
 
@@ -1220,8 +1254,9 @@ This later evidence-only commit is not that measured head.
 | `pnpm --dir apps/web exec vitest run src/app/auth/invitations/__tests__/route.test.ts` | 0 | 3.642s | `117563c2bfc37dc3` |
 | `pnpm --dir apps/web typecheck` | 0 | 15.381s | `765ff3cd7612e1ff` |
 
-**Concrete remaining boundary:** `deploy_cloud_run_waji.sh` still invokes only
-its normal canonical gate after promotion; it does not invoke the foreground
+**Historical remaining boundary at `1159cff1dd59` (superseded by the rollout
+increment at the top of this document):** `deploy_cloud_run_waji.sh` still invoked
+only its normal canonical gate after promotion; it did not invoke the foreground
 provisioning executor. The new transport and same-process bundle/gate compose
 without foreground DB access, but the rollout owner must wire an explicit,
 non-default trusted-foreground promoted-before-gate invocation inside that
