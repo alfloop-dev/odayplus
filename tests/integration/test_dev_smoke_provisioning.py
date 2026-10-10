@@ -409,3 +409,102 @@ def test_runtime_contract_is_exported_with_exact_invitation_paths_and_client(mon
         assert response.status_code == 503
         assert response.json() == {"error": {"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"}}
         assert PASSWORD not in response.text
+
+
+@pytest.fixture
+def foreground_plan_input() -> Any:
+    """Offline proposed request, not a custodian approval or live receipt."""
+    from datetime import UTC, datetime
+    from delivery_toolchain.release.provision_dev_smoke import (
+        AUTHORIZATION_ID, PRESERVED_ACCOUNT_ID, PURPOSE, REPOSITORY, TENANT_ID,
+    )
+    now = datetime(2026, 10, 10, 5, tzinfo=UTC)
+    account = {
+        "subject_id": PRESERVED_ACCOUNT_ID, "tenant_id": TENANT_ID, "username": "ajoe734",
+        "email": "ajoe734@odayplus.com.tw", "status": "active", "identity_source": "identity.accounts",
+        "roles": ["auditor", "operations_manager", "platform_admin"],
+        "scope": {"tenant_id": TENANT_ID, "clearance": "CONFIDENTIAL", **{axis: [] for axis in (
+            "brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids", "modules",
+        )}},
+    }
+    plan = {
+        "authorization_id": AUTHORIZATION_ID, "repository": REPOSITORY, "environment": "dev",
+        "release_profile": "dev-admin", "release_sha": "a" * 40, "manifest_digest": "sha256:" + "b" * 64,
+        "tenant_id": TENANT_ID, "actor_account_id": PRESERVED_ACCOUNT_ID, "purpose": PURPOSE,
+        "execution_id": "f56189b9-a0c2-4db2-aedb-78e1ff854cbb", "username": "release.smoke",
+        "email": "owner-approved@example.invalid", "recipient_custodian": "offline-custodian",
+        "recipient_control": "owner-controlled", "expires_at": "2026-10-10T05:30:00+00:00",
+    }
+    return plan, {"original_account": account, "release_sha": plan["release_sha"],
+                  "manifest_digest": plan["manifest_digest"], "now": now}
+
+
+def test_foreground_preflight_is_pure_and_never_claims_execution(foreground_plan_input: Any) -> None:
+    from copy import deepcopy
+    from delivery_toolchain.release.provision_dev_smoke import validate_foreground_plan
+    plan, context = foreground_plan_input
+    before = deepcopy((plan, context))
+    checked = validate_foreground_plan(plan, **context)
+    assert (plan, context) == before
+    assert checked.username == plan["username"] and checked.email == plan["email"]
+    assert plan["email"] not in repr(checked)
+    receipt = checked.to_receipt()
+    assert receipt["stage"] == "preflight-only" and receipt["execution_authorized"] is False
+    assert "deployment_success" not in receipt and "account_created" not in receipt
+    assert plan["email"] not in json.dumps(receipt)
+    # No CLI, cloud client, database service or workflow integration exists yet.
+    import delivery_toolchain.release.provision_dev_smoke as module
+    assert not hasattr(module, "main") and not hasattr(module, "execute")
+
+
+@pytest.mark.parametrize("key,value", [
+    ("authorization_id", "other-authorization"), ("repository", "other/repository"),
+    ("environment", "production"), ("release_profile", "full"),
+    ("tenant_id", OTHER_TENANT), ("actor_account_id", OTHER_TENANT), ("purpose", "business-admin"),
+    ("release_sha", "dev"), ("release_sha", "c" * 40), ("manifest_digest", "sha256:" + "c" * 64),
+    ("execution_id", "not-a-uuid"), ("execution_id", "00000000-0000-0000-0000-000000000000"),
+    ("execution_id", "F56189B9-A0C2-4DB2-AEDB-78E1FF854CBB"),
+    ("expires_at", "2026-10-10T05:00:00+00:00"), ("expires_at", "2026-10-10T06:00:01+00:00"),
+    ("expires_at", "2026-10-10T05:30:00"), ("expires_at", "bad-time"),
+    ("username", "AJOE734"), ("username", "release.smoke\n"), ("username", "ab"),
+    ("email", "AJOE734@ODAYPLUS.COM.TW"), ("email", "owner@example.invalid\n"),
+    ("recipient_control", "assumed-plus-alias"), ("recipient_custodian", ""),
+    ("recipient_custodian", "private\ninput"), ("password", "private-secret-do-not-echo"),
+    ("token", "private-secret-do-not-echo"), ("roles", ["platform_admin"]),
+    ("environment", True),
+])
+def test_foreground_preflight_refuses_unbound_or_secret_input(
+    foreground_plan_input: Any, key: str, value: Any,
+) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, validate_foreground_plan
+    plan, context = foreground_plan_input
+    plan[key] = value
+    with pytest.raises(ProvisioningRefused) as error:
+        validate_foreground_plan(plan, **context)
+    assert str(error.value).startswith("PROVISIONING_")
+    assert "private" not in str(error.value) and error.value.__cause__ is None
+
+
+@pytest.mark.parametrize("change", ["roles", "duplicate_role", "status", "tenant", "scope", "identity", "account", "clock"])
+def test_foreground_preflight_requires_exact_original_inventory(foreground_plan_input: Any, change: str) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, validate_foreground_plan
+    plan, context = foreground_plan_input
+    original = context["original_account"]
+    if change == "roles":
+        original["roles"].remove("operations_manager")
+    elif change == "duplicate_role":
+        original["roles"].append("platform_admin")
+    elif change == "status":
+        original["status"] = "disabled"
+    elif change == "tenant":
+        original["tenant_id"] = OTHER_TENANT
+    elif change == "scope":
+        original["scope"]["brand_ids"] = ["enlarged-scope"]
+    elif change == "identity":
+        original["identity_source"] = "request-headers"
+    elif change == "account":
+        original["subject_id"] = OTHER_TENANT
+    else:
+        context["now"] = context["now"].replace(tzinfo=None)
+    with pytest.raises(ProvisioningRefused):
+        validate_foreground_plan(plan, **context)

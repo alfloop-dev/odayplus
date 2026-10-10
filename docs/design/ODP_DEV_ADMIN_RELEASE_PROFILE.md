@@ -375,10 +375,18 @@ and accept event bindings. They never pretend this account was bootstrapped.
 The existing bootstrap and explicitly read-enabled branches remain intact;
 this invitation branch admits no additional roles or business authority.
 
-This is a **source contract, not activation evidence**. Human-bound foreground
-provisioning, encrypted matched dev credential binding/recovery and authorized
-promoted-before-gate orchestration still require completion and independent
-review before use. The background worker creates no live account or secrets.
+This is a **source contract, not activation evidence**. The partial
+`delivery_toolchain/release/provision_dev_smoke.py` preflight checks a non-secret
+foreground plan against the exact candidate/manifest tuple, repository, dev
+profile, tenant and original three-role account readback. It requires an explicit
+new username, recipient/custodian assertion, execution UUID and offset-aware
+expiry within one hour. These inputs are proposals, **not** authenticated
+custodian approval, mailbox verification, release admission or durable single-use
+consumption; its receipt explicitly says `execution_authorized=false`. It has no
+executor, CLI or workflow wiring. Human-bound foreground provisioning, encrypted
+matched dev credential binding/recovery and authorized promoted-before-gate
+orchestration still require completion and independent review before use. The
+background worker creates no live account or secrets.
 
 ## 6. Operator / coordinator handoff
 

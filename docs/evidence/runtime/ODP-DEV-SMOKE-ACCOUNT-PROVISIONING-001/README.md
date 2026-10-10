@@ -377,3 +377,41 @@ must supply an explicitly approved new username/owner-controlled email and
 original administrator credentials; no fabricated recipient or worker access.
 No live login, credential access, account mutation, GH secret/config write, IAM,
 source activation, model promotion or deployment occurred. Not review-ready.
+
+## Base composition / foreground preflight increment (2026-10-10)
+
+Normal non-rewriting merge at `411973d2d4986abf073ab543755e58b02d1c7de1`
+composed `origin/dev=0dd210dbe04fb420825abbddc08c8d3141de9ab1` with prior
+`097d80a6dbfe0ed08e1e99a3317d32685d6b1003`. Both are parents; no reset,
+rebase, discard or force push. Merge had no conflicts. PR1445's service-level
+API/Web warm-instance logic, test and inventory entry are preserved verbatim.
+
+All five declared commands completed at that merge head through the canonical
+verification runner (original foreground terminal exit 0):
+
+| Declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.016s | `36b2c32d5feac31e` |
+| Invitation/provisioning/workflow pytest | 0 | 84.257s | `b8c9497756467990` |
+| Existing gate/operator pytest | 0 | 43.713s | `91f1eb60124ba246` |
+| Invitation Web Vitest | 0 | 2.257s | `b9ab7ef65f3d1f4a` |
+| Web typecheck | 0 | 5.825s | `b52a7cd914bd3838` |
+
+The subsequent source increment adds **only a pure preflight validator**, not
+an executor, CLI or workflow binding. It rejects unknown/secret-bearing fields,
+wrong repo/environment/profile/tenant/purpose/original actor, mismatched exact
+candidate/manifest, missing/noncanonical execution UUID, expired/naive/over-one-
+hour windows, original-account roles/status/scope/identity changes and reuse of
+its username/email. It requires explicit recipient/custodian assertions without
+claiming authenticated ownership or alias deliverability. Static refusal codes
+never echo inputs; identifier-only receipts say `execution_authorized=false`.
+Offline tests are part of the already declared provisioning selection.
+
+The preflight cannot authenticate a custodian, independently verify the human
+record/admission or durably consume the execution UUID. Future orchestration
+must do those **before any** account or configuration mutation. Encrypted matched
+GH dev binding/recovery, promoted-before-unchanged-gate wiring, exact-head CI and
+independent Codex review remain incomplete. No new live execution is enabled.
+The base receipts above do not attest this later source increment; it needs its
+own measured head. No account, password, other session, IAM, source/model,
+secret/configuration or deployment was accessed or changed by this worker.
