@@ -11,10 +11,16 @@ Routes (all under /operator/users):
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
+
+from shared.auth import Principal
+from shared.identity.invitation_service import InvitationRefused, InvitationService
 
 from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.user_role_management import (
@@ -68,6 +74,45 @@ class UserStatusPayload(BaseModel):
     status: str
     reason: str = ""
     actorName: str | None = None
+
+
+class InvitationIssuePayload(BaseModel):
+    """No caller-supplied actor, tenant, roles, scope or account identifier."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    email: str = Field(min_length=3, max_length=320)
+    lifetime_seconds: int = Field(default=3600, ge=1, le=259200)
+
+
+async def _invitation_body(request: Request) -> dict[str, Any]:
+    # Do not let FastAPI's default validation handler echo input. Even an
+    # unexpected field or malformed request could contain a password/token.
+    if request.headers.get("content-type", "").split(";", 1)[0].strip() != "application/json":
+        raise HTTPException(415, detail={"code": "INVITATION_JSON_REQUIRED"})
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 4096:
+            raise HTTPException(413, detail={"code": "INVITATION_BODY_TOO_LARGE"})
+    try:
+        parsed = json.loads(body)
+        if not isinstance(parsed, dict):
+            raise ValueError()
+        return parsed
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(422, detail={"code": "INVITATION_INPUT_INVALID"}) from None
+
+
+def _invitation_error(exc: InvitationRefused) -> JSONResponse:
+    code = exc.code
+    http_status = 403 if code in {
+        "INVITATION_ADMIN_REQUIRED", "INVITATION_TENANT_REQUIRED",
+        "INVITATION_SESSION_REQUIRED", "INVITATION_ADMIN_SESSION_INVALID",
+    } else 404 if code == "INVITATION_NOT_FOUND" else 409 if code in {
+        "INVITATION_ACCOUNT_EXISTS", "INVITATION_PENDING_EXISTS", "INVITATION_UNAVAILABLE",
+    } else 422
+    return JSONResponse({"error": {"code": code}}, status_code=http_status,
+                        headers={"cache-control": "no-store"})
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +206,64 @@ def create_user_role_sub_router(
             "correlation_id": getattr(request.state, "correlation_id", None),
         }
 
+    def invitation_context(request: Request) -> tuple[InvitationService, Principal]:
+        # ONLY the existing permission dependency's verified Principal. Never
+        # construct one from request headers/body or a selected console persona.
+        principal = getattr(request.state, "operator_principal", None)
+        if not require_manage_permission_fn or not isinstance(principal, Principal):
+            raise HTTPException(403, detail={"code": "INVITATION_ADMIN_REQUIRED"})
+        svc = get_svc(request)
+        if not getattr(svc, "requires_tenant", False):
+            raise HTTPException(503, detail={"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"})
+        invitations = svc.invitation_service
+        if not isinstance(invitations, InvitationService):
+            raise HTTPException(503, detail={"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"})
+        return invitations, principal
+
+    @router.post("/invitations", dependencies=manage_deps)
+    async def issue_invitation(request: Request) -> JSONResponse:
+        try:
+            parsed = await _invitation_body(request)
+            try:
+                payload = InvitationIssuePayload.model_validate(parsed)
+            except ValidationError:
+                raise HTTPException(422, detail={"code": "INVITATION_INPUT_INVALID"}) from None
+            invitations, principal = invitation_context(request)
+            result = await run_in_threadpool(invitations.issue, principal, **payload.model_dump())
+            # Capability is returned once to the verified issuer, for private
+            # in-memory custody only. Receipt/audit representations exclude it.
+            return JSONResponse({**result.to_receipt(), "token": result.token}, status_code=201,
+                                headers={"cache-control": "no-store"})
+        except InvitationRefused as exc:
+            return _invitation_error(exc)
+        except HTTPException as exc:
+            code = exc.detail.get("code", "INVITATION_INPUT_INVALID") if isinstance(exc.detail, dict) else "INVITATION_INPUT_INVALID"
+            return JSONResponse({"error": {"code": code}}, status_code=exc.status_code,
+                                headers={"cache-control": "no-store"})
+        except Exception:
+            return JSONResponse({"error": {"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"}},
+                                status_code=503, headers={"cache-control": "no-store"})
+
+    @router.post("/invitations/{invitation_id}/revoke", dependencies=manage_deps)
+    async def revoke_invitation(invitation_id: str, request: Request) -> JSONResponse:
+        try:
+            if await _invitation_body(request):
+                raise HTTPException(422, detail={"code": "INVITATION_INPUT_INVALID"})
+            invitations, principal = invitation_context(request)
+            result = await run_in_threadpool(invitations.revoke, principal, invitation_id=invitation_id)
+            return JSONResponse(result, headers={"cache-control": "no-store"})
+        except InvitationRefused as exc:
+            return _invitation_error(exc)
+        except HTTPException as exc:
+            code = exc.detail.get("code", "INVITATION_INPUT_INVALID") if isinstance(exc.detail, dict) else "INVITATION_INPUT_INVALID"
+            return JSONResponse({"error": {"code": code}}, status_code=exc.status_code,
+                                headers={"cache-control": "no-store"})
+        except Exception:
+            return JSONResponse({"error": {"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"}},
+                                status_code=503, headers={"cache-control": "no-store"})
+
+    # Acceptance remains internal until the bounded Web capability adapter and
+    # durable abuse controls land; do not expose an unfinished public endpoint.
     @router.get("/{subject_id}", dependencies=read_deps)
     def get_user(subject_id: str, request: Request) -> dict[str, Any]:
         svc = get_svc(request)

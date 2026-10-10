@@ -90,6 +90,13 @@ class IdentityUserRoleManagementService:
         self._engine = engine
         self._audit_log = audit_log
 
+    @property
+    def invitation_service(self) -> Any:
+        """Same transaction/audit authority; never a document-store fallback."""
+        from shared.identity.invitation_service import InvitationService
+
+        return InvitationService(engine=self._engine, audit_log=self._audit_log)
+
     # ── reads ─────────────────────────────────────────────────────────────
 
     def _require_tenant(self, tenant_id: str | None) -> str:

@@ -40,19 +40,52 @@ that commit with no diffs. The current implementation adds:
   preset tampering, case-insensitive collisions and audit rollback/recovery.
   These are application-layer cases, not invitation-router coverage.
 
-Verification declaration is **none**. No tests, builds, linters, live requests,
-credentials reads or configuration writes were run. No test-pass claim is made.
+At anchor 1, verification was declared **none** and no tests were run. The
+canonical declaration was updated at 2026-10-10 03:27 UTC to require diffcheck,
+invitation/integration/workflow regressions and the existing dev-admin gate /
+operator authorization regressions. Results must be bound to their measured
+head by `task_verification.py` receipts; no test-pass claim is made here.
+
+## Anchor 2: authenticated issuance/revocation adapter
+
+The existing `IdentityUserRoleManagementService` exposes the same-engine
+invitation service. Its existing live composition mounts these two routes in
+`apps/api/app/routes/operator_modules/users_roles.py`:
+
+- `POST /api/v1/operator/users/invitations` (JSON email / optional lifetime).
+- `POST /api/v1/operator/users/invitations/{id}/revoke` (empty JSON object).
+
+Both reuse the existing `user:UPDATE` dependency and require its verified
+`request.state.operator_principal`; the core additionally requires persisted
+platform-admin and a valid account-bound session. No trusted-header, request
+actor, document-store, missing-guard or fake-principal fallback is used.
+Strict request fields, bounded JSON (4096 bytes), no input echo on validation
+failure, safe infrastructure errors, threadpool execution and no-store responses
+protect private capability custody. The token is returned once in the successful
+authenticated issuance response, never in an identifier receipt or audit event.
+
+`tests/integration/test_dev_smoke_provisioning.py` now exercises those actual
+routers with the existing production boundary / real PostgreSQL fixture, not
+permission overrides. Cases cover anonymous/header forgery/wrong-role/rotation/
+revocation denial before service calls, strict/oversized/malformed input,
+server-fixed tenant/actor, duplicate/revocation recovery, safe audit-failure
+rollback and concurrent acceptance through independent PostgreSQL engines.
+These are offline source regressions, not account or deployment receipts.
+
+**Acceptance is still internal**, deliberately not exposed as an unfinished
+public endpoint. The bounded Web/BFF capability adapter and durable abuse
+controls must land before an acceptance HTTP route is enabled. No Web, GH,
+workflow, deployment, IAM or gate changes are part of anchor 2.
 
 ## Remaining work (must precede review)
 
-1. Mount issuance/revocation under the canonical authenticated user-admin
-   router, with verified principal only (no header fallback), and token-only
-   acceptance via the existing Web/BFF trust boundary. Strict DTOs must not
-   echo passwords/tokens in validation responses; no-store responses, origin/
-   CSRF policy, bounded bodies and acceptance abuse controls are required.
-2. Complete actual-router and PostgreSQL concurrency/rollback regressions.
-   Register narrowly scoped verification commands with the coordinator before
-   running them; the current task declares none.
+1. Complete token-only acceptance via the existing Web/BFF trust boundary.
+   Strict DTOs must not echo passwords/tokens in validation responses; no-store
+   responses, origin/CSRF policy, bounded bodies and durable acceptance abuse
+   controls are required. Issuance/revocation are now mounted as above.
+2. Execute the canonical declared regressions, repair any findings, and extend
+   actual acceptance-router coverage. Declare focused Web checks with the
+   coordinator before implementing/executing those adapters.
 3. Implement explicit one-time Human-bound foreground provisioning and recovery
    within a normally signed/admitted dev rollout after route availability,
    before the unchanged finite live gate. Bind environment/repo/tenant/purpose,
