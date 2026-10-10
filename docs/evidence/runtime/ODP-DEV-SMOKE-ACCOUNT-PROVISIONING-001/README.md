@@ -455,3 +455,31 @@ foreground approval/custody, memory-only Web invite/accept, encrypted matched
 GitHub dev binding and recovery, promoted-before-unchanged-gate orchestration,
 required exact-head CI, independent Codex review and formal review submission
 remain outstanding. PR1445 deployment/inventory is untouched. Not review-ready.
+
+### Exact journal-anchor verification
+
+Canonical `task_verification.py` completed all five exact declarations at
+`024cded34162e824357ee14f39ec675e171b791a`. The original foreground runner
+returned exit 0; no background/summary polling or broader test selection:
+
+| Declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.029s | `fdb6b138e5f8e689` |
+| Invitation/provisioning/workflow pytest | 0 | 96.431s | `81f064e90f99d868` |
+| Existing gate/operator pytest | 0 | 44.778s | `8e0390e08eca0699` |
+| Invitation Web Vitest | 0 | 2.304s | `24185a8b71018178` |
+| Web typecheck | 0 | 5.888s | `60f23160e35256c7` |
+
+The first run's Python commands both exited 127 before launch because the fresh
+worker PATH omitted the existing `/home/lupin/.local/bin/uv`. Its receipts are
+retained (`4b2392ac255c3983`, `e93d422646594319`), together with the first run's
+successful diff/Web/typecheck (`fad4f5ceeefcf08f`, `6251c80b02298824`,
+`ebe1fa70d8298f94`). The explicit retry reason permitted remeasurement of all
+five declarations at the same head after adding that existing directory. The
+existing scratch Corepack pnpm shim and npm workspace binary PATH were reused;
+no installation, dependency or tracked config changes were needed. Original
+runner receipts were copied into canonical `.orchestrator/evidence`.
+
+These receipts attest the source anchor above, not this later evidence-only
+follow-up's SHA, CI, human approval, mailbox custody, account/configuration
+execution or deployment success. The task stays in progress, not review.
