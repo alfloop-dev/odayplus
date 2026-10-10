@@ -17,10 +17,14 @@ const RECEIPT = { status: "accepted", invitation_id: INVITATION,
   audit_event_id: "3f2d9a7b-2a79-4887-bdc0-b96c3f1d3a14" };
 
 function request(body: unknown = BODY, headers: Record<string, string> = {}, suffix = ""): NextRequest {
-  return new NextRequest(`${ORIGIN}/auth/invitations${suffix}`, {
-    method: "POST", headers: { "content-type": "application/json", origin: ORIGIN, ...headers },
+  const req = new NextRequest(`${ORIGIN}/auth/invitations${suffix}`, {
+    method: "POST", headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
+  // happy-dom removes forbidden Origin during Request construction. Set it
+  // after construction, as the existing password/login route suites do.
+  req.headers.set("origin", headers.origin ?? ORIGIN);
+  return req;
 }
 
 beforeEach(() => {
@@ -90,9 +94,11 @@ describe("bounded invitation capability acceptance BFF (no login or credential o
     expect((await POST(request(BODY, {}, "?token=private-secret"))).status).toBe(422);
     expect((await POST(request(BODY, { "content-type": "text/plain" }))).status).toBe(415);
     for (const body of ['{"private-secret":', '"' + "s".repeat(9000) + '"']) {
-      const response = await POST(new NextRequest(`${ORIGIN}/auth/invitations`, {
-        method: "POST", headers: { origin: ORIGIN, "content-type": "application/json" }, body,
-      }));
+      const req = new NextRequest(`${ORIGIN}/auth/invitations`, {
+        method: "POST", headers: { "content-type": "application/json" }, body,
+      });
+      req.headers.set("origin", ORIGIN);
+      const response = await POST(req);
       expect(response.status).toBe(422);
       expect(await response.text()).not.toContain("private-secret");
     }

@@ -159,6 +159,29 @@ receipts; the above passes do not attest the repair. Full command strings,
 head, exit, duration and output tails are in the canonical runner's existing
 `.orchestrator/evidence/verification-odp_dev_smoke_account_provisioning_001-*.json`.
 
+## Anchor 5 measured regression checkpoint
+
+At `a77b6428abfd346e0797692d4abd4e3bb24b2142`, initial canonical runs passed
+both pytest selections and diffcheck. pnpm 12 tried to auto-install the npm
+workspaces from the public registry and refused unresolved private workspace
+packages; neither Web test started successfully. This is not a source failure.
+An explicit infrastructure retry activated pnpm 9.15.9 through Corepack and
+added the repository's npm-installed `node_modules/.bin` to PATH. It recorded:
+
+| Declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| Diffcheck | 0 | 0.017s | `6f820d2c7617433d` |
+| Invitation/provisioning/workflow pytest | 0 | 61.759s | `8e6393b3c67b85e0` |
+| Existing gate/operator pytest | 0 | 49.374s | `3267c5fd680fe6ab` |
+| Invitation Vitest | 1 | 2.962s | `eb5188518c18b1be` |
+| Web typecheck | 0 | 25.460s | `230d5ca427cd6a00` |
+
+Vitest now actually launched. Its failures consistently stopped at CSRF 403:
+like the existing password/login tests, happy-dom strips forbidden `Origin`
+when constructing Request. The new tests now set it **after** construction;
+the production CSRF guard is not changed or mocked. This fixture repair needs
+new-head receipts. No test count was inferred or broader suite launched.
+
 ## Remaining work (must precede review)
 
 1. Activate the bounded acceptance factory/Web adapter only after middleware
