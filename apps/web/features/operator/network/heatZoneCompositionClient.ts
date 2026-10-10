@@ -1,5 +1,6 @@
 import type { OperatorRoleId } from "../navigation";
 import { operatorSecurityHeaders } from "../operatorSecurityHeaders";
+import { OperatorLoadFailureError, operatorLoadFailureFromResponse } from "../operatorDataMode";
 import type {
   HeatZoneProposal,
   ProposalPreviewData,
@@ -29,15 +30,20 @@ export function buildHeatZoneCompositionClient(
       const url = status && status !== "ALL"
         ? `/api/v1/heatzones/merge-split/proposals?status=${encodeURIComponent(status)}`
         : "/api/v1/heatzones/merge-split/proposals";
+      const correlationId = `corr-hz006-proposals-list-${Date.now()}`;
       const response = await fetch(url, {
         cache: "no-store",
         headers: {
           ...headers,
-          "X-Correlation-Id": `corr-hz006-proposals-list-${Date.now()}`,
+          "X-Correlation-Id": correlationId,
         },
       });
       if (!response.ok) {
-        return [];
+        // A refused list is not an empty proposal queue: surface the typed
+        // failure (status, canonical code, correlation ID) to the workspace.
+        throw new OperatorLoadFailureError(
+          await operatorLoadFailureFromResponse(response, "heatzone merge-split proposals", correlationId),
+        );
       }
       const data = await response.json();
       return (data.items || []) as HeatZoneProposal[];

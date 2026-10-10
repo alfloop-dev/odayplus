@@ -17,6 +17,7 @@ import {
   exportEvidencePackage,
   fetchGovernanceSnapshot,
   submitGovernanceDecision,
+  type GovernanceActionAuthority,
   type GovernanceSnapshot,
   type GovernanceStatusBoard,
   type GovernanceStatusRow,
@@ -54,9 +55,15 @@ export type GovernanceWorkspaceProps = {
   approvals?: GovernanceApproval[];
   decisions?: GovernanceDecisionRow[];
   auditRows?: GovernanceAuditRow[];
+  /** Selected workspace persona label: a view, never decision authority. */
   role?: GovernanceRole;
   /** Operator role id used for the X-Operator-Role snapshot header. */
   roleId?: string;
+  /**
+   * Caller-side ceiling on decision controls. It can only narrow: decision
+   * controls also need the snapshot's server-verified `actionAuthority`
+   * (local/POC fixture mode without a verified answer excepted).
+   */
   canDecide?: boolean;
   canComment?: boolean;
   callbacks?: GovernanceWorkspaceCallbacks;
@@ -331,13 +338,65 @@ export function inspectGovernanceSnapshot(
   return hasRequiredShape && hasRows ? "ready" : "empty";
 }
 
+export type GovernanceDecisionAuthorityState = "granted" | "denied" | "unverified";
+
+export type GovernanceDecisionAuthority = {
+  canDecide: boolean;
+  canExport: boolean;
+  state: GovernanceDecisionAuthorityState;
+  /** Server-verified platform roles; empty when unverified. */
+  systemRoles: string[];
+};
+
+/**
+ * Decision controls follow the authenticated principal's server-verified
+ * authority, never the selected persona: a platform_admin/auditor viewing the
+ * 營運主管 workspace is still read-only for business decisions. Production
+ * without a verified answer confirms nothing; only local/POC fixture mode may
+ * fall back to the caller's flag.
+ */
+export function resolveGovernanceDecisionAuthority({
+  callerAllows,
+  fixturesAllowed,
+  serverAuthority,
+}: {
+  callerAllows: boolean;
+  fixturesAllowed: boolean;
+  serverAuthority: GovernanceActionAuthority | null;
+}): GovernanceDecisionAuthority {
+  if (serverAuthority?.verified) {
+    const canDecide = callerAllows && serverAuthority.decide;
+    return {
+      canDecide,
+      canExport: serverAuthority.exportEvidence,
+      state: canDecide ? "granted" : "denied",
+      systemRoles: serverAuthority.systemRoles,
+    };
+  }
+  if (fixturesAllowed) {
+    return {
+      canDecide: callerAllows,
+      canExport: true,
+      state: callerAllows ? "granted" : "denied",
+      systemRoles: [],
+    };
+  }
+  return { canDecide: false, canExport: false, state: "unverified", systemRoles: [] };
+}
+
+const DECISION_AUTHORITY_LABEL: Record<GovernanceDecisionAuthorityState, string> = {
+  granted: "可決策",
+  denied: "僅可查看",
+  unverified: "決策權限未確認",
+};
+
 export function GovernanceWorkspace({
   approvals: approvalsProp,
   decisions: decisionsProp,
   auditRows: auditRowsProp,
   role = "營運主管",
   roleId,
-  canDecide = true,
+  canDecide: callerAllowsDecision = true,
   canComment = true,
   callbacks,
 }: GovernanceWorkspaceProps) {
@@ -386,6 +445,7 @@ export function GovernanceWorkspace({
     fixturesAllowed ? "fixture" : "loading",
   );
   const [apiLoadError, setApiLoadError] = useState<string | null>(null);
+  const [serverAuthority, setServerAuthority] = useState<GovernanceActionAuthority | null>(null);
 
   const [activeTab, setActiveTab] = useState<GovernanceTab>("approvals");
   const [selectedApprovalId, setSelectedApprovalId] = useState(localApprovals[0]?.id ?? "");
@@ -427,6 +487,7 @@ export function GovernanceWorkspace({
     if (!fixturesAllowed) setApiLoadState("loading");
     setApiLoadError(null);
     const snapshot = await fetchGovernanceSnapshot(roleId);
+    setServerAuthority(snapshot?.actionAuthority ?? null);
     if (!snapshot) {
       setApiLoadState(fixturesAllowed ? "fixture" : "error");
       setApiLoadError("Governance snapshot API 無法完成讀取。");
@@ -527,6 +588,12 @@ export function GovernanceWorkspace({
   }, [auditRows, apiActive]);
 
   const pendingCount = localApprovals.filter((approval) => approval.status === "pending").length;
+  const decisionAuthority = resolveGovernanceDecisionAuthority({
+    callerAllows: callerAllowsDecision,
+    fixturesAllowed,
+    serverAuthority,
+  });
+  const canDecide = decisionAuthority.canDecide;
   const sortedApprovals = useMemo(
     () =>
       [...localApprovals].sort((left, right) => {
@@ -900,8 +967,20 @@ export function GovernanceWorkspace({
         </div>
         <div className={styles.headerStats} aria-label="Governance state">
           <span>{pendingCount} 件待核准</span>
-          <span>{role}</span>
-          <span>{canDecide ? "可決策" : "僅可查看"}</span>
+          <span data-testid="governance-workspace-persona" title="工作台視角，不代表決策權限">
+            視角：{role}
+          </span>
+          <span
+            data-authority={decisionAuthority.state}
+            data-testid="governance-decision-authority"
+            title={
+              decisionAuthority.systemRoles.length
+                ? `伺服器驗證的帳號角色：${decisionAuthority.systemRoles.join("、")}`
+                : undefined
+            }
+          >
+            {DECISION_AUTHORITY_LABEL[decisionAuthority.state]}
+          </span>
         </div>
       </header>
 
@@ -1092,8 +1171,12 @@ export function GovernanceWorkspace({
                           </button>
                         </div>
                       ) : (
-                        <div className={styles.readOnlyNotice}>
-                          目前角色僅可查看 — 核准需營運主管或 PM／稽核
+                        <div className={styles.readOnlyNotice} data-testid="governance-decision-readonly">
+                          {decisionAuthority.state === "unverified"
+                            ? "尚未取得伺服器驗證的決策權限，核准、退回與駁回不開放。"
+                            : decisionAuthority.systemRoles.length
+                              ? `此帳號僅可查看 — 伺服器驗證的帳號角色（${decisionAuthority.systemRoles.join("、")}）不含核准權限；工作台視角「${role}」不代表決策權限。`
+                              : "目前帳號僅可查看 — 核准需具備核准權限的帳號。"}
                         </div>
                       )}
                     </>
@@ -1352,12 +1435,19 @@ export function GovernanceWorkspace({
             <button
               className={styles.exportButton}
               data-testid="governance-export-button"
-              disabled={evdRunning}
+              disabled={evdRunning || !decisionAuthority.canExport}
               onClick={handleExport}
               type="button"
             >
               {evdRunning ? "產生中…" : "產生 Evidence Package"}
             </button>
+            {decisionAuthority.canExport ? null : (
+              <p className={styles.readOnlyNotice} data-testid="governance-export-readonly">
+                {decisionAuthority.state === "unverified"
+                  ? "尚未取得伺服器驗證的匯出權限，無法產生 Evidence Package。"
+                  : "此帳號的伺服器授權不含 Evidence Package 匯出權限。"}
+              </p>
+            )}
 
             {evdResult ? (
               <div className={styles.exportResult} data-testid="evidence-package-result">

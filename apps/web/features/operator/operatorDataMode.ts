@@ -221,6 +221,88 @@ export function classifyLoadFailure(
   return "unknown";
 }
 
+/**
+ * Build the failure from a refused HTTP read. The status and the canonical
+ * error envelope (`error.code`, `error.correlation_id`, see shared/api/errors.py)
+ * decide the kind, so a received 403 is an authenticated denial and never a
+ * transport failure, whatever words the endpoint path happens to contain.
+ */
+export async function operatorLoadFailureFromResponse(
+  response: Response,
+  label: string,
+  requestCorrelationId?: string,
+): Promise<OperatorLoadFailure> {
+  let code: string | undefined;
+  let correlationId: string | undefined;
+  let message: string | undefined;
+  try {
+    const body = asRecord(await response.clone().json());
+    const envelope = asRecord(body?.error);
+    code = typeof envelope?.code === "string" ? envelope.code : undefined;
+    correlationId =
+      typeof envelope?.correlation_id === "string" ? envelope.correlation_id : undefined;
+    message =
+      typeof envelope?.message === "string"
+        ? envelope.message
+        : typeof body?.detail === "string"
+          ? body.detail
+          : undefined;
+  } catch {
+    // A non-JSON refusal still has its status; the kind comes from that.
+  }
+  const httpStatus = response.status;
+  const kind =
+    code === "forbidden"
+      ? "forbidden"
+      : code === "unauthorized"
+        ? "unauthenticated"
+        : classifyLoadFailure(undefined, httpStatus);
+  return {
+    correlationId:
+      correlationId ??
+      response.headers?.get?.("x-correlation-id") ??
+      requestCorrelationId ??
+      undefined,
+    httpStatus,
+    kind,
+    occurredAt: new Date().toISOString(),
+    technicalDetail: `${label} returned ${httpStatus}${code ? ` ${code}` : ""}${message ? `: ${message}` : ""}`,
+  };
+}
+
+/** Build the failure for a read that never received an HTTP response. */
+export function operatorLoadFailureFromError(
+  error: unknown,
+  label: string,
+  requestCorrelationId?: string,
+): OperatorLoadFailure {
+  const text = error instanceof Error ? error.message : String(error ?? "request failed");
+  return {
+    correlationId: requestCorrelationId,
+    kind: classifyLoadFailure(error),
+    occurredAt: new Date().toISOString(),
+    technicalDetail: `${label} request failed: ${text}`,
+  };
+}
+
+/** Thrown by readers that must surface the typed failure to their caller. */
+export class OperatorLoadFailureError extends Error {
+  readonly failure: OperatorLoadFailure;
+
+  constructor(failure: OperatorLoadFailure) {
+    super(failure.technicalDetail ?? failure.kind);
+    this.name = "OperatorLoadFailureError";
+    this.failure = failure;
+  }
+}
+
+/** Short label for a count whose collection could not be read. */
+export function unreadCountLabel(kind: OperatorLoadFailureKind | undefined): string {
+  if (kind === "forbidden") return "未授權";
+  if (kind === "unauthenticated") return "未登入";
+  return "無法取得";
+}
+
 function failureMessage(kind: OperatorLoadFailureKind): UnavailableDataMessage {
   switch (kind) {
     case "timeout":
@@ -251,7 +333,7 @@ function failureMessage(kind: OperatorLoadFailureKind): UnavailableDataMessage {
       return {
         badge: "沒有權限",
         code: "OPERATOR_DATA_FORBIDDEN",
-        detail: "此帳號沒有營運資料讀取權限（例如僅具平台管理員角色）。",
+        detail: "伺服器已確認登入身分，但此帳號沒有這項營運資料的讀取權限（例如僅具平台管理員或稽核角色）。這不是連線問題，也不代表資料為空。",
         next: "使用者與角色管理請使用「管理後台」；需要營運資料權限請洽系統管理員。",
         title: "此帳號沒有營運資料讀取權限",
       };

@@ -1,7 +1,8 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GovernanceWorkspace, inspectGovernanceSnapshot } from "../GovernanceWorkspace";
+import { OperatorConsole } from "../OperatorConsole";
 import { normalizeGovernanceStatusBoard } from "../governance/governanceEnvelope";
 
 const snapshot = {
@@ -59,6 +60,20 @@ const snapshot = {
   source: "operator-governance-production",
 };
 
+// actionAuthority as the API derives it for an operations_manager principal,
+// the only canonical role holding intervention APPROVE/CREATE.
+const decidingSnapshot = {
+  ...snapshot,
+  actionAuthority: { verified: true, systemRoles: ["operations_manager"], decide: true, exportEvidence: true },
+};
+
+// The deployed dev account on 2026-10-10: auditor + platform_admin, no
+// business decision grant, viewing the console through the 營運主管 persona.
+const readAdminSnapshot = {
+  ...snapshot,
+  actionAuthority: { verified: true, systemRoles: ["auditor", "platform_admin"], decide: false, exportEvidence: false },
+};
+
 describe("GovernanceWorkspace high-risk failures", () => {
   afterEach(() => {
     cleanup();
@@ -108,7 +123,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/snapshot") && (!init?.method || init.method === "GET")) {
-        return new Response(JSON.stringify(snapshot), {
+        return new Response(JSON.stringify(decidingSnapshot), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -191,7 +206,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
   it("requires a durable reason before return or reject", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(snapshot), {
+      new Response(JSON.stringify(decidingSnapshot), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }),
@@ -236,5 +251,160 @@ describe("GovernanceWorkspace high-risk failures", () => {
     expect(screen.getByText("Data Quality 監控")).toBeInTheDocument();
     expect(screen.getByTestId("governance-sla-card")).toBeInTheDocument();
     expect(screen.getByTestId("governance-users-card")).toBeInTheDocument();
+  });
+});
+
+const govRole = {
+  id: "ops-lead",
+  label: "營運主管",
+  subtitle: "Workspace persona",
+  allowedWorkspaces: ["today", "govern"],
+  heroName: "Read Admin",
+};
+
+const governEnvelope = {
+  meta: {
+    source: "operator-shell-production",
+    dataMode: "live",
+    role: govRole,
+    counts: { approvals: 0, critical: 0, notifications: 0, search: 0, taskCenter: 0 },
+  },
+  navigation: {
+    roles: [govRole],
+    workspaces: [
+      { id: "today", label: "Today", shortLabel: "Today", description: "Live queue", allowed: true },
+      { id: "govern", label: "Govern", shortLabel: "Govern", description: "Govern", allowed: true },
+    ],
+    allowedWorkspaces: ["today", "govern"],
+  },
+  header: { counts: { approvals: 0, critical: 0, notifications: 0, search: 0, taskCenter: 0 } },
+  today: {
+    hero: { name: "Read Admin", roleLabel: "營運主管", scope: "Tenant scope", dateLabel: "2026-10-10" },
+    kpis: [{ label: "Live unresolved", value: "0", tone: "info" }],
+    queue: [],
+    decisions: [],
+    riskRows: [],
+    auditFeed: [],
+  },
+  notifications: [],
+  search: { count: 0, items: [] },
+};
+
+const nav = vi.hoisted(() => ({ search: "ws=govern" }));
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/operator",
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(nav.search),
+}));
+
+function stubConsoleGovernance(governanceSnapshot: unknown) {
+  const writes: string[] = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input instanceof Request ? input.url : input), "http://localhost");
+    if ((init?.method ?? "GET") !== "GET") writes.push(url.pathname);
+    if (url.pathname === "/api/v1/operator/bootstrap") {
+      return new Response(JSON.stringify(governEnvelope), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.pathname === "/api/v1/operator/governance/snapshot") {
+      return new Response(JSON.stringify(governanceSnapshot), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ detail: "not routed" }), { status: 503, headers: { "Content-Type": "application/json" } });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { fetchMock, writes };
+}
+
+describe("Governance decision authority in the production Operator Console mount", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    // The client-selected persona claims 營運主管; only the server decides authority.
+    window.sessionStorage.setItem("oday.operator.role", "ops-lead");
+    nav.search = "ws=govern";
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("defers the dormant workspace until navigation, then preserves read-admin authority and config access", async () => {
+    nav.search = "ws=today";
+    const { fetchMock, writes } = stubConsoleGovernance(readAdminSnapshot);
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+
+    const navigation = await screen.findByRole("navigation", { name: "Operator workspaces" });
+    await waitFor(() => expect(within(navigation).getByRole("button", { name: /Today/ })).toHaveAttribute("aria-current", "page"));
+    expect(screen.queryByTestId("governance-workspace")).toBeNull();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/governance/snapshot"))).toBe(false);
+
+    fireEvent.click(within(navigation).getByRole("button", { name: /Govern/ }));
+    const authority = await screen.findByTestId("governance-decision-authority", {}, { timeout: 5000 });
+    expect(authority).toHaveAttribute("data-authority", "denied");
+    expect(screen.getAllByText("Review candidate").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "核准" })).toBeNull();
+    expect(screen.getByTestId("governance-tab-userManagement")).toBeEnabled();
+    expect(screen.getByTestId("governance-tab-featureFlags")).toBeEnabled();
+    expect(writes).toEqual([]);
+  });
+
+  it("keeps the 營運主管 persona from claiming decisions for a server-verified auditor+platform_admin", async () => {
+    const { writes } = stubConsoleGovernance(readAdminSnapshot);
+
+    render(<OperatorConsole searchParams={{ ws: "govern" }} />);
+
+    const authority = await screen.findByTestId("governance-decision-authority", {}, { timeout: 5000 });
+    expect(authority).toHaveAttribute("data-authority", "denied");
+    expect(authority).toHaveTextContent("僅可查看");
+    expect(authority).not.toHaveTextContent("可決策");
+    expect(screen.getByTestId("governance-workspace-persona")).toHaveTextContent("視角：營運主管");
+    expect(screen.getByLabelText("Governance state")).not.toHaveTextContent(/(^|[^僅])可決策/);
+    // The legitimate scoped rows stay visible; only the decision controls go.
+    expect(screen.getAllByText("Review candidate").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "核准" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "退回修改" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "駁回" })).toBeNull();
+    const readOnly = screen.getByTestId("governance-decision-readonly");
+    expect(readOnly).toHaveTextContent("auditor、platform_admin");
+    expect(readOnly).toHaveTextContent("不代表決策權限");
+
+    fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
+    expect(screen.getByTestId("governance-export-button")).toBeDisabled();
+    expect(screen.getByTestId("governance-export-readonly")).toBeInTheDocument();
+
+    // Platform-admin account/config surfaces remain reachable.
+    expect(screen.getByTestId("governance-tab-userManagement")).toBeEnabled();
+    expect(screen.getByTestId("governance-tab-featureFlags")).toBeEnabled();
+    expect(writes).toEqual([]);
+  });
+
+  it("presents decision controls for a server-verified decision actor", async () => {
+    stubConsoleGovernance(decidingSnapshot);
+
+    render(<OperatorConsole searchParams={{ ws: "govern" }} />);
+
+    const authority = await screen.findByTestId("governance-decision-authority", {}, { timeout: 5000 });
+    expect(authority).toHaveAttribute("data-authority", "granted");
+    expect(authority).toHaveTextContent("可決策");
+    expect(screen.getByRole("button", { name: "核准" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "退回修改" })).toBeEnabled();
+    expect(screen.queryByTestId("governance-decision-readonly")).toBeNull();
+    fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
+    expect(screen.getByTestId("governance-export-button")).toBeEnabled();
+  });
+
+  it("confirms no decision authority when the server did not verify one", async () => {
+    stubConsoleGovernance(snapshot);
+
+    render(<OperatorConsole searchParams={{ ws: "govern" }} />);
+
+    const authority = await screen.findByTestId("governance-decision-authority", {}, { timeout: 5000 });
+    expect(authority).toHaveAttribute("data-authority", "unverified");
+    expect(authority).toHaveTextContent("決策權限未確認");
+    expect(screen.queryByRole("button", { name: "核准" })).toBeNull();
+    expect(screen.getByTestId("governance-decision-readonly")).toHaveTextContent("尚未取得伺服器驗證的決策權限");
   });
 });
