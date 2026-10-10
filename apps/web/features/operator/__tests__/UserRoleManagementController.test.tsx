@@ -34,7 +34,14 @@ function stubStatefulFetch(initialUsers: any[], invitedSubjectId?: string) {
     if (url.includes("/api/v1/operator/users") && options?.method === "POST") {
       const body = JSON.parse(options.body);
       posted.push(body);
-      const targetId = body.subjectId || invitedSubjectId || body.username;
+      if (url.endsWith("/invite")) {
+        return Promise.resolve({ ok: true, json: async () => ({
+          status: "invited", token: "a".repeat(43),
+          invitation_id: invitedSubjectId || "71b983f0-236b-441d-a586-bf7c6ea227d3",
+          expires_at: "2026-10-10T16:00:00Z",
+        }) });
+      }
+      const targetId = body.subjectId;
       const existing = serverUsers.find((u) => u.subject_id === targetId);
       const saved = {
         subject_id: targetId,
@@ -56,8 +63,6 @@ function stubStatefulFetch(initialUsers: any[], invitedSubjectId?: string) {
         ok: true,
         json: async () => ({
           user: { ...saved },
-          temporary_password: body.initialPassword || "generated-pwd-123",
-          initial_password: body.initialPassword || "generated-pwd-123",
         }),
       });
     }
@@ -116,6 +121,13 @@ describe("UserRoleManagementController", () => {
           ok: true,
           json: async () => ({ events: [], count: 0 }),
         });
+      }
+      if (url.endsWith("/invite") && options?.method === "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({
+          status: "invited", token: "a".repeat(43),
+          invitation_id: "71b983f0-236b-441d-a586-bf7c6ea227d3",
+          expires_at: "2026-10-10T16:00:00Z",
+        }) });
       }
       if (url.includes("/api/v1/operator/users")) {
         return Promise.resolve({
@@ -338,7 +350,7 @@ describe("UserRoleManagementController", () => {
     expect(posted[0].scope.modules).toEqual(["allowed-module"]);
   });
 
-  it("renders the newly created user row after a successful create", async () => {
+  it("does not manufacture an account row before invitation acceptance", async () => {
     const { posted } = stubStatefulFetch([
       {
         subject_id: "ops-lead",
@@ -377,10 +389,11 @@ describe("UserRoleManagementController", () => {
       expect(screen.queryByTestId("edit-role-modal")).not.toBeInTheDocument();
     });
 
-    // The admin-typed subject id is what gets persisted, not a generated one.
-    expect(posted[0].subjectId || posted[0].username).toBe("idp|new-operator");
-
-    expect(await screen.findByTestId("user-row-idp|new-operator")).toBeInTheDocument();
+    expect(posted[0].username).toBe("idp|new-operator");
+    expect(posted[0]).not.toHaveProperty("initialPassword");
+    expect(posted[0]).not.toHaveProperty("initial_password");
+    expect(screen.getByTestId("invited-credentials-modal")).toBeInTheDocument();
+    expect(screen.queryByTestId("user-row-idp|new-operator")).not.toBeInTheDocument();
     expect(screen.getByTestId("user-row-ops-lead")).toBeInTheDocument();
   });
 
@@ -415,9 +428,7 @@ describe("UserRoleManagementController", () => {
     fireEvent.change(screen.getByTestId("edit-email-input"), {
       target: { value: "invited@odayplus.com" },
     });
-    fireEvent.change(screen.getByTestId("edit-initial-password-input"), {
-      target: { value: "CustomInitPass123!" },
-    });
+    expect(screen.queryByTestId("edit-initial-password-input")).not.toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText(/請輸入權限調整原因/i), {
       target: { value: "發送邀請建立新經理帳號" },
     });
@@ -427,7 +438,8 @@ describe("UserRoleManagementController", () => {
       expect(screen.getByTestId("invited-credentials-modal")).toBeInTheDocument();
     });
 
-    expect(screen.getByTestId("invited-password-display")).toHaveTextContent("CustomInitPass123!");
+    expect(posted[0]).not.toHaveProperty("initialPassword");
+    expect(screen.getByTestId("invited-password-display")).toHaveTextContent("a".repeat(43));
     expect(screen.getByTestId("copy-password-button")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("close-credentials-modal"));
@@ -438,8 +450,10 @@ describe("UserRoleManagementController", () => {
     const { accountId } = await openInvitedCredentials();
     const modal = screen.getByTestId("invited-credentials-modal");
     expect(modal).toHaveTextContent("invited-manager");
-    expect(modal).not.toHaveTextContent(accountId);
-    expect(await screen.findByTestId(`user-row-${accountId}`)).toBeInTheDocument();
+    expect(modal.querySelector("strong")).toHaveTextContent("invited-manager");
+    expect(modal.querySelector("strong")).not.toHaveTextContent(accountId);
+    expect(modal).toHaveTextContent(accountId); // separate invitation ID, not login name
+    expect(screen.queryByTestId(`user-row-${accountId}`)).not.toBeInTheDocument();
   });
 
   it("marks copied only after the clipboard promise succeeds", async () => {
@@ -448,7 +462,8 @@ describe("UserRoleManagementController", () => {
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     await openInvitedCredentials();
     fireEvent.click(screen.getByTestId("copy-password-button"));
-    expect(writeText).toHaveBeenCalledWith("generated-pwd-123");
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining(`Token: ${"a".repeat(43)}`));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Username: invited-manager"));
     expect(screen.getByTestId("copy-password-button")).toHaveTextContent("複製中…");
     expect(screen.getByTestId("copy-password-button")).toBeDisabled();
     expect(screen.queryByText("已複製 ✓")).not.toBeInTheDocument();
@@ -467,7 +482,7 @@ describe("UserRoleManagementController", () => {
     fireEvent.click(screen.getByTestId("copy-password-button"));
     expect(await screen.findByTestId("copy-password-error")).toHaveTextContent("請手動選取");
     expect(screen.queryByText("已複製 ✓")).not.toBeInTheDocument();
-    expect(screen.getByTestId("invited-password-display")).toHaveTextContent("generated-pwd-123");
+    expect(screen.getByTestId("invited-password-display")).toHaveTextContent("a".repeat(43));
     fireEvent.click(screen.getByTestId("copy-password-button"));
     await waitFor(() => {
       expect(screen.getByTestId("copy-password-button")).toHaveTextContent("已複製 ✓");
@@ -481,7 +496,7 @@ describe("UserRoleManagementController", () => {
     fireEvent.click(screen.getByTestId("copy-password-button"));
     expect(await screen.findByTestId("copy-password-error")).toHaveTextContent("關閉後無法再次查看");
     expect(screen.queryByText("已複製 ✓")).not.toBeInTheDocument();
-    expect(screen.getByTestId("invited-password-display")).toHaveTextContent("generated-pwd-123");
+    expect(screen.getByTestId("invited-password-display")).toHaveTextContent("a".repeat(43));
   });
 
   it("discards a late copy completion after the credential modal closes", async () => {

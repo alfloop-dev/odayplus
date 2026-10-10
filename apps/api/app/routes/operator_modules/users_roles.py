@@ -76,10 +76,6 @@ class UserStatusPayload(BaseModel):
     actorName: str | None = None
 
 
-class AccountInvitationScope(ScopePayload):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-
 class UserInvitePayload(BaseModel):
     """Pending invitation only; never accepts a password or caller identity."""
 
@@ -89,7 +85,7 @@ class UserInvitePayload(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     name: str = Field(default="", max_length=255)
     roles: list[str] = Field(min_length=1, max_length=32)
-    scope: AccountInvitationScope | None = None
+    scope: dict[str, Any] | None = None
     lifetime_seconds: int = Field(default=3600, ge=1, le=259200)
     reason: str = Field(default="", max_length=512)
 
@@ -537,7 +533,7 @@ def create_user_role_sub_router(
             result = await run_in_threadpool(
                 invitations.issue_account, principal, username=payload.username,
                 email=payload.email, display_name=payload.name, roles=payload.roles,
-                scope=payload.scope.model_dump(exclude_unset=True) if payload.scope is not None else None,
+                scope=payload.scope,
                 lifetime_seconds=payload.lifetime_seconds, reason=payload.reason,
             )
             return JSONResponse({**result.to_receipt(), "token": result.token}, status_code=201,

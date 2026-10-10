@@ -1911,19 +1911,6 @@ export type UrlIntakeRequest = {
   scope: ScopeContext;
 };
 
-/** POST /operator/users/invite — payload for inviting / creating a new user. */
-export type UserInvitePayload = {
-  displayName?: string | null;
-  email: string;
-  initialPassword?: string | null;
-  initial_password?: string | null;
-  name?: string | null;
-  reason?: string;
-  roles: string[];
-  scope?: ScopePayload | null;
-  username: string;
-};
-
 /** POST /operator/users — payload for user role & scope assignment. */
 export type UserSavePayload = {
   actorName?: string | null;

@@ -575,7 +575,7 @@ def test_operator_router_invite_endpoint_rbac_and_audit() -> None:
     )
     assert res.status_code == 403
 
-    # 2. Admin can invite user
+    # 2. Document/fixture administration cannot manufacture identity credentials
     res = client.post(
         "/api/v1/operator/users/invite",
         headers=admin_headers,
@@ -592,21 +592,10 @@ def test_operator_router_invite_endpoint_rbac_and_audit() -> None:
             "reason": "Invited from operator console",
         },
     )
-    assert res.status_code == 200, res.text
-    data = res.json()
-    assert "user" in data
-    assert "temporary_password" in data
-    assert data["must_change"] is True
-    assert data["user"]["subject_id"] == "new-ops-lead"
-    assert data["user"]["roles"] == ["operations_manager"]
-
-    # 3. Check audit trail
-    audit = client.get(
-        "/api/v1/operator/users/audit-trail?subject_id=new-ops-lead",
-        headers=admin_headers,
-    ).json()
-    assert audit["count"] == 1
-    assert audit["events"][0]["event_type"] == "identity.account.invite"
-    assert audit["events"][0]["actor"] == "platform-admin-user"
+    assert res.status_code == 503, res.text
+    assert res.json()["error"]["code"] == "IDENTITY_PERSISTENCE_UNAVAILABLE"
+    listed = client.get("/api/v1/operator/users", headers=admin_headers).json()["users"]
+    assert not any(u["subject_id"] == "new-ops-lead" for u in listed)
+    assert not any(e.event_type == "identity.account.invite" for e in audit_log.list_events())
 
 

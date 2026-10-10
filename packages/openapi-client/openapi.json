@@ -10239,98 +10239,6 @@
         "title": "UrlIntakeRequest",
         "type": "object"
       },
-      "UserInvitePayload": {
-        "additionalProperties": true,
-        "description": "POST /operator/users/invite — payload for inviting / creating a new user.",
-        "properties": {
-          "displayName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Displayname"
-          },
-          "email": {
-            "maxLength": 320,
-            "minLength": 3,
-            "title": "Email",
-            "type": "string"
-          },
-          "initialPassword": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Initialpassword"
-          },
-          "initial_password": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Initial Password"
-          },
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "reason": {
-            "default": "",
-            "title": "Reason",
-            "type": "string"
-          },
-          "roles": {
-            "items": {
-              "type": "string"
-            },
-            "minItems": 1,
-            "title": "Roles",
-            "type": "array"
-          },
-          "scope": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ScopePayload"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "username": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Username",
-            "type": "string"
-          }
-        },
-        "required": [
-          "username",
-          "email",
-          "roles"
-        ],
-        "title": "UserInvitePayload",
-        "type": "object"
-      },
       "UserSavePayload": {
         "additionalProperties": true,
         "description": "POST /operator/users — payload for user role & scope assignment.",
@@ -42907,25 +42815,85 @@
     },
     "/api/v1/operator/users/create": {
       "post": {
-        "operationId": "invite_user_api_v1_operator_users_create_post",
+        "operationId": "createOperatorAccountInvitation",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UserInvitePayload"
+                "additionalProperties": false,
+                "description": "Pending invitation only; never accepts a password or caller identity.",
+                "properties": {
+                  "email": {
+                    "maxLength": 320,
+                    "minLength": 3,
+                    "title": "Email",
+                    "type": "string"
+                  },
+                  "lifetime_seconds": {
+                    "default": 3600,
+                    "maximum": 259200.0,
+                    "minimum": 1.0,
+                    "title": "Lifetime Seconds",
+                    "type": "integer"
+                  },
+                  "name": {
+                    "default": "",
+                    "maxLength": 255,
+                    "title": "Name",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "default": "",
+                    "maxLength": 512,
+                    "title": "Reason",
+                    "type": "string"
+                  },
+                  "roles": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "title": "Roles",
+                    "type": "array"
+                  },
+                  "scope": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Scope"
+                  },
+                  "username": {
+                    "maxLength": 64,
+                    "minLength": 3,
+                    "title": "Username",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "username",
+                  "email",
+                  "roles"
+                ],
+                "title": "UserInvitePayload",
+                "type": "object"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Invite User Api V1 Operator Users Create Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InvitationIssuedPayload"
                 }
               }
             },
@@ -43460,25 +43428,85 @@
     },
     "/api/v1/operator/users/invite": {
       "post": {
-        "operationId": "invite_user_api_v1_operator_users_invite_post",
+        "operationId": "inviteOperatorAccount",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UserInvitePayload"
+                "additionalProperties": false,
+                "description": "Pending invitation only; never accepts a password or caller identity.",
+                "properties": {
+                  "email": {
+                    "maxLength": 320,
+                    "minLength": 3,
+                    "title": "Email",
+                    "type": "string"
+                  },
+                  "lifetime_seconds": {
+                    "default": 3600,
+                    "maximum": 259200.0,
+                    "minimum": 1.0,
+                    "title": "Lifetime Seconds",
+                    "type": "integer"
+                  },
+                  "name": {
+                    "default": "",
+                    "maxLength": 255,
+                    "title": "Name",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "default": "",
+                    "maxLength": 512,
+                    "title": "Reason",
+                    "type": "string"
+                  },
+                  "roles": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "title": "Roles",
+                    "type": "array"
+                  },
+                  "scope": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Scope"
+                  },
+                  "username": {
+                    "maxLength": 64,
+                    "minLength": 3,
+                    "title": "Username",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "username",
+                  "email",
+                  "roles"
+                ],
+                "title": "UserInvitePayload",
+                "type": "object"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Invite User Api V1 Operator Users Invite Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InvitationIssuedPayload"
                 }
               }
             },
