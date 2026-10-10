@@ -62,6 +62,24 @@ fi
 # A narrowed profile is refused here, before the preflight and before any
 # Cloud Run mutation, for anything but dev or without its sign-in inputs.
 ODP_RELEASE_PROFILE="${ODP_RELEASE_PROFILE:-full}"
+# Only the trusted foreground library supplies an inherited control descriptor.
+# The ordinary workflow never sets this and never provisions an identity.
+if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then
+  if [ "${ODP_DEPLOY_ENV}" != "dev" ] || [ "${ODP_RELEASE_PROFILE}" != "dev-admin" ] \
+    || [ -n "${ODP_DEV_ADMIN_CREDENTIAL_BUNDLE:-}" ]; then
+    echo "Error: PROVISIONING_FOREGROUND_SCOPE_INVALID" >&2
+    exit 1
+  fi
+  python3 -c '
+import os, socket, sys
+try:
+    s = socket.socket(fileno=int(os.environ["ODP_DEV_SMOKE_FOREGROUND_FD"]))
+    s.getpeername()
+    s.detach()
+except Exception:
+    sys.exit("Error: PROVISIONING_FOREGROUND_CHANNEL_INVALID")
+'
+fi
 case "${ODP_RELEASE_PROFILE}" in
   full)
     ;;
@@ -70,7 +88,7 @@ case "${ODP_RELEASE_PROFILE}" in
       echo "Error: release profile 'dev-admin' may only deploy to dev, not '${ODP_DEPLOY_ENV}'." >&2
       exit 1
     fi
-    if [ -z "${ODP_DEV_ADMIN_CREDENTIAL_BUNDLE:-}" ]; then
+    if [ -z "${ODP_DEV_ADMIN_CREDENTIAL_BUNDLE:-}" ] && [ -z "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then
       ODP_DEV_ADMIN_USERNAME="${ODP_DEV_ADMIN_USERNAME:-${ODP_DEV_BOOTSTRAP_ADMIN_USERNAME:-}}"
       ODP_DEV_ADMIN_PASSWORD="${ODP_DEV_ADMIN_PASSWORD:-${ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD:-}}"
       : "${ODP_DEV_ADMIN_USERNAME:?Error: the dev-admin profile requires ODP_DEV_ADMIN_USERNAME (the platform_admin account).}"
@@ -1211,6 +1229,30 @@ fi
 # Production reaches the API through its custom domain, but the transport
 # audience stays the API's stable Cloud Run service URL.
 mint_api_invoker_token "${API_SERVICE_AUDIENCE}"
+if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then
+  # No command/plugin/receipt path: the parent owns the actual lifecycle and
+  # canonical same-process gate. Only minted service tokens cross this socket;
+  # admin/new-account/GitHub credentials never enter this shell or a file.
+  export LIVE_E2E_API_URL LIVE_E2E_WEB_URL LIVE_E2E_DEPLOYMENT_MODE WORKER_CANDIDATE_JOB
+  python3 - <<'PY'
+import json, os, socket, sys
+try:
+    channel = socket.socket(fileno=int(os.environ["ODP_DEV_SMOKE_FOREGROUND_FD"]))
+    channel.settimeout(1800)
+    names = ("ODAY_RELEASE_SHA", "MANIFEST_DIGEST", "ODP_DEPLOY_ENV", "ODP_RELEASE_PROFILE",
+             "ODP_EXTERNAL_PROVIDER_MODE", "LIVE_E2E_API_URL", "LIVE_E2E_WEB_URL",
+             "LIVE_E2E_DEPLOYMENT_MODE", "WORKER_CANDIDATE_JOB", "GCP_REGION", "GCP_PROJECT",
+             "ODP_OPERATOR_SMOKE_BEARER_TOKEN", "ODP_API_INVOKER_TOKEN")
+    payload = {name: os.environ.get(name, "") for name in names}
+    channel.sendall(json.dumps(payload).encode() + b"\n")
+    # Fixed acknowledgement, not an uploaded passing receipt or a gate override.
+    reply = channel.recv(16)
+    if reply != b"PASS\n":
+        raise ValueError
+except Exception:
+    sys.exit("Error: PROVISIONING_FOREGROUND_GATE_REFUSED")
+PY
+else
 run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --api-url "${LIVE_E2E_API_URL}" \
   --web-url "${LIVE_E2E_WEB_URL}" \
@@ -1222,6 +1264,7 @@ run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --worker-deadline-seconds "${ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS:-600}" \
   --release-profile "${ODP_RELEASE_PROFILE:-full}" \
   --output "${LIVE_E2E_REPORT}"
+fi
 
 DEPLOYMENT_COMMITTED=true
 

@@ -183,6 +183,10 @@ def test_deploy_workflow_only_consumes_matched_bundle_never_provisions() -> None
     assert "read_dev_credential_bundle" in script
     assert script.index("read_dev_credential_bundle") < script.index("DEPLOYMENT_COMMITTED=false")
     assert script.index("check_live_e2e_gate.py") < script.index("DEPLOYMENT_COMMITTED=true")
+    assert "ODP_DEV_SMOKE_FOREGROUND_FD" not in WORKFLOW.read_text()
+    assert script.index('promote_service_traffic "${WEB_SERVICE}"') < script.index('reply = channel.recv(16)')
+    assert script.index('reply = channel.recv(16)') < script.index("DEPLOYMENT_COMMITTED=true")
+    assert "trap handle_deployment_exit EXIT" in script
 
 
 @pytest.mark.parametrize("case", ["valid", "malformed", "full", "staging"])
@@ -215,3 +219,23 @@ def test_actual_deploy_bundle_preflight_refuses_before_cloud_without_decoding_sh
     for secret in (bundle["password"], "private-malformed-password", env["ODP_DEV_ADMIN_INITIAL_PASSWORD"]):
         assert secret not in result.stdout + result.stderr
     assert bundle["password"] not in shell
+
+
+@pytest.mark.parametrize("environment,profile,descriptor", [
+    ("production", "dev-admin", "7"), ("dev", "full", "7"),
+    ("dev", "dev-admin", "999999"), ("dev", "dev-admin", "private-invalid-value"),
+])
+def test_actual_foreground_channel_preflight_refuses_without_cloud_or_secret_echo(
+    environment: str, profile: str, descriptor: str,
+) -> None:
+    script = (ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
+    block = script[script.index('ODP_RELEASE_PROFILE="'):script.index('case "${ODP_RELEASE_PROFILE}" in')]
+    env = dict(os.environ, ODP_DEPLOY_ENV=environment, ODP_RELEASE_PROFILE=profile,
+               ODP_DEV_SMOKE_FOREGROUND_FD=descriptor)
+    env.pop("ODP_DEV_ADMIN_CREDENTIAL_BUNDLE", None)
+    result = subprocess.run(["/bin/bash", "-c", 'set -euo pipefail\n' + block +
+                             '\nprintf "cloud-boundary-reached\\n"'], env=env,
+                            capture_output=True, text=True, timeout=20, check=False)
+    assert result.returncode != 0 and "cloud-boundary-reached" not in result.stdout
+    assert "private-invalid-value" not in result.stdout + result.stderr
+    assert "PROVISIONING_FOREGROUND_" in result.stderr

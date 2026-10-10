@@ -543,11 +543,35 @@ leave the durable root/intent/ACK as a no-retry boundary, with quarantine when
 possible. Logout uncertainty never returns success. No credential enters the
 journal payload, a process argument, file or report.
 
-Independent trust-root acquisition and rollback-owned promoted-before-gate
-deployment wiring remain outstanding. No CLI/workflow invokes this foreground
-entrypoint yet; the worker creates neither live approval/comment nor identity/
-configuration. No new mailbox-verification gate is imposed. This source increment
-is not activation approval.
+`ForegroundDevSmokeRollout(binding=<actual DevCredentialBundleExecutor>)`
+now supplies an explicit trusted-owner deployment invocation. It checks the
+exact clean candidate checkout, owner-pinned dev-admin/sources-off tuple and
+gate inputs, and freshly observes independent source/recorded consent/consumed
+admission before spawning the existing `deploy_cloud_run_waji.sh`. The owner
+supplies a separate deployment environment; admin/new-account/GitHub custodian
+credentials are forbidden there and remain in foreground memory. There is no
+arbitrary executable hook or uploaded passing receipt. An inherited socket is
+validated before cloud mutation; after API/Web promotion the fixed shell hook
+sends its actual serving origins, tuple, worker name and freshly minted service
+tokens to the parent. Every non-token field must equal the owner's pinned gate
+context. The parent runs the actual lifecycle/binding and unchanged canonical
+gate with the newly accepted pair, writes only the canonical redacted gate
+report, and sends a fixed completion acknowledgement only after session cleanup.
+The shell commits only after this acknowledgement; refusal, lost channel or red
+gate exits nonzero under the original traffic/scheduler EXIT rollback boundary.
+The parent waits on that original process handle and never counts a gate pass
+with nonzero/missing shell exit as deployment success. Deadline interruption
+means recovery is unknown, never successful rollback; durable reservation/intent
+still prohibit automatic provisioning retry. An acknowledged bundle is not
+rolled back, reset or replaced after rollout failure.
+
+Independent acquisition of review/CI/admission/custodian trust roots, approved
+recipient/plan and normal deployment credentials remains the foreground owner's
+duty. No CLI or GitHub workflow invokes this library: default automation still
+only consumes an already-staged bundle and cannot create accounts. The worker
+creates neither live approval/comment nor identity/configuration. No new
+mailbox-verification gate is imposed. Offline shell/socket/router composition is
+not activation approval, real traffic restoration or successful deployment.
 
 PR1445 deployment/inventory, admission, IAM and
 finite-role gates remain intact. Independent review is required before use; the

@@ -7,6 +7,36 @@ intermediate source anchor, not provisioning evidence. Human authorization
 `HUMAN-ODP-DEV-SMOKE-20261010-001` permits the bounded future operation; it is
 not evidence that any account, credential binding or deployment changed.
 
+## Foreground rollout boundary increment (2026-10-10)
+
+`ForegroundDevSmokeRollout` now launches only the existing exact clean-candidate
+Cloud Run shell, after fresh independent source/recorded-consent/consumed-admission
+observation. Its explicit deployment environment cannot contain the preserved
+admin password, new password, custodian GitHub token or shell initialization hook.
+Those secrets remain in foreground memory. The inherited socket is validated
+before cloud mutation; the fixed shell gate hook runs after API/Web promotion
+and before `DEPLOYMENT_COMMITTED`. It sends actual tuple/origins/worker and
+refreshed service tokens; all non-token values must match owner pins. No arbitrary
+command, caller gate callback or uploaded passing receipt is accepted.
+
+The parent composes actual remote authenticated journal, invitation, same-pair
+sealed-box upload and canonical gate; only a post-cleanup success acknowledgement
+lets the shell commit. Red gate, source loss, context mismatch or socket failure
+returns nonzero inside the existing EXIT traffic/scheduler rollback boundary.
+The original Popen handle/exit code is mandatory; gate success with failed shell
+is not deployment success. Timeout/interruption recovery is unknown. No account,
+secret or durable intent rollback/delete/reset/replacement is attempted.
+
+New offline cases execute the **actual hook/commit shell tail** and real inherited
+socket together with production router/PostgreSQL journal and encrypted upload.
+The pre-promotion/traffic restoration shell layer and final gate verdict are
+explicit spies, **not Cloud Run or live acceptance evidence**. Cases distinguish
+red gate, source loss, wrong context and a shell failure after gate success;
+preflight rejects foreign scope, credential-bearing environment, injected Bash
+init, dirty checkout or wrong SHA before shell/login. Declared verification has
+not yet run for this increment. Required exact-final-head CI/Codex review and
+foreground trust-root acquisition/activation remain pending.
+
 ## Anchor 1: internal invitation transaction layer
 
 Base/configuration inspected against fetched `origin/dev`

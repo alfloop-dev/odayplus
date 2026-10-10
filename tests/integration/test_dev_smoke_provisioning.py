@@ -2121,3 +2121,141 @@ from tests.integration.dev_smoke_remote_journal_cases import (  # noqa: E402, F4
     test_remote_gate_preflight_refuses_before_journal_session_login,
     test_remote_journal_server_audit_failure_rolls_back_reservation_without_issue,
 )
+
+
+@pytest.mark.parametrize("fault", ["none", "gate-red", "source-loss", "context", "shell-exit"])
+def test_foreground_rollout_real_socket_shell_boundary_and_remote_lifecycle(
+    remote_binding: Any, monkeypatch: Any, tmp_path: Any, fault: str,
+) -> None:
+    """Actual shell hook + socket + PG/router + sealed box; OFFLINE gate spy.
+
+    The harness supplies a simulated pre-promotion/rollback layer, not Cloud Run
+    traffic proof. It runs the exact hook/commit tail from the canonical shell.
+    """
+    import os
+    import subprocess
+    from pathlib import Path
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.release.provision_dev_smoke import ForegroundDevSmokeRollout, ProvisioningRefused
+    s, web, journal, binding, github, _, plan, args = remote_binding
+    config = _foreground_gate_template(binding, args)
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
+    hook = source[source.rindex('if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then'):]
+    calls = tmp_path / "shell-calls"
+    report = tmp_path / "gate.json"
+    env = {
+        "PATH": os.environ["PATH"], "ODAY_RELEASE_SHA": config.expected_sha,
+        "MANIFEST_DIGEST": config.expected_manifest_digest, "ODP_DEPLOY_ENV": "dev",
+        "ODP_RELEASE_PROFILE": "dev-admin", "ODP_EXTERNAL_PROVIDER_MODE": "disabled",
+        "ODP_WEB_BASE_URL": config.web_url, "GCP_REGION": "asia-east1", "GCP_PROJECT": "offline-project",
+        "LIVE_E2E_API_URL": config.api_url, "LIVE_E2E_WEB_URL": config.web_url,
+        "LIVE_E2E_DEPLOYMENT_MODE": "dev", "WORKER_CANDIDATE_JOB": "offline-worker",
+        "ODP_OPERATOR_SMOKE_BEARER_TOKEN": "fresh-service-token",
+        "ODP_API_INVOKER_TOKEN": "fresh-transport-token", "SHELL_CALLS": str(calls),
+        "MIGRATION_CANDIDATE_JOB": "offline-migration", "WORKER_SCHEDULE_NAME": "offline-worker-schedule",
+        "SCHEDULER_CANDIDATE_JOB": "offline-scheduler", "SCHEDULER_SCHEDULE_NAME": "offline-schedule",
+    }
+    if fault == "context":
+        env["LIVE_E2E_API_URL"] = "https://foreign.example.invalid"
+    harness = '''set -euo pipefail
+DEPLOYMENT_COMMITTED=false
+trap 'status=$?; if [ "$status" -ne 0 ] && [ "$DEPLOYMENT_COMMITTED" != true ]; then printf "restore-api-web-schedulers\\n" >> "$SHELL_CALLS"; fi; exit "$status"' EXIT
+printf 'promote-api\\npromote-web\\n' >> "$SHELL_CALLS"
+''' + hook
+    if fault == "shell-exit":
+        harness = harness.replace("DEPLOYMENT_COMMITTED=true", "exit 31\nDEPLOYMENT_COMMITTED=true")
+    original_popen = subprocess.Popen
+    children = []
+
+    def run(command: Any, **kwargs: Any) -> Any:
+        if command == ["git", "rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(command, 0, config.expected_sha + "\n", "")
+        if command == ["git", "status", "--porcelain", "--untracked-files=no"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        pytest.fail("offline gate must not launch a worker process")
+
+    def spawn(command: Any, **kwargs: Any) -> Any:
+        assert command == ["/bin/bash", str(root / "product_ops/deployment/deploy_cloud_run_waji.sh")]
+        child_env = kwargs["env"]
+        assert all(secret not in json.dumps(child_env) + json.dumps(command)
+                   for secret in (args["admin_password"], args["new_password"]))
+        assert "GH_TOKEN" not in child_env and "GITHUB_TOKEN" not in child_env
+        child = original_popen(["/bin/bash", "-c", harness], **kwargs,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        children.append(child)
+        return child
+
+    def evaluate(fresh: Any, **kwargs: Any) -> Any:
+        assert calls.read_text().splitlines() == ["promote-api", "promote-web"]
+        assert fresh.bearer_token == "fresh-service-token"
+        assert fresh.api_transport_token == "fresh-transport-token"
+        assert fresh.dev_admin_password == args["new_password"]
+        assert not fresh.dev_admin_initial_password and not fresh.bootstrap_admin_password
+        assert len(github.uploads) == 1 and binding.inspect()["stage"] == "binding-acknowledged"
+        if fault == "source-loss":
+            web.source_evidence.status = 404
+        ok = fault != "gate-red"
+        return [gate.CheckResult(ok, "offline-only", "not live evidence")], {
+            "ok": ok, "expected_release_sha": config.expected_sha, "expected_deployment": "dev",
+        }
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    monkeypatch.setattr(gate, "evaluate_gate", evaluate)
+    runner = ForegroundDevSmokeRollout(binding=binding)
+    kwargs = dict(gate_config=config, worker_job="offline-worker", gcp_region="asia-east1",
+                  gcp_project="offline-project", deploy_env=env, report_path=report, **args)
+    if fault == "none":
+        result = runner.execute(plan, **kwargs)
+        assert result["rollout"]["shell_exit_code"] == 0
+        assert result["rollout"]["deployment_success"] is True  # OFFLINE composition assertion only.
+        assert result["provisioning"]["deployment_success"] is False
+        assert json.loads(report.read_text())["ok"] is True
+        assert calls.read_text().splitlines() == ["promote-api", "promote-web"]
+    else:
+        with pytest.raises(ProvisioningRefused, match="PROVISIONING_ROLLOUT_RECOVERY_REQUIRED"):
+            runner.execute(plan, **kwargs)
+        assert calls.read_text().splitlines() == ["promote-api", "promote-web", "restore-api-web-schedulers"]
+        assert children[0].returncode != 0
+    assert all(child.poll() is not None for child in children)
+    assert len(github.uploads) == int(fault != "context")
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1 if fault == "context" else 2,)]
+    assert s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("fault", ["environment", "password-env", "token-env", "bash-env", "dirty", "head"])
+def test_foreground_rollout_refuses_before_shell_or_live_login(
+    remote_binding: Any, monkeypatch: Any, tmp_path: Any, fault: str,
+) -> None:
+    import os
+    import subprocess
+    from delivery_toolchain.release.provision_dev_smoke import ForegroundDevSmokeRollout, ProvisioningRefused
+    _, web, journal, binding, github, _, plan, args = remote_binding
+    config = _foreground_gate_template(binding, args)
+    env = {"PATH": os.environ["PATH"], "ODAY_RELEASE_SHA": config.expected_sha,
+           "MANIFEST_DIGEST": config.expected_manifest_digest, "ODP_DEPLOY_ENV": "dev",
+           "ODP_RELEASE_PROFILE": "dev-admin", "ODP_EXTERNAL_PROVIDER_MODE": "disabled",
+           "ODP_WEB_BASE_URL": config.web_url, "GCP_REGION": "asia-east1", "GCP_PROJECT": "offline-project"}
+    if fault == "environment":
+        env["ODP_DEPLOY_ENV"] = "production"
+    elif fault == "password-env":
+        env["OTHER_NAME"] = args["new_password"]
+    elif fault == "token-env":
+        env["GITHUB_TOKEN"] = "private-token"
+    elif fault == "bash-env":
+        env["BASH_ENV"] = "/untrusted-hook"
+
+    def run(command: Any, **kwargs: Any) -> Any:
+        if command == ["git", "rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(command, 0, "f" * 40 if fault == "head" else config.expected_sha)
+        return subprocess.CompletedProcess(command, 0, " M tracked.py\n" if fault == "dirty" else "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("refused plan launched shell"))
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_ROLLOUT_PREFLIGHT_REFUSED"):
+        ForegroundDevSmokeRollout(binding=binding).execute(
+            plan, gate_config=config, worker_job="offline-worker", gcp_region="asia-east1",
+            gcp_project="offline-project", deploy_env=env, report_path=tmp_path / "gate.json", **args,
+        )
+    assert not web.calls and not github.calls and journal.inspect() is None

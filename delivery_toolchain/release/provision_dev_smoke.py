@@ -1489,6 +1489,15 @@ class DevCredentialBundleExecutor(DevSmokeBindingJournal):
         It does not verify GitHub's decrypted value: a later ordinary consumer
         must still do that. No caller gate callback or passing receipt is accepted.
         """
+        config = self._prepare_gate(plan, gate_config=gate_config, worker_job=worker_job,
+                                    gcp_region=gcp_region, gcp_project=gcp_project, **credentials)
+        return self._execute_gate(plan, config=config, worker_job=worker_job,
+                                  gcp_region=gcp_region, gcp_project=gcp_project, **credentials)
+
+    def _prepare_gate(
+        self, plan: Any, *, gate_config: Any, worker_job: str,
+        gcp_region: str, gcp_project: str, **credentials: Any,
+    ) -> Any:
         from delivery_toolchain.e2e import check_live_e2e_gate as gate
 
         # Validate every known gate input before login, reservation or PUT. The
@@ -1517,8 +1526,7 @@ class DevCredentialBundleExecutor(DevSmokeBindingJournal):
         except Exception:
             raise ProvisioningRefused("PROVISIONING_GATE_CONFIG_INVALID") from None
 
-        return self._execute_gate(plan, config=config, worker_job=worker_job,
-                                  gcp_region=gcp_region, gcp_project=gcp_project, **credentials)
+        return config
 
     @_journal_session
     def _execute_gate(self, plan: Any, *, config: Any, worker_job: str,
@@ -1631,3 +1639,161 @@ class DevCredentialBundleExecutor(DevSmokeBindingJournal):
                     pass  # Root reservation still forbids account recreation.
             raise ProvisioningRefused("PROVISIONING_BINDING_RECOVERY_REQUIRED" if reservation
                                      else "PROVISIONING_BINDING_REFUSED") from None
+
+
+class ForegroundDevSmokeRollout:
+    """Explicit trusted-owner invocation of the EXISTING rollback-owned shell.
+
+    No CLI, workflow toggle, arbitrary hook or caller-passed gate receipt. The
+    owner constructs the actual executor with independent review/CI, consumed
+    admission and recorded-consent pins, and supplies secrets only in memory.
+    An inherited socket joins the shell's promoted-before-gate boundary to that
+    executor. The canonical gate runs in THIS process with the newly accepted
+    pair; the shell receives only a fixed completion acknowledgement. Failure
+    leaves the shell's EXIT rollback armed and the durable journal forbids retry.
+    """
+
+    def __init__(self, *, binding: DevCredentialBundleExecutor) -> None:
+        if type(binding) is not DevCredentialBundleExecutor:
+            raise ProvisioningRefused("PROVISIONING_ROLLOUT_CONFIG_INVALID")
+        self._binding = binding
+
+    def execute(
+        self, plan: Any, *, gate_config: Any, worker_job: str,
+        gcp_region: str, gcp_project: str, deploy_env: dict[str, str],
+        report_path: Any, deadline_seconds: float = 7200, **credentials: Any,
+    ) -> dict[str, Any]:
+        import os
+        import socket
+        import subprocess
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        binding = self._binding
+        # Validate before launching any cloud-capable shell or opening a session.
+        config = binding._prepare_gate(plan, gate_config=gate_config, worker_job=worker_job,
+                                       gcp_region=gcp_region, gcp_project=gcp_project, **credentials)
+        try:
+            if (type(deploy_env) is not dict or not all(type(k) is str and type(v) is str
+                                                      for k, v in deploy_env.items())
+                    or type(deadline_seconds) not in (int, float)
+                    or not 60 <= deadline_seconds <= 7200):
+                raise ValueError
+            expected = {
+                "ODAY_RELEASE_SHA": config.expected_sha,
+                "MANIFEST_DIGEST": config.expected_manifest_digest,
+                "ODP_DEPLOY_ENV": "dev", "ODP_RELEASE_PROFILE": "dev-admin",
+                "ODP_EXTERNAL_PROVIDER_MODE": "disabled", "GCP_REGION": gcp_region,
+                "GCP_PROJECT": gcp_project, "ODP_WEB_BASE_URL": config.web_url,
+            }
+            if any(deploy_env.get(k) != v for k, v in expected.items()):
+                raise ValueError
+            # Do not inherit the foreground owner's credentials into any child.
+            # This environment is explicitly supplied, never dict(os.environ).
+            forbidden = {
+                "ODP_DEV_SMOKE_FOREGROUND_FD", "ODP_DEV_ADMIN_CREDENTIAL_BUNDLE",
+                "ODP_DEV_ADMIN_PASSWORD", "ODP_DEV_ADMIN_INITIAL_PASSWORD",
+                "ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD", "ODP_IDENTITY_BOOTSTRAP_SECRET",
+                "GH_TOKEN", "GITHUB_TOKEN", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS",
+            }
+            secrets = (credentials["admin_password"], credentials["new_password"],
+                       binding._store._client.headers["Authorization"].removeprefix("Bearer "))
+            if (any(deploy_env.get(k) for k in forbidden)
+                    or any(k.startswith("BASH_FUNC_") for k in deploy_env)
+                    or any(secret and secret in value for secret in secrets for value in deploy_env.values())):
+                raise ValueError
+            # The deployment entrypoint must come from the exact approved clean
+            # candidate checkout, not an arbitrary script/plugin supplied by a plan.
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True,
+                                  capture_output=True, text=True).stdout.strip()
+            dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
+                                   cwd=root, check=True, capture_output=True, text=True).stdout
+            if head != config.expected_sha or dirty:
+                raise ValueError
+            report_path = Path(report_path)
+            binding._lifecycle._observe_admission(
+                plan, release_sha=config.expected_sha, manifest_digest=config.expected_manifest_digest,
+            )
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_ROLLOUT_PREFLIGHT_REFUSED") from None
+
+        parent, child = socket.socketpair()
+        process = None
+        result = None
+        failure = False
+        try:
+            env = dict(deploy_env, ODP_DEV_SMOKE_FOREGROUND_FD=str(child.fileno()),
+                       LIVE_E2E_REPORT=str(report_path))
+            process = subprocess.Popen(
+                ["/bin/bash", str(root / "product_ops/deployment/deploy_cloud_run_waji.sh")],
+                cwd=root, env=env, pass_fds=(child.fileno(),),
+            )
+            child.close()
+            parent.settimeout(deadline_seconds)
+            payload = bytearray()
+            while not payload.endswith(b"\n"):
+                chunk = parent.recv(4096)
+                if not chunk or len(payload) + len(chunk) > 32768:
+                    raise ValueError
+                payload.extend(chunk)
+            context = json.loads(payload)
+            required = {
+                **expected, "LIVE_E2E_API_URL": config.api_url,
+                "LIVE_E2E_WEB_URL": config.web_url, "LIVE_E2E_DEPLOYMENT_MODE": "dev",
+                "WORKER_CANDIDATE_JOB": worker_job,
+            }
+            required.pop("ODP_WEB_BASE_URL")
+            tokens = {"ODP_OPERATOR_SMOKE_BEARER_TOKEN", "ODP_API_INVOKER_TOKEN"}
+            if (type(context) is not dict or context.keys() != required.keys() | tokens
+                    or any(context[k] != v for k, v in required.items())
+                    or any(type(context[k]) is not str or not context[k].strip() for k in tokens)):
+                raise ValueError
+            # Service credentials are freshly minted by the canonical shell;
+            # all origins, tuple, profile, sources and worker remain owner-pinned.
+            fresh = replace(config, bearer_token=context["ODP_OPERATOR_SMOKE_BEARER_TOKEN"],
+                            api_transport_token=context["ODP_API_INVOKER_TOKEN"])
+            result = binding.execute_and_check_gate(
+                plan, gate_config=fresh, worker_job=worker_job,
+                gcp_region=gcp_region, gcp_project=gcp_project, **credentials,
+            )
+            # Persist only canonical secret-redacted reports, never an approval
+            # input. A report-write failure also keeps deployment uncommitted.
+            serialized = json.dumps(result["gate"], indent=2, sort_keys=True) + "\n"
+            if any(secret and secret in serialized for secret in secrets):
+                raise ValueError
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(serialized, encoding="utf-8")
+            passed = (result["provisioning"]["live_gate_passed"] is True
+                      and result["gate"]["ok"] is True)
+            parent.sendall(b"PASS\n" if passed else b"FAIL\n")
+            failure = not passed
+        except Exception:
+            failure = True
+            try:
+                parent.sendall(b"FAIL\n")
+            except OSError:
+                pass
+        finally:
+            parent.close()
+            child.close()
+            if process is not None:
+                # The original Popen handle and exit status are the only shell
+                # completion proof. No log grep or independently supplied receipt.
+                try:
+                    status = process.wait(timeout=deadline_seconds)
+                except subprocess.TimeoutExpired:
+                    process.terminate()
+                    try:
+                        status = process.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                    failure = True  # Interrupted recovery is UNKNOWN, not success.
+                    status = -1
+            else:
+                status = -1
+        if failure or status != 0 or result is None:
+            raise ProvisioningRefused("PROVISIONING_ROLLOUT_RECOVERY_REQUIRED") from None
+        return {**result, "rollout": {"shell_exit_code": status, "deployment_success": True,
+                                    "credential_binding_verified": False,
+                                    "secret_values_redacted": True}}
