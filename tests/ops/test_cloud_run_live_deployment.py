@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -6460,3 +6461,1009 @@ def test_compatibility_never_follows_an_api_redirect_to_another_origin() -> None
     assert collected == []
     assert not all(check.ok for check in checks)
     assert API_TRANSPORT_TOKEN not in json.dumps(report)
+
+
+# ---------------------------------------------------------------------------
+# ODP-DEV-CANDIDATE-SMOKE-STARTUP-001: bounded startup retry for the
+# tagged-candidate smoke
+# ---------------------------------------------------------------------------
+
+SMOKE_BEARER = "smoke-token"  # the bearer DeterministicRuntimeHandler accepts
+SMOKE_API_INVOKER = "api-invoker-secret-value"
+SMOKE_WEB_INVOKER = "web-invoker-secret-value"
+SMOKE_API_PATHS = (
+    "/platform/version",
+    "/platform/health",
+    "/readiness",
+    "/api/v1/operator/bootstrap",
+)
+
+
+def _smoke_policy(**overrides: float) -> object:
+    values = {
+        "attempts": 4,
+        "timeout_seconds": 15.0,
+        "backoff_seconds": 2.0,
+        "max_backoff_seconds": 8.0,
+        "deadline_seconds": 180.0,
+    }
+    values.update(overrides)
+    return validator.ProbeRetryPolicy(**values)
+
+
+def _path_of(url: str) -> str:
+    return "/" + url.split("://", 1)[1].split("/", 1)[1]
+
+
+class _CandidateTransport:
+    """Scripted `_request`: per-path failures first, then the real answer."""
+
+    def __init__(self, clock: _FakeClock, failures: dict[str, list[BaseException]]) -> None:
+        self.clock = clock
+        self.failures = {path: list(errors) for path, errors in failures.items()}
+        self.calls: list[str] = []
+        self.headers_seen: list[dict[str, str]] = []
+        self.real_request = validator._request
+
+    def __call__(self, url: str, *, headers, timeout: float):
+        path = _path_of(url)
+        self.calls.append(path)
+        self.headers_seen.append(dict(headers))
+        pending = self.failures.get(path)
+        if pending:
+            # A cold candidate consumes the whole per-attempt timeout.
+            self.clock.advance(timeout)
+            raise pending.pop(0)
+        return self.real_request(url, headers=headers, timeout=timeout)
+
+
+def _clocked_sleep(clock: _FakeClock, sleeper: _RecordingSleep):
+    def fake_sleep(seconds: float) -> None:
+        sleeper(seconds)
+        clock.advance(seconds)
+
+    return fake_sleep
+
+
+def _run_candidate_smoke(url: str, *, policy, clock, sleeper, expected_sha=EXPECTED_SHA):
+    return validator.smoke_checks(
+        api_url=url,
+        web_url=url,
+        expected_sha=expected_sha,
+        bearer_token=SMOKE_BEARER,
+        operator_role="ops-lead",
+        operator_subject="smoke-operator",
+        operator_tenant="tenant-live",
+        correlation_id="corr-candidate-startup",
+        timeout=15.0,
+        web_invoker_token=SMOKE_WEB_INVOKER,
+        api_invoker_token=SMOKE_API_INVOKER,
+        retry_policy=policy,
+        sleep=_clocked_sleep(clock, sleeper),
+        monotonic=clock,
+    )
+
+
+def _assert_smoke_redacted(checks, report) -> None:
+    serialized = json.dumps(report) + json.dumps([[c.name, c.detail] for c in checks])
+    for secret in (SMOKE_BEARER, SMOKE_API_INVOKER, SMOKE_WEB_INVOKER):
+        assert secret not in serialized
+    assert report["secret_values_redacted"] is True
+
+
+@pytest.mark.parametrize(
+    "transport_error",
+    [
+        TimeoutError("The read operation timed out"),
+        validator.urllib.error.URLError(OSError("Connection refused")),
+        ConnectionResetError("Connection reset by peer"),
+    ],
+    ids=["read-timeout", "url-error", "connection-reset"],
+)
+def test_candidate_smoke_outlasts_a_cold_start_and_judges_authentic_answers(
+    monkeypatch: pytest.MonkeyPatch, transport_error: BaseException
+) -> None:
+    clock, sleeper = _FakeClock(), _RecordingSleep()
+    transport = _CandidateTransport(
+        clock,
+        {
+            "/platform/version": [transport_error, transport_error],
+            "/platform/health": [transport_error],
+        },
+    )
+    monkeypatch.setattr(validator, "_request", transport)
+    server, url = start_server()
+    try:
+        checks, report = _run_candidate_smoke(
+            url, policy=_smoke_policy(), clock=clock, sleeper=sleeper
+        )
+    finally:
+        server.shutdown()
+
+    # Every original check passed, and only on the candidate's real answers.
+    assert [c.name for c in checks if not c.ok] == []
+    assert report["version"]["release_sha"] == EXPECTED_SHA
+    assert transport.calls == [
+        "/platform/version",
+        "/platform/version",
+        "/platform/version",
+        "/platform/health",
+        "/platform/health",
+        "/readiness",
+        "/api/v1/operator/bootstrap",
+    ]
+    assert sleeper.delays == [2.0, 4.0, 2.0]
+
+    version_probe = report["version_probe"]
+    assert version_probe["outcome"] == "answered"
+    assert version_probe["attempt_count"] == 3
+    # The failed attempts are preserved, not replaced by the eventual success.
+    assert [a["provenance"] for a in version_probe["attempts"]] == [
+        "no_response",
+        "no_response",
+        "json_object",
+    ]
+    assert [a["status"] for a in version_probe["attempts"]] == [None, None, 200]
+    assert all(a["error"] for a in version_probe["attempts"][:2])
+    assert report["health_probe"]["attempt_count"] == 2
+    assert report["readiness_probe"]["attempt_count"] == 1
+    assert report["operator_bootstrap_probe"]["attempt_count"] == 1
+    by_name = {c.name: c for c in checks}
+    assert "attempts=3" in by_name["smoke:/platform/version:http"].detail
+    assert report["probe_retry_policy"]["deadline_scope"] == "shared_by_api_probes"
+    _assert_smoke_redacted(checks, report)
+
+
+def test_candidate_smoke_exhausted_attempts_fail_closed_with_every_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock, sleeper = _FakeClock(), _RecordingSleep()
+    transport = _CandidateTransport(
+        clock, {"/platform/version": [TimeoutError("The read operation timed out")] * 10}
+    )
+    monkeypatch.setattr(validator, "_request", transport)
+    server, url = start_server()
+    try:
+        checks, report = _run_candidate_smoke(
+            url, policy=_smoke_policy(), clock=clock, sleeper=sleeper
+        )
+    finally:
+        server.shutdown()
+
+    by_name = {c.name: c for c in checks}
+    version_http = by_name["smoke:/platform/version:http"]
+    assert version_http.ok is False
+    assert "The read operation timed out" in version_http.detail
+    assert "attempts=4" in version_http.detail
+    assert "attempts_exhausted" in version_http.detail
+    # A missing version is never relabelled as a matching release.
+    assert by_name["smoke:/platform/version:release_sha"].ok is False
+    assert "actual=<missing>" in by_name["smoke:/platform/version:release_sha"].detail
+    assert "version" not in report
+    assert report["version_probe"]["outcome"] == "attempts_exhausted"
+    assert report["version_probe"]["attempt_count"] == 4
+    assert all(a["transient"] for a in report["version_probe"]["attempts"])
+    assert transport.calls.count("/platform/version") == 4
+    assert sleeper.delays == [2.0, 4.0, 8.0]
+    _assert_smoke_redacted(checks, report)
+
+
+def test_candidate_smoke_deadline_is_one_budget_shared_by_every_api_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock, sleeper = _FakeClock(), _RecordingSleep()
+    timeout = TimeoutError("The read operation timed out")
+    transport = _CandidateTransport(clock, {path: [timeout] * 10 for path in SMOKE_API_PATHS})
+    seen_timeouts: list[float] = []
+
+    def recording_transport(url: str, *, headers, timeout: float):
+        seen_timeouts.append(timeout)
+        return transport(url, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(validator, "_request", recording_transport)
+    monkeypatch.setattr(
+        validator,
+        "_request_without_redirect",
+        lambda url, **_: (307, "https://web.example/login?returnTo=%2Foperator"),
+    )
+
+    checks, report = validator.smoke_checks(
+        api_url="https://candidate-x---oday-api-abc.a.run.app",
+        web_url="https://web.example",
+        expected_sha=EXPECTED_SHA,
+        bearer_token=SMOKE_BEARER,
+        operator_role="ops-lead",
+        operator_subject="smoke-operator",
+        operator_tenant="tenant-live",
+        correlation_id="corr-candidate-deadline",
+        timeout=15.0,
+        api_invoker_token=SMOKE_API_INVOKER,
+        retry_policy=_smoke_policy(deadline_seconds=100.0),
+        sleep=_clocked_sleep(clock, sleeper),
+        monotonic=clock,
+    )
+
+    # version spends 74s on four attempts, health gets one 15s attempt, the
+    # readiness attempt is clamped to the 11s that remain, and the bootstrap
+    # never sends a request. No probe receives a fresh window.
+    assert clock.now <= 100.0
+    assert report["api_probe_elapsed_seconds"] == pytest.approx(clock.now)
+    assert report["api_probe_elapsed_seconds"] == pytest.approx(100.0)
+    assert transport.calls == [
+        "/platform/version",
+        "/platform/version",
+        "/platform/version",
+        "/platform/version",
+        "/platform/health",
+        "/readiness",
+    ]
+    assert seen_timeouts[-1] == pytest.approx(11.0)
+    assert report["version_probe"]["outcome"] == "attempts_exhausted"
+    assert report["health_probe"]["outcome"] == "deadline_exhausted"
+    assert report["operator_bootstrap_probe"] == {
+        "outcome": "deadline_exhausted",
+        "attempt_count": 0,
+        "attempts": [],
+    }
+    failed = {c.name for c in checks if not c.ok}
+    for path in SMOKE_API_PATHS:
+        assert f"smoke:{path}:http" in failed
+    bootstrap = {c.name: c for c in checks}["smoke:/api/v1/operator/bootstrap:http"]
+    assert "elapsed before any attempt" in bootstrap.detail
+    _assert_smoke_redacted(checks, report)
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "failing_check"),
+    [
+        (401, json.dumps({"detail": "unauthorized"}), "smoke:/platform/version:http"),
+        (403, json.dumps({"detail": "forbidden"}), "smoke:/platform/version:http"),
+        (503, json.dumps({"status": "starting"}), "smoke:/platform/version:http"),
+        (200, "<html>Service Unavailable</html>", "smoke:/platform/version:http"),
+        (200, "[]", "smoke:/platform/version:http"),
+        (
+            200,
+            json.dumps({"status": "ok", "release_sha": "b" * 40}),
+            "smoke:/platform/version:release_sha",
+        ),
+    ],
+    ids=["401", "403", "503", "malformed-json", "non-object-json", "wrong-release-sha"],
+)
+def test_candidate_smoke_never_retries_a_received_answer(
+    monkeypatch: pytest.MonkeyPatch, status: int, body: str, failing_check: str
+) -> None:
+    clock, sleeper = _FakeClock(), _RecordingSleep()
+    calls: list[str] = []
+
+    def answering_transport(url: str, *, headers, timeout: float):
+        calls.append(_path_of(url))
+        return status, "application/json", body
+
+    monkeypatch.setattr(validator, "_request", answering_transport)
+    monkeypatch.setattr(
+        validator,
+        "_request_without_redirect",
+        lambda url, **_: (307, "https://web.example/login?returnTo=%2Foperator"),
+    )
+
+    checks, report = validator.smoke_checks(
+        api_url="https://candidate-x---oday-api-abc.a.run.app",
+        web_url="https://web.example",
+        expected_sha=EXPECTED_SHA,
+        bearer_token=SMOKE_BEARER,
+        operator_role="ops-lead",
+        operator_subject="smoke-operator",
+        operator_tenant="tenant-live",
+        correlation_id="corr-candidate-final-answer",
+        timeout=15.0,
+        api_invoker_token=SMOKE_API_INVOKER,
+        retry_policy=_smoke_policy(),
+        sleep=_clocked_sleep(clock, sleeper),
+        monotonic=clock,
+    )
+
+    assert calls == list(SMOKE_API_PATHS)
+    assert sleeper.delays == []
+    for name in ("version", "health", "readiness", "operator_bootstrap"):
+        probe = report[f"{name}_probe"]
+        assert probe["attempt_count"] == 1
+        assert probe["attempts"][0]["status"] == status
+        assert probe["attempts"][0]["transient"] is False
+    failed = {c.name for c in checks if not c.ok}
+    assert failing_check in failed
+    _assert_smoke_redacted(checks, report)
+
+
+def test_candidate_smoke_never_retries_an_unrequestable_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock, sleeper = _FakeClock(), _RecordingSleep()
+    calls: list[str] = []
+
+    def invalid_transport(url: str, *, headers, timeout: float):
+        calls.append(url)
+        raise validator.http.client.InvalidURL("nonnumeric port")
+
+    monkeypatch.setattr(validator, "_request", invalid_transport)
+    monkeypatch.setattr(
+        validator,
+        "_request_without_redirect",
+        lambda url, **_: (307, "https://web.example/login?returnTo=%2Foperator"),
+    )
+
+    checks, report = validator.smoke_checks(
+        api_url="https://candidate-x---oday-api-abc.a.run.app",
+        web_url="https://web.example",
+        expected_sha=EXPECTED_SHA,
+        bearer_token=SMOKE_BEARER,
+        operator_role="ops-lead",
+        operator_subject="smoke-operator",
+        operator_tenant="tenant-live",
+        correlation_id="corr-candidate-invalid-url",
+        timeout=15.0,
+        api_invoker_token=SMOKE_API_INVOKER,
+        retry_policy=_smoke_policy(),
+        sleep=_clocked_sleep(clock, sleeper),
+        monotonic=clock,
+    )
+
+    assert len(calls) == len(SMOKE_API_PATHS)
+    assert sleeper.delays == []
+    assert report["version_probe"]["outcome"] == "rejected"
+    assert report["version_probe"]["attempts"][0]["provenance"] == "invalid_request"
+    assert not all(c.ok for c in checks)
+    _assert_smoke_redacted(checks, report)
+
+
+def test_smoke_checks_without_a_policy_keep_a_single_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    slept: list[float] = []
+
+    def timing_out(url: str, *, headers, timeout: float):
+        calls.append(_path_of(url))
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(validator, "_request", timing_out)
+    monkeypatch.setattr(
+        validator,
+        "_request_without_redirect",
+        lambda url, **_: (307, "https://web.example/login?returnTo=%2Foperator"),
+    )
+
+    checks, report = validator.smoke_checks(
+        api_url="https://candidate-x---oday-api-abc.a.run.app",
+        web_url="https://web.example",
+        expected_sha=EXPECTED_SHA,
+        bearer_token=SMOKE_BEARER,
+        operator_role="ops-lead",
+        operator_subject="smoke-operator",
+        operator_tenant="tenant-live",
+        correlation_id="corr-candidate-single",
+        timeout=0.5,
+        api_invoker_token=SMOKE_API_INVOKER,
+        sleep=slept.append,
+    )
+
+    assert calls == list(SMOKE_API_PATHS)
+    assert slept == []
+    assert report["probe_retry_policy"]["attempts"] == 1
+    assert not all(c.ok for c in checks)
+    _assert_smoke_redacted(checks, report)
+
+
+def _smoke_cli_env() -> dict[str, str]:
+    return {
+        **os.environ,
+        "ODP_API_INVOKER_TOKEN": SMOKE_API_INVOKER,
+        "ODP_OPERATOR_SMOKE_BEARER_TOKEN": SMOKE_BEARER,
+        "ODP_OPERATOR_SMOKE_ROLE": "ops-lead",
+    }
+
+
+def test_smoke_cli_defaults_to_the_bounded_startup_retry_contract(tmp_path: Path) -> None:
+    server, url = start_server()
+    report_path = tmp_path / "cloud-run-smoke.json"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(VALIDATOR_PATH),
+                "smoke",
+                "--api-url",
+                url,
+                "--web-url",
+                url,
+                "--expected-sha",
+                EXPECTED_SHA,
+                "--output",
+                str(report_path),
+            ],
+            cwd=ROOT,
+            env=_smoke_cli_env(),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        server.shutdown()
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    text = report_path.read_text(encoding="utf-8")
+    report = json.loads(text)
+    assert report["ok"] is True
+    assert report["probe_retry_policy"] == {
+        "attempts": validator.SMOKE_PROBE_ATTEMPTS,
+        "per_attempt_timeout_seconds": 15.0,
+        "backoff_seconds": validator.SMOKE_PROBE_BACKOFF_SECONDS,
+        "max_backoff_seconds": validator.SMOKE_PROBE_MAX_BACKOFF_SECONDS,
+        "total_deadline_seconds": validator.SMOKE_PROBE_DEADLINE_SECONDS,
+        "deadline_scope": "shared_by_api_probes",
+    }
+    assert validator.SMOKE_PROBE_ATTEMPTS > 1
+    assert 0 < validator.SMOKE_PROBE_DEADLINE_SECONDS < float("inf")
+    assert report["version_probe"]["attempt_count"] == 1
+    assert SMOKE_BEARER not in text
+    assert SMOKE_API_INVOKER not in text
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--smoke-retry-attempts", "0"),
+        ("--smoke-retry-deadline-seconds", "inf"),
+        ("--smoke-retry-deadline-seconds", "nan"),
+        ("--smoke-retry-backoff-seconds", "-1"),
+        ("--timeout", "nan"),
+    ],
+)
+def test_smoke_cli_fails_closed_on_an_unbounded_retry_policy(
+    tmp_path: Path, flag: str, value: str
+) -> None:
+    report_path = tmp_path / "cloud-run-smoke.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(VALIDATOR_PATH),
+            "smoke",
+            "--api-url",
+            "http://127.0.0.1:1",
+            "--web-url",
+            "http://127.0.0.1:1",
+            "--expected-sha",
+            EXPECTED_SHA,
+            flag,
+            value,
+            "--output",
+            str(report_path),
+        ],
+        cwd=ROOT,
+        env=_smoke_cli_env(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ok"] is False
+    assert [check["name"] for check in report["checks"]] == ["smoke:retry_policy"]
+
+
+class _MisbehavingCandidateHandler(DeterministicRuntimeHandler):
+    """The deterministic candidate, except the first `/platform/version`.
+
+    That first request receives `stall_status` and its headers, then a body
+    that stalls part-way (`mode="stall"`), trickles one byte at a time
+    (`mode="trickle"`), or never stops trickling without a declared length
+    (`mode="trickle-until-close"`). Every later request is answered healthily,
+    so a retry would turn the authentic first answer into a pass.
+    """
+
+    stall_status = 401
+    mode = "stall"
+    version_hits = 0
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib handler contract
+        cls = type(self)
+        if self.path == "/platform/version":
+            cls.version_hits += 1
+            if cls.version_hits == 1:
+                self._misbehave()
+                return
+        super().do_GET()
+
+    def _misbehave(self) -> None:
+        body = json.dumps({"detail": "refused", "padding": "x" * 64}).encode()
+        self.send_response(self.stall_status)
+        self.send_header("content-type", "application/json")
+        if self.mode != "trickle-until-close":
+            self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        try:
+            if self.mode == "stall":
+                self.wfile.write(body[:5])
+                self.wfile.flush()
+                time.sleep(2.0)
+                return
+            for byte in body:
+                self.wfile.write(bytes([byte]))
+                self.wfile.flush()
+                time.sleep(0.03)
+        except OSError:
+            return
+
+
+def _start_misbehaving_server(status: int, mode: str) -> tuple[ThreadingHTTPServer, str]:
+    handler = type(
+        "_Handler",
+        (_MisbehavingCandidateHandler,),
+        {"stall_status": status, "mode": mode, "version_hits": 0},
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address
+    return server, f"http://{host}:{port}"
+
+
+@pytest.mark.parametrize("mode", ["stall", "trickle", "trickle-until-close"])
+@pytest.mark.parametrize("status", [401, 403, 503, 200])
+def test_request_keeps_a_received_status_when_its_body_never_completes(
+    status: int, mode: str
+) -> None:
+    server, url = _start_misbehaving_server(status, mode)
+    try:
+        started = time.monotonic()
+        with pytest.raises(validator.ResponseBodyError) as raised:
+            validator._request(f"{url}/platform/version", headers={}, timeout=0.2)
+        elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+
+    # The status that arrived is kept, and the bound covers the body too: a
+    # peer trickling one byte per read cannot hold the exchange open.
+    assert raised.value.status == status
+    assert raised.value.provenance == "unreadable_body"
+    assert f"answered status {status}" in str(raised.value)
+    assert elapsed < 1.0
+
+
+@pytest.mark.parametrize("status", [200, 401, 403, 503])
+@pytest.mark.parametrize("mode", ["trickle", "stall"])
+def test_request_bounds_a_peer_that_never_finishes_its_headers(status: int, mode: str) -> None:
+    class SlowHeaders(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            try:
+                self.wfile.write(f"HTTP/1.1 {status} Test\r\n".encode())
+                self.wfile.flush()
+                if mode == "stall":
+                    time.sleep(2.0)
+                    return
+                for _ in range(100):
+                    self.wfile.write(b"x-pad: 1\r\n")
+                    self.wfile.flush()
+                    time.sleep(0.03)
+            except OSError:
+                return
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SlowHeaders)
+    Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address
+    try:
+        started = time.monotonic()
+        result = validator.probe_with_bounded_retry(
+            f"http://{host}:{port}/platform/version",
+            headers={},
+            policy=_smoke_policy(timeout_seconds=0.2, deadline_seconds=1.0),
+            sleep=_RecordingSleep(),
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+    # Even when getresponse() raises before returning an object, the status
+    # line already arrived: never erase it and retry to a different answer.
+    assert len(result.attempts) == 1
+    assert result.final.status == status
+    assert result.final.provenance == "unreadable_body"
+    assert result.outcome == "rejected"
+    assert elapsed < 1.0
+
+
+_PROXY_ENV = (
+    "http_proxy",
+    "HTTP_PROXY",
+    "https_proxy",
+    "HTTPS_PROXY",
+    "all_proxy",
+    "ALL_PROXY",
+    "no_proxy",
+    "NO_PROXY",
+)
+
+
+def _start_raw_trickler(greeting: bytes, drip: bytes) -> tuple[socket.socket, int, list[bytes]]:
+    """Answer each connection with ``greeting``, then ``drip`` every 0.04s for 2s.
+
+    Every chunk arrives well inside a socket inactivity timeout, so only an
+    absolute deadline can end the exchange before the peer gives up.
+    """
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    received: list[bytes] = []
+
+    def serve(conn: socket.socket) -> None:
+        with conn:
+            try:
+                received.append(conn.recv(4096))
+                conn.sendall(greeting)
+                for _ in range(50):
+                    time.sleep(0.04)
+                    conn.sendall(drip)
+            except OSError:
+                return
+
+    def accept() -> None:
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            Thread(target=serve, args=(conn,), daemon=True).start()
+
+    Thread(target=accept, daemon=True).start()
+    return listener, listener.getsockname()[1], received
+
+
+def _assert_no_answer_within_deadline(result: object, elapsed: float) -> None:
+    # Nothing from the origin arrived, so there is no verdict to keep: the
+    # attempt is a bounded no-response, never an answer.
+    assert elapsed < 1.0
+    assert result.outcome == "attempts_exhausted"
+    assert len(result.attempts) == 1
+    assert result.final.status is None
+    assert result.final.provenance == "no_response"
+
+
+def test_request_bounds_a_proxy_that_never_finishes_its_connect_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in _PROXY_ENV:
+        monkeypatch.delenv(name, raising=False)
+    listener, port, received = _start_raw_trickler(
+        b"HTTP/1.1 200 Connection established\r\n", b"x-pad: 1\r\n"
+    )
+    # urllib's default ProxyHandler tunnels HTTPS through a configured proxy;
+    # the proxy is local, so the origin name is never resolved or contacted.
+    monkeypatch.setenv("https_proxy", f"http://127.0.0.1:{port}")
+    try:
+        started = time.monotonic()
+        result = validator.probe_with_bounded_retry(
+            "https://candidate.invalid/platform/version",
+            headers={},
+            policy=_smoke_policy(
+                attempts=1, timeout_seconds=0.2, deadline_seconds=0.2, backoff_seconds=0.0
+            ),
+            sleep=_RecordingSleep(),
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        listener.close()
+
+    assert received and received[0].startswith(b"CONNECT candidate.invalid:443 ")
+    # The proxy's 200 is a tunnel status, not the origin's verdict.
+    _assert_no_answer_within_deadline(result, elapsed)
+
+
+def test_request_bounds_a_peer_that_never_finishes_the_tls_handshake(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in _PROXY_ENV:
+        monkeypatch.delenv(name, raising=False)
+    # A TLS handshake record header promising 16 KiB, then one byte at a time.
+    listener, port, received = _start_raw_trickler(b"\x16\x03\x03\x40\x00", b"\x00")
+    try:
+        started = time.monotonic()
+        result = validator.probe_with_bounded_retry(
+            f"https://127.0.0.1:{port}/platform/version",
+            headers={},
+            policy=_smoke_policy(
+                attempts=1, timeout_seconds=0.2, deadline_seconds=0.2, backoff_seconds=0.0
+            ),
+            sleep=_RecordingSleep(),
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        listener.close()
+
+    assert received and received[0][:1] == b"\x16"
+    _assert_no_answer_within_deadline(result, elapsed)
+
+
+def test_request_connect_attempts_share_one_deadline_across_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in _PROXY_ENV:
+        monkeypatch.delenv(name, raising=False)
+    # A listener whose one-slot backlog is full silently drops further SYNs,
+    # so each connect to it stalls until its own timeout.
+    blackhole = socket.socket()
+    blackhole.bind(("127.0.0.1", 0))
+    blackhole.listen(0)
+    port = blackhole.getsockname()[1]
+    filler = socket.create_connection(("127.0.0.1", port), timeout=1.0)
+    resolved = [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", port))]
+    monkeypatch.setattr(validator.socket, "getaddrinfo", lambda *_args, **_kw: resolved * 4)
+    try:
+        started = time.monotonic()
+        with pytest.raises(TimeoutError, match="no response within 0.3s"):
+            validator._request(f"http://candidate.invalid:{port}/", headers={}, timeout=0.3)
+        elapsed = time.monotonic() - started
+    finally:
+        filler.close()
+        blackhole.close()
+
+    # Four addresses at a fresh 0.3s each would take 1.2s.
+    assert elapsed < 0.6
+
+
+def test_probe_retry_cannot_outrun_its_deadline_on_a_slow_body() -> None:
+    server, url = _start_misbehaving_server(200, "trickle")
+    try:
+        started = time.monotonic()
+        result = validator.probe_with_bounded_retry(
+            f"{url}/platform/version",
+            headers={},
+            policy=_smoke_policy(timeout_seconds=0.1, deadline_seconds=0.1),
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+
+    assert elapsed < 0.5
+    assert result.outcome == "rejected"
+    assert len(result.attempts) == 1
+    assert result.final.status == 200
+    assert result.final.provenance == "unreadable_body"
+    assert validator.probe_failure_is_transient(result.final) is False
+
+
+@pytest.mark.parametrize("mode", ["stall", "trickle"])
+@pytest.mark.parametrize("status", [401, 403, 503])
+def test_candidate_smoke_never_retries_away_a_refusal_whose_body_failed(
+    status: int, mode: str
+) -> None:
+    server, url = _start_misbehaving_server(status, mode)
+    sleeper = _RecordingSleep()
+    try:
+        checks, report = validator.smoke_checks(
+            api_url=url,
+            web_url=url,
+            expected_sha=EXPECTED_SHA,
+            bearer_token=SMOKE_BEARER,
+            operator_role="ops-lead",
+            operator_subject="smoke-operator",
+            operator_tenant="tenant-live",
+            correlation_id="corr-candidate-partial-refusal",
+            timeout=0.3,
+            web_invoker_token=SMOKE_WEB_INVOKER,
+            api_invoker_token=SMOKE_API_INVOKER,
+            retry_policy=_smoke_policy(timeout_seconds=0.3, deadline_seconds=30.0),
+            sleep=sleeper,
+        )
+        version_hits = server.RequestHandlerClass.version_hits
+    finally:
+        server.shutdown()
+
+    # The healthy answer that a second request would get is never requested.
+    assert version_hits == 1
+    assert sleeper.delays == []
+    version_probe = report["version_probe"]
+    assert version_probe["outcome"] == "rejected"
+    assert [a["status"] for a in version_probe["attempts"]] == [status]
+    assert [a["provenance"] for a in version_probe["attempts"]] == ["unreadable_body"]
+    assert [a["transient"] for a in version_probe["attempts"]] == [False]
+    by_name = {c.name: c for c in checks}
+    version_http = by_name["smoke:/platform/version:http"]
+    assert version_http.ok is False
+    assert f"answered status {status}" in version_http.detail
+    assert by_name["smoke:/platform/version:release_sha"].ok is False
+    assert "version" not in report
+    # Every other probe still judged the healthy candidate on its own answer.
+    assert [c.name for c in checks if not c.ok] == [
+        "smoke:/platform/version:http",
+        "smoke:/platform/version:release_sha",
+    ]
+    _assert_smoke_redacted(checks, report)
+
+
+def test_probe_json_endpoint_never_retries_a_malformed_status_line() -> None:
+    class NotHttp(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.wfile.write(b"NOT-HTTP garbage\r\n\r\n")
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), NotHttp)
+    Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address
+    try:
+        result = validator.probe_with_bounded_retry(
+            f"http://{host}:{port}/platform/version",
+            headers={},
+            policy=_smoke_policy(timeout_seconds=2.0, deadline_seconds=10.0),
+            sleep=_RecordingSleep(),
+        )
+    finally:
+        server.shutdown()
+
+    assert len(result.attempts) == 1
+    assert result.final.status is None
+    assert result.final.provenance == "malformed_response"
+    assert result.outcome == "rejected"
+
+
+# Dummy credentials shaped to trip http.client's header validation, whose
+# error quotes the rejected header value as a bytes repr.
+_CRLF_SECRET = "dummy-crlf-secret-head\r\nX-Injected: dummy-crlf-secret-tail"
+_CRLF_SECRET_LEAKS = (
+    _CRLF_SECRET,
+    "dummy-crlf-secret-head",
+    "dummy-crlf-secret-tail",
+    repr(_CRLF_SECRET.encode())[2:-1],
+    json.dumps(_CRLF_SECRET)[1:-1],
+)
+
+
+def _assert_no_crlf_secret(text: str) -> None:
+    for leak in _CRLF_SECRET_LEAKS:
+        assert leak not in text
+
+
+@pytest.mark.parametrize("carrier", ["bearer", "api_invoker", "web_invoker"])
+def test_smoke_redacts_a_token_quoted_by_a_transport_exception(carrier: str) -> None:
+    tokens = {
+        "bearer": SMOKE_BEARER,
+        "api_invoker": SMOKE_API_INVOKER,
+        "web_invoker": SMOKE_WEB_INVOKER,
+    }
+    tokens[carrier] = _CRLF_SECRET
+    server, url = start_server()
+    try:
+        checks, report = validator.smoke_checks(
+            api_url=url,
+            web_url=url,
+            expected_sha=EXPECTED_SHA,
+            bearer_token=tokens["bearer"],
+            operator_role="ops-lead",
+            operator_subject="smoke-operator",
+            operator_tenant="tenant-live",
+            correlation_id="corr-candidate-redaction",
+            timeout=2.0,
+            web_invoker_token=tokens["web_invoker"],
+            api_invoker_token=tokens["api_invoker"],
+            retry_policy=_smoke_policy(timeout_seconds=2.0, deadline_seconds=30.0),
+            sleep=_RecordingSleep(),
+        )
+    finally:
+        server.shutdown()
+
+    failed = [c for c in checks if not c.ok]
+    assert failed, "a token http.client refuses to send must fail the smoke"
+    # The diagnostic survives -- only the secret inside it is replaced.
+    assert any("<redacted>" in c.detail for c in failed)
+    _assert_no_crlf_secret(json.dumps(report) + json.dumps([[c.name, c.detail] for c in checks]))
+    _assert_smoke_redacted(checks, report)
+
+
+def test_compatibility_redacts_a_token_quoted_by_a_transport_exception() -> None:
+    server, url = start_server()
+    try:
+        checks, report = validator.compatibility_smoke_checks(
+            api_url=url,
+            web_url=url,
+            correlation_id="corr-compat-redaction",
+            timeout=2.0,
+            retry_policy=_smoke_policy(timeout_seconds=2.0, deadline_seconds=30.0),
+            sleep=_RecordingSleep(),
+            api_invoker_token=_CRLF_SECRET,
+        )
+    finally:
+        server.shutdown()
+
+    assert not any(c.ok for c in checks)
+    assert any("<redacted>" in c.detail for c in checks)
+    _assert_no_crlf_secret(json.dumps(report) + json.dumps([[c.name, c.detail] for c in checks]))
+
+
+def test_smoke_cli_redacts_a_token_quoted_by_a_transport_exception(tmp_path: Path) -> None:
+    server, url = start_server()
+    report_path = tmp_path / "cloud-run-smoke.json"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(VALIDATOR_PATH),
+                "smoke",
+                "--api-url",
+                url,
+                "--web-url",
+                url,
+                "--expected-sha",
+                EXPECTED_SHA,
+                "--output",
+                str(report_path),
+            ],
+            cwd=ROOT,
+            env={**_smoke_cli_env(), "ODP_OPERATOR_SMOKE_BEARER_TOKEN": _CRLF_SECRET},
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        server.shutdown()
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ok"] is False
+    assert report["secret_values_redacted"] is True
+    _assert_no_crlf_secret(report_path.read_text(encoding="utf-8"))
+    _assert_no_crlf_secret(result.stdout + result.stderr)
+
+
+@pytest.mark.parametrize("status", [401, 403, 503])
+def test_received_http_error_body_exception_is_final(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    calls: list[str] = []
+
+    class BrokenBody(validator.urllib.error.HTTPError):
+        def read(self) -> bytes:
+            raise TimeoutError("body read timed out")
+
+    class Opener:
+        def open(self, request, *, timeout):
+            calls.append(request.full_url)
+            raise BrokenBody(request.full_url, status, "refused", {}, None)
+
+    monkeypatch.setattr(validator.urllib.request, "build_opener", lambda *_: Opener())
+    result = validator.probe_with_bounded_retry(
+        "https://candidate.example/platform/version",
+        headers={},
+        policy=_smoke_policy(),
+        sleep=_RecordingSleep(),
+    )
+    assert len(calls) == 1
+    assert result.final.status == status
+    assert result.final.provenance == "unreadable_body"
+    assert result.outcome == "rejected"
+    assert "body read timed out" in result.final.error
+
+
+def test_smoke_redacts_known_tokens_in_payload_keys_and_exception_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def token_echo(url, *, headers, timeout):
+        if url.endswith("/platform/version"):
+            return 200, {SMOKE_API_INVOKER: SMOKE_WEB_INVOKER, "release_sha": EXPECTED_SHA}
+        raise TimeoutError(f"transport failed with bearer {SMOKE_BEARER!r}")
+
+    monkeypatch.setattr(validator, "_json_request", token_echo)
+    monkeypatch.setattr(
+        validator, "_request_without_redirect", lambda *_, **__: (307, "/login?returnTo=%2Foperator")
+    )
+    clock, sleeper = _FakeClock(), _RecordingSleep()
+    checks, report = _run_candidate_smoke(
+        "https://candidate.example", policy=_smoke_policy(), clock=clock, sleeper=sleeper
+    )
+    _assert_smoke_redacted(checks, report)
+    assert report["version"]["<redacted>"] == "<redacted>"
+    assert all(
+        "<redacted>" in attempt["error"] for attempt in report["health_probe"]["attempts"]
+    )

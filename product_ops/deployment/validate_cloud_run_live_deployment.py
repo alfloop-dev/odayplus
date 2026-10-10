@@ -17,7 +17,9 @@ import json
 import math
 import os
 import re
+import socket
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -1701,31 +1703,217 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class _ExchangeDeadline:
+    """Wall-clock bound for one HTTP exchange, enforced from another thread.
+
+    A socket timeout only bounds each blocking read, so a peer that trickles
+    one byte per read can hold a response open indefinitely. When the bound
+    expires this shuts down every socket the exchange opened, which wakes the
+    blocked read; `expired` then lets the caller refuse whatever was read.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        self._lock = threading.Lock()
+        self._sockets: list[Any] = []
+        self.expired = threading.Event()
+        self.received_status: int | None = None
+        self._expires_at = time.monotonic() + seconds
+        self._timer = threading.Timer(seconds, self._expire)
+        self._timer.daemon = True
+
+    def remaining(self) -> float:
+        return self._expires_at - time.monotonic()
+
+    def register(self, sock: Any) -> None:
+        # Watch a duplicate descriptor: TLS wrapping detaches ``sock`` itself,
+        # but shutting down any descriptor of a connection ends it for all.
+        watched = sock.dup()
+        with self._lock:
+            self._sockets.append(watched)
+            if self.expired.is_set():
+                self._shutdown(watched)
+
+    def create_connection(
+        self,
+        address: tuple[str, int],
+        timeout: Any = None,
+        source_address: tuple[str, int] | None = None,
+    ) -> socket.socket:
+        """``socket.create_connection`` inside this exchange's bound.
+
+        Every address tried shares the one remaining budget, and the socket is
+        watched as soon as it connects -- before a proxy CONNECT tunnel or a
+        TLS handshake runs on it, both of which read from the peer.
+        """
+        host, port = address
+        last_error: OSError | None = None
+        for family, socktype, proto, _name, sockaddr in socket.getaddrinfo(
+            host, port, 0, socket.SOCK_STREAM
+        ):
+            remaining = self.remaining()
+            if remaining <= 0:
+                break
+            if isinstance(timeout, (int, float)):
+                remaining = min(remaining, timeout)
+            sock = socket.socket(family, socktype, proto)
+            try:
+                sock.settimeout(remaining)
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(sockaddr)
+            except OSError as exc:
+                sock.close()
+                last_error = exc
+                continue
+            self.register(sock)
+            return sock
+        if last_error is not None:
+            raise last_error
+        raise TimeoutError("no connection within the exchange deadline")
+
+    def _expire(self) -> None:
+        with self._lock:
+            self.expired.set()
+            for sock in self._sockets:
+                self._shutdown(sock)
+
+    @staticmethod
+    def _shutdown(sock: Any) -> None:
+        with contextlib.suppress(OSError):
+            sock.shutdown(socket.SHUT_RDWR)
+
+    def __enter__(self) -> _ExchangeDeadline:
+        self._timer.start()
+        return self
+
+    def has_expired(self) -> bool:
+        # Refuse a late response even if the watchdog has not been scheduled yet.
+        return self.expired.is_set() or time.monotonic() >= self._expires_at
+
+    def __exit__(self, *_exc: object) -> None:
+        self._timer.cancel()
+        self._timer.join()
+        with self._lock:
+            for sock in self._sockets:
+                sock.close()
+            self._sockets.clear()
+
+
+def _deadline_connection(base: type, deadline: _ExchangeDeadline) -> type:
+    class _DeadlineResponse(http.client.HTTPResponse):
+        def _read_status(self) -> tuple[str, int, str]:
+            version, status, reason = super()._read_status()
+            if status >= 200:
+                # getresponse() can fail while reading headers, before urllib
+                # exposes any response object. Keep the origin's status here.
+                deadline.received_status = status
+            return version, status, reason
+
+    class _DeadlineConnection(base):  # type: ignore[misc, valid-type]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._create_connection = deadline.create_connection
+
+        def connect(self) -> None:
+            super().connect()
+            # Install after connect: a proxy CONNECT status is not an origin
+            # verdict, nor is an interim 100 Continue status.
+            self.response_class = _DeadlineResponse
+
+    return _DeadlineConnection
+
+
+class _DeadlineHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, deadline: _ExchangeDeadline) -> None:
+        super().__init__()
+        self._deadline = deadline
+
+    def http_open(self, req):  # noqa: ANN001
+        return self.do_open(_deadline_connection(http.client.HTTPConnection, self._deadline), req)
+
+
+class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, deadline: _ExchangeDeadline) -> None:
+        super().__init__()
+        self._deadline = deadline
+
+    def https_open(self, req):  # noqa: ANN001
+        return self.do_open(
+            _deadline_connection(http.client.HTTPSConnection, self._deadline),
+            req,
+            context=self._context,
+        )
+
+
 def _request(
     url: str,
     *,
     headers: Mapping[str, str],
     timeout: float,
 ) -> tuple[int, str, str]:
+    """GET ``url`` within ``timeout`` seconds of wall clock, end to end.
+
+    ``timeout`` bounds the whole exchange -- connect, status line, headers and
+    every byte of the body -- not each socket read. Once a status line has
+    arrived that status is the answer: a body that then fails, stalls or
+    outlives the bound raises ``ResponseBodyError`` carrying the received
+    status, never a no-response error a retry could replace.
+    """
+
     # Every caller probes the private API with its Cloud Run transport token
     # (and, for the operator bootstrap, the application bearer). urllib copies
     # those headers onto any redirect target, so a redirect is never followed:
     # the 3xx is returned as the probe's own non-200 verdict instead.
     request = urllib.request.Request(url, headers=dict(headers))
-    opener = urllib.request.build_opener(_NoRedirect)
-    try:
-        with opener.open(request, timeout=timeout) as response:  # noqa: S310
-            return (
-                response.status,
-                response.headers.get("content-type", ""),
-                response.read().decode("utf-8", errors="replace"),
-            )
-    except urllib.error.HTTPError as exc:
-        return (
-            exc.code,
-            exc.headers.get("content-type", ""),
-            exc.read().decode("utf-8", errors="replace"),
+    with _ExchangeDeadline(timeout) as deadline:
+        opener = urllib.request.build_opener(
+            _NoRedirect, _DeadlineHTTPHandler(deadline), _DeadlineHTTPSHandler(deadline)
         )
+        try:
+            response = opener.open(request, timeout=timeout)  # noqa: S310
+        except urllib.error.HTTPError as exc:
+            response = exc
+            status = exc.code
+        except (TimeoutError, urllib.error.URLError, OSError, http.client.HTTPException) as exc:
+            if deadline.received_status is not None:
+                raise ResponseBodyError(
+                    f"{url} answered status {deadline.received_status} but its headers "
+                    f"could not be read: {type(exc).__name__}: {exc}",
+                    status=deadline.received_status,
+                    provenance=PROBE_UNREADABLE_BODY,
+                ) from exc
+            if deadline.has_expired():
+                raise TimeoutError(f"no response within {timeout}s") from None
+            raise
+        else:
+            status = response.status
+        with contextlib.closing(response):
+            content_type = response.headers.get("content-type", "")
+            try:
+                body = response.read()
+            except (OSError, ValueError, http.client.HTTPException) as exc:
+                reason = (
+                    f"body not complete within {timeout}s"
+                    if deadline.has_expired()
+                    else f"{type(exc).__name__}: {exc}"
+                )
+                raise ResponseBodyError(
+                    f"{url} answered status {status} but its body could not be read: {reason}",
+                    status=status,
+                    provenance=PROBE_UNREADABLE_BODY,
+                ) from exc
+            if deadline.has_expired():
+                # Shutting the socket down ends the stream cleanly, so a
+                # read-until-close body -- or headers still arriving after the
+                # status line -- can look complete. It is a truncation, not an
+                # answer, but the status that arrived stays on the record.
+                raise ResponseBodyError(
+                    f"{url} answered status {status} but the response was not complete "
+                    f"within {timeout}s",
+                    status=status,
+                    provenance=PROBE_UNREADABLE_BODY,
+                )
+    return status, content_type, body.decode("utf-8", errors="replace")
 
 
 def _request_without_redirect(
@@ -1883,6 +2071,19 @@ def _redact_location(location: str | None) -> str:
         return "<unparsable>"
 
 
+class ResponseBodyError(ValueError):
+    """A response arrived, but its body is unreadable or not a JSON object.
+
+    Carries the received status and probe provenance so a bounded retry can
+    tell this final answer apart from a request that never got one.
+    """
+
+    def __init__(self, message: str, *, status: int, provenance: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.provenance = provenance
+
+
 def _json_request(
     url: str,
     *,
@@ -1893,9 +2094,17 @@ def _json_request(
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"{url} did not return valid JSON: {exc}") from exc
+        raise ResponseBodyError(
+            f"{url} did not return valid JSON: {exc}",
+            status=status,
+            provenance=PROBE_UNPARSEABLE_BODY,
+        ) from exc
     if not isinstance(payload, dict):
-        raise ValueError(f"{url} returned a non-object JSON payload")
+        raise ResponseBodyError(
+            f"{url} returned a non-object JSON payload",
+            status=status,
+            provenance=PROBE_NON_OBJECT_BODY,
+        )
     return status, payload
 
 
@@ -2193,12 +2402,99 @@ def _api_transport_headers(api_invoker_token: str) -> dict[str, str]:
     return {"x-serverless-authorization": f"Bearer {token}"} if token else {}
 
 
+REDACTED_SECRET = "<redacted>"
+
+
+def _secret_spellings(secrets: Iterator[str] | tuple[str, ...]) -> list[str]:
+    """Every way a diagnostic may spell one of ``secrets``, longest first.
+
+    Exceptions do not quote a header value verbatim: http.client rejects a
+    token holding CR/LF with ``Invalid header value b'Bearer ...\\r\\n...'``,
+    i.e. the bytes repr. Redacting only the raw string would miss exactly the
+    diagnostic that leaks it, so each secret is matched raw, stripped, as a
+    str/bytes repr and as JSON, plus any long fragment between control
+    characters that a message may print on its own.
+    """
+
+    spellings: set[str] = set()
+    for secret in secrets:
+        for value in {secret, secret.strip()}:
+            if not value:
+                continue
+            spellings.update(
+                {
+                    value,
+                    repr(value)[1:-1],
+                    json.dumps(value)[1:-1],
+                    repr(value.encode("utf-8", "backslashreplace"))[2:-1],
+                    repr(value.encode("latin-1", "backslashreplace"))[2:-1],
+                }
+            )
+            spellings.update(
+                part for part in re.split(r"[\s\x00-\x1f\x7f]+", value) if len(part) >= 8
+            )
+    return sorted((spelling for spelling in spellings if spelling), key=len, reverse=True)
+
+
+def _redact_secret_values(value: Any, spellings: list[str]) -> Any:
+    if isinstance(value, str):
+        for spelling in spellings:
+            value = value.replace(spelling, REDACTED_SECRET)
+        return value
+    if isinstance(value, CheckResult):
+        return replace(
+            value,
+            name=_redact_secret_values(value.name, spellings),
+            detail=_redact_secret_values(value.detail, spellings),
+        )
+    if isinstance(value, Mapping):
+        return {
+            _redact_secret_values(key, spellings): _redact_secret_values(item, spellings)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_secret_values(item, spellings) for item in value]
+    return value
+
+
+def _redact_known_secrets(
+    checks: list[CheckResult], report: dict[str, Any], *secrets: str
+) -> tuple[list[CheckResult], dict[str, Any]]:
+    """Scrub every known token from checks and report before they leave."""
+
+    spellings = _secret_spellings(secrets)
+    if not spellings:
+        return checks, report
+    return _redact_secret_values(checks, spellings), _redact_secret_values(report, spellings)
+
+
 def _missing_api_invoker_check(prefix: str) -> CheckResult:
     return CheckResult(
         False,
         f"secret:{API_INVOKER_TOKEN_ENV}",
         f"missing; the private API cannot be reached for {prefix} probes",
     )
+
+
+# The release smoke probes a 0%-traffic tagged candidate. Its URL is new, so the
+# first request can land before any candidate instance is serving: run
+# 38025605232 attempt 2 timed out on /platform/version and /platform/health and
+# then received /readiness 200 from the same candidate. Service-level
+# `minScale` does not prove the tagged revision is already warm. As with the
+# compatibility gate, only a no-response transport failure is retried; every
+# received answer -- 401/403, 5xx, malformed JSON, wrong release SHA, unhealthy
+# readiness -- is judged on its first arrival. The deadline below is one budget
+# shared by all API probes, not a per-probe window.
+SMOKE_PROBE_ATTEMPTS = 4
+SMOKE_PROBE_BACKOFF_SECONDS = 2.0
+SMOKE_PROBE_MAX_BACKOFF_SECONDS = 8.0
+SMOKE_PROBE_DEADLINE_SECONDS = 180.0
+SMOKE_API_PROBE_PATHS = (
+    ("version", "/platform/version"),
+    ("health", "/platform/health"),
+    ("readiness", "/readiness"),
+    ("operator_bootstrap", "/api/v1/operator/bootstrap"),
+)
 
 
 def smoke_checks(
@@ -2214,7 +2510,21 @@ def smoke_checks(
     timeout: float,
     web_invoker_token: str = "",
     api_invoker_token: str = "",
+    retry_policy: ProbeRetryPolicy | None = None,
+    sleep: Any = time.sleep,
+    monotonic: Any = time.monotonic,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
+    # Without an explicit policy every API probe is a single attempt, exactly as
+    # before; the `smoke` CLI that drives the real deployment passes the bounded
+    # startup policy. Either way the policy's deadline is ONE budget shared by
+    # all API probes, not a fresh window per probe.
+    policy = retry_policy or ProbeRetryPolicy(
+        attempts=1,
+        timeout_seconds=timeout,
+        backoff_seconds=0.0,
+        max_backoff_seconds=0.0,
+        deadline_seconds=timeout * len(SMOKE_API_PROBE_PATHS),
+    )
     checks: list[CheckResult] = []
     report: dict[str, Any] = {
         "api_url": api_url.rstrip("/"),
@@ -2224,7 +2534,36 @@ def smoke_checks(
         "web_invoker_authenticated": bool(web_invoker_token.strip()),
         "api_invoker_authenticated": bool(api_invoker_token.strip()),
         "secret_values_redacted": True,
+        "probe_retry_policy": {**policy.as_report(), "deadline_scope": "shared_by_api_probes"},
     }
+    smoke_started = monotonic()
+
+    def probe(path: str, headers: Mapping[str, str]) -> ProbeResult | None:
+        # None means the shared budget was spent before this probe sent anything:
+        # there is no response to judge, so the caller fails the check closed.
+        remaining = policy.deadline_seconds - (monotonic() - smoke_started)
+        if remaining <= 0:
+            return None
+        return probe_with_bounded_retry(
+            f"{api_url.rstrip('/')}{path}",
+            headers=headers,
+            policy=replace(policy, deadline_seconds=remaining),
+            monotonic=monotonic,
+            sleep=sleep,
+        )
+
+    def unanswered_detail(result: ProbeResult | None) -> str:
+        if result is None:
+            return (
+                f"smoke probe deadline of {policy.deadline_seconds}s elapsed before any attempt"
+            )
+        return f"{result.final.error} ({result.retry_detail()})"
+
+    def probe_report(result: ProbeResult | None) -> dict[str, Any]:
+        if result is None:
+            return {"outcome": "deadline_exhausted", "attempt_count": 0, "attempts": []}
+        return result.as_report()
+
     base_headers = {"x-correlation-id": correlation_id}
     # Each service gets only the transport token minted for its own audience.
     api_headers = {**base_headers, **_api_transport_headers(api_invoker_token)}
@@ -2235,30 +2574,23 @@ def smoke_checks(
     if web_invoker_token.strip():
         web_headers["x-serverless-authorization"] = f"Bearer {web_invoker_token.strip()}"
 
-    probes = (
-        ("version", "/platform/version"),
-        ("health", "/platform/health"),
-        ("readiness", "/readiness"),
-    )
     payloads: dict[str, dict[str, Any]] = {}
-    for name, path in probes:
-        try:
-            status, payload = _json_request(
-                f"{api_url.rstrip('/')}{path}",
-                headers=api_headers,
-                timeout=timeout,
-            )
+    for name, path in SMOKE_API_PROBE_PATHS[:3]:
+        result = probe(path, api_headers)
+        report[f"{name}_probe"] = probe_report(result)
+        if result is not None and result.final.has_verdict:
+            payload = result.final.payload or {}
             payloads[name] = payload
             report[name] = payload
             checks.append(
                 CheckResult(
-                    ok=status == 200,
+                    ok=result.final.status == 200,
                     name=f"smoke:{path}:http",
-                    detail=f"status={status}",
+                    detail=f"status={result.final.status} {result.retry_detail()}",
                 )
             )
-        except (OSError, TimeoutError, ValueError, urllib.error.URLError) as exc:
-            checks.append(CheckResult(False, f"smoke:{path}:http", str(exc)))
+        else:
+            checks.append(CheckResult(False, f"smoke:{path}:http", unanswered_detail(result)))
 
     if expected_sha is not None:
         version = payloads.get("version", {})
@@ -2319,12 +2651,11 @@ def smoke_checks(
         "authorization": f"Bearer {bearer_token}",
         "x-operator-role": operator_role,
     }
-    try:
-        status, bootstrap = _json_request(
-            f"{api_url.rstrip('/')}/api/v1/operator/bootstrap",
-            headers=operator_headers,
-            timeout=timeout,
-        )
+    bootstrap_result = probe(SMOKE_API_PROBE_PATHS[3][1], operator_headers)
+    report["operator_bootstrap_probe"] = probe_report(bootstrap_result)
+    if bootstrap_result is not None and bootstrap_result.final.has_verdict:
+        status = bootstrap_result.final.status
+        bootstrap = bootstrap_result.final.payload or {}
         report["operator_bootstrap"] = {
             "status": status,
             "data_mode": _declared_data_mode(bootstrap) or None,
@@ -2334,7 +2665,7 @@ def smoke_checks(
             CheckResult(
                 ok=status == 200,
                 name="smoke:/api/v1/operator/bootstrap:http",
-                detail=f"status={status}",
+                detail=f"status={status} {bootstrap_result.retry_detail()}",
             )
         )
         bootstrap_mode = _declared_data_mode(bootstrap)
@@ -2385,9 +2716,18 @@ def smoke_checks(
                 ),
             )
         )
-    except (OSError, TimeoutError, ValueError, urllib.error.URLError) as exc:
-        checks.append(CheckResult(False, "smoke:/api/v1/operator/bootstrap:http", str(exc)))
+    else:
+        checks.append(
+            CheckResult(
+                False,
+                "smoke:/api/v1/operator/bootstrap:http",
+                unanswered_detail(bootstrap_result),
+            )
+        )
 
+    # Include backoff and all four probes, unlike the per-probe receipt's
+    # request-only elapsed total. The Web redirect is outside this API budget.
+    report["api_probe_elapsed_seconds"] = round(monotonic() - smoke_started, 3)
     try:
         web_status, location = _request_without_redirect(
             f"{web_url.rstrip('/')}/operator",
@@ -2411,10 +2751,20 @@ def smoke_checks(
                 ),
             )
         )
-    except (OSError, TimeoutError, urllib.error.URLError) as exc:
-        checks.append(CheckResult(False, "smoke:web:/operator", str(exc)))
+    except (
+        OSError,
+        TimeoutError,
+        ValueError,
+        http.client.HTTPException,
+        urllib.error.URLError,
+    ) as exc:
+        # ValueError covers a token http.client refuses to put on the wire; it
+        # used to escape as a traceback that printed the token itself.
+        checks.append(CheckResult(False, "smoke:web:/operator", f"{type(exc).__name__}: {exc}"))
 
-    return checks, report
+    return _redact_known_secrets(
+        checks, report, bearer_token, web_invoker_token, api_invoker_token
+    )
 
 
 # The migration compatibility gate is the first request the deployment sends to
@@ -2435,6 +2785,8 @@ COMPATIBILITY_PROBE_DEADLINE_SECONDS = 120.0
 # with a body we could not parse.
 PROBE_NO_RESPONSE = "no_response"  # transport failure or timeout: nothing came back
 PROBE_INVALID_REQUEST = "invalid_request"  # the request could not be built: a defective URL
+PROBE_MALFORMED_RESPONSE = "malformed_response"  # bytes came back, but no HTTP status line
+PROBE_UNREADABLE_BODY = "unreadable_body"  # a status arrived; the rest failed or ran late
 PROBE_UNPARSEABLE_BODY = "unparseable_body"  # a response arrived; its body was not JSON
 PROBE_NON_OBJECT_BODY = "non_object_body"  # a response arrived; its JSON was not an object
 PROBE_JSON_OBJECT = "json_object"  # a response arrived with a JSON object body
@@ -2442,6 +2794,8 @@ PROBE_PROVENANCES = frozenset(
     {
         PROBE_NO_RESPONSE,
         PROBE_INVALID_REQUEST,
+        PROBE_MALFORMED_RESPONSE,
+        PROBE_UNREADABLE_BODY,
         PROBE_UNPARSEABLE_BODY,
         PROBE_NON_OBJECT_BODY,
         PROBE_JSON_OBJECT,
@@ -2450,7 +2804,9 @@ PROBE_PROVENANCES = frozenset(
 # Nothing came back, so there is no status to record. These two differ only in
 # whether a retry could ever change the answer: a cold start can be outlasted, a
 # URL we cannot turn into a request cannot.
-PROBE_NO_STATUS_PROVENANCES = frozenset({PROBE_NO_RESPONSE, PROBE_INVALID_REQUEST})
+PROBE_NO_STATUS_PROVENANCES = frozenset(
+    {PROBE_NO_RESPONSE, PROBE_INVALID_REQUEST, PROBE_MALFORMED_RESPONSE}
+)
 # Positive allowlist rather than a substring probe: `"unhealthy" in text` is
 # true for the literal dependency value `"unhealthy"`, so a substring test
 # would pass the very verdict this gate exists to catch.
@@ -2636,7 +2992,11 @@ def probe_failure_is_transient(attempt: ProbeAttempt) -> bool:
     A request we could not even build (`invalid_request`) also received no
     response, but it is not transient: nothing was sent, so there is no cold
     start to outlast, and every retry would rebuild the identical broken
-    request and burn the deadline before failing the same way.
+    request and burn the deadline before failing the same way. The same holds
+    for a peer that answered without an HTTP status line
+    (`malformed_response`), and for a status whose body then failed, stalled
+    or outlived the exchange bound (`unreadable_body`): that status -- a 401,
+    403 or 503 included -- was received and is the answer.
     """
 
     return attempt.provenance == PROBE_NO_RESPONSE
@@ -2653,7 +3013,19 @@ def probe_json_endpoint(
 
     started = monotonic()
     try:
-        status, _content_type, body = _request(url, headers=headers, timeout=timeout)
+        status, payload = _json_request(url, headers=headers, timeout=timeout)
+    except ResponseBodyError as exc:
+        # A status line arrived -- `_request` converts HTTPError into a status
+        # and body, and turns a body that fails, stalls or outlives the bound
+        # into this error -- so this is a received, final answer that is never
+        # retried and never loses its status.
+        return ProbeAttempt(
+            status=exc.status,
+            payload=None,
+            error=str(exc),
+            elapsed_seconds=monotonic() - started,
+            provenance=exc.provenance,
+        )
     except (ValueError, http.client.InvalidURL) as exc:
         # `urllib` refuses to build the request itself -- a malformed URL
         # (`ValueError: Invalid IPv6 URL`, `UnicodeEncodeError` on a non-latin-1
@@ -2679,32 +3051,22 @@ def probe_json_endpoint(
             elapsed_seconds=monotonic() - started,
             provenance=PROBE_NO_RESPONSE,
         )
-    elapsed = monotonic() - started
-    # Past this point a response exists -- `_request` converts HTTPError into a
-    # status and body -- so every remaining outcome is a received response.
-    try:
-        payload = json.loads(body)
-    except json.JSONDecodeError as exc:
+    except http.client.HTTPException as exc:
+        # The peer answered with something that is not an HTTP status line
+        # (`BadStatusLine`, `LineTooLong`). That is not a cold start a retry can
+        # outlast, and before this arm it escaped as a traceback with no report.
         return ProbeAttempt(
-            status=status,
+            status=None,
             payload=None,
-            error=f"{url} did not return valid JSON: {exc}",
-            elapsed_seconds=elapsed,
-            provenance=PROBE_UNPARSEABLE_BODY,
-        )
-    if not isinstance(payload, dict):
-        return ProbeAttempt(
-            status=status,
-            payload=None,
-            error=f"{url} returned a non-object JSON payload",
-            elapsed_seconds=elapsed,
-            provenance=PROBE_NON_OBJECT_BODY,
+            error=f"{url} sent a malformed HTTP response: {type(exc).__name__}: {exc}",
+            elapsed_seconds=monotonic() - started,
+            provenance=PROBE_MALFORMED_RESPONSE,
         )
     return ProbeAttempt(
         status=status,
         payload=payload,
         error="",
-        elapsed_seconds=elapsed,
+        elapsed_seconds=monotonic() - started,
         provenance=PROBE_JSON_OBJECT,
     )
 
@@ -2860,7 +3222,7 @@ def compatibility_smoke_checks(
             )
         )
 
-    return checks, report
+    return _redact_known_secrets(checks, report, api_invoker_token)
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:
@@ -4011,7 +4373,9 @@ def _finalize(
     report: dict[str, Any],
     output: Path | None,
     label: str,
+    secrets: tuple[str, ...] = (),
 ) -> int:
+    checks, report = _redact_known_secrets(checks, report, *secrets)
     report.update(
         {
             "schema_version": 1,
@@ -4052,6 +4416,18 @@ def main() -> int:
     smoke.add_argument("--expected-sha", required=True)
     smoke.add_argument("--correlation-id", default=f"corr-cloud-run-{int(time.time())}")
     smoke.add_argument("--timeout", type=float, default=15.0)
+    smoke.add_argument("--smoke-retry-attempts", type=int, default=SMOKE_PROBE_ATTEMPTS)
+    smoke.add_argument(
+        "--smoke-retry-backoff-seconds", type=float, default=SMOKE_PROBE_BACKOFF_SECONDS
+    )
+    smoke.add_argument(
+        "--smoke-retry-max-backoff-seconds",
+        type=float,
+        default=SMOKE_PROBE_MAX_BACKOFF_SECONDS,
+    )
+    smoke.add_argument(
+        "--smoke-retry-deadline-seconds", type=float, default=SMOKE_PROBE_DEADLINE_SECONDS
+    )
     smoke.add_argument("--output", type=Path)
 
     compatibility_smoke = subparsers.add_parser("compatibility-smoke")
@@ -4219,6 +4595,21 @@ def main() -> int:
                 api_invoker_token=api_invoker_token,
             )
     else:
+        try:
+            smoke_policy = ProbeRetryPolicy(
+                attempts=args.smoke_retry_attempts,
+                timeout_seconds=args.timeout,
+                backoff_seconds=args.smoke_retry_backoff_seconds,
+                max_backoff_seconds=args.smoke_retry_max_backoff_seconds,
+                deadline_seconds=args.smoke_retry_deadline_seconds,
+            )
+        except ValueError as exc:
+            return _finalize(
+                checks=[CheckResult(False, "smoke:retry_policy", str(exc))],
+                report={"secret_values_redacted": True},
+                output=args.output,
+                label="Cloud Run live deployment smoke",
+            )
         token = os.environ.get("ODP_OPERATOR_SMOKE_BEARER_TOKEN", "")
         api_invoker_token = os.environ.get(API_INVOKER_TOKEN_ENV, "")
         checks = []
@@ -4247,6 +4638,7 @@ def main() -> int:
                 timeout=args.timeout,
                 web_invoker_token=os.environ.get("ODP_WEB_CANDIDATE_INVOKER_TOKEN", ""),
                 api_invoker_token=api_invoker_token,
+                retry_policy=smoke_policy,
             )
     return _finalize(
         checks=checks,
@@ -4256,6 +4648,14 @@ def main() -> int:
             "Cloud Run live deployment smoke"
             if args.command == "smoke"
             else "Cloud Run migration compatibility smoke"
+        ),
+        secrets=tuple(
+            os.environ.get(name, "")
+            for name in (
+                "ODP_OPERATOR_SMOKE_BEARER_TOKEN",
+                API_INVOKER_TOKEN_ENV,
+                "ODP_WEB_CANDIDATE_INVOKER_TOKEN",
+            )
         ),
     )
 
