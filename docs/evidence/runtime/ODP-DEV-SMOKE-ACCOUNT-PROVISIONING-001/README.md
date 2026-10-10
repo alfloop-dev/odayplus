@@ -787,3 +787,29 @@ process, and malformed/exception results. Verification pending at source anchor.
 Still missing: authenticated foreground custody/source approval/exact admission
 and promoted/rollback-owned wiring. No CLI/workflow hookup or live action; not
 review-ready. This increment resolves memory handoff, not rollout authority.
+
+### Exact same-process composition verification
+
+Source anchor `3afa9db85b7a17cfd390b9f1e7ddb6f14c3372d6` completed all five exact
+declared commands once through the canonical foreground verification module.
+Original tool terminal exit0; each retained JSON receipt binds command, selection,
+source SHA, actual exit code and duration. No background wait, polling, broadened
+suite or count-only rerun. Existing uv, scratch pnpm9.15.9 launcher and installed
+workspace binaries were reused without tracked dependency changes.
+
+| Exact declared selection | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.018s | `7d18cec9e51f6e14` |
+| Invitation/provisioning/workflow pytest | 0 | 238.918s | `4b3727996bf48c4e` |
+| Gate/operator pytest | 0 | 45.648s | `1d9716278411df2c` |
+| Invitation Web Vitest | 0 | 2.536s | `d4384046783eed4b` |
+| Web typecheck | 0 | 6.639s | `595f8e38177c0a55` |
+
+Original receipts remain in canonical `.orchestrator/evidence`. This subsequent
+evidence-only commit is not the tested source SHA. Exact-head required CI and
+independent Codex review are still required before activation. The passing
+composition spy is explicitly NOT an actual passing gate; the actual evaluator
+negative proves unavailable runtime quarantine, not live release acceptance.
+Source/admission/custody authentication and rollback-owned deployment hookup are
+still the next source work. No worker live identity, secret/config, IAM, traffic,
+source or model action; no deployment/F11/full-product claim or review submission.
