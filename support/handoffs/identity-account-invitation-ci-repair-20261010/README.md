@@ -2,14 +2,16 @@
 
 Owner: Pi · Reviewer: Codex2 · PR: [#1447](https://github.com/alfloop-dev/odayplus/pull/1447)
 
-**Current checkpoint (2026-10-10):** base `d99de4a05ef5` is composed with
-preserved history; the lifecycle repair is implemented on source anchor
-`c29f9c46524c`. Focused verification passes, including actual Web/Pg/API auth.
-Submit the new head for independent Codex2 review and required remote CI;
-**no merge, live provisioning, or deployment acceptance is claimed.** The older
-"not ready" paragraphs below describe prior increments, not this checkpoint.
-The optional broader release-binding run hit a missing local PyNaCl dependency;
-its failure and unavailable project runner are disclosed in the final section.
+**Current checkpoint (2026-10-10 22:57 UTC):** merge `014781053779`
+composes current `origin/dev` `d50cd331a53b` without rewriting task history;
+source `7c7b01c2ada5` additionally clarifies that recipient delivery is unknown.
+Fresh focused verification passes, including actual Web/Pg/API auth. Submit the
+new evidence head through `task_finalize.sh` for fresh exact-head full CI and
+independent Codex2 review; **no merge, live provisioning, incident recovery,
+credential binding, or deployment acceptance is claimed.** The older "not ready"
+paragraphs below describe prior increments, not this checkpoint. Original review
+findings/churn and CI failures remain preserved. The historical optional broader
+release-binding run's missing local PyNaCl failure is disclosed below.
 
 ## Failure and bounded repair
 
@@ -254,3 +256,75 @@ dependencies; Codex2 must independently approve before any merge or `done`.
 The next commit records evidence only, not another source change. This worker
 performed no live identity mutations, credential binding, release admission or
 deployment changes and did not alter the dev-admin gate relative to the base.
+
+## Resumed owner dispatch — current base composition (2026-10-10 22:57 UTC)
+
+The source scheduling hold has been removed by canonical task control. This
+source task remains independent of the interrupted foreground credential
+execution. No reset, reissue, recovery endpoint, new account, secret write,
+release admission or live operation was attempted. Archived/frozen deliveries
+are unchanged relative to `origin/dev`.
+
+- `014781053779` has parents `d28d1ba0fe1e` and actual base `d50cd331a53b`.
+  The normal non-fast-forward merge was clean; the worker-safe private-index
+  wrapper committed the composed paths explicitly. All task history survives.
+- The existing repaired lifecycle continues to reuse the independently merged
+  random-token/hash-only pending invitation and atomic Argon2 acceptance
+  authority. This composition does not restore password-derived capabilities or
+  early activation. The original reviewer rejection and churn remain intact.
+- `7c7b01c2ada5` changes only the handoff UI and its regression assertion: new
+  account input is labelled login username, not UUID subject ID; invitation
+  creation is not email delivery. Recipient delivery/acceptance remains unknown;
+  clipboard success means only the completed clipboard write. No delivery ACK,
+  active-user placeholder or credential-custody receipt is invented.
+
+### Fresh terminal verification
+
+On merge source `014781053779`, the following synchronous command completed
+with terminal **exit 0**, **164 passed**, 8 deprecation warnings, 197.65 seconds:
+
+```sh
+.venv/bin/python -m pytest -m 'not requires_live_env' \
+  tests/contract/test_openapi_artifact_and_client.py \
+  tests/identity/test_identity_user_role_management.py \
+  tests/security/test_user_role_management.py \
+  tests/security/test_dev_smoke_invitation.py \
+  tests/security/test_operator_read_authorization.py \
+  tests/contract/test_web_release_manifest_binding.py
+```
+
+This includes the real disposable PostgreSQL/Web/API invitation-login-password
+rotation regression described above, plus current-base authority and manifest
+regressions. It is not a live environment acceptance or credential incident
+recovery receipt. Python/runtime/OpenAPI source did not change after this run.
+
+On final source `7c7b01c2ada5`, this synchronous chain completed with terminal
+**exit 0**, **84 passed, 1 skipped**, in 6 Web test files; typecheck and whitespace
+checks also passed:
+
+```sh
+npm test --workspace=@oday-plus/web -- \
+  features/operator/__tests__/UserRoleManagementController.test.tsx \
+  src/app/auth/invitations/__tests__/route.test.ts \
+  src/lib/auth/__tests__/password.test.ts \
+  src/lib/auth/__tests__/login.test.ts \
+  src/lib/auth/__tests__/localAuth.test.ts \
+  src/lib/auth/__tests__/operatorReleasePage.test.ts
+npm run typecheck --workspace=@oday-plus/web
+git diff --check
+```
+
+The same Web command also passed before the copy-only increment. Its one
+standalone skip is the disposable Pg auth fixture, actually exercised by the
+Python regression above, not replaced with a synthetic session/password edit.
+
+Fresh task Python ruff, `delivery_toolchain/governance/check_code_boundaries.py`
+(1221 files), and `delivery_toolchain/openapi/check_drift.py --base-ref origin/dev`
+also passed on the merge source. The contract remains **2 additive, 0 unapproved
+breaking**. No lint, test, policy, gate, dependency or lockfile was weakened.
+
+The evidence-only commit following this source is the new review target.
+Required full GitHub CI must run on that exact head, and Codex2 must independently
+approve it. Prior green runs are historical, not current security approval.
+`task_finalize.sh` must push normally and atomically bind PR #1447 to the new
+submission; no direct handoff, force push, owner approval or `done` is permitted.
