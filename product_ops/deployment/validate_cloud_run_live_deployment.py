@@ -1883,6 +1883,19 @@ def _redact_location(location: str | None) -> str:
         return "<unparsable>"
 
 
+class ResponseBodyError(ValueError):
+    """A response arrived, but its body is not a JSON object.
+
+    Carries the received status and probe provenance so a bounded retry can
+    tell this final answer apart from a request that never got one.
+    """
+
+    def __init__(self, message: str, *, status: int, provenance: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.provenance = provenance
+
+
 def _json_request(
     url: str,
     *,
@@ -1893,9 +1906,17 @@ def _json_request(
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"{url} did not return valid JSON: {exc}") from exc
+        raise ResponseBodyError(
+            f"{url} did not return valid JSON: {exc}",
+            status=status,
+            provenance=PROBE_UNPARSEABLE_BODY,
+        ) from exc
     if not isinstance(payload, dict):
-        raise ValueError(f"{url} returned a non-object JSON payload")
+        raise ResponseBodyError(
+            f"{url} returned a non-object JSON payload",
+            status=status,
+            provenance=PROBE_NON_OBJECT_BODY,
+        )
     return status, payload
 
 
@@ -2201,6 +2222,27 @@ def _missing_api_invoker_check(prefix: str) -> CheckResult:
     )
 
 
+# The release smoke probes a 0%-traffic tagged candidate. Its URL is new, so the
+# first request can land before any candidate instance is serving: run
+# 38025605232 attempt 2 timed out on /platform/version and /platform/health and
+# then received /readiness 200 from the same candidate. Service-level
+# `minScale` does not prove the tagged revision is already warm. As with the
+# compatibility gate, only a no-response transport failure is retried; every
+# received answer -- 401/403, 5xx, malformed JSON, wrong release SHA, unhealthy
+# readiness -- is judged on its first arrival. The deadline below is one budget
+# shared by all API probes, not a per-probe window.
+SMOKE_PROBE_ATTEMPTS = 4
+SMOKE_PROBE_BACKOFF_SECONDS = 2.0
+SMOKE_PROBE_MAX_BACKOFF_SECONDS = 8.0
+SMOKE_PROBE_DEADLINE_SECONDS = 180.0
+SMOKE_API_PROBE_PATHS = (
+    ("version", "/platform/version"),
+    ("health", "/platform/health"),
+    ("readiness", "/readiness"),
+    ("operator_bootstrap", "/api/v1/operator/bootstrap"),
+)
+
+
 def smoke_checks(
     *,
     api_url: str,
@@ -2214,7 +2256,21 @@ def smoke_checks(
     timeout: float,
     web_invoker_token: str = "",
     api_invoker_token: str = "",
+    retry_policy: ProbeRetryPolicy | None = None,
+    sleep: Any = time.sleep,
+    monotonic: Any = time.monotonic,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
+    # Without an explicit policy every API probe is a single attempt, exactly as
+    # before; the `smoke` CLI that drives the real deployment passes the bounded
+    # startup policy. Either way the policy's deadline is ONE budget shared by
+    # all API probes, not a fresh window per probe.
+    policy = retry_policy or ProbeRetryPolicy(
+        attempts=1,
+        timeout_seconds=timeout,
+        backoff_seconds=0.0,
+        max_backoff_seconds=0.0,
+        deadline_seconds=timeout * len(SMOKE_API_PROBE_PATHS),
+    )
     checks: list[CheckResult] = []
     report: dict[str, Any] = {
         "api_url": api_url.rstrip("/"),
@@ -2224,7 +2280,36 @@ def smoke_checks(
         "web_invoker_authenticated": bool(web_invoker_token.strip()),
         "api_invoker_authenticated": bool(api_invoker_token.strip()),
         "secret_values_redacted": True,
+        "probe_retry_policy": {**policy.as_report(), "deadline_scope": "shared_by_api_probes"},
     }
+    smoke_started = monotonic()
+
+    def probe(path: str, headers: Mapping[str, str]) -> ProbeResult | None:
+        # None means the shared budget was spent before this probe sent anything:
+        # there is no response to judge, so the caller fails the check closed.
+        remaining = policy.deadline_seconds - (monotonic() - smoke_started)
+        if remaining <= 0:
+            return None
+        return probe_with_bounded_retry(
+            f"{api_url.rstrip('/')}{path}",
+            headers=headers,
+            policy=replace(policy, deadline_seconds=remaining),
+            monotonic=monotonic,
+            sleep=sleep,
+        )
+
+    def unanswered_detail(result: ProbeResult | None) -> str:
+        if result is None:
+            return (
+                f"smoke probe deadline of {policy.deadline_seconds}s elapsed before any attempt"
+            )
+        return f"{result.final.error} ({result.retry_detail()})"
+
+    def probe_report(result: ProbeResult | None) -> dict[str, Any]:
+        if result is None:
+            return {"outcome": "deadline_exhausted", "attempt_count": 0, "attempts": []}
+        return result.as_report()
+
     base_headers = {"x-correlation-id": correlation_id}
     # Each service gets only the transport token minted for its own audience.
     api_headers = {**base_headers, **_api_transport_headers(api_invoker_token)}
@@ -2235,30 +2320,23 @@ def smoke_checks(
     if web_invoker_token.strip():
         web_headers["x-serverless-authorization"] = f"Bearer {web_invoker_token.strip()}"
 
-    probes = (
-        ("version", "/platform/version"),
-        ("health", "/platform/health"),
-        ("readiness", "/readiness"),
-    )
     payloads: dict[str, dict[str, Any]] = {}
-    for name, path in probes:
-        try:
-            status, payload = _json_request(
-                f"{api_url.rstrip('/')}{path}",
-                headers=api_headers,
-                timeout=timeout,
-            )
+    for name, path in SMOKE_API_PROBE_PATHS[:3]:
+        result = probe(path, api_headers)
+        report[f"{name}_probe"] = probe_report(result)
+        if result is not None and result.final.has_verdict:
+            payload = result.final.payload or {}
             payloads[name] = payload
             report[name] = payload
             checks.append(
                 CheckResult(
-                    ok=status == 200,
+                    ok=result.final.status == 200,
                     name=f"smoke:{path}:http",
-                    detail=f"status={status}",
+                    detail=f"status={result.final.status} {result.retry_detail()}",
                 )
             )
-        except (OSError, TimeoutError, ValueError, urllib.error.URLError) as exc:
-            checks.append(CheckResult(False, f"smoke:{path}:http", str(exc)))
+        else:
+            checks.append(CheckResult(False, f"smoke:{path}:http", unanswered_detail(result)))
 
     if expected_sha is not None:
         version = payloads.get("version", {})
@@ -2319,12 +2397,11 @@ def smoke_checks(
         "authorization": f"Bearer {bearer_token}",
         "x-operator-role": operator_role,
     }
-    try:
-        status, bootstrap = _json_request(
-            f"{api_url.rstrip('/')}/api/v1/operator/bootstrap",
-            headers=operator_headers,
-            timeout=timeout,
-        )
+    bootstrap_result = probe(SMOKE_API_PROBE_PATHS[3][1], operator_headers)
+    report["operator_bootstrap_probe"] = probe_report(bootstrap_result)
+    if bootstrap_result is not None and bootstrap_result.final.has_verdict:
+        status = bootstrap_result.final.status
+        bootstrap = bootstrap_result.final.payload or {}
         report["operator_bootstrap"] = {
             "status": status,
             "data_mode": _declared_data_mode(bootstrap) or None,
@@ -2334,7 +2411,7 @@ def smoke_checks(
             CheckResult(
                 ok=status == 200,
                 name="smoke:/api/v1/operator/bootstrap:http",
-                detail=f"status={status}",
+                detail=f"status={status} {bootstrap_result.retry_detail()}",
             )
         )
         bootstrap_mode = _declared_data_mode(bootstrap)
@@ -2385,8 +2462,14 @@ def smoke_checks(
                 ),
             )
         )
-    except (OSError, TimeoutError, ValueError, urllib.error.URLError) as exc:
-        checks.append(CheckResult(False, "smoke:/api/v1/operator/bootstrap:http", str(exc)))
+    else:
+        checks.append(
+            CheckResult(
+                False,
+                "smoke:/api/v1/operator/bootstrap:http",
+                unanswered_detail(bootstrap_result),
+            )
+        )
 
     try:
         web_status, location = _request_without_redirect(
@@ -2653,7 +2736,17 @@ def probe_json_endpoint(
 
     started = monotonic()
     try:
-        status, _content_type, body = _request(url, headers=headers, timeout=timeout)
+        status, payload = _json_request(url, headers=headers, timeout=timeout)
+    except ResponseBodyError as exc:
+        # A response exists -- `_request` converts HTTPError into a status and
+        # body -- so this is a received, final answer that is never retried.
+        return ProbeAttempt(
+            status=exc.status,
+            payload=None,
+            error=str(exc),
+            elapsed_seconds=monotonic() - started,
+            provenance=exc.provenance,
+        )
     except (ValueError, http.client.InvalidURL) as exc:
         # `urllib` refuses to build the request itself -- a malformed URL
         # (`ValueError: Invalid IPv6 URL`, `UnicodeEncodeError` on a non-latin-1
@@ -2679,32 +2772,11 @@ def probe_json_endpoint(
             elapsed_seconds=monotonic() - started,
             provenance=PROBE_NO_RESPONSE,
         )
-    elapsed = monotonic() - started
-    # Past this point a response exists -- `_request` converts HTTPError into a
-    # status and body -- so every remaining outcome is a received response.
-    try:
-        payload = json.loads(body)
-    except json.JSONDecodeError as exc:
-        return ProbeAttempt(
-            status=status,
-            payload=None,
-            error=f"{url} did not return valid JSON: {exc}",
-            elapsed_seconds=elapsed,
-            provenance=PROBE_UNPARSEABLE_BODY,
-        )
-    if not isinstance(payload, dict):
-        return ProbeAttempt(
-            status=status,
-            payload=None,
-            error=f"{url} returned a non-object JSON payload",
-            elapsed_seconds=elapsed,
-            provenance=PROBE_NON_OBJECT_BODY,
-        )
     return ProbeAttempt(
         status=status,
         payload=payload,
         error="",
-        elapsed_seconds=elapsed,
+        elapsed_seconds=monotonic() - started,
         provenance=PROBE_JSON_OBJECT,
     )
 
@@ -4052,6 +4124,18 @@ def main() -> int:
     smoke.add_argument("--expected-sha", required=True)
     smoke.add_argument("--correlation-id", default=f"corr-cloud-run-{int(time.time())}")
     smoke.add_argument("--timeout", type=float, default=15.0)
+    smoke.add_argument("--smoke-retry-attempts", type=int, default=SMOKE_PROBE_ATTEMPTS)
+    smoke.add_argument(
+        "--smoke-retry-backoff-seconds", type=float, default=SMOKE_PROBE_BACKOFF_SECONDS
+    )
+    smoke.add_argument(
+        "--smoke-retry-max-backoff-seconds",
+        type=float,
+        default=SMOKE_PROBE_MAX_BACKOFF_SECONDS,
+    )
+    smoke.add_argument(
+        "--smoke-retry-deadline-seconds", type=float, default=SMOKE_PROBE_DEADLINE_SECONDS
+    )
     smoke.add_argument("--output", type=Path)
 
     compatibility_smoke = subparsers.add_parser("compatibility-smoke")
@@ -4219,6 +4303,21 @@ def main() -> int:
                 api_invoker_token=api_invoker_token,
             )
     else:
+        try:
+            smoke_policy = ProbeRetryPolicy(
+                attempts=args.smoke_retry_attempts,
+                timeout_seconds=args.timeout,
+                backoff_seconds=args.smoke_retry_backoff_seconds,
+                max_backoff_seconds=args.smoke_retry_max_backoff_seconds,
+                deadline_seconds=args.smoke_retry_deadline_seconds,
+            )
+        except ValueError as exc:
+            return _finalize(
+                checks=[CheckResult(False, "smoke:retry_policy", str(exc))],
+                report={"secret_values_redacted": True},
+                output=args.output,
+                label="Cloud Run live deployment smoke",
+            )
         token = os.environ.get("ODP_OPERATOR_SMOKE_BEARER_TOKEN", "")
         api_invoker_token = os.environ.get(API_INVOKER_TOKEN_ENV, "")
         checks = []
@@ -4247,6 +4346,7 @@ def main() -> int:
                 timeout=args.timeout,
                 web_invoker_token=os.environ.get("ODP_WEB_CANDIDATE_INVOKER_TOKEN", ""),
                 api_invoker_token=api_invoker_token,
+                retry_policy=smoke_policy,
             )
     return _finalize(
         checks=checks,
