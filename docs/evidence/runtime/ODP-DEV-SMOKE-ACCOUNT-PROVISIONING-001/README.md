@@ -643,3 +643,32 @@ live gate/deployment success. Exact-head CI, independent Codex review and formal
 `task_finalize.sh` submission are required once end-to-end source is ready.
 No live account/login/session, GitHub token/secret/configuration, IAM, deployment,
 source activation or model action occurred. Task remains in progress.
+
+## Anchor 12 — memory-only bundle consumer with durable quarantine refusal
+
+Compared current deploy/workflow configuration with fetched `origin/dev` before
+editing. Added only the optional bundle secret to the existing live-deploy step;
+no lifecycle/writer or provisioning token is supplied by the workflow. Deploy
+preflight validates the bundle before cloud mutation without decoding values into
+shell/argv/files/outputs. The gate takes the exact matched pair in process memory
+and suppresses every old username/password/initial/bootstrap fallback. Nonempty
+invalid JSON, duplicate keys, incomplete pair, preserved subject, wrong dev scope,
+unknown schema/keys or malformed UUIDs refuse without fallback or raw diagnostics.
+
+Secret presence/parse alone is insufficient: the authenticated tenant-scoped
+administration audit projection now includes only the two identifier-only dev
+journal types in addition to existing identity events. The gate requires a unique
+reserved root, binding intent and durable ACK matching execution/plan/creation
+tuple/account/tenant; missing ACK, quarantine, duplicates or inconsistent events
+fail closed. It also requires pure-admin account and invitation principal/audit
+proof, preserving all existing finite-role/session/business/model/worker gates.
+Original standing configuration still applies only when the bundle is absent.
+No receipt claims decrypted GitHub readback or deployment success.
+
+Offline coverage added for parser strictness, old-secret suppression, pre-network
+refusal, actual deploy preflight, gate account/journal mismatches, and the actual
+sealed-box lifecycle's matched-pair reader plus tenant-filtered journal projection.
+Verification pending at this anchor. Still unfinished: authenticated foreground
+custody/source approval and normally admitted dev promotion -> same-pair unchanged
+final gate orchestration; explicit recovery reconciliation remains coordinator-owned.
+Not review-ready; no live account/session/secret/IAM/deploy/source/model action.

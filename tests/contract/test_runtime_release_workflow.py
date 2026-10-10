@@ -171,3 +171,47 @@ def test_missing_supply_chain_digest_still_blocks_handoff(publication):
     assert result.returncode != 0
     assert "no SBOM attestation artifact resolves" in result.stderr
     assert "signature_refs=" not in output and "sbom_refs=" not in output
+
+
+def test_deploy_workflow_only_consumes_matched_bundle_never_provisions() -> None:
+    jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
+    (step,) = [s for s in jobs["deploy"]["steps"] if s.get("id") == "live-deploy"]
+    assert step["env"]["ODP_DEV_ADMIN_CREDENTIAL_BUNDLE"] == "${{ secrets.ODP_DEV_ADMIN_CREDENTIAL_BUNDLE }}"
+    assert step["run"] == "./product_ops/deployment/deploy_cloud_run_waji.sh"
+    script = (ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
+    assert "WebInvitationExecutor" not in script and "DevCredentialBundleExecutor" not in script
+    assert "read_dev_credential_bundle" in script
+    assert script.index("read_dev_credential_bundle") < script.index("DEPLOYMENT_COMMITTED=false")
+    assert script.index("check_live_e2e_gate.py") < script.index("DEPLOYMENT_COMMITTED=true")
+
+
+@pytest.mark.parametrize("case", ["valid", "malformed", "full", "staging"])
+def test_actual_deploy_bundle_preflight_refuses_before_cloud_without_decoding_shell(case: str) -> None:
+    import shlex
+    from delivery_toolchain.release.provision_dev_smoke import AUTHORIZATION_ID, TENANT_ID
+    bundle = {"schema_version": 1, "authorization_id": AUTHORIZATION_ID,
+              "execution_id": "747efb4e-230d-4864-9bb9-194bec13045b",
+              "repository": "alfloop-dev/odayplus", "environment": "dev", "tenant_id": TENANT_ID,
+              "account_id": "5f0c1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b",
+              "username": "new.admin", "password": "private-exact-bundle-password"}
+    script = (ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
+    # Execute the unchanged real profile/preflight block. The downstream marker
+    # models first cloud mutation; subprocess Python is the frozen test interpreter.
+    block = script[script.index('ODP_RELEASE_PROFILE="'):script.index('if [ "${ODP_DEPLOY_ENV}" = "production" ]; then')]
+    shell = ('set -euo pipefail\nrun_locked_python() { ' + shlex.quote(sys.executable) +
+             ' "$@"; }\n' + block + '\nprintf "cloud-boundary-reached\\n"\n')
+    env = dict(os.environ, ODP_DEPLOY_ENV="staging" if case == "staging" else "dev",
+               ODP_RELEASE_PROFILE="full" if case == "full" else "dev-admin",
+               ODP_DEV_ADMIN_CREDENTIAL_BUNDLE="{private-malformed-password" if case == "malformed" else json.dumps(bundle),
+               ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE="cs-lead")
+    # Valid bundle must not need or decode the old pair, even with a stale initial.
+    for key in ("ODP_DEV_ADMIN_USERNAME", "ODP_DEV_ADMIN_PASSWORD", "ODP_DEV_BOOTSTRAP_ADMIN_USERNAME", "ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD"):
+        env.pop(key, None)
+    env["ODP_DEV_ADMIN_INITIAL_PASSWORD"] = "private-stale-initial-password"
+    result = subprocess.run(["bash", "-c", shell], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=20, check=False)
+    assert result.returncode == 0 if case == "valid" else result.returncode != 0
+    assert ("cloud-boundary-reached" in result.stdout) is (case == "valid")
+    for secret in (bundle["password"], "private-malformed-password", env["ODP_DEV_ADMIN_INITIAL_PASSWORD"]):
+        assert secret not in result.stdout + result.stderr
+    assert bundle["password"] not in shell

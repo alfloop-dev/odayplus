@@ -70,10 +70,12 @@ case "${ODP_RELEASE_PROFILE}" in
       echo "Error: release profile 'dev-admin' may only deploy to dev, not '${ODP_DEPLOY_ENV}'." >&2
       exit 1
     fi
-    ODP_DEV_ADMIN_USERNAME="${ODP_DEV_ADMIN_USERNAME:-${ODP_DEV_BOOTSTRAP_ADMIN_USERNAME:-}}"
-    ODP_DEV_ADMIN_PASSWORD="${ODP_DEV_ADMIN_PASSWORD:-${ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD:-}}"
-    : "${ODP_DEV_ADMIN_USERNAME:?Error: the dev-admin profile requires ODP_DEV_ADMIN_USERNAME (the platform_admin account).}"
-    : "${ODP_DEV_ADMIN_PASSWORD:?Error: the dev-admin profile requires ODP_DEV_ADMIN_PASSWORD (secret).}"
+    if [ -z "${ODP_DEV_ADMIN_CREDENTIAL_BUNDLE:-}" ]; then
+      ODP_DEV_ADMIN_USERNAME="${ODP_DEV_ADMIN_USERNAME:-${ODP_DEV_BOOTSTRAP_ADMIN_USERNAME:-}}"
+      ODP_DEV_ADMIN_PASSWORD="${ODP_DEV_ADMIN_PASSWORD:-${ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD:-}}"
+      : "${ODP_DEV_ADMIN_USERNAME:?Error: the dev-admin profile requires ODP_DEV_ADMIN_USERNAME (the platform_admin account).}"
+      : "${ODP_DEV_ADMIN_PASSWORD:?Error: the dev-admin profile requires ODP_DEV_ADMIN_PASSWORD (secret).}"
+    fi
     : "${ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE:?Error: the dev-admin profile requires ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE (an operator role the account does not hold).}"
     export ODP_DEV_ADMIN_USERNAME ODP_DEV_ADMIN_PASSWORD
     ;;
@@ -83,6 +85,20 @@ case "${ODP_RELEASE_PROFILE}" in
     ;;
 esac
 export ODP_RELEASE_PROFILE
+# Validate a staged matched pair before cloud mutation. Never decode credentials
+# into shell/argv/files/outputs; the gate reads the same bundle in its own memory.
+# Nonempty malformed/wrong-environment bundles MUST NOT fall back to legacy inputs.
+if [ -n "${ODP_DEV_ADMIN_CREDENTIAL_BUNDLE:-}" ]; then
+  run_locked_python -c '
+import os, sys
+from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, read_dev_credential_bundle
+try:
+    read_dev_credential_bundle(os.environ["ODP_DEV_ADMIN_CREDENTIAL_BUNDLE"],
+        environment=os.environ["ODP_DEPLOY_ENV"], release_profile=os.environ["ODP_RELEASE_PROFILE"])
+except ProvisioningRefused:
+    sys.exit("Error: PROVISIONING_CREDENTIAL_BUNDLE_INVALID")
+'
+fi
 if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
   : "${ODP_PROD_DEPLOY_URL:?Error: ODP_PROD_DEPLOY_URL is required for production live E2E.}"
   : "${ODP_PROD_API_URL:?Error: ODP_PROD_API_URL is required for production live E2E.}"

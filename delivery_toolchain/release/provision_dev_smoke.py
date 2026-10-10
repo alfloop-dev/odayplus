@@ -7,9 +7,10 @@ release admission/human approval, proves mailbox ownership, or authorizes a clou
 mutation. The Web lifecycle below is callable only by the trusted foreground
 coordinator after source approval and exact release admission; it does not
 implement those control-plane checks. The optional encrypted bundle writer below
-composes the same lifecycle/password in one call, but is not yet consumed by the
-release workflow and cannot prove the stored secret value. Default workflows
-do not invoke this module, and there is intentionally no anonymous CLI.
+composes the same lifecycle/password in one call but cannot prove the stored
+secret value. The release workflow consumes an already staged bundle through the
+strict memory-only reader; it never invokes the lifecycle/writer. There is
+intentionally no anonymous provisioning CLI.
 
 Account input must come from the existing authenticated identity readback, not
 caller headers or an offline receipt. Credentials/capabilities are not accepted
@@ -579,14 +580,124 @@ class GitHubDevSecretStore:
             raise ProvisioningRefused("PROVISIONING_GITHUB_UNCERTAIN") from None
 
 
+@dataclass(frozen=True)
+class DevCredentialBundle:
+    """Memory-only matched pair. Never serialize, print or pass to a subprocess."""
+
+    username: str
+    password: str = field(repr=False)
+    account_id: str
+    tenant_id: str
+    execution_id: str
+
+
+def read_dev_credential_bundle(
+    raw: str, *, environment: str, release_profile: str,
+) -> DevCredentialBundle | None:
+    """Empty means legacy binding; any nonempty invalid bundle refuses fallback.
+
+    This is a secret/configuration reader, NOT human approval or lifecycle proof.
+    The unchanged gate must still authenticate the account and prove invitation
+    provenance. The bundle is standing dev configuration, not candidate-specific.
+    Neither an acknowledged upload nor a successful parse is activation evidence.
+    """
+    if raw == "":
+        return None
+    try:
+        if (not isinstance(raw, str) or len(raw) > 16384
+                or environment != "dev" or release_profile != "dev-admin"):
+            raise ValueError
+
+        def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError
+                result[key] = value
+            return result
+
+        bundle = json.loads(raw, object_pairs_hook=unique)
+        keys = {"schema_version", "authorization_id", "execution_id", "repository",
+                "environment", "tenant_id", "account_id", "username", "password"}
+        if (not isinstance(bundle, dict) or set(bundle) != keys
+                or type(bundle["schema_version"]) is not int or bundle["schema_version"] != 1
+                or not all(type(bundle[k]) is str for k in keys - {"schema_version"})
+                or bundle["authorization_id"] != AUTHORIZATION_ID
+                or bundle["repository"] != REPOSITORY or bundle["environment"] != "dev"
+                or bundle["tenant_id"] != TENANT_ID
+                or not _USERNAME.fullmatch(bundle["username"])
+                or bundle["username"].casefold() == "ajoe734"
+                or not 12 <= len(bundle["password"]) <= 1024):
+            raise ValueError
+        for key in ("account_id", "execution_id"):
+            value = UUID(bundle[key])
+            if value.int == 0 or str(value) != bundle[key]:
+                raise ValueError
+        if bundle["account_id"] == PRESERVED_ACCOUNT_ID:
+            raise ValueError
+        return DevCredentialBundle(bundle["username"], bundle["password"], bundle["account_id"],
+                                   bundle["tenant_id"], bundle["execution_id"])
+    except Exception:
+        # JSON decoding/UUID errors may embed secret input: static code only.
+        raise ProvisioningRefused("PROVISIONING_CREDENTIAL_BUNDLE_INVALID") from None
+
+
+def credential_bundle_acknowledged(bundle: DevCredentialBundle, events: list[Any]) -> bool:
+    """Authenticated tenant-audit projection only; never a local upload receipt.
+
+    Requires reserved root + intent + durable ACK, matching execution/account and
+    original tuple. Recovery/extra/ambiguous events fail closed. Standing binding
+    may be used for later admitted candidates without relabelling its creation.
+    """
+    try:
+        grouped = []
+        for cls, stages in ((ProvisioningJournal, ["reserved"]),
+                            (DevCredentialBundleExecutor, ["binding-intent", "binding-acknowledged"])):
+            found = [e for e in events if e.get("event_type") == cls._TYPE
+                     or e.get("correlation_id") == cls._CORRELATION]
+            found.sort(key=lambda e: datetime.fromisoformat(e["timestamp"]))
+            if len(found) != len(stages):
+                return False
+            for event, stage in zip(found, stages):
+                m = event["metadata"]
+                if (event["event_type"] != cls._TYPE or event["actor"] != cls._ACTOR
+                        or event["action"] != ("DEV_SMOKE_RESERVATION" if cls is ProvisioningJournal else "DEV_SMOKE_BINDING")
+                        or event["resource"] != cls._CORRELATION or event["correlation_id"] != cls._CORRELATION
+                        or event["outcome"] != "success" or not _aware(datetime.fromisoformat(event["timestamp"]))
+                        or str(UUID(event["event_id"])) != event["event_id"] or UUID(event["event_id"]).int == 0
+                        or set(m) != cls._KEYS or m["stage"] != stage
+                        or m["authorization_id"] != AUTHORIZATION_ID or m["tenant_id"] != bundle.tenant_id
+                        or m["execution_id"] != bundle.execution_id or m["execution_authorized"] is not False
+                        or m["secret_values_redacted"] is not True or not _SHA.fullmatch(m["release_sha"])
+                        or not _DIGEST.fullmatch(m["manifest_digest"])
+                        or not re.fullmatch(r"[0-9a-f]{64}", m["plan_digest"])):
+                    return False
+                if cls is DevCredentialBundleExecutor and (
+                        m["account_id"] != bundle.account_id or m["secret_name"] != GitHubDevSecretStore.NAME
+                        or m["credential_binding_verified"] is not False):
+                    return False
+            grouped.append(found)
+        ordered = grouped[0] + grouped[1]
+        if len({e["event_id"] for e in ordered}) != 3:
+            return False
+        base = grouped[0][0]["metadata"]
+        for e in grouped[1]:
+            if any(e["metadata"][k] != base[k] for k in ProvisioningJournal._KEYS - {"stage"}):
+                return False
+        return all(datetime.fromisoformat(a["timestamp"]) <= datetime.fromisoformat(b["timestamp"])
+                   for a, b in zip(ordered, ordered[1:]))
+    except Exception:
+        return False
+
+
 class DevCredentialBundleExecutor:
     """Foreground lifecycle + same-pair encrypted staging, NOT rollout authority.
 
     A SINGLE encrypted JSON secret contains the matched username/password plus
     tuple/account identifiers. It cannot mix the preserved account's password or
     optional bootstrap credential. Existing vars/secrets are untouched. The
-    workflow does not consume the bundle yet; acknowledged PUT is NOT proof of
-    secret value, deployment or gate success. The approved coordinator must own
+    workflow consumes the bundle only as a matched pair; acknowledged PUT is NOT
+    proof of secret value, deployment or gate success. The approved coordinator must own
     source/admission/custody checks before calling this library.
 
     Durable intent precedes PUT. Crash/lost reply/readback/journal failures leave

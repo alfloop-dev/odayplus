@@ -196,7 +196,11 @@ class IdentityUserRoleManagementService:
         tenant = self._require_tenant(tenant_id)
         events: list[dict[str, Any]] = []
         for event in self._audit_log.list_events(tenant_id=tenant):
-            if not event.event_type.startswith(IDENTITY_EVENT_PREFIX):
+            # Identifier-only dev provisioning journals are projected through
+            # this same authenticated, tenant-filtered administration read. The
+            # consumer must refuse uncertain roots, not infer ACK from a secret.
+            if (not event.event_type.startswith(IDENTITY_EVENT_PREFIX)
+                    and event.event_type not in {"release.dev_smoke.reservation", "release.dev_smoke.binding"}):
                 continue
             meta = dict(event.metadata or {})
             if subject_id and subject_id not in {meta.get("subject_id"), meta.get("account_id")}:

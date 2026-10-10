@@ -963,10 +963,19 @@ def test_binding_encrypts_one_matched_pair_without_bootstrap_fallback(encrypted_
         "environment": "dev", "tenant_id": TENANT, "account_id": receipt["account_id"],
         "username": plan["username"], "password": PASSWORD,
     }
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle
+    consumed = read_dev_credential_bundle(json.dumps(bundle), environment="dev", release_profile="dev-admin")
+    assert consumed.username == plan["username"] and consumed.password == args["new_password"]
+    assert consumed.account_id == receipt["account_id"] and consumed.tenant_id == TENANT
+    assert PASSWORD not in repr(consumed)
     assert receipt["binding_write_acknowledged"] is True
     assert receipt["credential_binding_verified"] is False
     assert not receipt["live_gate_passed"] and not receipt["deployment_success"]
     assert binding.inspect()["stage"] == "binding-acknowledged"
+    from delivery_toolchain.release.provision_dev_smoke import credential_bundle_acknowledged
+    projected = s.service.get_audit_trail(tenant_id=TENANT)
+    assert credential_bundle_acknowledged(consumed, projected)
+    assert not credential_bundle_acknowledged(consumed, s.service.get_audit_trail(tenant_id=OTHER_TENANT))
     after = _snapshot(s)
     for key in before.keys() - {"sessions"}:
         assert after[key] == before[key]

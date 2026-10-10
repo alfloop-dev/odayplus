@@ -1417,6 +1417,10 @@ jobs:
           # through the Web password form as the single pure platform_admin
           # account, verifies must_change enforcement, first-login rotation
           # if fresh, authoritative user admin, and signs out again.
+          # Optional one-secret matched pair staged by the approved foreground
+          # custodian. Consumer only: this step never creates accounts/bindings.
+          # It suppresses ALL standing/initial-password fallbacks when present.
+          ODP_DEV_ADMIN_CREDENTIAL_BUNDLE: ${{ secrets.ODP_DEV_ADMIN_CREDENTIAL_BUNDLE }}
           ODP_DEV_ADMIN_USERNAME: ${{ vars.ODP_DEV_ADMIN_USERNAME }}
           ODP_DEV_ADMIN_PASSWORD: ${{ secrets.ODP_DEV_ADMIN_PASSWORD }}
           ODP_DEV_ADMIN_INITIAL_PASSWORD: ${{ secrets.ODP_DEV_ADMIN_INITIAL_PASSWORD }}

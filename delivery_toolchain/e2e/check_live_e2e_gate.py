@@ -370,8 +370,13 @@ class GateConfig:
     # dev-admin only: the bootstrap-created pure platform_admin account the gate
     # signs in as through the Web password form. Never written to the report.
     dev_admin_username: str = ""
-    dev_admin_password: str = ""
-    dev_admin_initial_password: str = ""
+    dev_admin_password: str = field(default="", repr=False)
+    dev_admin_initial_password: str = field(default="", repr=False)
+    # Non-secret expectations from a strictly parsed matched bundle. The gate
+    # binds these to authoritative reads; they confer no permissions/provenance.
+    dev_admin_bundle_account_id: str = ""
+    dev_admin_bundle_tenant_id: str = ""
+    dev_admin_bundle_execution_id: str = ""
     dev_admin_denied_role: str = ""
     bootstrap_admin_username: str = ""
     bootstrap_admin_password: str = ""
@@ -2168,6 +2173,13 @@ def _check_dev_admin_session(
     report["dev_admin"]["account_mode"] = "read-enabled-admin" if read_admin else "pure-admin"
     if users.failed or users.status != 200 or not (pure_admin or read_admin):
         return
+    if config.dev_admin_bundle_account_id:
+        matched = (pure_admin and own_record.get("subject_id") == config.dev_admin_bundle_account_id
+                   and _as_dict(own_record.get("scope")).get("tenant_id") == config.dev_admin_bundle_tenant_id)
+        _check(checks, matched, "admin:credential_bundle_account_bound",
+               f"authoritativeMatchedPairAccount={matched}", "auth")
+        if not matched:
+            return
     if read_admin:
         principal = web.request(
             "GET", "/api/v1/auth/principal", authenticated=False, headers=session_headers(cookies)
@@ -2203,6 +2215,16 @@ def _check_dev_admin_session(
     )
     events = trail.payload.get("events") if not trail.failed else None
     events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
+    if config.dev_admin_bundle_account_id:
+        from delivery_toolchain.release.provision_dev_smoke import DevCredentialBundle, credential_bundle_acknowledged
+        acknowledged = credential_bundle_acknowledged(DevCredentialBundle(
+            username, "", config.dev_admin_bundle_account_id, config.dev_admin_bundle_tenant_id,
+            config.dev_admin_bundle_execution_id,
+        ), events)
+        _check(checks, acknowledged, "admin:credential_bundle_durable_acknowledgement",
+               f"reservedIntentAcknowledgementWithoutQuarantine={acknowledged}", "audit")
+        if not acknowledged:
+            return
     bootstrap_events = [
         e
         for e in events
@@ -2216,6 +2238,10 @@ def _check_dev_admin_session(
              or _as_dict(e.get("metadata")).get("account_id") == own_record.get("subject_id"))
         for e in events
     )
+    if config.dev_admin_bundle_account_id and not invited:
+        _check(checks, False, "admin:credential_bundle_invitation_required",
+               "matched bundle requires genuine invitation provenance", "audit")
+        return
     if invited:
         provenance = _invitation_provenance(own_record, events)
         audited = not trail.failed and trail.status == 200 and provenance is not None
@@ -3420,6 +3446,18 @@ def _required_providers(args: argparse.Namespace) -> tuple[str, ...]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, read_dev_credential_bundle
+
+    try:
+        bundle = read_dev_credential_bundle(
+            os.environ.get("ODP_DEV_ADMIN_CREDENTIAL_BUNDLE", ""),
+            environment=args.expected_deployment.strip().lower(),
+            release_profile=str(args.release_profile or "").strip().lower(),
+        )
+    except ProvisioningRefused:
+        # No raw JSON/password, diagnostics, fallback or network on parse failure.
+        print("Live E2E gate refused: PROVISIONING_CREDENTIAL_BUNDLE_INVALID", file=sys.stderr)
+        return 2
     config = GateConfig(
         api_url=args.api_url.strip(),
         expected_sha=args.expected_sha.strip().lower(),
@@ -3441,13 +3479,16 @@ def main(argv: list[str] | None = None) -> int:
         # The six-journey receipt is bound to this admitted manifest digest;
         # without it full acceptance can never be claimed (fail closed).
         expected_manifest_digest=str(args.expected_manifest_digest or "").strip().lower(),
-        dev_admin_username=os.environ.get(DEV_ADMIN_USERNAME_ENV, "").strip() or os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
-        # Not stripped: a password is exactly what the operator set.
-        dev_admin_password=os.environ.get(DEV_ADMIN_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
-        dev_admin_initial_password=os.environ.get(DEV_ADMIN_INITIAL_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_SECRET_ENV, ""),
+        dev_admin_username=bundle.username if bundle else (os.environ.get(DEV_ADMIN_USERNAME_ENV, "").strip() or os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip()),
+        # No stripping and NO per-field fallback when a matched bundle is present.
+        dev_admin_password=bundle.password if bundle else (os.environ.get(DEV_ADMIN_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, "")),
+        dev_admin_initial_password="" if bundle else (os.environ.get(DEV_ADMIN_INITIAL_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_SECRET_ENV, "")),
+        dev_admin_bundle_account_id=bundle.account_id if bundle else "",
+        dev_admin_bundle_tenant_id=bundle.tenant_id if bundle else "",
+        dev_admin_bundle_execution_id=bundle.execution_id if bundle else "",
         dev_admin_denied_role=os.environ.get(DEV_ADMIN_DENIED_ROLE_ENV, "").strip() or "cs-lead",
-        bootstrap_admin_username=os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
-        bootstrap_admin_password=os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
+        bootstrap_admin_username="" if bundle else os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
+        bootstrap_admin_password="" if bundle else os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
     )
     correlation_id = f"corr-live-e2e-{config.expected_sha[:12] or 'unbound'}-{int(time.time())}"
 

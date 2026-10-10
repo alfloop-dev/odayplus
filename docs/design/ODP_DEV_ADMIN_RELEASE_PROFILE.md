@@ -413,13 +413,24 @@ back decrypted secret values. The trusted custodian must exclude external secret
 writers (GitHub has no create-only conditional PUT). Neither custody, source
 review nor admission is authenticated by this library.
 
-The workflow **does not consume this bundle yet**. An atomic matched-pair reader
-that refuses malformed bundles and suppresses the old optional bootstrap secret,
-approved-foreground promoted-before-unchanged-gate orchestration, and actual
-unchanged live-gate proof remain unfinished. Existing default workflows/bindings,
-PR1445 deployment/inventory and finite-role gates remain unchanged. Independent
-review is required before use; the background worker creates no live account or
-secrets. Staging an encrypted bundle is not standing-binding activation proof.
+The workflow now **consumes an already staged bundle**, never invokes the
+lifecycle/writer. Its strict memory-only reader rejects nonempty malformed,
+partial, duplicate-key or wrong-scope JSON before cloud mutation, with no legacy
+fallback. A present bundle supplies both username/password and suppresses every
+old initial/bootstrap credential. The gate additionally binds account/tenant to
+the authenticated pure-admin record and requires genuine invitation provenance
+plus the matching durable reservation, binding intent and acknowledgement on
+the tenant-filtered authenticated audit read. Missing ACK, duplicate/extra events,
+quarantine or execution/plan/account mismatch blocks; a secret's presence alone
+cannot authorize recovery. No decoded pair enters shell, arguments, files or
+workflow outputs. Standing bundle creation provenance is not relabelled when a
+later admitted candidate uses it. Without a bundle the existing binding is unchanged.
+
+Approved-foreground promoted-before-unchanged-gate orchestration and actual live
+gate proof remain unfinished. PR1445 deployment/inventory, admission, IAM and
+finite-role gates remain intact. Independent review is required before use; the
+background worker creates no live account or secrets. Parsing/staging a bundle
+is not standing-binding activation or deployment proof.
 
 ## 6. Operator / coordinator handoff
 
