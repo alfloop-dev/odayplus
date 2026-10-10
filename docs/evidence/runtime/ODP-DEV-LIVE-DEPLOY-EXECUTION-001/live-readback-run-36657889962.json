@@ -1,0 +1,165 @@
+{
+  "readback_at": "2026-09-30T02:07:39Z",
+  "note": "read-only readback after Deploy Dev run 36657889962 (lease lease-410e6cf6a181ebb31e8b91fb14177bed). Service/job listing reduced to name/image/labels; no env values or secret values recorded.",
+  "project": "odayplus-runtime-20260825",
+  "region": "asia-east1",
+  "run": {
+    "id": 36657889962,
+    "url": "https://github.com/alfloop-dev/odayplus/actions/runs/36657889962",
+    "head_sha": "a631b8c793b27842f28f54f663a33b4af49ee824",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-09-30T02:01:38Z",
+    "updated_at": "2026-09-30T02:06:05Z",
+    "jobs": [
+      {
+        "name": "Validate release phase inputs",
+        "conclusion": "success",
+        "failed_steps": []
+      },
+      {
+        "name": "Verify the Supervisor lease authorises this deploy",
+        "conclusion": "success",
+        "failed_steps": []
+      },
+      {
+        "name": "Build once and publish the immutable artifact handoff",
+        "conclusion": "skipped",
+        "failed_steps": []
+      },
+      {
+        "name": "Deploy the admitted artifact by immutable digest",
+        "conclusion": "failure",
+        "failed_steps": [
+          "Deploy Cloud Run by immutable digest"
+        ]
+      },
+      {
+        "name": "Verify production watch and clean up ephemeral staging",
+        "conclusion": "skipped",
+        "failed_steps": []
+      }
+    ]
+  },
+  "cloud_run_services": [
+    {
+      "name": "oday-mlflow",
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-mlflow@sha256:da3cbc2b0625f3a398901db30fd1e45d416cbcd2d9981f6072234a673c65fbf9",
+      "labels": {
+        "cloud.googleapis.com/location": "asia-east1"
+      }
+    },
+    {
+      "name": "oday-staging-mlflow",
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-mlflow@sha256:69700d5f66cb99f381ff7d437ad5b9e4e5bbdaa741128484e825f5cbea32cfb6",
+      "labels": {
+        "cloud.googleapis.com/location": "asia-east1"
+      }
+    }
+  ],
+  "cloud_run_jobs": [],
+  "migration_execution_logs": [
+    {
+      "timestamp": "2026-09-30T02:04:09.119448Z",
+      "severity": "NOTICE",
+      "logName": "projects/odayplus-runtime-20260825/logs/cloudaudit.googleapis.com%2Factivity",
+      "textPayload": null,
+      "jsonPayload": null,
+      "protoPayload_method": "google.cloud.run.v1.Jobs.CreateJob",
+      "protoPayload_status": {}
+    },
+    {
+      "timestamp": "2026-09-30T02:04:09.816270Z",
+      "severity": "INFO",
+      "logName": "projects/odayplus-runtime-20260825/logs/cloudaudit.googleapis.com%2Fsystem_event",
+      "textPayload": null,
+      "jsonPayload": null,
+      "protoPayload_method": "/Jobs.CreateJob",
+      "protoPayload_status": {
+        "message": "Ready condition status changed to True for Job oday-migration-r-ee06d1d82944."
+      }
+    },
+    {
+      "timestamp": "2026-09-30T02:05:34.339755Z",
+      "severity": null,
+      "logName": "projects/odayplus-runtime-20260825/logs/run.googleapis.com%2Fstdout",
+      "textPayload": null,
+      "jsonPayload": {
+        "assisted_intake_manifest_sha256": "37e55eca74bfb922a4c2ae2fc3685de8eeac1a9c6b27c46d89806e7fc0fb62b2",
+        "assisted_intake_schema_status": "verified",
+        "assisted_intake_steps": [
+          "001_baseline.sql",
+          "002_consistency.sql",
+          "003_promotion_state.sql",
+          "004_tenant_rls_lineage.sql"
+        ],
+        "checksum_status": "verified",
+        "cloud_run_execution": "oday-migration-r-ee06d1d82944-76fh9",
+        "cloud_run_task_index": "0",
+        "environment": "dev",
+        "manifest_sha256": "29e86f8da041bb5b8b05d20d96136dcbba411de9c233324d3b6dc23ab42eafcf",
+        "receipt_kind": "migration",
+        "recorded_at": "2026-09-30T02:05:34Z",
+        "release_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+        "returncode": 0,
+        "runtime_schema_verified": true,
+        "schema_version": 1,
+        "status": "succeeded",
+        "target_revision": "head"
+      },
+      "protoPayload_method": null,
+      "protoPayload_status": null
+    },
+    {
+      "timestamp": "2026-09-30T02:05:34.794538Z",
+      "severity": "INFO",
+      "logName": "projects/odayplus-runtime-20260825/logs/run.googleapis.com%2Fvarlog%2Fsystem",
+      "textPayload": "Container called exit(0).",
+      "jsonPayload": null,
+      "protoPayload_method": null,
+      "protoPayload_status": null
+    },
+    {
+      "timestamp": "2026-09-30T02:05:38.305987Z",
+      "severity": "INFO",
+      "logName": "projects/odayplus-runtime-20260825/logs/cloudaudit.googleapis.com%2Fsystem_event",
+      "textPayload": null,
+      "jsonPayload": null,
+      "protoPayload_method": "/Jobs.RunJob",
+      "protoPayload_status": {
+        "message": "Execution oday-migration-r-ee06d1d82944-76fh9 has completed successfully."
+      }
+    },
+    {
+      "timestamp": "2026-09-30T02:05:55.373826Z",
+      "severity": "NOTICE",
+      "logName": "projects/odayplus-runtime-20260825/logs/cloudaudit.googleapis.com%2Factivity",
+      "textPayload": null,
+      "jsonPayload": null,
+      "protoPayload_method": "google.cloud.run.v1.Jobs.DeleteJob",
+      "protoPayload_status": {}
+    },
+    {
+      "timestamp": "2026-09-30T02:05:55.470020Z",
+      "severity": "INFO",
+      "logName": "projects/odayplus-runtime-20260825/logs/cloudaudit.googleapis.com%2Fsystem_event",
+      "textPayload": null,
+      "jsonPayload": null,
+      "protoPayload_method": "/Jobs.DeleteJob",
+      "protoPayload_status": {
+        "message": "Execution oday-migration-r-ee06d1d82944-76fh9 has been deleted."
+      }
+    },
+    {
+      "timestamp": "2026-09-30T02:05:55.713595Z",
+      "severity": "INFO",
+      "logName": "projects/odayplus-runtime-20260825/logs/cloudaudit.googleapis.com%2Fsystem_event",
+      "textPayload": null,
+      "jsonPayload": null,
+      "protoPayload_method": "/Jobs.DeleteJob",
+      "protoPayload_status": {
+        "message": "Ready condition status changed to True for Job oday-migration-r-ee06d1d82944."
+      }
+    }
+  ]
+}

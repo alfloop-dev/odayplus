@@ -1,0 +1,50 @@
+{
+  "checks": [
+    {
+      "detail": "exact release SHA is present in image/env/labels",
+      "name": "jobs-smoke:migration:release_sha",
+      "ok": true
+    },
+    {
+      "detail": "bounded migrate entrypoint is configured",
+      "name": "jobs-smoke:migration:entrypoint",
+      "ok": true
+    },
+    {
+      "detail": "no external providers selected (consumer-only deployment)",
+      "name": "jobs-smoke:migration:provider_selection",
+      "ok": true
+    },
+    {
+      "detail": "database and every selected provider secret are bound to Secret Manager references: ODAY_DATABASE_URL",
+      "name": "jobs-smoke:migration:secret_bindings",
+      "ok": true
+    },
+    {
+      "detail": "latest execution completed with succeededCount>=1 and failedCount=0",
+      "name": "jobs-smoke:migration:execution",
+      "ok": true
+    },
+    {
+      "detail": "execution has a queryable Cloud Run status receipt",
+      "name": "jobs-smoke:migration:execution_receipt",
+      "ok": true
+    }
+  ],
+  "execution_name": "oday-migration-r-6140d0ef633c-kwd8j",
+  "expected_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
+  "generated_at": "2026-10-02T18:47:41Z",
+  "job_kind": "migration",
+  "job_name": "oday-migration-r-6140d0ef633c",
+  "ok": true,
+  "required_secret_env_vars": [
+    "ODAY_DATABASE_URL"
+  ],
+  "schema_version": 1,
+  "secret_bound_env_vars": [
+    "ODAY_DATABASE_URL"
+  ],
+  "secret_values_redacted": true,
+  "selected_provider_ids": [],
+  "unselected_provider_secret_env_vars": []
+}

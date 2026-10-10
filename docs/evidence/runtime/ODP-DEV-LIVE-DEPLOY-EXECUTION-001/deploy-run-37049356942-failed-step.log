@@ -1,0 +1,201 @@
+﻿2026-10-02T18:45:44.5815754Z ##[group]Run ./product_ops/deployment/deploy_cloud_run_waji.sh
+2026-10-02T18:45:44.5816245Z ^[[36;1m./product_ops/deployment/deploy_cloud_run_waji.sh^[[0m
+2026-10-02T18:45:44.5880638Z shell: /usr/bin/bash -e {0}
+2026-10-02T18:45:44.5880934Z env:
+2026-10-02T18:45:44.5881161Z   RELEASE_RECEIPT_DIR: .odp_data/release
+2026-10-02T18:45:44.5881840Z   GCP_PROJECT: odayplus-runtime-20260825
+2026-10-02T18:45:44.5882149Z   GCP_REGION: asia-east1
+2026-10-02T18:45:44.5882412Z   GCP_AR_REPO: oday-plus-dev
+2026-10-02T18:45:44.5882804Z   GCP_CLOUD_SQL_INSTANCE: odayplus-runtime-20260825:asia-east1:oday-dev-sql
+2026-10-02T18:45:44.5883233Z   ODP_STAGING_VPC_NETWORK: 
+2026-10-02T18:45:44.5883516Z   ODP_STAGING_VPC_SUBNETWORK: 
+2026-10-02T18:45:44.5883781Z   ODP_STAGING_KMS_KEY_ID: 
+2026-10-02T18:45:44.5884045Z   ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: 
+2026-10-02T18:45:44.5884355Z   ODP_STAGING_TERRAFORM_STATE_BUCKET: 
+2026-10-02T18:45:44.5884646Z   ODP_STAGING_RECOVERY_BUNDLE_BUCKET: 
+2026-10-02T18:45:44.5884926Z   API_SERVICE: oday-api
+2026-10-02T18:45:44.5885197Z   WEB_SERVICE: oday-web
+2026-10-02T18:45:44.5885438Z   MIGRATION_JOB: oday-migration
+2026-10-02T18:45:44.5885710Z   WORKER_JOB: oday-worker
+2026-10-02T18:45:44.5885959Z   SCHEDULER_JOB: oday-scheduler
+2026-10-02T18:45:44.5886245Z   WORKER_SCHEDULE_NAME: oday-worker-trigger
+2026-10-02T18:45:44.5886584Z   SCHEDULER_SCHEDULE_NAME: oday-scheduler-trigger
+2026-10-02T18:45:44.5887158Z   ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT: gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com
+2026-10-02T18:45:44.5887935Z   ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT: oday-dev-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com
+2026-10-02T18:45:44.5888723Z   ODP_CLOUD_RUN_VPC_CONNECTOR: projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc
+2026-10-02T18:45:44.5889271Z   ODP_PROD_VPC_NETWORK: 
+2026-10-02T18:45:44.5889518Z   ODP_PROD_VPC_SUBNETWORK: 
+2026-10-02T18:45:44.5889787Z   ODP_CLOUD_RUN_VPC_EGRESS: all-traffic
+2026-10-02T18:45:44.5890072Z   ODP_WORKER_CRON: */5 * * * *
+2026-10-02T18:45:44.5890338Z   ODP_SCHEDULER_CRON: 0 * * * *
+2026-10-02T18:45:44.5890624Z   ODP_SCHEDULER_TIME_ZONE: Asia/Taipei
+2026-10-02T18:45:44.5891058Z   ODP_SNAPSHOT_BUCKET: oday-dev-source-snapshots-odayplus-runtime-20260825
+2026-10-02T18:45:44.5891890Z   MLFLOW_TRACKING_URI: https://oday-mlflow-767864276141.asia-east1.run.app
+2026-10-02T18:45:44.5892445Z   ODP_MLFLOW_CLOUD_RUN_AUDIENCE: https://oday-mlflow-767864276141.asia-east1.run.app
+2026-10-02T18:45:44.5892911Z   ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled
+2026-10-02T18:45:44.5893266Z   ODP_AUTH_ISSUER: https://accounts.google.com
+2026-10-02T18:45:44.5893913Z   ODP_AUTH_AUDIENCES: https://oday-api-767864276141.asia-east1.run.app
+2026-10-02T18:45:44.5894375Z   ODP_AUTH_JWKS_URI: https://www.googleapis.com/oauth2/v3/certs
+2026-10-02T18:45:44.5894888Z   ODP_AUTH_PRINCIPAL_MAP_SECRET: oday-plus-dev-auth-principal-map:latest
+2026-10-02T18:45:44.5895552Z   ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT: oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com
+2026-10-02T18:45:44.5896157Z   ODP_WEB_OIDC_ISSUER: https://accounts.google.com
+2026-10-02T18:45:44.5896480Z   ODP_WEB_OIDC_CLIENT_ID: 
+2026-10-02T18:45:44.5896826Z   ODP_WEB_BASE_URL: https://oday-web-767864276141.asia-east1.run.app
+2026-10-02T18:45:44.5897287Z   ODP_OPERATOR_SMOKE_ROLE: operations_manager,model_owner,data_owner
+2026-10-02T18:45:44.5897669Z   ODP_LIVE_E2E_DEPLOYMENT_MODE: 
+2026-10-02T18:45:44.5897951Z   ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS: 
+2026-10-02T18:45:44.5898346Z   ODAY_DATABASE_URL_SECRET: oday-plus-dev-api-database-url-pg16:latest
+2026-10-02T18:45:44.5898824Z   ODP_WEB_OIDC_CLIENT_SECRET_SECRET: oday-dev-web-oidc-client-secret
+2026-10-02T18:45:44.5899206Z   ODP_AUTH_MODE: local
+2026-10-02T18:45:44.5899443Z   ODP_AUTH_OIDC_ENABLED: 
+2026-10-02T18:45:44.5899802Z   ODP_WEB_SESSION_SECRET_SECRET: oday-plus-dev-web-session-secret:latest
+2026-10-02T18:45:44.5900363Z   ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET: oday-plus-dev-identity-token-signing-key:latest
+2026-10-02T18:45:44.5901084Z   ODP_DEPLOY_ENV: dev
+2026-10-02T18:45:44.5901665Z   ODAY_RELEASE_SHA: 6140d0ef633cbf94522c171d9927103ab200257f
+2026-10-02T18:45:44.5902029Z   ODP_REQUIRE_LIVE_DATA: true
+2026-10-02T18:45:44.5902297Z   ODP_DATA_BINDING_MODE: live
+2026-10-02T18:45:44.5902555Z   ODP_PRODUCT_MODE: production
+2026-10-02T18:45:44.5902824Z   ODP_FORECAST_ENGINE: statsforecast
+2026-10-02T18:45:44.5903101Z   ODP_FORECAST_MODEL: seasonal_naive
+2026-10-02T18:45:44.5903391Z   ODP_EXTERNAL_PROVIDER_MODE: disabled
+2026-10-02T18:45:44.5903669Z   ODP_PERSISTENCE: postgresql
+2026-10-02T18:45:44.5903920Z   ODP_OBJECT_STORE: gcs
+2026-10-02T18:45:44.5904268Z   ODP_SCHEDULED_INGESTION_TENANT_ID: a11ce505-70bc-56d9-8564-ad22efa23c9e
+2026-10-02T18:45:44.5904702Z   ODP_TENANT_ID: a11ce505-70bc-56d9-8564-ad22efa23c9e
+2026-10-02T18:45:44.5905012Z   ODP_PROD_DEPLOY_URL: 
+2026-10-02T18:45:44.5905248Z   ODP_PROD_API_URL: 
+2026-10-02T18:45:44.5905646Z   MANIFEST_DIGEST: sha256:d286dd009978a5b9aaa9ee9fc01d1c1be1d8b846855539be63b18504ad368108
+2026-10-02T18:45:44.5906252Z   PUBLIC_EGRESS_PROBE_REPORT: .odp_data/deployment/public-egress-probe.json
+2026-10-02T18:45:44.5907106Z   API_IMAGE: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:67bbd2639c901a9faa0dc3a751f865ebcac5da1d008c97e3a13561ed14df6f70
+2026-10-02T18:45:44.5908243Z   WEB_IMAGE: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:7b5911dc5da91e0b36ea1b11625023886f7f8f635cf146c2959edce1a8a6a99a
+2026-10-02T18:45:44.5909395Z   WORKER_IMAGE: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9eaa9ea6aa9f48da4a57e0c92bff57b621101aa86c4f7444d4b4c296974880a0
+2026-10-02T18:45:44.5910596Z   SCHEDULER_IMAGE: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:2d83f4d65424912a6974907dd882fc7636388d988098394c9384dc545d3634cc
+2026-10-02T18:45:44.5911594Z   ODP_DEPLOY_BY_DIGEST: true
+2026-10-02T18:45:44.5911939Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-02T18:45:44.5912524Z   CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: /home/runner/work/odayplus/odayplus/gha-creds-a8d8447b163322b3.json
+2026-10-02T18:45:44.5913253Z   GOOGLE_APPLICATION_CREDENTIALS: /home/runner/work/odayplus/odayplus/gha-creds-a8d8447b163322b3.json
+2026-10-02T18:45:44.5913920Z   GOOGLE_GHA_CREDS_PATH: /home/runner/work/odayplus/odayplus/gha-creds-a8d8447b163322b3.json
+2026-10-02T18:45:44.5914429Z   CLOUDSDK_CORE_PROJECT: odayplus-runtime-20260825
+2026-10-02T18:45:44.5914782Z   CLOUDSDK_PROJECT: odayplus-runtime-20260825
+2026-10-02T18:45:44.5915113Z   GCLOUD_PROJECT: odayplus-runtime-20260825
+2026-10-02T18:45:44.5915609Z   GOOGLE_CLOUD_PROJECT: odayplus-runtime-20260825
+2026-10-02T18:45:44.5916005Z   CLOUDSDK_METRICS_ENVIRONMENT: github-actions-setup-gcloud
+2026-10-02T18:45:44.5916420Z   CLOUDSDK_METRICS_ENVIRONMENT_VERSION: 2.2.1
+2026-10-02T18:45:44.5916725Z ##[endgroup]
+2026-10-02T18:45:44.6035675Z === Starting ODay Plus Cloud Run Deployment ===
+2026-10-02T18:45:44.6043961Z Cloud Run VPC binding mode: connector
+2026-10-02T18:45:44.6059419Z Authentication mode: local (ODP_AUTH_OIDC_ENABLED=false).
+2026-10-02T18:45:44.6069869Z Running fail-closed live deployment preflight...
+2026-10-02T18:45:48.6069542Z 2026/10/02 18:45:48 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026-10-02T18:45:48.6181968Z 2026/10/02 18:45:48 INFO mlflow.store.db.utils: Updating database tables
+2026-10-02T18:45:50.9276368Z Cloud Run live deployment preflight passed.
+2026-10-02T18:45:50.9277307Z report=.odp_data/deployment/cloud-run-preflight.json
+2026-10-02T18:45:51.8369312Z Deployment details:
+2026-10-02T18:45:51.8370141Z   Environment:      dev
+2026-10-02T18:45:51.8370756Z   Release SHA:      6140d0ef633cbf94522c171d9927103ab200257f
+2026-10-02T18:45:51.8371661Z   GCP Project:      odayplus-runtime-20260825
+2026-10-02T18:45:51.8372262Z   GCP Region:       asia-east1
+2026-10-02T18:45:51.8372752Z   Artifact Repo:    oday-plus-dev
+2026-10-02T18:45:51.8373231Z   API Service:      oday-api
+2026-10-02T18:45:51.8374093Z   Web Service:      oday-web
+2026-10-02T18:45:51.8374541Z   Migration Job:    oday-migration
+2026-10-02T18:45:51.8375016Z   Worker Job:       oday-worker
+2026-10-02T18:45:51.8375468Z   Scheduler Job:    oday-scheduler
+2026-10-02T18:45:51.8375930Z   Runtime Mode:     live / production / PostgreSQL
+2026-10-02T18:45:51.8376264Z ----------------------------------------------
+2026-10-02T18:45:52.3908199Z Adding credentials for: asia-east1-docker.pkg.dev
+2026-10-02T18:45:52.4108229Z Docker configuration file updated.
+2026-10-02T18:45:52.5399514Z Deploy-by-digest: skipping build for API image (asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:67bbd2639c901a9faa0dc3a751f865ebcac5da1d008c97e3a13561ed14df6f70).
+2026-10-02T18:45:52.5401856Z Deploy-by-digest: skipping build for worker image (asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9eaa9ea6aa9f48da4a57e0c92bff57b621101aa86c4f7444d4b4c296974880a0).
+2026-10-02T18:45:52.5403589Z Deploy-by-digest: skipping build for scheduler image (asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:2d83f4d65424912a6974907dd882fc7636388d988098394c9384dc545d3634cc).
+2026-10-02T18:45:52.5404945Z Recording the existing API/Web traffic before any runtime mutation...
+2026-10-02T18:45:58.7025430Z WARNING: The following filter keys were not present in any resource : name
+2026-10-02T18:46:00.3569154Z WARNING: The following filter keys were not present in any resource : name
+2026-10-02T18:46:00.6112107Z Deploying immutable migration candidate Cloud Run Job...
+2026-10-02T18:46:03.3066526Z Deploying container to Cloud Run job [oday-migration-r-6140d0ef633c] in project [odayplus-runtime-20260825] region [asia-east1]
+2026-10-02T18:46:03.3067340Z Creating job...
+2026-10-02T18:46:05.6371912Z Done.
+2026-10-02T18:46:05.7108249Z Job [oday-migration-r-6140d0ef633c] has successfully been deployed.
+2026-10-02T18:46:05.7109022Z 
+2026-10-02T18:46:05.7109254Z To execute this job, use:
+2026-10-02T18:46:05.7109838Z gcloud run jobs execute oday-migration-r-6140d0ef633c
+2026-10-02T18:46:05.8821273Z Executing migration Cloud Run Job...
+2026-10-02T18:46:06.4884114Z Creating execution...
+2026-10-02T18:46:59.4870459Z Provisioning resources......................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................done
+2026-10-02T18:47:07.7707579Z Starting execution.........................................................................................done
+2026-10-02T18:47:34.9361007Z Running execution............................................................................................................................................................................................................................................................................................................done
+2026-10-02T18:47:35.1284515Z Done.
+2026-10-02T18:47:35.2177094Z Execution [oday-migration-r-6140d0ef633c-kwd8j] has successfully completed.
+2026-10-02T18:47:35.2178024Z 
+2026-10-02T18:47:35.2178357Z View details about this execution by running:
+2026-10-02T18:47:35.2179593Z gcloud run jobs executions describe oday-migration-r-6140d0ef633c-kwd8j
+2026-10-02T18:47:35.2180289Z 
+2026-10-02T18:47:35.2181291Z Or visit https://console.cloud.google.com/run/jobs/executions/details/asia-east1/oday-migration-r-6140d0ef633c-kwd8j?project=767864276141
+2026-10-02T18:47:41.2838166Z Cloud Run migration Job smoke passed.
+2026-10-02T18:47:41.2838897Z report=.odp_data/deployment/cloud-run-jobs/migration-validation.json
+2026-10-02T18:47:41.4410692Z Cloud Run bootstrap compatibility passed.
+2026-10-02T18:47:41.4412475Z report=.odp_data/deployment/cloud-run-migration-compatibility.json
+2026-10-02T18:47:41.4550566Z Deploying immutable API candidate without production traffic...
+2026-10-02T18:47:51.3736965Z Deploying container to Cloud Run service [oday-api] in project [odayplus-runtime-20260825] region [asia-east1]
+2026-10-02T18:47:51.3737634Z Deploying new service...
+2026-10-02T18:48:26.8379342Z Creating Revision...................................................................................................................................................................................................................................................................................................................................................................done
+2026-10-02T18:48:26.8380964Z Routing traffic.....done
+2026-10-02T18:48:27.8211343Z Done.
+2026-10-02T18:48:27.8331464Z Service [oday-api] revision [oday-api-release-6140d0ef633c] has been deployed and is serving 100 percent of traffic.
+2026-10-02T18:48:27.8332814Z Service URL: https://oday-api-767864276141.asia-east1.run.app
+2026-10-02T18:48:27.8333685Z The revision can be reached directly at https://candidate-6140d0ef633cbf94---oday-api-2l6wuyl67q-de.a.run.app
+2026-10-02T18:48:32.3610207Z Updated IAM policy for service [oday-api].
+2026-10-02T18:48:35.4662930Z Updated IAM policy for service [oday-api].
+2026-10-02T18:48:36.0515534Z WARNING: This command is using service account impersonation. All API calls will be executed as [oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com].
+2026-10-02T18:50:06.3298003Z Deploying immutable scheduler candidate Cloud Run Job...
+2026-10-02T18:50:09.1248994Z Deploying container to Cloud Run job [oday-scheduler-r-6140d0ef633c] in project [odayplus-runtime-20260825] region [asia-east1]
+2026-10-02T18:50:09.1251015Z Creating job...
+2026-10-02T18:50:11.4278926Z Done.
+2026-10-02T18:50:11.4289526Z Job [oday-scheduler-r-6140d0ef633c] has successfully been deployed.
+2026-10-02T18:50:11.4290138Z 
+2026-10-02T18:50:11.4290317Z To execute this job, use:
+2026-10-02T18:50:11.4290862Z gcloud run jobs execute oday-scheduler-r-6140d0ef633c
+2026-10-02T18:50:11.6658153Z Deploying immutable worker candidate Cloud Run Job...
+2026-10-02T18:50:14.5329893Z Deploying container to Cloud Run job [oday-worker-r-6140d0ef633c] in project [odayplus-runtime-20260825] region [asia-east1]
+2026-10-02T18:50:14.5330887Z Creating job...
+2026-10-02T18:50:16.1909773Z Done.
+2026-10-02T18:50:16.2363757Z Job [oday-worker-r-6140d0ef633c] has successfully been deployed.
+2026-10-02T18:50:16.2364340Z 
+2026-10-02T18:50:16.2364514Z To execute this job, use:
+2026-10-02T18:50:16.2365354Z gcloud run jobs execute oday-worker-r-6140d0ef633c
+2026-10-02T18:50:19.5481998Z Updated IAM policy for job [oday-scheduler-r-6140d0ef633c].
+2026-10-02T18:50:19.5646339Z bindings:
+2026-10-02T18:50:19.5646879Z - members:
+2026-10-02T18:50:19.5647512Z   - serviceAccount:oday-dev-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com
+2026-10-02T18:50:19.5648292Z   role: roles/run.invoker
+2026-10-02T18:50:19.5648692Z etag: BwZc4AD-5CY=
+2026-10-02T18:50:19.5649020Z version: 1
+2026-10-02T18:50:22.6588744Z Updated IAM policy for job [oday-worker-r-6140d0ef633c].
+2026-10-02T18:50:22.6762584Z bindings:
+2026-10-02T18:50:22.6763041Z - members:
+2026-10-02T18:50:22.6763723Z   - serviceAccount:oday-dev-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com
+2026-10-02T18:50:22.6764546Z   role: roles/run.invoker
+2026-10-02T18:50:22.6764947Z etag: BwZc4AEuLF4=
+2026-10-02T18:50:22.6765305Z version: 1
+2026-10-02T18:50:22.8282555Z Proving sources-off public egress is denied from the candidate worker job...
+2026-10-02T18:50:24.6594329Z Error: previous-release state could not be determined; no recovery mode is claimed.
+2026-10-02T18:50:24.6595322Z Deployment failed on the first release into this target.
+2026-10-02T18:50:24.6596303Z There is no previous release to roll back to; recovery is deleting the candidate and holding zero traffic.
+2026-10-02T18:50:26.4314363Z Deleting bootstrap candidate service oday-api; it did not exist before this release...
+2026-10-02T18:50:27.0607336Z Deleting [oday-api]...
+2026-10-02T18:50:28.0142852Z ....done.
+2026-10-02T18:50:28.0622569Z Deleted service [oday-api].
+2026-10-02T18:50:31.0628257Z Deleting first-release candidate Cloud Run Job 'oday-migration-r-6140d0ef633c'...
+2026-10-02T18:50:31.6813375Z Deleting [oday-migration-r-6140d0ef633c]...
+2026-10-02T18:50:32.7998717Z .....done.
+2026-10-02T18:50:32.8829334Z Deleted job [oday-migration-r-6140d0ef633c].
+2026-10-02T18:50:34.7443039Z Deleting first-release candidate Cloud Run Job 'oday-worker-r-6140d0ef633c'...
+2026-10-02T18:50:35.3500735Z Deleting [oday-worker-r-6140d0ef633c]...
+2026-10-02T18:50:36.2241673Z ....done.
+2026-10-02T18:50:36.3514708Z Deleted job [oday-worker-r-6140d0ef633c].
+2026-10-02T18:50:37.5142953Z Deleting first-release candidate Cloud Run Job 'oday-scheduler-r-6140d0ef633c'...
+2026-10-02T18:50:38.1442404Z Deleting [oday-scheduler-r-6140d0ef633c]...
+2026-10-02T18:50:39.0333593Z ....done.
+2026-10-02T18:50:39.1457914Z Deleted job [oday-scheduler-r-6140d0ef633c].
+2026-10-02T18:50:39.2763000Z Error: one or more Cloud Run recovery actions failed.
+2026-10-02T18:50:39.2802056Z ##[error]Process completed with exit code 1.
