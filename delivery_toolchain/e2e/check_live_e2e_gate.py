@@ -45,6 +45,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
@@ -1719,6 +1720,81 @@ def _identity_snapshot(record: Mapping[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _invitation_provenance(
+    record: Mapping[str, Any], events: Sequence[Mapping[str, Any]],
+) -> dict[str, str] | None:
+    """Bind a pure admin to one real issue/accept pair, never a fake bootstrap.
+
+    Inputs come only from the authenticated identity administration readback.
+    No receipt/config switch can waive the existing role or release checks.
+    """
+    account = record.get("subject_id")
+    snapshot = _identity_snapshot(record)
+    if snapshot is None or _canonical_uuid(account) != account:
+        return None
+    tenant = snapshot["scope"]["tenant_id"]
+    fixed_scope = {"tenant_id": tenant, "clearance": "CONFIDENTIAL", **{
+        axis: [] for axis in ("brand_ids", "region_ids", "store_ids", "assigned_area_ids",
+                             "heat_zone_ids", "modules")
+    }}
+    if snapshot["roles"] != ["platform_admin"] or snapshot["status"] != "active" or snapshot["scope"] != fixed_scope:
+        return None
+    accepts = [e for e in events if e.get("event_type") == "identity.account.accept"
+               and (e.get("actor") == account or _as_dict(e.get("metadata")).get("account_id") == account)]
+    if len(accepts) != 1 or any(
+        e.get("event_type") == BOOTSTRAP_AUDIT_EVENT
+        and _as_dict(e.get("metadata")).get("account_id") == account for e in events
+    ):
+        return None
+    accept = accepts[0]
+    meta = _as_dict(accept.get("metadata"))
+    invitation = meta.get("invitation_id")
+    if _canonical_uuid(invitation) != invitation or invitation is None:
+        return None
+    issues = [e for e in events if e.get("event_type") == "identity.account.invite"
+              and _as_dict(e.get("metadata")).get("invitation_id") == invitation]
+    # A duplicate/revoked/replayed lifecycle is not provenance for this account.
+    related_accepts = [e for e in events if e.get("event_type") == "identity.account.accept"
+                       and _as_dict(e.get("metadata")).get("invitation_id") == invitation]
+    if len(issues) != 1 or len(related_accepts) != 1 or any(
+        e.get("event_type") == "identity.account.invitation_revoked"
+        and _as_dict(e.get("metadata")).get("invitation_id") == invitation for e in events
+    ):
+        return None
+    issue = issues[0]
+    preset = _as_dict(issue.get("metadata"))
+    actor = issue.get("actor")
+    if actor is None or _canonical_uuid(actor) != actor or actor == account or record.get("updated_by") != actor:
+        return None
+    if (accept.get("actor") != account or meta.get("account_id") != account
+            or meta.get("subject_id") != account or meta.get("tenant_id") != tenant
+            or meta.get("roles") != ["platform_admin"] or meta.get("scope") != fixed_scope
+            or meta.get("status") != "active" or meta.get("must_change") is not False
+            or preset.get("tenant_id") != tenant or preset.get("preset_roles") != ["platform_admin"]
+            or preset.get("preset_scope") != fixed_scope):
+        return None
+    for event in (issue, accept):
+        if (event.get("outcome") != "success"
+                or event.get("resource") != f"identity.invitation:{invitation}"
+                or event.get("correlation_id") != f"identity-invitation-{invitation}"
+                or _canonical_uuid(event.get("event_id")) != event.get("event_id")
+                or event.get("event_id") is None):
+            return None
+    if issue["event_id"] == accept["event_id"]:
+        return None
+    try:
+        issued = datetime.fromisoformat(issue["timestamp"])
+        accepted = datetime.fromisoformat(accept["timestamp"])
+        expires = datetime.fromisoformat(preset["expires_at"])
+        if (any(t.tzinfo is None for t in (issued, accepted, expires))
+                or not issued <= accepted < expires or not timedelta(0) < expires - issued <= timedelta(hours=72)):
+            return None
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    return {"invitation_id": invitation, "issue_event_id": issue["event_id"],
+            "accept_event_id": accept["event_id"], "issuer_account_id": actor}
+
+
 def _read_admin_roles(roles: Any) -> bool:
     """Accept only explicit finite read grants, pinned against canonical RBAC.
 
@@ -2118,7 +2194,7 @@ def _check_dev_admin_session(
             "canonical_finite_grants_verified": True,
         }
 
-    # 6. User audit trail carries identity.account.bootstrap event.
+    # 6. Genuine bootstrap OR a strict invitation issue/accept lifecycle.
     trail = web.request(
         "GET",
         "/api/v1/operator/users/audit-trail",
@@ -2134,18 +2210,50 @@ def _check_dev_admin_session(
         and own_record
         and _as_dict(e.get("metadata")).get("account_id") == own_record.get("subject_id")
     ]
-    _check(
-        checks,
-        (not trail.failed) and trail.status == 200 and bool(bootstrap_events),
-        "admin:bootstrap_audited",
-        (
-            _failure_detail(trail, expected="200")
-            if trail.failed or trail.status != 200
-            else f"status=200 identityEvents={len(events)} bootstrapEvents={len(bootstrap_events)}"
-        ),
-        "audit",
+    invited = any(
+        e.get("event_type") == "identity.account.accept"
+        and (e.get("actor") == own_record.get("subject_id")
+             or _as_dict(e.get("metadata")).get("account_id") == own_record.get("subject_id"))
+        for e in events
     )
-    operations.append("bootstrap_audit_readback")
+    if invited:
+        provenance = _invitation_provenance(own_record, events)
+        audited = not trail.failed and trail.status == 200 and provenance is not None
+        _check(checks, audited, "admin:invitation_audited",
+               f"status={trail.status} uniqueTenantBoundIssueAccept={audited}", "audit")
+        operations.append("invitation_audit_readback")
+        if not audited:
+            return
+        # Even a pure invited administrator must bind the cookie's subject to
+        # the API's server-verified account, tenant and exact finite role set.
+        principal = web.request(
+            "GET", "/api/v1/auth/principal", authenticated=False, headers=session_headers(cookies)
+        )
+        bound = (
+            not principal.failed and principal.status == 200
+            and principal.payload.get("account_id") == own_record["subject_id"]
+            and principal.payload.get("tenant_id") == own_record["scope"]["tenant_id"]
+            and principal.payload.get("roles") == ["platform_admin"]
+            and not current.failed and current.status == 200 and current.payload.get("subject") == username
+        )
+        _check(checks, bound, "admin:invitation_principal_bound",
+               f"status={principal.status} accountTenantRolesBound={bound}", "auth")
+        if not bound:
+            return
+        report["dev_admin"]["identity_provenance"] = {"mode": "invitation", **provenance}
+    else:
+        _check(
+            checks,
+            (not trail.failed) and trail.status == 200 and bool(bootstrap_events),
+            "admin:bootstrap_audited",
+            (
+                _failure_detail(trail, expected="200")
+                if trail.failed or trail.status != 200
+                else f"status=200 identityEvents={len(events)} bootstrapEvents={len(bootstrap_events)}"
+            ),
+            "audit",
+        )
+        operations.append("bootstrap_audit_readback")
     if read_admin:
         grant_events = [
             e for e in events

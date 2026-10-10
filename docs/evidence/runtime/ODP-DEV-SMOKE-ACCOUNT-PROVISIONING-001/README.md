@@ -316,3 +316,30 @@ those remain separate. Invitation issue/accept/replay/preservation use the real
 production route/boundary/PG transaction/audit, without permission overrides.
 The normal deployment migrations must still succeed before live use. New-head
 verification is pending; none of these earlier failures is re-labelled success.
+
+## Invitation provenance anchor (2026-10-10, source only)
+
+The next increment replaces no gate requirement. A pure invitation-created
+administrator now needs an exact durable issue/accept lifecycle rather than a
+manufactured bootstrap event. Issuance audit records non-secret fixed presets
+and expiry; authenticated identity audit projection includes outcome. The gate
+binds UUIDs, actor/creator, tenant, pure roles, fixed scope, active acceptance,
+distinct event IDs, resource/correlation and offset-aware lifetime <=72h. It
+rejects duplicate, revoked, mismatched and fake-bootstrap histories and requires
+an additional cookie-to-verified-principal binding for invited pure admins.
+No input/config flag grants this provenance. Existing bootstrap/read-enabled
+journeys, finite roles, `full`, admission, models and all other checks remain.
+
+Offline regression adds a successful invitation-only gate journey, malformed
+and ambiguous lifecycle/principal failures, and the release predicate applied
+to actual account and audit readbacks through the real PG/runtime routers.
+The original account snapshot still has to be unchanged. These tests are not
+live account creation, encrypted secret binding or deployment evidence.
+
+Verification of this new anchor is pending. The two changed Python selections
+will use the exact commands in the task brief with original terminal exits.
+Foreground `provision_dev_smoke.py`, encrypted matched GH dev binding/recovery,
+Human-approved promoted-before-live-gate orchestration, required exact-head CI,
+independent Codex review and formal PR submission remain outstanding. No live
+login, credential access, account mutation, GH secret/config write, IAM, source
+activation, model promotion or deployment occurred. Not review-ready.

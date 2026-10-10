@@ -138,9 +138,14 @@ class InvitationService:
 
     def _record(
         self, *, event_type: str, actor: str, invitation_id: str, tenant: str,
-        now: Any, account_id: str | None = None,
+        now: Any, account_id: str | None = None, expires_at: datetime | None = None,
     ) -> Any:
         metadata: dict[str, Any] = {"tenant_id": tenant, "invitation_id": invitation_id}
+        if expires_at is not None:
+            metadata.update({
+                "preset_roles": [Role.PLATFORM_ADMIN.value], "preset_scope": _scope(tenant),
+                "expires_at": expires_at.isoformat(),
+            })
         if account_id is not None:
             metadata.update({
                 "account_id": account_id, "subject_id": account_id,
@@ -190,7 +195,7 @@ class InvitationService:
             )
             event = self._record(
                 event_type="identity.account.invite", actor=actor, invitation_id=invitation_id,
-                tenant=tenant, now=now,
+                tenant=tenant, now=now, expires_at=expires,
             )
         return InvitationIssued(invitation_id, tenant, expires.isoformat(), event.event_id, token)
 

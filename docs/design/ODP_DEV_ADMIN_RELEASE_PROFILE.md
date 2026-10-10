@@ -343,6 +343,43 @@ profile/model/registry/source/admission boundaries remain unchanged. This permit
 verification of the actual current audited subject, not permission promotion or
 full-product/F11 acceptance.
 
+### 5.7 Invitation-created pure administrator (ODP-DEV-SMOKE-ACCOUNT-PROVISIONING-001)
+
+A separate pure `platform_admin` can be created through the authenticated,
+server-tenant-bound invitation lifecycle (§7.1/7.3 of the password-first
+contract), not by rerunning first-administrator bootstrap. It must satisfy all
+existing pure-admin session, foreign-tenant refusal/readback, business denial,
+wrong-persona, password, logout, worker, persistence and model checks. The
+finite-role policy, `full` profile and admission requirements are unchanged.
+
+The gate derives provenance from authenticated identity account/audit readbacks,
+never a caller switch or offline receipt. An invitation-created subject requires:
+
+- Exactly one `identity.account.invite` and one `identity.account.accept` with
+  the same invitation UUID, tenant, resource and correlation; distinct event
+  UUIDs and successful outcomes. No duplicate acceptance, revocation or fake
+  `identity.account.bootstrap` for that subject is accepted.
+- A UUID issuing administrator different from the new account and equal to the
+  identity account's persisted `created_by` (projected as `updated_by`). The
+  accept actor, account and subject UUIDs must equal the new account.
+- Issue presets and acceptance metadata must prove pure `platform_admin`,
+  tenant-only empty-axis `CONFIDENTIAL` scope, active acceptance and
+  `must_change=false`. Current persisted account roles/status/scope must match.
+- Offset-aware issue/accept/expiry timestamps: acceptance at or after issuance,
+  strictly before expiry; positive invitation lifetime no longer than 72 hours.
+- Cookie session username and `/api/v1/auth/principal` must bind the same UUID
+  account, tenant and exactly `platform_admin`.
+
+Receipts label `identity_provenance.mode=invitation`, with identifier-only issue
+and accept event bindings. They never pretend this account was bootstrapped.
+The existing bootstrap and explicitly read-enabled branches remain intact;
+this invitation branch admits no additional roles or business authority.
+
+This is a **source contract, not activation evidence**. Human-bound foreground
+provisioning, encrypted matched dev credential binding/recovery and authorized
+promoted-before-gate orchestration still require completion and independent
+review before use. The background worker creates no live account or secrets.
+
 ## 6. Operator / coordinator handoff
 
 **Changed release interface**

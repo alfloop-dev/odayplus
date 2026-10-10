@@ -354,6 +354,24 @@ def test_full_runtime_mounts_admin_issue_and_pg_capability_acceptance(pg_runtime
     assert client.post(ACCEPT, json=body).status_code == 409
     assert _snapshot(s) == before
 
+    # Exercise the actual release predicate against production PG-backed
+    # account/audit projections, not just hand-authored gate fixtures.
+    from delivery_toolchain.e2e.check_live_e2e_gate import _invitation_provenance
+    users = client.get("/api/v1/operator/users", headers=headers)
+    trail = client.get("/api/v1/operator/users/audit-trail", headers=headers)
+    assert users.status_code == trail.status_code == 200
+    own = next(u for u in users.json()["users"] if u["subject_id"] == receipt["account_id"])
+    provenance = _invitation_provenance(own, trail.json()["events"])
+    assert provenance == {
+        "invitation_id": receipt["invitation_id"], "issue_event_id": issued.json()["audit_event_id"],
+        "accept_event_id": receipt["audit_event_id"], "issuer_account_id": s.admin,
+    }
+    assert not any(e["event_type"] == "identity.account.bootstrap"
+                   and e["metadata"].get("account_id") == receipt["account_id"]
+                   for e in trail.json()["events"])
+    assert PASSWORD not in json.dumps(provenance) and body["token"] not in json.dumps(provenance)
+    assert _snapshot(s) == before
+
 
 def test_runtime_contract_is_exported_with_exact_invitation_paths_and_client(monkeypatch: Any) -> None:
     from delivery_toolchain.openapi.export_openapi import ARTIFACT_PATH, build_schema, serialize

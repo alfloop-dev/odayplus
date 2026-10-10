@@ -206,6 +206,7 @@ class IdentityUserRoleManagementService:
                     "event_id": event.event_id,
                     "event_type": event.event_type,
                     "action": event.action,
+                    "outcome": event.outcome,
                     "actor": event.actor,
                     "resource": event.resource,
                     "timestamp": event.occurred_at.isoformat(),
