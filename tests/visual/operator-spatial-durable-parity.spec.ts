@@ -77,14 +77,14 @@ for (const width of [1440, 390]) {
         const target = modal ? page.getByTestId(`${kind}-modal`) : panel;
         const geometry = await target.evaluate((el) => {
           const box = (node: Element) => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, scrollWidth: node.scrollWidth }; };
-          return { box: box(el.querySelector('[role="dialog"]') ?? el), controls: [...el.querySelectorAll("button, select, textarea")].map(box), documentWidth: document.documentElement.scrollWidth };
+          return { box: box(el.querySelector('[role="dialog"]') ?? el), controls: [...el.querySelectorAll("button, select, textarea")].map(box), splitFacts: [...el.querySelectorAll('[data-testid="split-children"], [data-testid="split-children"] div, [data-testid="split-children"] dt, [data-testid="split-children"] dd')].map(box), documentWidth: document.documentElement.scrollWidth };
         });
         const axe = await new AxeBuilder({ page }).include(modal ? `[data-testid="${kind}-modal"]` : '[data-testid="heatzone-merge-split-panel"]').withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
         await save(`${state}-geometry`, geometry);
         await save(`${state}-axe`, { violations: axe.violations, incomplete: axe.incomplete, passes: axe.passes.map((rule) => rule.id) });
         await page.screenshot({ path: path.join(directory, `${kind}-${width}-${state}.png`), fullPage: true, animations: "disabled" });
         expect(geometry.documentWidth).toBeLessThanOrEqual(width);
-        for (const box of [geometry.box, ...geometry.controls]) {
+        for (const box of [geometry.box, ...geometry.controls, ...geometry.splitFacts]) {
           expect(box.x).toBeGreaterThanOrEqual(0);
           expect(box.x + box.width).toBeLessThanOrEqual(width);
           expect(box.scrollWidth).toBeLessThanOrEqual(Math.ceil(box.width));
@@ -133,6 +133,9 @@ for (const width of [1440, 390]) {
         await panel.getByTestId("btn-preview-proposal").click();
         await expect(panel.getByTestId("preview-box")).toBeVisible();
       }
+      if (split && phase === "after") {
+        await expect(panel.getByTestId("split-density")).toContainText(`${proposal.split_density_ratio.toFixed(2)} 倍`);
+      }
       await capture("preview");
       await panel.getByTestId(`btn-open-${kind}`).click();
       const modal = page.getByTestId(`${kind}-modal`);
@@ -158,6 +161,10 @@ for (const width of [1440, 390]) {
       await expect(panel.getByTestId("proposal-detail")).toContainText(proposal.zone_id);
       await expect(panel.getByTestId("btn-open-approve")).toHaveCount(0);
       await expect(panel.getByTestId("btn-open-reject")).toHaveCount(0);
+      if (split && phase === "after") {
+        await expect(panel.getByTestId("split-density")).toContainText(`${proposal.split_density_ratio.toFixed(2)} 倍`);
+        await expect(panel.getByTestId("split-children")).toContainText(kind === "reject" ? "本次決策不建立子熱區" : "現況以拓撲讀回為準");
+      }
       await capture("reloaded-terminal");
       const detail = await page.request.get(`${endpoint}/proposals/${id}`, { headers });
       expect(detail.status()).toBe(200);

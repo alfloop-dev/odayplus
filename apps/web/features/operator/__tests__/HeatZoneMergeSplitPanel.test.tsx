@@ -195,6 +195,26 @@ describe("HeatZoneMergeSplitPanel", () => {
     expect(children).toHaveTextContent("cell-a");
     expect(children).toHaveTextContent("cell-c");
     expect(children).toHaveTextContent("核准一次即同時建立以上全部子熱區");
+    expect(screen.getByTestId("split-density")).toHaveTextContent("實績吸收密度比3.20 倍");
+  });
+
+  it.each([
+    [0, "0.00 倍"],
+    [null, "資料未提供"],
+    [undefined, "資料未提供"],
+    [Number.NaN, "資料未提供"],
+  ])("shows source split density %s without a positive fallback", (ratio, label) => {
+    render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[{ ...splitProposal, split_density_ratio: ratio }]} />);
+    expect(screen.getByTestId("split-density")).toHaveTextContent(label);
+  });
+
+  it.each(["APPROVED", "APPLIED", "REJECTED"] as const)("does not present %s split topology as an undecided future action", (status) => {
+    render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[{ ...splitProposal, status }]} />);
+    const children = screen.getByTestId("split-children");
+    expect(children).not.toHaveTextContent("核准一次即同時建立");
+    expect(children).toHaveTextContent(status === "REJECTED" ? "本次決策不建立子熱區" : "現況以拓撲讀回為準");
+    expect(screen.queryByTestId("btn-open-approve")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("btn-open-reject")).not.toBeInTheDocument();
   });
 
   it("keeps detail inside the selected filter", () => {

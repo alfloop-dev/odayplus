@@ -546,6 +546,14 @@ export function HeatZoneMergeSplitPanel({
                         <h5 style={{ margin: "0 0 6px 0", color: "#475569" }}>
                           分割後子熱區 ({activeProposal.child_partitions!.length})
                         </h5>
+                        <dl data-testid="split-density" style={{ margin: "0 0 8px", display: "flex", flexWrap: "wrap", gap: "4px 8px", color: "#475569" }}>
+                          <dt>實績吸收密度比</dt>
+                          <dd style={{ margin: 0, fontWeight: 700 }}>
+                            {activeProposal.split_density_ratio != null && Number.isFinite(activeProposal.split_density_ratio)
+                              ? `${activeProposal.split_density_ratio.toFixed(2)} 倍`
+                              : "資料未提供"}
+                          </dd>
+                        </dl>
                         {activeProposal.child_partitions!.map((partition, index) => (
                           <div
                             key={activeProposal.child_zone_ids?.[index] ?? index}
@@ -570,7 +578,11 @@ export function HeatZoneMergeSplitPanel({
                           </div>
                         ))}
                         <div style={{ color: "#64748b", fontFamily: "inherit" }}>
-                          核准一次即同時建立以上全部子熱區，父熱區同時退場。
+                          {activeProposal.status === "REJECTED"
+                            ? "提案已拒絕；本次決策不建立子熱區或退場父熱區。"
+                            : activeProposal.status === "PROPOSED"
+                              ? "核准一次即同時建立以上全部子熱區，父熱區同時退場。"
+                              : "此為已核准的拆分提案；子熱區與父熱區現況以拓撲讀回為準。"}
                         </div>
                       </div>
                     )}
