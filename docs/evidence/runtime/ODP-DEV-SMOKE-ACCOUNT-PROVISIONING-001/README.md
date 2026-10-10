@@ -274,3 +274,13 @@ explicitly requests live-data composition (otherwise the local document-service
 router is selected). This is an offline composition selector, not a live flag
 change or auth override. These repairs require new-head checks; the failure
 above is retained, not converted to a pass.
+
+The same declared pytest selection was then run foreground at exact
+`72e3cdc0a9d0` (shell `time`, original terminal exit 1, real duration 78.441s).
+Client/inventory comparison passed; the remaining test refused constructing
+its memory-backed **non-identity test adapters** after live-data had already
+been selected. Construction is now ordered before that offline selector;
+identity engine/store/sessions/audit are still real PostgreSQL, and no factory
+or permission guard is changed. This hybrid composition is not evidence of
+healthy live business persistence, providers or deployment. New-head canonical
+checks are still required. No broader suite was launched.

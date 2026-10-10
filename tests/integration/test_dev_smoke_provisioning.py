@@ -308,9 +308,11 @@ def test_full_runtime_mounts_admin_issue_and_pg_capability_acceptance(invitation
     from shared.infrastructure.persistence.factory import build_persistence
 
     s = invitations
-    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     bundle = replace(build_persistence(mode="memory"), engine=s.engine,
                      identity_store=s.identity, session_service=s.sessions)
+    # Build offline non-identity adapters before selecting live routing; the
+    # runtime identity service below is still the genuine PG engine/store.
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     # Real canonical boundary and PG session resolver, not a fabricated
     # Principal or a permission dependency override.
     monkeypatch.setattr(dependencies, "default_boundary", lambda: s.boundary)
