@@ -1011,3 +1011,30 @@ promoted-before-gate deployment wiring remain unfinished. No worker live login,
 account, GitHub comment/secret/configuration, IAM, traffic, sources or model
 action occurred. Verification pending at this anchor; no passing live gate,
 deployment/full-product/F11 acceptance or secret-value readback is claimed.
+
+### Exact custodian-consent verification
+
+Source anchor `2c7e29a711ba476192c7ba5f1a5302e954e8f8e9` completed each of the five
+exact declared commands once through the canonical foreground verification
+module. Original terminal exit0; the original receipts preserve command,
+selection, head SHA, actual exit status and duration. Existing local uv and
+npm-workspace binaries were used, with a scratch-only Corepack pnpm9.15.9
+launcher. No tracked dependency change, background polling, timeout/signal,
+count-only rerun or expanded selection occurred.
+
+| Exact declared command | Exit | Duration | Receipt id |
+|---|---:|---:|---|
+| `git diff --check` | 0 | 0.016s | `b8ca10ad1d5f8dcb` |
+| `uv run --frozen --python 3.12 pytest tests/security/test_dev_smoke_invitation.py tests/integration/test_dev_smoke_provisioning.py tests/contract/test_runtime_release_workflow.py -q` | 0 | 310.468s | `3a29330230b5e53e` |
+| `uv run --frozen --python 3.12 pytest tests/e2e/test_live_e2e_gate_dev_admin.py tests/security/test_operator_read_authorization.py -q` | 0 | 47.691s | `e475a363cdf6d8d1` |
+| `pnpm --dir apps/web exec vitest run src/app/auth/invitations/__tests__/route.test.ts` | 0 | 3.528s | `01eba4ff9bbf5996` |
+| `pnpm --dir apps/web typecheck` | 0 | 8.650s | `c92c6aa9147a96aa` |
+
+Original JSON receipts remain in canonical `.orchestrator/evidence`; this later
+evidence-only commit is not the measured source SHA. The fresh-read consent
+boundary is now enforced in the library, but independent exact-head source
+approval/required CI, actual mailbox verification and rollback-owned
+promoted-before-gate deploy wiring remain unfinished. The default workflow still
+only consumes a staged bundle. Task remains in progress, not review-ready; no
+review submission, live consent record, login/account/GitHub secret/config/IAM/
+traffic/source/model action, passing live gate, deployment or F11 is claimed.
