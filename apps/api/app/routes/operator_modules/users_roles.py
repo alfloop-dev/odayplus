@@ -70,6 +70,22 @@ class UserStatusPayload(BaseModel):
     actorName: str | None = None
 
 
+class UserInvitePayload(BaseModel):
+    """POST /operator/users/invite — payload for inviting / creating a new user."""
+
+    model_config = ConfigDict(extra="allow")
+
+    username: str = Field(min_length=1, max_length=64)
+    email: str = Field(min_length=3, max_length=320)
+    name: str | None = None
+    displayName: str | None = None
+    roles: list[str] = Field(min_length=1)
+    scope: ScopePayload | None = None
+    initialPassword: str | None = None
+    initial_password: str | None = None
+    reason: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
@@ -243,6 +259,52 @@ def create_user_role_sub_router(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
             ) from exc
+        except UserRolePolicyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+
+    @router.post("/invite", dependencies=manage_deps)
+    @router.post("/create", dependencies=manage_deps)
+    def invite_user(
+        body: UserInvitePayload,
+        request: Request,
+    ) -> dict[str, Any]:
+        svc = get_svc(request)
+        scope_dict = (
+            body.scope.model_dump(exclude_unset=True)
+            if body.scope is not None
+            else None
+        )
+        server_actor = getattr(request.state, "operator_subject_id", None) or "operator"
+        server_role = getattr(request.state, "operator_role_id", None) or "platform_admin"
+        partition_tenant = caller_tenant(request)
+        initial_pwd = body.initialPassword or body.initial_password
+        display_name = body.displayName or body.name
+        try:
+            result = svc.create_user(
+                **actor_kwargs(svc, request),
+                username=body.username,
+                email=body.email,
+                display_name=display_name,
+                roles=body.roles,
+                scope=scope_dict,
+                initial_password=initial_pwd,
+                actor_name=server_actor,
+                actor_role=server_role,
+                reason=body.reason,
+                correlation_id=getattr(request.state, "correlation_id", None),
+                tenant_id=partition_tenant,
+            )
+            return {
+                "user": result["user"],
+                "temporary_password": result["temporary_password"],
+                "initial_password": result["initial_password"],
+                "invitation_token": result.get("invitation_token"),
+                "must_change": result.get("must_change", True),
+                "message": f"User '{body.username}' invited successfully.",
+                "correlation_id": getattr(request.state, "correlation_id", None),
+            }
         except UserRolePolicyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)

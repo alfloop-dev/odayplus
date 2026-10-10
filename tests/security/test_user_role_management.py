@@ -541,3 +541,72 @@ def test_operator_router_ui_shaped_flow_leaves_visible_audit_trail() -> None:
         "USER_STATUS_UPDATED",
     ]
 
+
+def test_operator_router_invite_endpoint_rbac_and_audit() -> None:
+    audit_log = InMemoryAuditLog()
+    router = create_operator_router(audit_log=audit_log)
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    client = TestClient(app)
+
+    admin_headers = {
+        "x-subject-id": "platform-admin-user",
+        "x-roles": "platform_admin",
+        "x-tenant-id": "tenant-a",
+        "x-operator-role": "platform-admin",
+    }
+    ops_headers = {
+        "x-subject-id": "ops-manager-user",
+        "x-roles": "operations_manager",
+        "x-tenant-id": "tenant-a",
+        "x-operator-role": "ops-lead",
+    }
+
+    # 1. Non-admin denied from inviting users
+    res = client.post(
+        "/api/v1/operator/users/invite",
+        headers=ops_headers,
+        json={
+            "username": "new-ops-lead",
+            "email": "new-ops-lead@odayplus.com",
+            "roles": ["operations_manager"],
+        },
+    )
+    assert res.status_code == 403
+
+    # 2. Admin can invite user
+    res = client.post(
+        "/api/v1/operator/users/invite",
+        headers=admin_headers,
+        json={
+            "username": "new-ops-lead",
+            "email": "new-ops-lead@odayplus.com",
+            "name": "新營運主管",
+            "roles": ["operations_manager"],
+            "scope": {
+                "tenant_id": "tenant-default",
+                "brand_ids": ["brand-a"],
+                "clearance": "CONFIDENTIAL",
+            },
+            "reason": "Invited from operator console",
+        },
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert "user" in data
+    assert "temporary_password" in data
+    assert data["must_change"] is True
+    assert data["user"]["subject_id"] == "new-ops-lead"
+    assert data["user"]["roles"] == ["operations_manager"]
+
+    # 3. Check audit trail
+    audit = client.get(
+        "/api/v1/operator/users/audit-trail?subject_id=new-ops-lead",
+        headers=admin_headers,
+    ).json()
+    assert audit["count"] == 1
+    assert audit["events"][0]["event_type"] == "identity.account.invite"
+    assert audit["events"][0]["actor"] == "platform-admin-user"
+
+

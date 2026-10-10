@@ -33,13 +33,18 @@ Rules
 
 from __future__ import annotations
 
+import hashlib
 import json
-from datetime import UTC, datetime
+import re
+import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from shared.audit import AuditEvent
 from shared.auth import DataClassification, Role
+from shared.identity.credential_service import CredentialService
+from shared.identity.password_policy import PasswordPolicy
 
 from .user_role_management import (
     ROLE_LABELS,
@@ -49,6 +54,8 @@ from .user_role_management import (
 
 IDENTITY_EVENT_PREFIX = "identity.account."
 _PLACEHOLDER_TENANTS = frozenset({"", "tenant-default"})
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
+_EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]+$")
 _SCOPE_AXES = (
     "brand_ids",
     "region_ids",
@@ -482,6 +489,203 @@ class IdentityUserRoleManagementService:
                 },
             )
         return after
+
+    def create_user(
+        self,
+        *,
+        username: str,
+        email: str,
+        roles: list[str],
+        display_name: str | None = None,
+        name: str | None = None,
+        scope: dict[str, Any] | None = None,
+        initial_password: str | None = None,
+        status: str = "active",
+        actor_name: str | None = None,
+        actor_role: str | None = None,
+        actor_roles: frozenset[str] | None = None,
+        reason: str = "",
+        correlation_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create an invited account with roles, scope, and a one-time initial password.
+
+        Contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §7.1, §7.3, §8.1
+        - Initiated by platform_admin via audited API.
+        - Generates one-time initial password (with must_change=true).
+        - Initial password/token is returned ONLY in the result, never in logs or audit trail.
+        - First login enforces password change through PASSWORD_CHANGE_REQUIRED.
+        """
+        tenant = self._require_tenant(tenant_id)
+        if actor_roles is not None and Role.PLATFORM_ADMIN.value not in actor_roles:
+            raise UserRolePolicyError("Creating or inviting users requires platform_admin.")
+
+        clean_username = (username or "").strip()
+        if not _USERNAME_RE.match(clean_username):
+            raise UserRolePolicyError(
+                "Username must be 3-64 characters of letters, digits, '.', '_' or '-'"
+            )
+
+        clean_email = (email or "").strip()
+        if not _EMAIL_RE.match(clean_email):
+            raise UserRolePolicyError("A valid email address is required")
+
+        valid = {r.value for r in Role}
+        new_roles: list[str] = []
+        for raw in roles:
+            role = str(raw).strip()
+            if role not in valid:
+                raise UserRolePolicyError(f"Invalid role '{role}'. Must be one of canonical roles.")
+            if role not in new_roles:
+                new_roles.append(role)
+        if not new_roles:
+            raise UserRolePolicyError("At least one valid role must be assigned to user")
+
+        if status not in {"active", "invited"}:
+            raise UserRolePolicyError("Status for new user must be 'active' or 'invited'")
+
+        requested = dict(scope) if scope is not None else {}
+        if "tenant_id" in requested:
+            scope_tenant = str(requested.get("tenant_id") or "").strip()
+            if scope_tenant not in _PLACEHOLDER_TENANTS and _uuid_or_none(scope_tenant) != tenant:
+                raise UserRolePolicyError(
+                    f"Cannot save user scope for tenant '{scope_tenant}'; caller is restricted to its own tenant."
+                )
+        if "clearance" in requested and requested.get("clearance") is not None:
+            clearance_input = str(requested.get("clearance")).upper()
+            if clearance_input not in DataClassification.__members__:
+                raise UserRolePolicyError(f"Invalid clearance '{clearance_input}'.")
+            clearance = clearance_input
+        else:
+            clearance = DataClassification.CONFIDENTIAL.name
+
+        axes: dict[str, list[str]] = {}
+        for axis in _SCOPE_AXES:
+            if axis in requested and requested[axis] is not None:
+                axes[axis] = sorted({str(v) for v in requested[axis]})
+            else:
+                axes[axis] = []
+
+        resolved_name = (display_name or name or clean_username).strip()[:255]
+
+        policy = PasswordPolicy()
+        if initial_password is not None and str(initial_password).strip():
+            raw_password = policy.normalize(str(initial_password).strip())
+            val_res = policy.validate(raw_password, username=clean_username, email=clean_email)
+            if not val_res.valid:
+                codes = ",".join(v.code for v in val_res.violations)
+                raise UserRolePolicyError(f"Initial password violates password policy ({codes})")
+        else:
+            raw_password = secrets.token_urlsafe(18)
+
+        # Hash with Argon2id before holding the DB lock
+        cred_service = CredentialService()
+        phc_hash = cred_service.hash_password(raw_password)
+        params = json.dumps(cred_service.extract_params_from_phc(phc_hash))
+
+        actor = actor_name or "platform_admin"
+        now = datetime.now(UTC)
+        account_id = str(uuid4())
+
+        with self._engine.lock:
+            self._lock_tenant(tenant)
+            clash = self._engine.query_one(
+                "SELECT account_id::text AS account_id, username, email FROM identity.accounts "
+                "WHERE tenant_id = ? AND (lower(username) = lower(?) OR lower(email) = lower(?)) "
+                "LIMIT 1",
+                (tenant, clean_username, clean_email),
+            )
+            if clash is not None:
+                raise UserRolePolicyError(
+                    f"An account with username '{clean_username}' or email '{clean_email}' already exists in this tenant."
+                )
+
+            self._engine.execute(
+                "INSERT INTO identity.accounts (account_id, tenant_id, username, email, "
+                "display_name, status, created_at, created_by, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    account_id,
+                    tenant,
+                    clean_username,
+                    clean_email,
+                    resolved_name,
+                    status,
+                    now,
+                    actor,
+                    now,
+                ),
+            )
+            self._engine.execute(
+                "INSERT INTO identity.password_credentials (account_id, algorithm, phc_hash, "
+                "params, must_change, last_rotated_at, updated_at) "
+                "VALUES (?, 'argon2id', ?, CAST(? AS jsonb), true, ?, ?)",
+                (account_id, phc_hash, params, now, now),
+            )
+            for role in new_roles:
+                self._engine.execute(
+                    "INSERT INTO identity.account_roles (account_id, role, granted_at, granted_by) "
+                    "VALUES (?, ?, ?, ?)",
+                    (account_id, role, now, actor),
+                )
+            self._engine.execute(
+                "INSERT INTO identity.account_scopes (account_id, brand_ids, region_ids, store_ids, "
+                "assigned_area_ids, heat_zone_ids, modules, clearance) VALUES (?, "
+                "CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb), "
+                "CAST(? AS jsonb), CAST(? AS jsonb), ?)",
+                (account_id, *(json.dumps(axes[a]) for a in _SCOPE_AXES), clearance),
+            )
+            token_hash = hashlib.sha256(raw_password.encode("utf-8")).hexdigest()
+            expires_at = now + timedelta(hours=72)
+            self._engine.execute(
+                "INSERT INTO identity.invitations (invitation_id, tenant_id, email, token_hash, "
+                "preset_roles, preset_scope, created_by, expires_at) "
+                "VALUES (?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?, ?)",
+                (
+                    str(uuid4()),
+                    tenant,
+                    clean_email,
+                    token_hash,
+                    json.dumps(new_roles),
+                    json.dumps(requested),
+                    actor,
+                    expires_at,
+                ),
+            )
+
+            created_user = self._find(tenant, account_id)
+            self._record(
+                event_type=f"{IDENTITY_EVENT_PREFIX}invite",
+                action="IDENTITY_ACCOUNT_INVITED",
+                actor=actor,
+                account_id=account_id,
+                correlation_id=correlation_id,
+                now=now,
+                metadata={
+                    "tenant_id": tenant,
+                    "account_id": account_id,
+                    "username": clean_username,
+                    "email": clean_email,
+                    "roles": new_roles,
+                    "scope": created_user["scope"],
+                    "status": created_user["status"],
+                    "must_change": True,
+                    "reason": reason,
+                    "actor_role": actor_role,
+                },
+            )
+
+        return {
+            "user": created_user,
+            "temporary_password": raw_password,
+            "initial_password": raw_password,
+            "invitation_token": raw_password,
+            "must_change": True,
+        }
+
+    def invite_user(self, **kwargs: Any) -> dict[str, Any]:
+        """Alias for create_user."""
+        return self.create_user(**kwargs)
 
 
 class UnavailableUserRoleManagementService:

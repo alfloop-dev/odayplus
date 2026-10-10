@@ -34,9 +34,10 @@ function stubStatefulFetch(initialUsers: any[]) {
     if (url.includes("/api/v1/operator/users") && options?.method === "POST") {
       const body = JSON.parse(options.body);
       posted.push(body);
-      const existing = serverUsers.find((u) => u.subject_id === body.subjectId);
+      const targetId = body.subjectId || body.username;
+      const existing = serverUsers.find((u) => u.subject_id === targetId);
       const saved = {
-        subject_id: body.subjectId,
+        subject_id: targetId,
         email: body.email,
         name: body.name,
         roles: body.roles,
@@ -50,7 +51,14 @@ function stubStatefulFetch(initialUsers: any[]) {
       } else {
         serverUsers.unshift(saved);
       }
-      return Promise.resolve({ ok: true, json: async () => ({ user: { ...saved } }) });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          user: { ...saved },
+          temporary_password: body.initialPassword || "generated-pwd-123",
+          initial_password: body.initialPassword || "generated-pwd-123",
+        }),
+      });
     }
     if (url.includes("/api/v1/operator/users")) {
       return Promise.resolve({
@@ -350,10 +358,60 @@ describe("UserRoleManagementController", () => {
     });
 
     // The admin-typed subject id is what gets persisted, not a generated one.
-    expect(posted[0].subjectId).toBe("idp|new-operator");
+    expect(posted[0].subjectId || posted[0].username).toBe("idp|new-operator");
 
     expect(await screen.findByTestId("user-row-idp|new-operator")).toBeInTheDocument();
     expect(screen.getByTestId("user-row-ops-lead")).toBeInTheDocument();
+  });
+
+  it("displays one-time initial credentials popup upon successful invitation", async () => {
+    const { posted } = stubStatefulFetch([
+      {
+        subject_id: "ops-lead",
+        email: "ops-lead@odayplus.com",
+        name: "營運主管",
+        roles: ["operations_manager"],
+        scope: {
+          tenant_id: "tenant-default",
+          brand_ids: [],
+          region_ids: [],
+          store_ids: [],
+          clearance: "CONFIDENTIAL",
+        },
+        status: "active",
+      },
+    ]);
+
+    render(<UserRoleManagementController currentRoleId="platform-admin" />);
+    await screen.findByTestId("user-row-ops-lead");
+
+    fireEvent.click(screen.getByTestId("add-user-button"));
+    fireEvent.change(screen.getByTestId("edit-subject-id-input"), {
+      target: { value: "invited-manager" },
+    });
+    fireEvent.change(screen.getByTestId("edit-name-input"), {
+      target: { value: "邀請營運經理" },
+    });
+    fireEvent.change(screen.getByTestId("edit-email-input"), {
+      target: { value: "invited@odayplus.com" },
+    });
+    fireEvent.change(screen.getByTestId("edit-initial-password-input"), {
+      target: { value: "CustomInitPass123!" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/請輸入權限調整原因/i), {
+      target: { value: "發送邀請建立新經理帳號" },
+    });
+    fireEvent.click(screen.getByTestId("save-user-roles-submit"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("invited-credentials-modal")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("invited-password-display")).toHaveTextContent("CustomInitPass123!");
+    expect(screen.getByTestId("copy-password-button")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("close-credentials-modal"));
+    expect(screen.queryByTestId("invited-credentials-modal")).not.toBeInTheDocument();
   });
 
   it("emits X-Operator-Role platform-admin and X-Roles platform_admin headers", async () => {

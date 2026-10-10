@@ -96,12 +96,15 @@ export function UserRoleManagementController({
   const [selectedUser, setSelectedUser] = useState<UserRecord | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [invitedCredentials, setInvitedCredentials] = useState<{ username: string; password: string } | null>(null);
+  const [copiedPassword, setCopiedPassword] = useState<boolean>(false);
 
   // Edit Form State
   const [isNewUser, setIsNewUser] = useState<boolean>(false);
   const [editSubjectId, setEditSubjectId] = useState<string>("");
   const [editName, setEditName] = useState<string>("");
   const [editEmail, setEditEmail] = useState<string>("");
+  const [editInitialPassword, setEditInitialPassword] = useState<string>("");
   const [editRoles, setEditRoles] = useState<string[]>([]);
   const [editTenantId, setEditTenantId] = useState<string>("tenant-default");
   const [editBrands, setEditBrands] = useState<string>("");
@@ -202,6 +205,8 @@ export function UserRoleManagementController({
     setEditSubjectId(user.subject_id || "");
     setEditName(user.name || "");
     setEditEmail(user.email || "");
+    setEditInitialPassword("");
+    setCopiedPassword(false);
     setEditRoles(user.roles || []);
     setEditTenantId(user.scope?.tenant_id || "tenant-default");
     setEditBrands((user.scope?.brand_ids || []).join(", "));
@@ -237,40 +242,12 @@ export function UserRoleManagementController({
     const parsedRegions = editRegions.split(",").map((s) => s.trim()).filter(Boolean);
     const parsedStores = editStores.split(",").map((s) => s.trim()).filter(Boolean);
 
-    const payload = {
-      subjectId: targetSubjectId,
-      email: editEmail.trim() || undefined,
-      name: editName.trim() || undefined,
-      roles: editRoles,
-      scope: {
-        ...(selectedUser?.scope || {}),
-        tenant_id: editTenantId,
-        brand_ids: parsedBrands,
-        region_ids: parsedRegions,
-        store_ids: parsedStores,
-        clearance: editClearance,
-      },
-      attributes: editAttributes,
-      status: selectedUser.status || "active",
-      reason: editReason || (isNewUser ? "新增使用者與角色權限指派" : "角色權限異動與 Scope 調整"),
-    };
-
     try {
-      const res = await fetch("/api/v1/operator/users", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...operatorSecurityHeaders(currentRoleId),
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const updatedUser: UserRecord = data.user || {
-          subject_id: targetSubjectId,
-          name: editName.trim() || targetSubjectId,
+      if (isNewUser) {
+        const invitePayload = {
+          username: targetSubjectId,
           email: editEmail.trim(),
+          name: editName.trim() || undefined,
           roles: editRoles,
           scope: {
             tenant_id: editTenantId,
@@ -279,23 +256,108 @@ export function UserRoleManagementController({
             store_ids: parsedStores,
             clearance: editClearance,
           },
+          initialPassword: editInitialPassword.trim() || undefined,
+          reason: editReason || "管理員建立營運帳號（邀請流程）",
+        };
+
+        const res = await fetch("/api/v1/operator/users/invite", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...operatorSecurityHeaders(currentRoleId),
+          },
+          body: JSON.stringify(invitePayload),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const updatedUser: UserRecord = data.user || {
+            subject_id: targetSubjectId,
+            name: editName.trim() || targetSubjectId,
+            email: editEmail.trim(),
+            roles: editRoles,
+            scope: {
+              tenant_id: editTenantId,
+              brand_ids: parsedBrands,
+              region_ids: parsedRegions,
+              store_ids: parsedStores,
+              clearance: editClearance,
+            },
+            status: "active",
+          };
+          const tempPassword = data.temporary_password || data.initial_password;
+          setUsers((prev) => [updatedUser, ...prev.filter((u) => u.subject_id !== updatedUser.subject_id)]);
+          fetchUsers();
+          setIsEditModalOpen(false);
+          if (tempPassword) {
+            setInvitedCredentials({ username: updatedUser.subject_id, password: tempPassword });
+          }
+          showToast(`已成功建立並邀請 ${updatedUser.name || updatedUser.subject_id}，已產生一次性初始密碼`);
+          if (onUserRoleChange) onUserRoleChange(updatedUser);
+        } else {
+          const errorData = await res.json().catch(() => ({}));
+          showToast(`邀請失敗：${errorData.detail || res.statusText}`);
+        }
+      } else {
+        const payload = {
+          subjectId: targetSubjectId,
+          email: editEmail.trim() || undefined,
+          name: editName.trim() || undefined,
+          roles: editRoles,
+          scope: {
+            ...(selectedUser?.scope || {}),
+            tenant_id: editTenantId,
+            brand_ids: parsedBrands,
+            region_ids: parsedRegions,
+            store_ids: parsedStores,
+            clearance: editClearance,
+          },
           attributes: editAttributes,
           status: selectedUser.status || "active",
+          reason: editReason || "角色權限異動與 Scope 調整",
         };
-        setUsers((prev) => {
-          const exists = prev.some((u) => u.subject_id === updatedUser.subject_id);
-          if (exists) {
-            return prev.map((u) => (u.subject_id === updatedUser.subject_id ? updatedUser : u));
-          }
-          return [updatedUser, ...prev];
+
+        const res = await fetch("/api/v1/operator/users", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...operatorSecurityHeaders(currentRoleId),
+          },
+          body: JSON.stringify(payload),
         });
-        fetchUsers();
-        showToast(`已成功${isNewUser ? "新增" : "更新"} ${updatedUser.name || updatedUser.subject_id} 的角色權限，已寫入 Audit Trail`);
-        if (onUserRoleChange) onUserRoleChange(updatedUser);
-        setIsEditModalOpen(false);
-      } else {
-        const errorData = await res.json().catch(() => ({}));
-        showToast(`儲存失敗：${errorData.detail || res.statusText}`);
+
+        if (res.ok) {
+          const data = await res.json();
+          const updatedUser: UserRecord = data.user || {
+            subject_id: targetSubjectId,
+            name: editName.trim() || targetSubjectId,
+            email: editEmail.trim(),
+            roles: editRoles,
+            scope: {
+              tenant_id: editTenantId,
+              brand_ids: parsedBrands,
+              region_ids: parsedRegions,
+              store_ids: parsedStores,
+              clearance: editClearance,
+            },
+            attributes: editAttributes,
+            status: selectedUser.status || "active",
+          };
+          setUsers((prev) => {
+            const exists = prev.some((u) => u.subject_id === updatedUser.subject_id);
+            if (exists) {
+              return prev.map((u) => (u.subject_id === updatedUser.subject_id ? updatedUser : u));
+            }
+            return [updatedUser, ...prev];
+          });
+          fetchUsers();
+          showToast(`已成功更新 ${updatedUser.name || updatedUser.subject_id} 的角色權限，已寫入 Audit Trail`);
+          if (onUserRoleChange) onUserRoleChange(updatedUser);
+          setIsEditModalOpen(false);
+        } else {
+          const errorData = await res.json().catch(() => ({}));
+          showToast(`儲存失敗：${errorData.detail || res.statusText}`);
+        }
       }
     } catch (err: any) {
       showToast(`儲存失敗：無法連線至 API (${err.message || err})`);
@@ -617,7 +679,7 @@ export function UserRoleManagementController({
                 <label style={{ display: "block", fontWeight: 600, fontSize: "13px", marginBottom: "6px" }}>
                   使用者帳號資訊 (Principal Details)
                 </label>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: isNewUser ? "1fr 1fr" : "1fr 1fr 1fr", gap: "10px" }}>
                   <div>
                     <label style={{ fontSize: "11px", color: "#475569" }}>使用者 ID (Subject ID)</label>
                     <input
@@ -660,6 +722,19 @@ export function UserRoleManagementController({
                       data-testid="edit-email-input"
                     />
                   </div>
+                  {isNewUser ? (
+                    <div>
+                      <label style={{ fontSize: "11px", color: "#475569" }}>初始密碼（選填，留空自動產生）</label>
+                      <input
+                        type="password"
+                        value={editInitialPassword}
+                        onChange={(e) => setEditInitialPassword(e.target.value)}
+                        placeholder="留空將自動產生安全隨機密碼"
+                        style={{ width: "100%", padding: "6px", fontSize: "12px", borderRadius: "4px", border: "1px solid #cbd5e1" }}
+                        data-testid="edit-initial-password-input"
+                      />
+                    </div>
+                  ) : null}
                 </div>
               </div>
               {/* Role Selection Checkboxes */}
@@ -800,6 +875,118 @@ export function UserRoleManagementController({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Invited Credentials Modal */}
+      {invitedCredentials ? (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(15, 23, 42, 0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1100,
+          }}
+          data-testid="invited-credentials-modal"
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "8px",
+              width: "480px",
+              maxWidth: "90%",
+              padding: "24px",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px", color: "#16a34a" }}>
+              <span style={{ fontSize: "20px" }}>✓</span>
+              <h3 style={{ margin: 0, fontSize: "16px", color: "#0f172a" }}>帳號建立成功（一次性初始憑證）</h3>
+            </div>
+            <p style={{ fontSize: "13px", color: "#475569", marginBottom: "16px", lineHeight: "1.5" }}>
+              使用者帳號 <strong>{invitedCredentials.username}</strong> 已建立。以下為該帳號的一次性初始密碼，請妥善複製並提供給使用者。基於安全原則，此密碼僅顯示一次且於首次登入時強制重設。
+            </p>
+            <div
+              style={{
+                background: "#f1f5f9",
+                border: "1px solid #cbd5e1",
+                borderRadius: "6px",
+                padding: "12px",
+                marginBottom: "16px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+              }}
+            >
+              <div>
+                <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "2px" }}>一次性初始密碼</div>
+                <div
+                  style={{
+                    fontFamily: "monospace",
+                    fontSize: "15px",
+                    fontWeight: 700,
+                    color: "#0f172a",
+                    letterSpacing: "1px",
+                  }}
+                  data-testid="invited-password-display"
+                >
+                  {invitedCredentials.password}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+                    navigator.clipboard.writeText(invitedCredentials.password);
+                  }
+                  setCopiedPassword(true);
+                  setTimeout(() => setCopiedPassword(false), 3000);
+                }}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: "4px",
+                  background: copiedPassword ? "#16a34a" : "#2563eb",
+                  color: "#ffffff",
+                  border: "none",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+                data-testid="copy-password-button"
+              >
+                {copiedPassword ? "已複製 ✓" : "複製密碼"}
+              </button>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setInvitedCredentials(null);
+                  setCopiedPassword(false);
+                }}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "6px",
+                  background: "#0f172a",
+                  color: "#ffffff",
+                  border: "none",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+                data-testid="close-credentials-modal"
+              >
+                關閉
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

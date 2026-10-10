@@ -691,3 +691,200 @@ def test_explicit_scope_updates_are_applied_and_can_be_cleared(stack: Any) -> No
     assert c_scope["brand_ids"] == ["b2"]
     assert c_scope["assigned_area_ids"] == ["area-1"]
 
+
+def test_admin_invite_user_creates_account_with_initial_password_and_forces_password_rotation(stack: Any) -> None:
+    admin_id = _bootstrap_admin(stack)
+    _rotate_password(stack, admin_id)
+    admin_headers = _sign_in(stack, admin_id)
+
+    # 1. Platform admin creates and invites an operations manager
+    invite_res = stack.client.post(
+        "/api/v1/operator/users/invite",
+        headers=admin_headers,
+        json={
+            "username": "ops.director",
+            "email": "ops.director@example.invalid",
+            "name": "營運總監",
+            "roles": ["operations_manager"],
+            "scope": {
+                "tenant_id": TENANT,
+                "brand_ids": ["brand-alpha"],
+                "region_ids": ["region-north"],
+                "clearance": "CONFIDENTIAL",
+            },
+            "reason": "Onboarding operations director for regional management",
+        },
+    )
+    assert invite_res.status_code == 200, invite_res.text
+    body = invite_res.json()
+    assert "user" in body
+    assert "temporary_password" in body
+    temp_pw = body["temporary_password"]
+    assert len(temp_pw) >= 12
+    created_user = body["user"]
+    ops_id = created_user["subject_id"]
+    assert created_user["username"] == "ops.director"
+    assert created_user["email"] == "ops.director@example.invalid"
+    assert created_user["roles"] == ["operations_manager"]
+    assert created_user["status"] == "active"
+    assert created_user["scope"]["brand_ids"] == ["brand-alpha"]
+
+    # 2. Check password_credentials has must_change=True
+    must_change = stack.identity.password_must_change(ops_id)
+    assert must_change is True
+
+    # 3. Check invitations table
+    invitations = _q(stack, "SELECT email, token_hash FROM identity.invitations WHERE tenant_id = %s", (TENANT,))
+    assert len(invitations) == 1
+    assert invitations[0][0] == "ops.director@example.invalid"
+    assert invitations[0][1] != temp_pw  # Only hash stored
+
+    # 4. Check audit trail
+    trail = stack.client.get("/api/v1/operator/users/audit-trail", headers=admin_headers).json()
+    invite_event = next(e for e in trail["events"] if e["event_type"] == "identity.account.invite")
+    assert invite_event["action"] == "IDENTITY_ACCOUNT_INVITED"
+    assert invite_event["metadata"]["username"] == "ops.director"
+    assert invite_event["metadata"]["must_change"] is True
+    # Password plaintext must NOT appear anywhere in the audit event
+    assert temp_pw not in str(invite_event)
+
+    # 5. Ops director signs in with the new account
+    ops_headers = _sign_in(stack, ops_id)
+
+    # 6. Must change password enforced before rotation
+    blocked_console = stack.client.get("/api/v1/operator/bootstrap", headers=ops_headers)
+    assert blocked_console.status_code == 403
+    assert blocked_console.json()["detail"] == PASSWORD_CHANGE_REQUIRED
+
+    blocked_users = stack.client.get("/api/v1/operator/users", headers=ops_headers)
+    assert blocked_users.status_code == 403
+    assert blocked_users.json()["detail"] == PASSWORD_CHANGE_REQUIRED
+
+    # 7. Rotate password
+    _rotate_password(stack, ops_id)
+    assert stack.identity.password_must_change(ops_id) is False
+
+    # 8. Post-rotation: can access business console (operations_manager role), but NOT admin user management
+    console_res = stack.client.get("/api/v1/operator/bootstrap", headers=ops_headers)
+    assert console_res.status_code == 200, console_res.text
+    assert console_res.json()["status"] == "ok"
+
+    admin_res = stack.client.get("/api/v1/operator/users", headers=ops_headers)
+    assert admin_res.status_code == 403  # operations_manager cannot manage users
+
+
+def test_admin_invite_user_rejects_duplicates_and_invalid_inputs(stack: Any) -> None:
+    admin_id = _bootstrap_admin(stack)
+    _rotate_password(stack, admin_id)
+    admin_headers = _sign_in(stack, admin_id)
+
+    # Create initial user
+    res1 = stack.client.post(
+        "/api/v1/operator/users/invite",
+        headers=admin_headers,
+        json={
+            "username": "member.dup",
+            "email": "member.dup@example.invalid",
+            "roles": ["operations_manager"],
+        },
+    )
+    assert res1.status_code == 200, res1.text
+
+    # Duplicate username
+    dup_username = stack.client.post(
+        "/api/v1/operator/users/invite",
+        headers=admin_headers,
+        json={
+            "username": "member.dup",
+            "email": "other.email@example.invalid",
+            "roles": ["operations_manager"],
+        },
+    )
+    assert dup_username.status_code == 422
+    assert "already exists" in dup_username.text
+
+    # Duplicate email (case-insensitive)
+    dup_email = stack.client.post(
+        "/api/v1/operator/users/invite",
+        headers=admin_headers,
+        json={
+            "username": "other.user",
+            "email": "MEMBER.DUP@EXAMPLE.INVALID",
+            "roles": ["operations_manager"],
+        },
+    )
+    assert dup_email.status_code == 422
+    assert "already exists" in dup_email.text
+
+    # Invalid username format
+    bad_user = stack.client.post(
+        "/api/v1/operator/users/invite",
+        headers=admin_headers,
+        json={
+            "username": "@invalid!",
+            "email": "valid@example.invalid",
+            "roles": ["operations_manager"],
+        },
+    )
+    assert bad_user.status_code == 422
+
+    # Invalid email format
+    bad_email = stack.client.post(
+        "/api/v1/operator/users/invite",
+        headers=admin_headers,
+        json={
+            "username": "valid.user",
+            "email": "not-an-email",
+            "roles": ["operations_manager"],
+        },
+    )
+    assert bad_email.status_code == 422
+
+    # Invalid role
+    bad_role = stack.client.post(
+        "/api/v1/operator/users/invite",
+        headers=admin_headers,
+        json={
+            "username": "valid.user2",
+            "email": "valid2@example.invalid",
+            "roles": ["super_hacker_role"],
+        },
+    )
+    assert bad_role.status_code == 422
+    assert "Invalid role" in bad_role.text
+
+    # Cross-tenant scope
+    bad_tenant = stack.client.post(
+        "/api/v1/operator/users/invite",
+        headers=admin_headers,
+        json={
+            "username": "foreign.user",
+            "email": "foreign@example.invalid",
+            "roles": ["operations_manager"],
+            "scope": {"tenant_id": OTHER_TENANT},
+        },
+    )
+    assert bad_tenant.status_code == 422
+    assert "restricted to its own tenant" in bad_tenant.text
+
+
+def test_non_admin_cannot_invite_user(stack: Any) -> None:
+    admin_id = _bootstrap_admin(stack)
+    _rotate_password(stack, admin_id)
+    ops_id = _invited_account(stack, "ops.member.tester", "operations_manager")
+    _rotate_password(stack, ops_id)
+    ops_headers = _sign_in(stack, ops_id)
+
+    # Operations manager attempts to invite a user
+    refused = stack.client.post(
+        "/api/v1/operator/users/invite",
+        headers=ops_headers,
+        json={
+            "username": "unauthorized.invitee",
+            "email": "unauthorized@example.invalid",
+            "roles": ["regional_supervisor"],
+        },
+    )
+    assert refused.status_code == 403
+
+
