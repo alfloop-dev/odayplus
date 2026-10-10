@@ -12,6 +12,7 @@ Routes (all under /operator/users):
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -288,6 +289,117 @@ def create_user_role_sub_router(
         except Exception:
             return JSONResponse({"error": {"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"}},
                                 status_code=503, headers={"cache-control": "no-store"})
+
+    def journal_operation(request: Request, body: dict[str, Any] | None) -> dict[str, Any]:
+        # Reuse the existing verified identity and durable session. Never trust
+        # headers/body for actor, tenant, source approval or admission authority.
+        from delivery_toolchain.release.provision_dev_smoke import (
+            AUTHORIZATION_ID, PRESERVED_ACCOUNT_ID, TENANT_ID, DevSmokeBindingJournal,
+            GitHubDevSecretStore, JournalReservation, ProvisioningJournal,
+            ProvisioningRefused, WebInvitationExecutor,
+        )
+        from delivery_toolchain.e2e.check_live_e2e_gate import _invitation_provenance
+        from datetime import datetime
+
+        invitations, principal = invitation_context(request)
+        if os.environ.get("ODP_DEPLOY_ENV") != "dev" or os.environ.get("ODP_RELEASE_PROFILE") != "dev-admin":
+            raise ProvisioningRefused("PROVISIONING_SCOPE_MISMATCH")
+        svc = get_svc(request)
+        with invitations._engine.lock:
+            actor, tenant = invitations._actor(principal)
+            if actor != PRESERVED_ACCOUNT_ID or tenant != TENANT_ID:
+                raise ProvisioningRefused("PROVISIONING_SCOPE_MISMATCH")
+            original = WebInvitationExecutor._original([svc.get_user(actor, tenant_id=tenant)])
+            journal = ProvisioningJournal(engine=invitations._engine, audit_log=invitations._audit)
+            binding = DevSmokeBindingJournal(journal=journal)
+            if body is not None:
+                action = body.get("action")
+                if action == "reserve" and set(body) == {"action", "plan"}:
+                    journal.reserve(body["plan"], original_account=original,
+                                    release_sha=os.environ.get("ODAY_RELEASE_SHA", ""),
+                                    manifest_digest=os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""))
+                elif action == "quarantine" and set(body) == {"action", "reservation"}:
+                    receipt = body["reservation"]
+                    if (not isinstance(receipt, dict) or set(receipt) != {
+                            "execution_id", "plan_digest", "event_id", "stage", "authorization_id",
+                            "execution_authorized", "secret_values_redacted"}
+                            or receipt["authorization_id"] != AUTHORIZATION_ID
+                            or receipt["execution_authorized"] is not False or receipt["secret_values_redacted"] is not True):
+                        raise ProvisioningRefused("PROVISIONING_RESERVATION_MISMATCH")
+                    journal.require_recovery(JournalReservation(*(receipt[key] for key in (
+                        "execution_id", "plan_digest", "event_id", "stage"))))
+                elif action in {"binding-intent", "binding-acknowledged", "recovery-required"} and set(body) == {
+                    "action", "account_id", "execution_id", "plan_digest",
+                }:
+                    reserved = journal.inspect()
+                    if (reserved is None or reserved.stage != "reserved"
+                            or body["execution_id"] != reserved.execution_id
+                            or body["plan_digest"] != reserved.plan_digest):
+                        raise ProvisioningRefused("PROVISIONING_RESERVATION_MISMATCH")
+                    existing = binding.inspect()
+                    if action == "binding-intent":
+                        if existing is not None:
+                            raise ProvisioningRefused("PROVISIONING_BINDING_ALREADY_ATTEMPTED")
+                        account = svc.get_user(body["account_id"], tenant_id=tenant)
+                        provenance = _invitation_provenance(account, svc.get_audit_trail(tenant_id=tenant))
+                        root = journal._events()[0]
+                        if (provenance is None or provenance["issuer_account_id"] != actor
+                                or account.get("username") != "odp-dev-smoke"
+                                or not any(e.event_id == provenance["issue_event_id"]
+                                    and datetime.fromisoformat(str(e.occurred_at)) >= datetime.fromisoformat(str(root.occurred_at))
+                                    for e in invitations._audit.list_events(tenant_id=tenant))):
+                            raise ProvisioningRefused("PROVISIONING_PROVENANCE_INVALID")
+                        metadata = {
+                            **root.metadata, "account_id": body["account_id"],
+                            "secret_name": GitHubDevSecretStore.NAME, "stage": "binding-intent",
+                            "credential_binding_verified": False,
+                        }
+                    else:
+                        if existing is None or body["account_id"] != existing["account_id"]:
+                            raise ProvisioningRefused("PROVISIONING_RESERVATION_MISMATCH")
+                        metadata = {k: v for k, v in existing.items() if k != "audit_event_id"}
+                    binding._append(metadata, action)
+                else:
+                    raise ProvisioningRefused("PROVISIONING_PLAN_INVALID")
+            reservation = journal.inspect()
+            return {"reservation": reservation.to_receipt() if reservation else None,
+                    "binding": binding.inspect(), "execution_authorized": False,
+                    "secret_values_redacted": True}
+
+    @router.get("/dev-smoke-journal", dependencies=manage_deps, operation_id="inspectDevSmokeJournal")
+    def inspect_dev_smoke_journal(request: Request) -> JSONResponse:
+        try:
+            return JSONResponse(journal_operation(request, None), headers={"cache-control": "no-store"})
+        except (InvitationRefused, HTTPException):
+            return JSONResponse({"error": {"code": "PROVISIONING_JOURNAL_REFUSED"}}, status_code=403,
+                                headers={"cache-control": "no-store"})
+        except Exception:
+            return JSONResponse({"error": {"code": "PROVISIONING_JOURNAL_UNAVAILABLE"}}, status_code=503,
+                                headers={"cache-control": "no-store"})
+
+    @router.post("/dev-smoke-journal", dependencies=manage_deps, operation_id="writeDevSmokeJournal",
+                 openapi_extra={"requestBody": {"required": True, "content": {
+                     "application/json": {"schema": {"type": "object", "additionalProperties": False,
+                         "properties": {"action": {"type": "string"}, "plan": {"type": "object"},
+                             "reservation": {"type": "object"}, "account_id": {"type": "string"},
+                             "execution_id": {"type": "string"}, "plan_digest": {"type": "string"}},
+                         "required": ["action"]}}
+                 }}})
+    async def write_dev_smoke_journal(request: Request) -> JSONResponse:
+        from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+        try:
+            parsed = await _invitation_body(request, limit=8192)
+            result = await run_in_threadpool(journal_operation, request, parsed)
+            return JSONResponse(result, headers={"cache-control": "no-store"})
+        except ProvisioningRefused as exc:
+            return JSONResponse({"error": {"code": exc.code}}, status_code=409,
+                                headers={"cache-control": "no-store"})
+        except (InvitationRefused, HTTPException):
+            return JSONResponse({"error": {"code": "PROVISIONING_JOURNAL_REFUSED"}}, status_code=403,
+                                headers={"cache-control": "no-store"})
+        except Exception:
+            return JSONResponse({"error": {"code": "PROVISIONING_JOURNAL_UNAVAILABLE"}}, status_code=503,
+                                headers={"cache-control": "no-store"})
 
     @router.get("/{subject_id}", dependencies=read_deps)
     def get_user(subject_id: str, request: Request) -> dict[str, Any]:

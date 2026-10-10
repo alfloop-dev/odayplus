@@ -479,32 +479,22 @@ reservation quarantines the root without retry; only this execution's sessions
 are still cleaned up. This enforces admission observation inside the actual
 library but is **not** authenticated source/custody approval or a rollback-owned
 deploy hook; trust-root acquisition and that hook remain unfinished.
-The mandatory `GitHubCustodyApprovalObserver` additionally re-reads an explicit
-custodian consent record before every existing admission boundary (including
-before login/GitHub preflight, reservation, issue, acceptance, fresh login, final
-readback, encrypted PUT and return from the gate). The coordinator independently
-pins the repository issue number, comment ID and approved human GitHub login/
-numeric ID; none comes from the plan. The exact unedited comment must be authored
-by that human and belong to the pinned issue in `alfloop-dev/odayplus`. Its body
-is strict JSON with exactly `schema_version=1`, the fixed `authorization_id`,
-`plan_digest` (SHA-256 of the entire plan's sorted compact ASCII JSON),
-`decision=approve`, `recipient_control=owner-controlled`,
-`consent=invitation-and-dev-smoke-credential-bundle`, and the plan's exact
-`expires_at`. Approval must already exist, remain unedited/available, and expire
-within one hour of its offset-aware creation time. This library only GETs the
-record; it never posts a consent on the custodian's behalf. The record publishes
-only the plan digest, not the recipient address, password or capability.
-
-This is an authenticated **custodian attestation** that the exact recipient is
-owner-controlled and consents to this smoke use, not a technical mailbox-control
-or deliverability test. The trusted foreground coordinator must obtain the
-actual mailbox-control evidence before requesting that attestation. Token-owner
-proof or `recipient_control` alone is still insufficient. Any changed plan field,
-foreign/bot author, edited/deleted/expired record, redirect, missing/uncertain
-readback refuses. Loss after reservation quarantines without later mutation or
-PUT/retry; cleanup still revokes only this execution's sessions. Offline mocked
-GitHub records are not actual consent. The mandatory
-`GitHubSourceApprovalObserver` now additionally re-reads independently pinned
+**Scope correction (2026-10-10):** the explicit user reply already recorded in
+`USER-AUTHORIZATION-20261010.json` authorizes this bounded operation. A new
+GitHub issue/comment or SMTP/mailbox-deliverability ceremony is not part of
+§7.1/7.3 or that authorization and is **not mandatory**. The trusted foreground
+owner supplies `RecordedUserAuthorization(authorization=<canonical recorded
+consent>, approved_plan=<owner-approved non-secret scoped plan>)`. It snapshots
+both inputs and refuses any plan change/expiry or incompatible recorded scope.
+The username is fixed to `odp-dev-smoke`; the foreground owner selects the
+recipient (including an explicitly understood private service alias) and approved
+GitHub custodian. This is a trusted invocation boundary, not a public receipt
+upload or a worker self-approval. Neither the recipient assertion nor the GitHub
+token owner is presented as SMTP verification. The former
+`GitHubCustodyApprovalObserver` remains an optional existing-evidence adapter;
+no worker or library posts a new consent on the user's behalf. Independent
+exact-head source review/CI and signed consumed admission are still required.
+The mandatory `GitHubSourceApprovalObserver` additionally re-reads independently pinned
 source trust roots at every lifecycle/admission/binding/gate boundary: merged
 same-repository PR into `dev`, its exact reviewed head, canonical
 `task-review-gate` writer login/numeric ID, CI workflow ID, checks app ID and
@@ -528,10 +518,36 @@ by this observer. It observes existing source approval and CI, not a release
 lease, mailbox proof or traffic/rollback capability; no cached pass is accepted.
 Offline mocks are regression inputs, not actual review/CI receipts.
 
-Independent trust-root acquisition, actual mailbox verification and rollback-owned
-promoted-before-gate deployment wiring remain outstanding. No CLI/workflow invokes
-this foreground entrypoint yet; the worker creates neither live approval/comment
-nor identity/configuration. This source increment is not activation approval.
+The foreground now supports `RemoteProvisioningJournal(web=<canonical Web
+HTTP client>, web_origin=<same HTTPS origin>)`: it needs **no PostgreSQL engine
+or database credential**. `/api/v1/operator/users/dev-smoke-journal` uses the
+existing BFF and `user:manage` dependency, then rechecks the durable active
+platform-admin session, exact preserved actor/tenant/three-role/full-scope
+snapshot and dev-admin runtime. Reservation uses fresh server account data,
+serving SHA/digest, DB time and the existing global advisory-lock/audit root.
+It never trusts a caller's account receipt or constructs a Principal. Binding
+intent additionally binds a real invitation-created pure `odp-dev-smoke` account
+issued by that actor after reservation; terminal records bind the same
+execution/plan/account. The API grants no source/admission authority and cannot
+verify GitHub's decrypted value. Reads/writes are bounded and secret-free;
+replay, unknown actions/fields, malformed evidence and audit/commit failure refuse.
+
+The outer foreground lifecycle/binding/gate operation owns one extra journal
+admin session, shared across nested calls and revoked at exit. It creates no
+standing session and does not revoke any original session. Independent
+source/consent/admission observations precede this login; invalid gate configuration
+is rejected before it. Issue/accept still use their original two execution-owned
+sessions. The remote ledger supplies the actual same-process encrypted bundle
+staging and canonical gate composition, not a fake local PG proxy. Lost replies
+leave the durable root/intent/ACK as a no-retry boundary, with quarantine when
+possible. Logout uncertainty never returns success. No credential enters the
+journal payload, a process argument, file or report.
+
+Independent trust-root acquisition and rollback-owned promoted-before-gate
+deployment wiring remain outstanding. No CLI/workflow invokes this foreground
+entrypoint yet; the worker creates neither live approval/comment nor identity/
+configuration. No new mailbox-verification gate is imposed. This source increment
+is not activation approval.
 
 PR1445 deployment/inventory, admission, IAM and
 finite-role gates remain intact. Independent review is required before use; the

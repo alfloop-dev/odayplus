@@ -432,7 +432,7 @@ def foreground_plan_input() -> Any:
         "authorization_id": AUTHORIZATION_ID, "repository": REPOSITORY, "environment": "dev",
         "release_profile": "dev-admin", "release_sha": "a" * 40, "manifest_digest": "sha256:" + "b" * 64,
         "tenant_id": TENANT_ID, "actor_account_id": PRESERVED_ACCOUNT_ID, "purpose": PURPOSE,
-        "execution_id": "f56189b9-a0c2-4db2-aedb-78e1ff854cbb", "username": "release.smoke",
+        "execution_id": "f56189b9-a0c2-4db2-aedb-78e1ff854cbb", "username": "odp-dev-smoke",
         "email": "owner-approved@example.invalid", "recipient_custodian": "offline-custodian",
         "recipient_control": "owner-controlled", "expires_at": "2026-10-10T05:30:00+00:00",
     }
@@ -2107,3 +2107,15 @@ def test_foreground_gate_uncertain_result_is_not_success(
         )
     assert error.value.__cause__ is None and args["new_password"] not in str(error.value)
     assert journal.inspect().stage == "recovery-required" and len(remote.uploads) == 1
+
+
+# Keep the exact declared provisioning selection; these cases exercise the
+# foreground HTTP journal without giving it a PostgreSQL engine/credential.
+from tests.integration.dev_smoke_remote_journal_cases import (  # noqa: E402, F401
+    remote_binding,
+    test_existing_recorded_consent_needs_no_new_github_comment,
+    test_foreground_remote_journal_composes_actual_router_binding_same_pair_and_gate,
+    test_remote_journal_lost_committed_reply_never_retries_or_replaces,
+    test_remote_journal_actual_auth_guard_precedes_any_ledger_write,
+    test_remote_journal_reserve_uses_server_account_tuple_and_global_single_use,
+)

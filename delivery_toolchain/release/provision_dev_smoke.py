@@ -7,9 +7,10 @@ release human approval, proves mailbox ownership, or authorizes a cloud mutation
 The Web lifecycle below requires a consumed-dev-admission observer pinned by
 the trusted foreground coordinator and rechecks it before mutations. Independent
 source approval is freshly observed through independently pinned GitHub PR/review/CI
-roots. Actual mailbox control and rollback ownership are still coordinator duties.
-A separately pinned GitHub custodian comment is re-read for exact-plan consent;
-that authenticated attestation is not a mailbox-delivery check. The optional encrypted bundle writer below
+roots. The canonical recorded user consent and foreground-approved scoped plan
+are supported without another social approval or mailbox-deliverability ceremony.
+A separately pinned GitHub custodian comment remains an optional input, not a
+mandatory policy. Rollback ownership is still a coordinator duty. The optional encrypted bundle writer below
 composes the same lifecycle/password in one call but cannot prove the stored
 secret value. The release workflow consumes an already staged bundle through the
 strict memory-only reader; it never invokes the lifecycle/writer. There is
@@ -25,8 +26,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from contextlib import contextmanager
+from functools import wraps
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -147,7 +150,8 @@ def validate_foreground_plan(
         raise ProvisioningRefused("PROVISIONING_EXPIRY_INVALID")
     _original_account(original_account)
     username, email = plan["username"], plan["email"]
-    if (not _USERNAME.fullmatch(username) or username.casefold() == original_account["username"].casefold()
+    if (username != "odp-dev-smoke" or not _USERNAME.fullmatch(username)
+            or username.casefold() == original_account["username"].casefold()
             or len(email) > 320 or not _EMAIL.fullmatch(email)
             or email.casefold() == original_account["email"].casefold()
             or plan["recipient_control"] != "owner-controlled"
@@ -242,6 +246,51 @@ def verify_consumed_dev_admission(
         # Never surface a nonce, signature, arbitrary registry/state error or
         # remote exception. An unavailable/corrupt trust root is not approval.
         raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED") from None
+
+
+class RecordedUserAuthorization:
+    """Canonical recorded consent plus the coordinator's approved scoped plan.
+
+    This is a trusted-foreground input, NOT authentication of an arbitrary caller.
+    The recorded user reply already authorizes this operation: no new GitHub
+    comment, SMTP proof or social approval is required. The foreground owner
+    selects the recipient/custodian and supplies the approved NON-SECRET plan;
+    its digest cannot subsequently be changed by an executor. Source/CI and
+    consumed admission still have their independent observers. Never load these
+    inputs from an anonymous request or let a background worker approve a plan.
+    """
+
+    def __init__(self, *, authorization: Any, approved_plan: Any) -> None:
+        from copy import deepcopy
+
+        self._authorization = deepcopy(authorization)
+        self._plan = deepcopy(approved_plan)
+
+    def observe(self, plan: Any, *, now: datetime) -> None:
+        try:
+            record = self._authorization
+            scope = record["approved_scope"]
+            if (record["schema_version"] != 1 or type(record["schema_version"]) is not int
+                    or record["authorization_id"] != AUTHORIZATION_ID
+                    or record["source"] != "Explicit user reply in this foreground conversation"
+                    or record["user_reply"] != "同意"
+                    or scope["environment"] != "dev" or scope["repository"] != REPOSITORY
+                    or scope["tenant_id"] != TENANT_ID or scope["new_identity_roles"] != ["platform_admin"]
+                    or scope["preserve_existing_account_id"] != PRESERVED_ACCOUNT_ID
+                    or scope["preserve_existing_roles"] != sorted(PRESERVED_ROLES)
+                    or any(scope[key] is not True for key in (
+                        "no_iam_changes", "no_gate_relaxation", "no_business_mutation_authority",
+                        "no_cross_tenant_bypass", "no_source_activation_backfill_or_fixture",
+                        "no_model_promotion", "no_full_product_or_F11_self_approval"))
+                    or not isinstance(plan, dict) or plan != self._plan
+                    or set(plan) != _PLAN_KEYS or not all(type(v) is str for v in plan.values())
+                    or not _aware(now)):
+                raise ValueError
+            expiry = datetime.fromisoformat(plan["expires_at"])
+            if not _aware(expiry) or not now < expiry <= now + timedelta(hours=1):
+                raise ValueError
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED") from None
 
 
 class GitHubCustodyApprovalObserver:
@@ -568,6 +617,11 @@ class ProvisioningJournal:
         self._engine = engine
         self._audit = audit_log
 
+    @contextmanager
+    def session(self, *, admin_password: str) -> Any:
+        # Local server-side storage already runs inside authenticated API context.
+        yield self
+
     def _lock(self) -> None:
         self._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (self._CORRELATION,))
 
@@ -687,14 +741,193 @@ class ProvisioningJournal:
             raise ProvisioningRefused("PROVISIONING_JOURNAL_UNAVAILABLE") from None
 
 
+def _journal_session(method: Any) -> Any:
+    @wraps(method)
+    def execute(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if type(self._journal) is RemoteProvisioningJournal:
+            admin_password, new_password = kwargs.get("admin_password"), kwargs.get("new_password")
+            if (not isinstance(admin_password, str) or not admin_password
+                    or not isinstance(new_password, str) or not 12 <= len(new_password) <= 1024
+                    or admin_password == new_password):
+                raise ProvisioningRefused("PROVISIONING_CREDENTIAL_INPUT_INVALID")
+            lifecycle = self if isinstance(self, WebInvitationExecutor) else self._lifecycle
+            plan = args[0] if args else kwargs.get("plan")
+            lifecycle._observe_admission(plan, release_sha=kwargs.get("release_sha", ""),
+                                         manifest_digest=kwargs.get("manifest_digest", ""))
+        with self._journal.session(admin_password=kwargs.get("admin_password", "")):
+            return method(self, *args, **kwargs)
+    return execute
+
+
+class RemoteProvisioningJournal:
+    """Same authenticated Web/BFF trust path; no foreground DB credentials.
+
+    Opens one execution-owned admin session for the outermost operation; nested
+    lifecycle/binding/gate calls share it. All journal writes are single-attempt.
+    An uncertain reservation cannot be replayed: server DB lock/root audit is
+    authoritative. A caller-provided original-account receipt is never forwarded.
+    """
+
+    PATH = "/api/v1/operator/users/dev-smoke-journal"
+
+    def __init__(self, *, web: Any, web_origin: str) -> None:
+        from urllib.parse import urlsplit
+        origin = urlsplit(web_origin)
+        if (origin.scheme != "https" or not origin.hostname or origin.username or origin.password
+                or origin.path or origin.query or origin.fragment):
+            raise ProvisioningRefused("PROVISIONING_TRANSPORT_INVALID")
+        self._web, self._origin = web, web_origin
+        self._cookie = ""
+        self._depth = 0
+
+    def _now(self) -> datetime:
+        # Server reservation/expiry uses DB time. This time is only for fresh
+        # independent source/admission observations, never accepted as DB time.
+        return datetime.now(UTC)
+
+    def _request(self, method: str, path: str, body: Any = None, *, status: int = 200) -> Any:
+        try:
+            headers = {"accept": "application/json", "origin": self._origin}
+            if self._cookie:
+                headers["cookie"] = f"__Host-oday_web_session={self._cookie}"
+            response = self._web.request(method, path, authenticated=False, body=body,
+                                         headers=headers, follow_redirects=False)
+            if response.failed or response.status != status or not isinstance(response.payload, dict):
+                raise ValueError
+            return response
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_JOURNAL_UNAVAILABLE") from None
+
+    @contextmanager
+    def session(self, *, admin_password: str) -> Any:
+        if self._depth:
+            self._depth += 1
+            try:
+                yield self
+            finally:
+                self._depth -= 1
+            return
+        try:
+            if not isinstance(admin_password, str) or not admin_password:
+                raise ValueError
+            response = self._request("POST", "/login", {
+                "username": "ajoe734", "password": admin_password, "returnTo": "/operator?view=admin",
+            })
+            cookie = response.cookies.get("__Host-oday_web_session")
+            if (response.payload.get("ok") is not True or response.payload.get("subject") != "ajoe734"
+                    or not isinstance(cookie, str) or not cookie or len(cookie) > 8192
+                    or any(c in cookie for c in ";\r\n")):
+                raise ValueError
+            self._cookie, self._depth = cookie, 1
+            # The server's journal context revalidates the pinned actor, active
+            # role, tenant and durable session on EVERY operation.
+            self.inspect()
+            yield self
+        except ProvisioningRefused:
+            raise
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_JOURNAL_UNAVAILABLE") from None
+        finally:
+            if self._cookie:
+                try:
+                    response = self._request("POST", "/auth/logout")
+                    if response.payload.get("ok") is not True:
+                        raise ValueError
+                    self._request("GET", "/auth/session", status=401)
+                except Exception:
+                    # Do not return successful binding/gate after logout uncertainty.
+                    try:
+                        reserved = self.inspect()
+                        if reserved is not None and reserved.stage == "reserved":
+                            self.require_recovery(reserved)
+                    except Exception:
+                        pass  # Existing durable root/intent remains a no-retry boundary.
+                    raise ProvisioningRefused("PROVISIONING_JOURNAL_SESSION_RECOVERY_REQUIRED") from None
+                finally:
+                    self._cookie, self._depth = "", 0
+
+    @staticmethod
+    def _reservation(value: Any) -> JournalReservation | None:
+        if value is None:
+            return None
+        try:
+            if (not isinstance(value, dict) or set(value) != {
+                    "execution_id", "plan_digest", "event_id", "stage", "authorization_id",
+                    "execution_authorized", "secret_values_redacted"}
+                    or value["authorization_id"] != AUTHORIZATION_ID
+                    or value["execution_authorized"] is not False or value["secret_values_redacted"] is not True
+                    or value["stage"] not in {"reserved", "recovery-required"}
+                    or not _DIGEST.fullmatch(value["plan_digest"])
+                    or any(str(UUID(value[key])) != value[key] for key in ("execution_id", "event_id"))):
+                raise ValueError
+            return JournalReservation(*(value[key] for key in ("execution_id", "plan_digest", "event_id", "stage")))
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_JOURNAL_INVALID") from None
+
+    def _read(self, method: str, body: Any = None) -> dict[str, Any]:
+        value = self._request(method, self.PATH, body).payload
+        if (set(value) != {"reservation", "binding", "execution_authorized", "secret_values_redacted"}
+                or value["execution_authorized"] is not False or value["secret_values_redacted"] is not True):
+            raise ProvisioningRefused("PROVISIONING_JOURNAL_INVALID")
+        return value
+
+    def inspect(self) -> JournalReservation | None:
+        return self._reservation(self._read("GET")["reservation"])
+
+    def reserve(self, plan: Any, **context: Any) -> JournalReservation:
+        # Never transmit a caller's account readback or any credential/capability.
+        value = self._read("POST", {"action": "reserve", "plan": plan})
+        result = self._reservation(value.get("reservation"))
+        if result is None:
+            raise ProvisioningRefused("PROVISIONING_JOURNAL_INVALID")
+        return result
+
+    def require_recovery(self, reservation: JournalReservation) -> JournalReservation:
+        value = self._read("POST", {
+            "action": "quarantine", "reservation": reservation.to_receipt(),
+        })
+        result = self._reservation(value.get("reservation"))
+        if result is None:
+            raise ProvisioningRefused("PROVISIONING_JOURNAL_INVALID")
+        return result
+
+    def binding_inspect(self) -> dict[str, Any] | None:
+        value = self._read("GET")["binding"]
+        if value is not None and (not isinstance(value, dict)
+                or set(value) != DevSmokeBindingJournal._KEYS | {"audit_event_id"}
+                or value.get("authorization_id") != AUTHORIZATION_ID
+                or value.get("tenant_id") != TENANT_ID or value.get("execution_authorized") is not False
+                or value.get("credential_binding_verified") is not False
+                or value.get("secret_values_redacted") is not True
+                or value.get("secret_name") != GitHubDevSecretStore.NAME
+                or value.get("stage") not in {"binding-intent", "binding-acknowledged", "recovery-required"}):
+            raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID")
+        return value
+
+    def binding_append(self, metadata: dict[str, Any], stage: str) -> AuditEvent:
+        value = self._read("POST", {
+            "action": stage, "account_id": metadata["account_id"],
+            "execution_id": metadata["execution_id"], "plan_digest": metadata["plan_digest"],
+        })["binding"]
+        if (not isinstance(value, dict) or set(value) != DevSmokeBindingJournal._KEYS | {"audit_event_id"}
+                or {k: v for k, v in value.items() if k != "audit_event_id"} != {**metadata, "stage": stage}):
+            raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID")
+        try:
+            event_id = str(UUID(value["audit_event_id"]))
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID") from None
+        return AuditEvent(event_id=event_id, event_type="release.dev_smoke.binding", actor="",
+                          action="DEV_SMOKE_BINDING", resource="", outcome="success")
+
+
 class WebInvitationExecutor:
     """Execute the supported lifecycle through Web, never directly mutate SQL.
 
     This is a foreground library entrypoint, NOT an admission/approval service.
-    The coordinator must verify promotion and actual mailbox control, and
-    supply independently pinned source/review/CI, admission roots and custodian
-    consent evidence. Consumed exact-dev admission and the custodian's
-    authenticated full-plan attestation are rechecked before side effects. A journal or
+    The coordinator must verify promotion, approve recipient custody and
+    supply independently pinned source/review/CI and admission roots plus the
+    canonical recorded consent and scoped plan (or optional GitHub attestation).
+    Consumed exact-dev admission and the approved plan are rechecked before side effects. A journal or
     matching string is not that proof. No workflow or CLI calls this entrypoint.
 
     All HTTP side effects are single-attempt. Once reserved, ANY uncertainty
@@ -706,8 +939,8 @@ class WebInvitationExecutor:
     _COOKIE = "__Host-oday_web_session"
 
     def __init__(
-        self, *, web: Any, web_origin: str, journal: ProvisioningJournal,
-        admission: ConsumedDevAdmissionObserver, custody: GitHubCustodyApprovalObserver,
+        self, *, web: Any, web_origin: str, journal: ProvisioningJournal | RemoteProvisioningJournal,
+        admission: ConsumedDevAdmissionObserver, custody: RecordedUserAuthorization | GitHubCustodyApprovalObserver,
         source: GitHubSourceApprovalObserver,
     ) -> None:
         from urllib.parse import urlsplit
@@ -715,11 +948,13 @@ class WebInvitationExecutor:
         origin = urlsplit(web_origin)
         if (origin.scheme != "https" or not origin.hostname or origin.username or origin.password
                 or origin.path or origin.query or origin.fragment
-                or not isinstance(journal, ProvisioningJournal)):
+                or type(journal) not in (ProvisioningJournal, RemoteProvisioningJournal)
+                or (type(journal) is RemoteProvisioningJournal
+                    and (journal._web is not web or journal._origin != web_origin))):
             raise ProvisioningRefused("PROVISIONING_TRANSPORT_INVALID")
         if type(admission) is not ConsumedDevAdmissionObserver:
             raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED")
-        if type(custody) is not GitHubCustodyApprovalObserver:
+        if type(custody) not in (RecordedUserAuthorization, GitHubCustodyApprovalObserver):
             raise ProvisioningRefused("PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED")
         if type(source) is not GitHubSourceApprovalObserver:
             raise ProvisioningRefused("PROVISIONING_SOURCE_APPROVAL_UNVERIFIED")
@@ -819,6 +1054,7 @@ class WebInvitationExecutor:
                        for key, value in expected.items())):
             raise ProvisioningRefused("PROVISIONING_PROMOTED_RELEASE_MISMATCH")
 
+    @_journal_session
     def execute(
         self, plan: Any, *, admin_password: str, new_password: str,
         release_sha: str, manifest_digest: str,
@@ -1145,7 +1381,78 @@ def credential_bundle_acknowledged(bundle: DevCredentialBundle, events: list[Any
         return False
 
 
-class DevCredentialBundleExecutor:
+class DevSmokeBindingJournal:
+    """Server-side durable binding intent/acknowledgement ledger.
+
+    Never grants authority or verifies a decrypted GitHub secret.
+    """
+
+    _CORRELATION = f"dev-smoke-binding:{AUTHORIZATION_ID}"
+    _ACTOR = "system:dev-smoke-credential-binding"
+    _TYPE = "release.dev_smoke.binding"
+    _KEYS = frozenset({
+        "authorization_id", "execution_id", "plan_digest", "release_sha", "manifest_digest",
+        "tenant_id", "account_id", "secret_name", "stage", "execution_authorized",
+        "credential_binding_verified", "secret_values_redacted",
+    })
+
+    def __init__(self, *, journal: ProvisioningJournal | RemoteProvisioningJournal) -> None:
+        self._journal = journal
+
+    def _events(self) -> list[AuditEvent]:
+        events = self._journal._audit.list_events(correlation_id=self._CORRELATION)
+        if len(events) > 2:
+            raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID")
+        for index, event in enumerate(events):
+            m = event.metadata
+            if (event.event_type != self._TYPE or event.actor != self._ACTOR
+                    or event.resource != self._CORRELATION or event.action != "DEV_SMOKE_BINDING"
+                    or event.outcome != "success" or set(m) != self._KEYS
+                    or m["authorization_id"] != AUTHORIZATION_ID or m["tenant_id"] != TENANT_ID
+                    or m["secret_name"] != GitHubDevSecretStore.NAME
+                    or m["execution_authorized"] is not False
+                    or m["credential_binding_verified"] is not False
+                    or m["secret_values_redacted"] is not True
+                    or m["stage"] not in (("binding-intent",) if index == 0 else
+                                          ("binding-acknowledged", "recovery-required"))):
+                raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID")
+            if index and {k: v for k, v in m.items() if k != "stage"} != {
+                k: v for k, v in events[0].metadata.items() if k != "stage"
+            }:
+                raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID")
+        return events
+
+    def inspect(self) -> dict[str, Any] | None:
+        if type(self._journal) is RemoteProvisioningJournal:
+            return self._journal.binding_inspect()
+        try:
+            with self._journal._engine.lock:
+                self._journal._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (self._CORRELATION,))
+                events = self._events()
+                return {**events[-1].metadata, "audit_event_id": events[-1].event_id} if events else None
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_UNAVAILABLE") from None
+
+    def _append(self, metadata: dict[str, Any], stage: str) -> AuditEvent:
+        if type(self._journal) is RemoteProvisioningJournal:
+            return self._journal.binding_append(metadata, stage)
+        with self._journal._engine.lock:
+            self._journal._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (self._CORRELATION,))
+            events = self._events()
+            if (stage not in {"binding-intent", "binding-acknowledged", "recovery-required"}
+                    or (stage == "binding-intent" and events)
+                    or (stage != "binding-intent" and (len(events) != 1
+                        or metadata != events[0].metadata))):
+                raise ProvisioningRefused("PROVISIONING_BINDING_ALREADY_ATTEMPTED")
+            event = self._journal._audit.record(AuditEvent(
+                event_type=self._TYPE, actor=self._ACTOR, action="DEV_SMOKE_BINDING",
+                resource=self._CORRELATION, correlation_id=self._CORRELATION, outcome="success",
+                occurred_at=self._journal._now(), metadata={**metadata, "stage": stage},
+            ))
+        return event
+
+
+class DevCredentialBundleExecutor(DevSmokeBindingJournal):
     """Foreground lifecycle + same-pair encrypted staging, NOT rollout authority.
 
     A SINGLE encrypted JSON secret contains the matched username/password plus
@@ -1175,54 +1482,6 @@ class DevCredentialBundleExecutor:
         self._lifecycle = lifecycle
         self._journal = lifecycle._journal
         self._store = store
-
-    def _events(self) -> list[AuditEvent]:
-        events = self._journal._audit.list_events(correlation_id=self._CORRELATION)
-        if len(events) > 2:
-            raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID")
-        for index, event in enumerate(events):
-            m = event.metadata
-            if (event.event_type != self._TYPE or event.actor != self._ACTOR
-                    or event.resource != self._CORRELATION or event.action != "DEV_SMOKE_BINDING"
-                    or event.outcome != "success" or set(m) != self._KEYS
-                    or m["authorization_id"] != AUTHORIZATION_ID or m["tenant_id"] != TENANT_ID
-                    or m["secret_name"] != self._store.NAME
-                    or m["execution_authorized"] is not False
-                    or m["credential_binding_verified"] is not False
-                    or m["secret_values_redacted"] is not True
-                    or m["stage"] not in (("binding-intent",) if index == 0 else
-                                          ("binding-acknowledged", "recovery-required"))):
-                raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID")
-            if index and {k: v for k, v in m.items() if k != "stage"} != {
-                k: v for k, v in events[0].metadata.items() if k != "stage"
-            }:
-                raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_INVALID")
-        return events
-
-    def inspect(self) -> dict[str, Any] | None:
-        """Restart diagnosis only; a pending intent MUST NOT be retried."""
-        try:
-            with self._journal._engine.lock:
-                self._journal._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (self._CORRELATION,))
-                events = self._events()
-                return {**events[-1].metadata, "audit_event_id": events[-1].event_id} if events else None
-        except Exception:
-            raise ProvisioningRefused("PROVISIONING_BINDING_JOURNAL_UNAVAILABLE") from None
-
-    def _append(self, metadata: dict[str, Any], stage: str) -> AuditEvent:
-        with self._journal._engine.lock:
-            self._journal._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (self._CORRELATION,))
-            events = self._events()
-            if ((stage == "binding-intent" and events)
-                    or (stage != "binding-intent" and (len(events) != 1
-                        or metadata != events[0].metadata))):
-                raise ProvisioningRefused("PROVISIONING_BINDING_ALREADY_ATTEMPTED")
-            event = self._journal._audit.record(AuditEvent(
-                event_type=self._TYPE, actor=self._ACTOR, action="DEV_SMOKE_BINDING",
-                resource=self._CORRELATION, correlation_id=self._CORRELATION, outcome="success",
-                occurred_at=self._journal._now(), metadata={**metadata, "stage": stage},
-            ))
-        return event
 
     def execute_and_check_gate(
         self, plan: Any, *, gate_config: Any, worker_job: str,
@@ -1265,6 +1524,14 @@ class DevCredentialBundleExecutor:
                 raise ValueError
         except Exception:
             raise ProvisioningRefused("PROVISIONING_GATE_CONFIG_INVALID") from None
+
+        return self._execute_gate(plan, config=config, worker_job=worker_job,
+                                  gcp_region=gcp_region, gcp_project=gcp_project, **credentials)
+
+    @_journal_session
+    def _execute_gate(self, plan: Any, *, config: Any, worker_job: str,
+                      gcp_region: str, gcp_project: str, **credentials: Any) -> dict[str, Any]:
+        from delivery_toolchain.e2e import check_live_e2e_gate as gate
 
         receipt = self.execute(plan, **credentials)
         try:
@@ -1313,6 +1580,7 @@ class DevCredentialBundleExecutor:
                 pass  # Reserved root/binding ACK still prevent lifecycle retry.
             raise ProvisioningRefused("PROVISIONING_GATE_RECOVERY_REQUIRED") from None
 
+    @_journal_session
     def execute(self, plan: Any, **credentials: Any) -> dict[str, Any]:
         """Same password goes to acceptance/fresh-login AND encrypted bundle.
 
