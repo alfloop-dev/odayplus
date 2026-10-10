@@ -1,8 +1,8 @@
 """Incremental real-router/PG invitation proof, NOT live provisioning evidence.
 
-Acceptance factory is exercised here but remains unmounted in runtime pending
-Web middleware scope approval. Foreground binding and deploy/gate orchestration
-remain to be implemented. No fake principal or permission dependency override:
+The acceptance factory and full runtime composition are exercised offline.
+Foreground binding and deploy/gate orchestration remain to be implemented.
+No fake principal or permission dependency override:
 all issuer/revoker requests use the existing production auth/session stack.
 """
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -299,3 +300,76 @@ def test_acceptance_router_audit_failure_has_safe_error_and_atomic_recovery(acce
     assert _q(s, "SELECT failure_count FROM identity.login_attempts "
               "WHERE attempt_key = 'invitation-accept:global'") == [(1,)]
     assert s.accept_client.post(ACCEPT, json=_accept_body(issued)).status_code == 201
+
+
+def test_full_runtime_mounts_admin_issue_and_pg_capability_acceptance(invitations: Any, monkeypatch: Any) -> None:
+    from apps.api.oday_api.main import create_app
+    from apps.api.oday_api.security import dependencies
+    from shared.infrastructure.persistence.factory import build_persistence
+
+    s = invitations
+    bundle = replace(build_persistence(mode="memory"), engine=s.engine,
+                     identity_store=s.identity, session_service=s.sessions)
+    # Real canonical boundary and PG session resolver, not a fabricated
+    # Principal or a permission dependency override.
+    monkeypatch.setattr(dependencies, "default_boundary", lambda: s.boundary)
+    client = TestClient(create_app(persistence=bundle, audit_log=s.audit,
+                                  external_provider_validation=lambda: None))
+    headers = _headers(s)
+    before = _snapshot(s)
+    issued = client.post(PATH, headers=headers, json={"email": EMAIL})
+    assert issued.status_code == 201, issued.text
+    body = {"invitation_id": issued.json()["invitation_id"], "token": issued.json()["token"],
+            "username": "release.smoke", "password": PASSWORD}
+    # Capability consumption accepts no user bearer or request actor/tenant.
+    accepted = client.post(ACCEPT, json=body, headers={"x-subject-id": "forged",
+                           "x-tenant-id": OTHER_TENANT, "x-roles": "operations_manager"})
+    assert accepted.status_code == 201, accepted.text
+    receipt = accepted.json()
+    assert receipt["tenant_id"] == TENANT and receipt["status"] == "accepted"
+    assert receipt["account_id"] != s.admin
+    assert PASSWORD not in accepted.text and body["token"] not in accepted.text
+    assert accepted.headers["cache-control"] == "no-store"
+    assert "set-cookie" not in accepted.headers
+    assert _q(s, "SELECT role FROM identity.account_roles WHERE account_id = %s",
+              (receipt["account_id"],)) == [("platform_admin",)]
+    assert _q(s, "SELECT status FROM identity.accounts WHERE account_id = %s",
+              (receipt["account_id"],)) == [("active",)]
+    assert client.post(ACCEPT, json=body).status_code == 409
+    assert _snapshot(s) == before
+
+
+def test_runtime_contract_is_exported_with_exact_invitation_paths_and_client(monkeypatch: Any) -> None:
+    from delivery_toolchain.openapi.export_openapi import ARTIFACT_PATH, build_schema, serialize
+    from delivery_toolchain.openapi.generate_client import OUTPUT_PATH, render
+    from apps.api.oday_api.main import create_app
+    from shared.api.versioning import alias_paths, versioned_paths
+    from shared.infrastructure.persistence.factory import build_persistence
+
+    monkeypatch.setenv("ODP_PERSISTENCE", "memory")
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+    schema = build_schema()
+    assert ARTIFACT_PATH.read_text() == serialize(schema)
+    assert OUTPUT_PATH.read_text() == render(schema)
+    expected = {PATH, f"{PATH}/{{invitation_id}}/revoke", ACCEPT}
+    actual = {path for path in schema["paths"] if "/invitations" in path}
+    assert actual == expected
+    for path in expected:
+        assert set(schema["paths"][path]) == {"post"}
+        request = schema["paths"][path]["post"]["requestBody"]
+        assert request["required"] is True
+        assert request["content"]["application/json"]["schema"]["additionalProperties"] is False
+    assert set(schema["paths"][ACCEPT]["post"]["responses"]) >= {"201", "409", "429", "503"}
+    payload = schema["paths"][ACCEPT]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    assert payload["properties"]["token"]["writeOnly"] is True
+    assert payload["properties"]["password"]["writeOnly"] is True
+    app = create_app(persistence=build_persistence(mode="memory"), external_provider_validation=lambda: None)
+    assert alias_paths(app) == [path[len("/api/v1"):] for path in versioned_paths(app)]
+    client = TestClient(app)
+    # No PostgreSQL means safe infrastructure refusal, never fallback account
+    # creation; both normal route and deprecated alias reach the same adapter.
+    for path in (ACCEPT, ACCEPT[len("/api/v1"):]):
+        response = client.post(path, json={"password": PASSWORD})
+        assert response.status_code == 503
+        assert response.json() == {"error": {"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"}}
+        assert PASSWORD not in response.text

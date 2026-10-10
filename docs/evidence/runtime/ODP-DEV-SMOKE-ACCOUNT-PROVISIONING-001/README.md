@@ -184,13 +184,11 @@ new-head receipts. No test count was inferred or broader suite launched.
 
 ## Remaining work (must precede review)
 
-1. Activate the bounded acceptance factory/Web adapter only after middleware
-   scope approval and complete routing/OpenAPI inventory integration. Issuance/
-   revocation are mounted; acceptance remains deliberately unmounted.
+1. Routing/contract activation is implemented in the routing anchor below;
+   obtain exact-head regressions and independent review before any live use.
 2. Execute the canonical declared regressions at the new anchor and repair any
-   findings. Focused Web checks are now declared; real middleware/composition
-   coverage remains pending and the new cross-instance throttle test needs a
-   measured pass.
+   findings. Focused Web matcher/handler and full-runtime PostgreSQL composition
+   now have offline coverage; none is a live provisioning receipt.
 3. Implement explicit one-time Human-bound foreground provisioning and recovery
    within a normally signed/admitted dev rollout after route availability,
    before the unchanged finite live gate. Bind environment/repo/tenant/purpose,
@@ -215,3 +213,43 @@ password and other sessions remain untouched. No IAM changes, source
 activation, backfill, fixtures as live data, model promotion, gate waiver,
 full-product acceptance or F11 approval. Archived PRs 1435/1441/1443 are not
 reopened.
+
+## Routing / contract anchor (2026-10-10)
+
+Pre-edit checks: correct task branch, clean worktree at `7fe54daadf1d`, fetched
+`origin/dev=10eb6224fa31010fbf3c6f27612ca7d17ba4401e`. Canonical active-task
+artifact inspection found no other owner on middleware/generated artifacts.
+Scope was extended via the live canonical status CLI while preserving the
+original artifacts, not by editing seeded worktree status files.
+
+- Runtime mounts `/api/v1/auth/invitations/accept` and its standard deprecated
+  alias using the same PostgreSQL engine/durable audit as user administration.
+  Memory/document composition returns a sanitized 503, never provisions.
+- Web middleware exempts **exactly** `/auth/invitations`; nearby auth routes,
+  password changes and protected pages still require the durable session.
+  Its bounded same-origin POST handler neither reads nor changes the issuer's
+  session and sends only the canonical server transport identity upstream.
+- Added actual production matcher/handler composition with anonymous/issuer
+  cookies, and a full runtime PostgreSQL issue/accept/replay regression through
+  the genuine existing authentication boundary. Original account preservation
+  remains asserted; no fake principal or guard override is used.
+- OpenAPI and client regenerated with the project exporters. Exactly three
+  invitation paths are added (289 total paths vs canonical baseline 286);
+  status codes, strict JSON request bodies, accepted/issued/revoked receipts
+  and write-only capability/password inputs are documented. Hand validation
+  remains intentional so rejected secrets are never echoed by FastAPI.
+  Offline integration guards exact invitation inventory, artifact/client drift,
+  paired aliases and safe infrastructure refusal.
+
+Prior exact `7fe54daadf1d6e3f5212bcd25a1318d6f477d420` canonical receipts:
+all five declared selections exited 0 (diff `92ae0bee87532246`, invitation /
+provisioning / workflow `f5fac960d8f88b07`, gate / operator `47f725602e2509ac`,
+Web `48eba17907ffc5de`, typecheck `f8c99bc38b8947bb`). Those do **not** attest
+this new routing anchor; its receipts are recorded after committing.
+
+Still not review-ready: foreground Human-bound provisioning, encrypted dev
+binding/recovery, rollout-before-gate orchestration, strict real invite/accept
+provenance in the unchanged finite gate, updated canonical release profile,
+exact-head required CI and independent Codex approval remain outstanding.
+No live credentials, account creation, secret binding, IAM changes or deploy
+were performed. Source activation is not successful deployment or acceptance.

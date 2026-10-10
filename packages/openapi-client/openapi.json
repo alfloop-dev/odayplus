@@ -4584,6 +4584,120 @@
         "title": "IntakeSummary",
         "type": "object"
       },
+      "InvitationAcceptedReceipt": {
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "audit_event_id": {
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "invitation_id": {
+            "title": "Invitation Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "accepted",
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "invitation_id",
+          "account_id",
+          "tenant_id",
+          "audit_event_id"
+        ],
+        "title": "InvitationAcceptedReceipt",
+        "type": "object"
+      },
+      "InvitationCapabilityError": {
+        "properties": {
+          "error": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Error",
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "InvitationCapabilityError",
+        "type": "object"
+      },
+      "InvitationIssuedPayload": {
+        "properties": {
+          "audit_event_id": {
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "invitation_id": {
+            "title": "Invitation Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "invited",
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "token": {
+            "description": "One-time private in-memory custody; never log or persist.",
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "invitation_id",
+          "tenant_id",
+          "expires_at",
+          "audit_event_id",
+          "token"
+        ],
+        "title": "InvitationIssuedPayload",
+        "type": "object"
+      },
+      "InvitationRevokedReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "invitation_id": {
+            "title": "Invitation Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "revoked",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "invitation_id",
+          "audit_event_id"
+        ],
+        "title": "InvitationRevokedReceipt",
+        "type": "object"
+      },
       "IssueTransitionRequest": {
         "description": "Write body for POST /operator/issues/{issue_id}/{action_type}.",
         "properties": {
@@ -13038,6 +13152,189 @@
         "summary": "Purge Retained Evidence",
         "tags": [
           "audit"
+        ]
+      }
+    },
+    "/api/v1/auth/invitations/accept": {
+      "post": {
+        "operationId": "acceptIdentityInvitation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "display_name": {
+                    "default": "",
+                    "maxLength": 255,
+                    "title": "Display Name",
+                    "type": "string"
+                  },
+                  "invitation_id": {
+                    "maxLength": 36,
+                    "minLength": 1,
+                    "title": "Invitation Id",
+                    "type": "string"
+                  },
+                  "password": {
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "title": "Password",
+                    "type": "string",
+                    "writeOnly": true
+                  },
+                  "token": {
+                    "maxLength": 43,
+                    "minLength": 1,
+                    "title": "Token",
+                    "type": "string",
+                    "writeOnly": true
+                  },
+                  "username": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "title": "Username",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "invitation_id",
+                  "token",
+                  "username",
+                  "password"
+                ],
+                "title": "InvitationAcceptPayload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationAcceptedReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationCapabilityError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationCapabilityError"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationCapabilityError"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationCapabilityError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationCapabilityError"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationCapabilityError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Accept Invitation",
+        "tags": [
+          "identity-invitations"
         ]
       }
     },
@@ -42510,6 +42807,243 @@
           }
         },
         "summary": "List Audit Trail",
+        "tags": [
+          "operator",
+          "operator-users-roles"
+        ]
+      }
+    },
+    "/api/v1/operator/users/invitations": {
+      "post": {
+        "operationId": "issueIdentityInvitation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "No caller-supplied actor, tenant, roles, scope or account identifier.",
+                "properties": {
+                  "email": {
+                    "maxLength": 320,
+                    "minLength": 3,
+                    "title": "Email",
+                    "type": "string"
+                  },
+                  "lifetime_seconds": {
+                    "default": 3600,
+                    "maximum": 259200.0,
+                    "minimum": 1.0,
+                    "title": "Lifetime Seconds",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "email"
+                ],
+                "title": "InvitationIssuePayload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationIssuedPayload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Issue Invitation",
+        "tags": [
+          "operator",
+          "operator-users-roles"
+        ]
+      }
+    },
+    "/api/v1/operator/users/invitations/{invitation_id}/revoke": {
+      "post": {
+        "operationId": "revokeIdentityInvitation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invitation_id",
+            "required": true,
+            "schema": {
+              "title": "Invitation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationRevokedReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Revoke Invitation",
         "tags": [
           "operator",
           "operator-users-roles"

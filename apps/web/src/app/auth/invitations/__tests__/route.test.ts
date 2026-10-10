@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "../route";
+import { config, middleware } from "../../../../middleware";
 import { resolveGoogleMetadataIdentityToken } from "../../../../lib/auth/cloudRunIdentity";
 
 vi.mock("../../../../lib/auth/cloudRunIdentity", () => ({
@@ -37,6 +38,36 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
 describe("bounded invitation capability acceptance BFF (no login or credential output)", () => {
+  const middlewareApplies = (path: string) => config.matcher.some(
+    (pattern) => new RegExp(`^${pattern}$`).test(path),
+  );
+
+  it("exempts only the capability endpoint, not nearby auth paths or protected pages", () => {
+    expect(middlewareApplies("/auth/invitations")).toBe(false);
+    for (const path of ["/operator", "/auth/password", "/auth/invitations-extra", "/auth/invitations/accept"]) {
+      expect(middlewareApplies(path)).toBe(true);
+    }
+  });
+
+  it.each([undefined, "existing-issuer-cookie"])(
+    "composes production matcher/handler without redirecting or clearing cookie %s", async (cookie) => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(RECEIPT), { status: 201 })));
+      const req = request();
+      if (cookie) req.cookies.set("__Host-oday_web_session", cookie);
+      let response;
+      if (middlewareApplies(req.nextUrl.pathname)) {
+        const gated = await middleware(req);
+        response = gated.headers.get("x-middleware-next") === "1" ? await POST(req) : gated;
+      } else {
+        response = await POST(req);
+      }
+      expect(response.status).toBe(201);
+      expect(response.headers.has("set-cookie")).toBe(false);
+      expect(response.headers.has("location")).toBe(false);
+      expect(await response.json()).toEqual(RECEIPT);
+    },
+  );
+
   it("uses canonical service transport, strips browser identity, returns identifiers without a cookie", async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...RECEIPT,
       token: BODY.token, password: BODY.password }), { status: 201 }));

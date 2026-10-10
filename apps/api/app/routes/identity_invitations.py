@@ -1,12 +1,13 @@
 """Capability acceptance adapter, not an authentication or registration route.
 
-Factory is intentionally not mounted in runtime yet. The paired Web adapter,
-origin policy and routing inventory must be complete before activation. No
+Mounted with the paired bounded Web adapter and durable acceptance budget. No
 account can be created without an existing admin-issued single-use capability.
 Cloud Run's existing Web-to-API transport IAM remains required at deployment;
 no user principal or browser identity headers authorize capability consumption.
 """
 from __future__ import annotations
+
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -20,16 +21,36 @@ from shared.identity.invitation_service import InvitationRefused, InvitationServ
 class InvitationAcceptPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     invitation_id: str = Field(min_length=1, max_length=36)
-    token: str = Field(min_length=1, max_length=43)
+    token: str = Field(min_length=1, max_length=43, repr=False, json_schema_extra={"writeOnly": True})
     username: str = Field(min_length=1, max_length=64)
-    password: str = Field(min_length=1, max_length=1024, repr=False)
+    password: str = Field(min_length=1, max_length=1024, repr=False, json_schema_extra={"writeOnly": True})
     display_name: str = Field(default="", max_length=255)
+
+
+class InvitationAcceptedReceipt(BaseModel):
+    status: Literal["accepted"]
+    invitation_id: str
+    account_id: str
+    tenant_id: str
+    audit_event_id: str
+
+
+class InvitationCapabilityError(BaseModel):
+    error: dict[str, str]
 
 
 def create_invitation_acceptance_router(service: InvitationService | None) -> APIRouter:
     router = APIRouter(prefix="/auth/invitations", tags=["identity-invitations"])
 
-    @router.post("/accept")
+    @router.post(
+        "/accept", status_code=201, response_model=InvitationAcceptedReceipt,
+        operation_id="acceptIdentityInvitation",
+        openapi_extra={"requestBody": {"required": True, "content": {
+            "application/json": {"schema": InvitationAcceptPayload.model_json_schema()}
+        }}},
+        responses={code: {"model": InvitationCapabilityError} for code in
+                   (409, 413, 415, 422, 429, 503)},
+    )
     async def accept_invitation(request: Request) -> JSONResponse:
         try:
             if service is None:

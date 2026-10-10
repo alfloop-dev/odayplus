@@ -12,7 +12,7 @@ Routes (all under /operator/users):
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -82,6 +82,21 @@ class InvitationIssuePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     email: str = Field(min_length=3, max_length=320)
     lifetime_seconds: int = Field(default=3600, ge=1, le=259200)
+
+
+class InvitationIssuedPayload(BaseModel):
+    status: Literal["invited"]
+    invitation_id: str
+    tenant_id: str
+    expires_at: str
+    audit_event_id: str
+    token: str = Field(repr=False, description="One-time private in-memory custody; never log or persist.")
+
+
+class InvitationRevokedReceipt(BaseModel):
+    status: Literal["revoked"]
+    invitation_id: str
+    audit_event_id: str
 
 
 async def _invitation_body(request: Request, *, limit: int = 4096) -> dict[str, Any]:
@@ -220,7 +235,13 @@ def create_user_role_sub_router(
             raise HTTPException(503, detail={"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"})
         return invitations, principal
 
-    @router.post("/invitations", dependencies=manage_deps)
+    @router.post(
+        "/invitations", dependencies=manage_deps, status_code=201,
+        response_model=InvitationIssuedPayload, operation_id="issueIdentityInvitation",
+        openapi_extra={"requestBody": {"required": True, "content": {
+            "application/json": {"schema": InvitationIssuePayload.model_json_schema()}
+        }}},
+    )
     async def issue_invitation(request: Request) -> JSONResponse:
         try:
             parsed = await _invitation_body(request)
@@ -244,7 +265,13 @@ def create_user_role_sub_router(
             return JSONResponse({"error": {"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"}},
                                 status_code=503, headers={"cache-control": "no-store"})
 
-    @router.post("/invitations/{invitation_id}/revoke", dependencies=manage_deps)
+    @router.post(
+        "/invitations/{invitation_id}/revoke", dependencies=manage_deps,
+        response_model=InvitationRevokedReceipt, operation_id="revokeIdentityInvitation",
+        openapi_extra={"requestBody": {"required": True, "content": {
+            "application/json": {"schema": {"type": "object", "additionalProperties": False}}
+        }}},
+    )
     async def revoke_invitation(invitation_id: str, request: Request) -> JSONResponse:
         try:
             if await _invitation_body(request):
@@ -262,8 +289,6 @@ def create_user_role_sub_router(
             return JSONResponse({"error": {"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"}},
                                 status_code=503, headers={"cache-control": "no-store"})
 
-    # Acceptance remains internal until the bounded Web capability adapter and
-    # durable abuse controls land; do not expose an unfinished public endpoint.
     @router.get("/{subject_id}", dependencies=read_deps)
     def get_user(subject_id: str, request: Request) -> dict[str, Any]:
         svc = get_svc(request)
