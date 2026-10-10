@@ -25,6 +25,10 @@ AUTHORIZATION_ID = "HUMAN-ODP-DEV-SMOKE-20261010-001"
 REPOSITORY = "alfloop-dev/odayplus"
 TENANT_ID = "e34f2117-de4b-478c-82fd-13c4ef428d42"
 PRESERVED_ACCOUNT_ID = "17e9cb99-db46-4a07-8e61-6bf9b22cf5d2"
+# The consent receipt's recorded role set: an immutable historical upper bound,
+# NOT a live baseline to force or restore. The actual roles are read back fresh
+# before execution and must be byte-for-byte unchanged afterwards; they must
+# keep platform_admin (the invitation issuer) and never exceed this set.
 PRESERVED_ROLES = frozenset({"auditor", "operations_manager", "platform_admin"})
 PURPOSE = "dedicated-dev-release-smoke"
 _AXES = ("brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids", "modules")
@@ -86,7 +90,8 @@ def _original_account(account: Any) -> None:
             or account.get("username") != "ajoe734" or account.get("status") != "active"
             or account.get("identity_source") != "identity.accounts"
             or not isinstance(roles, list) or not all(isinstance(role, str) for role in roles)
-            or len(roles) != len(PRESERVED_ROLES) or set(roles) != PRESERVED_ROLES
+            or len(set(roles)) != len(roles) or "platform_admin" not in roles
+            or not set(roles) <= PRESERVED_ROLES
             or not isinstance(scope, dict)
             or scope != {"tenant_id": TENANT_ID, "clearance": "CONFIDENTIAL", **{axis: [] for axis in _AXES}}
             or not isinstance(account.get("email"), str) or not _EMAIL.fullmatch(account["email"])):

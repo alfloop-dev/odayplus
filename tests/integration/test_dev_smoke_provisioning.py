@@ -544,7 +544,25 @@ def test_foreground_preflight_refuses_unbound_or_secret_input(
     assert "private" not in str(error.value) and error.value.__cause__ is None
 
 
-@pytest.mark.parametrize("change", ["roles", "duplicate_role", "status", "tenant", "scope", "identity", "account", "clock"])
+@pytest.mark.parametrize("roles", [
+    ["auditor", "operations_manager", "platform_admin"],  # historical consent-time state
+    ["auditor", "platform_admin"],  # actual fresh 2026-10-10 readback: never restored
+    ["platform_admin"],
+])
+def test_foreground_preflight_accepts_actual_roles_within_recorded_bound(
+    foreground_plan_input: Any, roles: list[str],
+) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import validate_foreground_plan
+    plan, context = foreground_plan_input
+    context["original_account"]["roles"] = list(roles)
+    checked = validate_foreground_plan(plan, **context)
+    assert checked.execution_id == plan["execution_id"]
+    # Validation never rewrites the observed inventory toward the receipt.
+    assert context["original_account"]["roles"] == roles
+
+
+@pytest.mark.parametrize("change", ["roles", "extra_role", "duplicate_role", "status", "tenant", "scope",
+                                    "identity", "account", "clock"])
 def test_foreground_preflight_requires_exact_original_inventory(foreground_plan_input: Any, change: str) -> None:
     from delivery_toolchain.release.provision_dev_smoke import (
         ProvisioningRefused,
@@ -553,7 +571,11 @@ def test_foreground_preflight_requires_exact_original_inventory(foreground_plan_
     plan, context = foreground_plan_input
     original = context["original_account"]
     if change == "roles":
-        original["roles"].remove("operations_manager")
+        # The issuer must remain a platform admin; a business-only actor refuses.
+        original["roles"].remove("platform_admin")
+    elif change == "extra_role":
+        # Roles beyond the recorded consent bound are an unapproved change.
+        original["roles"].append("cs_lead")
     elif change == "duplicate_role":
         original["roles"].append("platform_admin")
     elif change == "status":
@@ -697,7 +719,7 @@ def test_journal_revalidates_before_reserving(provisioning_journal: Any, monkeyp
     elif invalid == "secret":
         plan["password"] = "private-credential-input"
     elif invalid == "original_roles":
-        context["original_account"]["roles"].remove("operations_manager")
+        context["original_account"]["roles"].remove("platform_admin")
     elif invalid == "release":
         context["release_sha"] = "c" * 40
     else:
@@ -1061,6 +1083,66 @@ def test_web_executor_actual_router_lifecycle_provenance_and_session_cleanup(web
     assert web.calls.count(("POST", PATH)) == 1
     assert web.calls.count(("POST", "/auth/invitations")) == 1
     assert s.audit.verify_chain().ok
+
+
+def test_web_executor_preserves_actual_fresh_roles_without_restoring_receipt_roles(web_lifecycle: Any) -> None:
+    # Real readback can legitimately differ from the 03:11 consent-time list
+    # (operations_manager already removed by its owner). The executor uses the
+    # fresh authenticated state as before/after baseline and never re-grants.
+    s, web, executor, journal, plan, args = web_lifecycle
+    s.engine.execute("DELETE FROM identity.account_roles WHERE account_id = ? AND role = 'operations_manager'",
+                     (s.admin,))
+    before = _snapshot(s)
+    receipt = executor.execute(plan, **args)
+    assert receipt["stage"] == "web-lifecycle-verified" and receipt["issuer_account_id"] == s.admin
+    after = _snapshot(s)
+    assert after["account_roles"] == before["account_roles"]
+    assert _q(s, "SELECT role FROM identity.account_roles WHERE account_id = %s ORDER BY role",
+              (s.admin,)) == [("auditor",), ("platform_admin",)]
+    assert {k: v for k, v in before.items() if k != "sessions"} == {k: v for k, v in after.items() if k != "sessions"}
+    assert journal.inspect().stage == "reserved"
+
+
+def test_web_executor_refuses_before_reservation_when_inventory_and_principal_disagree(
+    web_lifecycle: Any, monkeypatch: Any,
+) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    original_request = web.request
+
+    def request(method: str, path: str, **kwargs: Any) -> Any:
+        response = original_request(method, path, **kwargs)
+        if path == "/api/v1/auth/principal" and response.payload.get("account_id") == s.admin:
+            response.payload["roles"] = ["platform_admin"]
+        return response
+
+    monkeypatch.setattr(web, "request", request)
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_LIFECYCLE_REFUSED"):
+        executor.execute(plan, **args)
+    assert journal.inspect() is None and ("POST", PATH) not in web.calls
+
+
+def test_web_executor_role_change_during_lifecycle_quarantines_without_restore(
+    web_lifecycle: Any, monkeypatch: Any,
+) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    original_request = web.request
+
+    def request(method: str, path: str, **kwargs: Any) -> Any:
+        if method == "POST" and path == "/auth/invitations":
+            # A concurrent owner-side change after the fresh before-snapshot.
+            s.engine.execute("DELETE FROM identity.account_roles WHERE account_id = ? "
+                             "AND role = 'operations_manager'", (s.admin,))
+        return original_request(method, path, **kwargs)
+
+    monkeypatch.setattr(web, "request", request)
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_LIFECYCLE_RECOVERY_REQUIRED"):
+        executor.execute(plan, **args)
+    assert journal.inspect().stage == "recovery-required"
+    # Detected, quarantined and reported; never silently re-granted.
+    assert _q(s, "SELECT role FROM identity.account_roles WHERE account_id = %s ORDER BY role",
+              (s.admin,)) == [("auditor",), ("platform_admin",)]
 
 
 @pytest.mark.parametrize("fault", [PATH, "/auth/invitations", "/api/v1/operator/users/audit-trail", "/auth/logout"])

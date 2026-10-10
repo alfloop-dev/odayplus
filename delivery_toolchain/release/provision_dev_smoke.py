@@ -822,9 +822,12 @@ class WebInvitationExecutor:
             self._observe_admission(plan, release_sha=release_sha, manifest_digest=manifest_digest)
             admin_cookie = self._login("ajoe734", admin_password)
             self._session(admin_cookie, "ajoe734")
-            self._principal(admin_cookie, PRESERVED_ACCOUNT_ID, sorted(PRESERVED_ROLES))
+            # Fresh trusted before-state: the authoritative user inventory and
+            # the verified session principal must agree on the ACTUAL roles.
+            # The consent receipt's role list bounds them; it is never restored.
             records = self._users(admin_cookie)
             original = self._original(records)
+            self._principal(admin_cookie, PRESERVED_ACCOUNT_ID, original["roles"])
             checked = validate_foreground_plan(
                 plan, original_account=original, release_sha=release_sha,
                 manifest_digest=manifest_digest, now=self._journal._now(),
