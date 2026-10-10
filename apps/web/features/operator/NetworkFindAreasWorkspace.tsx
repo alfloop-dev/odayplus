@@ -1470,6 +1470,14 @@ export function NetworkFindAreasWorkspace({
   const listingsReadFailure =
     !fixturesAllowed && networkLoadState === "error" ? networkLoadFailure : null;
   const snapshotCountState = resolveNetworkCountState(networkLoadState, networkLoadFailure, fixturesAllowed);
+  // A successful row-level read does not authorize whole-zone aggregates.
+  // Keep listing/candidate/review counts independent of withheld HeatZones.
+  const heatZoneCountState = resolveNetworkCountState(
+    networkLoadState,
+    networkLoadFailure,
+    fixturesAllowed,
+    networkLoadState === "ready" && heatZones.length === 0,
+  );
   const rebalanceCountState = resolveNetworkCountState(rebalanceLoadState, rebalanceLoadFailure, fixturesAllowed);
 
   const listingRadarPanel = (
@@ -1537,12 +1545,12 @@ export function NetworkFindAreasWorkspace({
           <p className={styles.headerSummary}>找區域 → 掃物件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配</p>
         </div>
         <div className={styles.headerStats} aria-label="Network Find Areas state">
-          <NetworkCount count={viewModel.totals.heatZones} label="HeatZones" state={snapshotCountState} />
+          <NetworkCount count={viewModel.totals.heatZones} label="HeatZones" state={heatZoneCountState} />
           <NetworkCount count={viewModel.totals.listings} label="listings" state={snapshotCountState} />
           <NetworkCount count={viewModel.totals.candidates} label="candidates" state={snapshotCountState} />
           <NetworkCount count={viewModel.totals.reviews} label="reviews" state={snapshotCountState} />
           <NetworkCount count={viewModel.totals.rebalances} label="rebalances" state={rebalanceCountState} />
-          <NetworkCount count={viewModel.totals.averageConfidence} label="avg confidence" state={snapshotCountState} />
+          <NetworkCount count={viewModel.totals.averageConfidence} label="avg confidence" state={heatZoneCountState} />
           {isFixtureFallback && (
             <span className={styles.muted} aria-label="Data source: fixtures" title="API unavailable — showing bundled fixture data">
               fixture data
@@ -1921,13 +1929,17 @@ function FindAreasPanel({
  */
 export type NetworkCountState =
   | { known: true }
-  | { known: false; label: string; reason: "pending" | "unread" };
+  | { known: false; label: string; reason: "pending" | "unread" | "withheld" };
 
 export function resolveNetworkCountState(
   loadState: OperatorDataAvailability,
   failure: OperatorLoadFailure | null,
   fixturesAllowed: boolean,
+  aggregateWithheld = false,
 ): NetworkCountState {
+  if (!fixturesAllowed && aggregateWithheld) {
+    return { known: false, label: "未授權", reason: "withheld" };
+  }
   if (fixturesAllowed || loadState === "ready" || loadState === "empty" || loadState === "fixture") {
     return { known: true };
   }

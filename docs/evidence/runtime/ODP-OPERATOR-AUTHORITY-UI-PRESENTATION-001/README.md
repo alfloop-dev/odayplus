@@ -39,7 +39,7 @@
 
 ### 3.1 宣告的驗證命令
 
-task 宣告的三條命令（`git diff --check`、四個 vitest 檔、`pnpm --dir apps/web typecheck`），由 `delivery_toolchain/git/task_verification.py run` 在最終 head 各跑一次。receipt 存在 supervisor evidence store。最終 head 的 exit code 與 duration 在送審後以 ai-status note 公布，本文件不引用承載自己的 commit。
+task 宣告的六條命令（`git diff --check`、四個 vitest 檔、`pnpm --dir apps/web typecheck`、auth-page vitest、Web build、bundle budget），由 `delivery_toolchain/git/task_verification.py run` 在最終 head 各跑一次。receipt 存在 supervisor evidence store。最終 head 的 exit code 與 duration 在送審後以 ai-status note 公布，本文件不引用承載自己的 commit。
 
 本機沒有全域 `pnpm`。執行時用 corepack 在 scratch 目錄建立 pnpm shim，並把 repo 根目錄的 `node_modules/.bin`（npm workspaces 把 tsc、vitest hoist 到這裡）加進 PATH。命令字串本身沒有改。
 
@@ -71,6 +71,14 @@ task 宣告的三條命令（`git diff --check`、四個 vitest 檔、`pnpm --di
 - 新增 production Console Today → Govern 導航測試：Today 不掛載 Governance、不讀 snapshot；選中後合法 scoped rows 保留、server-verified read-admin 仍沒有核准控制項、Users／Feature Flags 入口仍可用，全程沒有寫入。auth-page 測試仍檢查 admin 的 server release status 與 password/business 路由。
 - 最終 head 的全部宣告驗證由 `task_verification.py run` 產生 exact-command／SHA／exit code／duration receipts，包括原三條、單一 `operatorReleasePage.test.ts`、`npm run build --workspace=@oday-plus/web` 和 `npm run bundle:budget --workspace=@oday-plus/web`。送審 note 記錄確切最終 head 與量測結果；本文件不以預測結果取代收據。新增的執行不重跑全庫測試。
 - **未提高 budget、刪功能、放寬 gate 或更動 roles/grants。** Required exact-head CI 和獨立 Codex review 仍是合併前提；本機 source 測試不是部署／完整產品 acceptance。
+
+## 3.5 Codex P2：scoped rows 與 withheld aggregates 分開
+
+- 保留原始 Codex 對 exact `7e9f2ff6a998ae1c8e899a987bcccad5bfdf2440` 的實質 reopen（2026-10-10 14:10:42 UTC）。問題不是 API scope 洩漏，而是 ready listing snapshot 的 count state 被誤用到 withheld HeatZones，造成權威 `0 HeatZones`。
+- 在 unapproved task branch 以正常 merge 合成 `origin/dev` `898630feee855ad8e66024e0272c0dac50417413`；保留所有 task commits 與舊失敗收據，沒有 reset、rebase 或 force push。合併無衝突。
+- 現在 HeatZone count 與其 average confidence 使用独立 state：有授權 scoped rows、沒有 HeatZones 的 ready snapshot 顯示 `— …（未授權）`／`data-count-state=withheld`，不是已知零。listing、candidate、review 的 snapshot counts 仍是已讀取的結果，合法 row 不隱藏。
+- Production Console regression 更新原本接受 fake zero 的測試；另外在有 scoped candidate/review rows、HeatZones withheld、scoring 403 的兩個實際 tab mounts 中確認 known row counts 與 withheld aggregates 分開。scoring 拒絕仍展示原始 403/correlation gate，不製造 score cards。完全空的合法 200 仍顯示 known zero。
+- 此段是 source/offline repair，不執行帳號／credential／bundle／journal recovery，也不聲稱新 bundle consumer、decrypted binding、部署或 F11 通過。後续以新 exact-head 六條宣告收據、required CI 與 Codex 獨立 review 決定 source 是否可合併。
 
 ## 4. 未完成、不在本 task 範圍
 

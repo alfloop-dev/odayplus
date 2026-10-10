@@ -212,6 +212,13 @@ describe("production workspace data contracts", () => {
 
   it("only counts collections that were actually read", () => {
     expect(resolveNetworkCountState("ready", null, false)).toEqual({ known: true });
+    // A scoped row-level 200 cannot turn withheld aggregate counts into zero.
+    expect(resolveNetworkCountState("ready", null, false, true)).toEqual({
+      known: false,
+      label: "未授權",
+      reason: "withheld",
+    });
+    expect(resolveNetworkCountState("ready", null, true, true)).toEqual({ known: true });
     // An authorized empty 200 is an authoritative zero.
     expect(resolveNetworkCountState("empty", null, false)).toEqual({ known: true });
     expect(resolveNetworkCountState("error", { kind: "forbidden", httpStatus: 403 }, false)).toEqual({

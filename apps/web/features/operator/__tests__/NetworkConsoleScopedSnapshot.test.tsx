@@ -163,7 +163,7 @@ function forbiddenResponse(correlationId: string, resource: string) {
 
 const DENIED = Symbol("denied");
 
-function stubProductionFetch(snapshot: unknown) {
+function stubProductionFetch(snapshot: unknown, denyScoring = false) {
   const networkListingUrls: URL[] = [];
   const legacyDomainPaths: string[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -173,7 +173,7 @@ function stubProductionFetch(snapshot: unknown) {
       networkListingUrls.push(url);
       return snapshot === DENIED ? forbiddenResponse("corr-listings-403", "operator_network") : jsonResponse(snapshot);
     }
-    if (snapshot === DENIED && /\/operator\/network-(scoring|reviews)$/.test(url.pathname)) {
+    if ((snapshot === DENIED || denyScoring) && /\/operator\/network-(scoring|reviews)$/.test(url.pathname)) {
       return forbiddenResponse("corr-scoring-403", "sitescore");
     }
     if (url.pathname === "/api/v1/operator/network-rebalance") {
@@ -241,8 +241,12 @@ describe("Network Find Areas in the production Operator Console composition", ()
 
     const state = await screen.findByLabelText("Network Find Areas state");
     await waitFor(() => expect(state).toHaveTextContent("1 listings"), { timeout: 5000 });
-    expect(state).toHaveTextContent("0 HeatZones");
-    // Find Areas owns the HeatZones, so it alone reports the withheld aggregate as empty.
+    expect(state).toHaveTextContent("— HeatZones（未授權）");
+    expect(state).not.toHaveTextContent("0 HeatZones");
+    expect(state).toHaveTextContent("— avg confidence（未授權）");
+    expect(within(state).getByText("HeatZones", { exact: false })).toHaveAttribute("data-count-state", "withheld");
+    expect(within(state).getByText("listings", { exact: false })).toHaveAttribute("data-count-state", "known");
+    // Find Areas reports the missing aggregate without suppressing authorized rows.
     await waitFor(() =>
       expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty"),
     );
@@ -260,6 +264,48 @@ describe("Network Find Areas in the production Operator Console composition", ()
     expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();
     expect(screen.queryByText("fixture data")).toBeNull();
   });
+
+  it.each(["candidates", "sitescore"])(
+    "keeps scoped candidate counts independent of withheld zones and the denied %s read",
+    async (tab) => {
+      const snapshot = {
+        ...zonesWithheldSnapshot,
+        candidates: [{
+          id: "CS-SCOPED-1", listingId: "L-SCOPED-1", heatZoneId: "HZ-SCOPED-02",
+          title: "Scoped candidate", address: "Scoped Road 1", status: "ready",
+          score: 82, recommendation: "GO", modelVersion: "v1",
+          datasetSnapshotId: "snapshot-scoped", missingData: [],
+        }],
+        siteReviews: [{
+          id: "REV-SCOPED-1", candidateId: "CS-SCOPED-1", status: "pending",
+          requestedByRoleId: "expansionManager", reviewerRoleIds: ["opsLead"],
+          requestedAt: "2026-10-10T12:17:00Z", reasonRequired: true,
+        }],
+      };
+      stubProductionFetch(snapshot, true);
+      nav.search = `ws=network&tab=${tab}`;
+      render(<OperatorConsole searchParams={{ ws: "network", tab }} />);
+
+      const state = await screen.findByLabelText("Network Find Areas state");
+      await waitFor(() => expect(state).toHaveTextContent("1 candidates"), { timeout: 5000 });
+      expect(state).toHaveTextContent("1 listings");
+      expect(state).toHaveTextContent("1 reviews");
+      expect(state).toHaveTextContent("— HeatZones（未授權）");
+      expect(state).toHaveTextContent("— avg confidence（未授權）");
+      for (const label of ["listings", "candidates", "reviews"]) {
+        expect(within(state).getByText(label, { exact: false })).toHaveAttribute("data-count-state", "known");
+      }
+      await waitFor(() =>
+        expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "forbidden"),
+      );
+      expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-scoring-403");
+      // The independently refused scoring binding must not render fabricated score cards.
+      expect(screen.queryByText("Scoped candidate")).toBeNull();
+      for (const [, init] of vi.mocked(fetch).mock.calls) {
+        expect((init as RequestInit | undefined)?.method ?? "GET").toBe("GET");
+      }
+    },
+  );
 
   it("reports an authorized empty scoped snapshot as empty instead of a binding error", async () => {
     const { legacyDomainPaths, networkListingUrls } = stubProductionFetch(emptyScopedSnapshot);
@@ -330,6 +376,11 @@ describe("Network Find Areas in the production Operator Console composition", ()
     );
     expect(state).toHaveTextContent("0 listings");
     expect(state).toHaveTextContent("0 HeatZones");
+    expect(state).toHaveTextContent("0 candidates");
+    expect(state).toHaveTextContent("0 reviews");
+    for (const label of ["HeatZones", "listings", "candidates", "reviews"]) {
+      expect(within(state).getByText(label, { exact: false })).toHaveAttribute("data-count-state", "known");
+    }
     expect(state).not.toHaveTextContent("未授權");
     expect(screen.getByTestId("operator-data-unavailable")).not.toHaveAttribute("data-failure-kind");
   });
