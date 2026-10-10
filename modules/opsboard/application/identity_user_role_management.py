@@ -97,6 +97,13 @@ class IdentityUserRoleManagementService:
         self._engine = engine
         self._audit_log = audit_log
 
+    @property
+    def invitation_service(self) -> Any:
+        """Same transaction/audit authority; never a document-store fallback."""
+        from shared.identity.invitation_service import InvitationService
+
+        return InvitationService(engine=self._engine, audit_log=self._audit_log)
+
     # ── reads ─────────────────────────────────────────────────────────────
 
     def _require_tenant(self, tenant_id: str | None) -> str:
@@ -196,7 +203,11 @@ class IdentityUserRoleManagementService:
         tenant = self._require_tenant(tenant_id)
         events: list[dict[str, Any]] = []
         for event in self._audit_log.list_events(tenant_id=tenant):
-            if not event.event_type.startswith(IDENTITY_EVENT_PREFIX):
+            # Identifier-only dev provisioning journals are projected through
+            # this same authenticated, tenant-filtered administration read. The
+            # consumer must refuse uncertain roots, not infer ACK from a secret.
+            if (not event.event_type.startswith(IDENTITY_EVENT_PREFIX)
+                    and event.event_type not in {"release.dev_smoke.reservation", "release.dev_smoke.binding"}):
                 continue
             meta = dict(event.metadata or {})
             if subject_id and subject_id not in {meta.get("subject_id"), meta.get("account_id")}:
@@ -206,6 +217,7 @@ class IdentityUserRoleManagementService:
                     "event_id": event.event_id,
                     "event_type": event.event_type,
                     "action": event.action,
+                    "outcome": event.outcome,
                     "actor": event.actor,
                     "resource": event.resource,
                     "timestamp": event.occurred_at.isoformat(),

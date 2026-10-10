@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-9ee6239a4542a5b158dd7e0c10d36d3c",
+  "serialNumber": "urn:uuid:sha256-a3d366005309e15739570f8ef814851c",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-07T04:37:09.624009+00:00",
+    "timestamp": "2026-10-10T09:03:29.215899+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@9eb49b745e86fcaf424bde87b8b7b3f956805d17",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@9eb49b745e86fcaf424bde87b8b7b3f956805d17"
+      "purl": "pkg:generic/alfloop-dev/odayplus@92dd8773c72f691553197119f5a12fa2424341a0",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@92dd8773c72f691553197119f5a12fa2424341a0"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "9eb49b745e86fcaf424bde87b8b7b3f956805d17"
+        "value": "92dd8773c72f691553197119f5a12fa2424341a0"
       },
       {
         "name": "sbom-hash",
-        "value": "9ee6239a4542a5b158dd7e0c10d36d3c19b73536a73b6ba18de1adbe23c87507"
+        "value": "a3d366005309e15739570f8ef814851c3f12a87e5b13a149aaebc5b57e60757c"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:d0106689368da51beb311476f8ca8569ed1b1046a82d5dd5851288f0ee4c9a8a"
+        "value": "sha256:092c444b27b6755d028867554160ce0a196b5014b5c6d83932898695e749132b"
       },
       {
         "name": "container-base-images",
@@ -14673,6 +14673,34 @@
       }
     },
     {
+      "name": "pynacl",
+      "version": "1.6.2",
+      "type": "library",
+      "purl": "pkg:pypi/pynacl@1.6.2",
+      "bom-ref": "pkg:pypi/pynacl@1.6.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA256",
+          "content": "018494d6d696ae03c7e656e5e74cdfd8ea1326962cc401bcf018f1ed8436811c"
+        },
+        {
+          "alg": "SHA256",
+          "content": "622d7b07cc5c02c666795792931b50c91f3ce3c2649762efb1ef0d5684c81594"
+        }
+      ],
+      "supplier": {
+        "name": "The PyNaCl developers <cryptography-dev@python.org>"
+      }
+    },
+    {
       "name": "pyomo",
       "version": "6.10.1",
       "type": "library",
@@ -18559,7 +18587,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@9eb49b745e86fcaf424bde87b8b7b3f956805d17",
+      "ref": "pkg:generic/alfloop-dev/odayplus@92dd8773c72f691553197119f5a12fa2424341a0",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -18601,6 +18629,7 @@
         "pkg:pypi/psycopg@3.3.4",
         "pkg:pypi/pydantic@2.13.4",
         "pkg:pypi/pymoo@0.6.2",
+        "pkg:pypi/pynacl@1.6.2",
         "pkg:pypi/pyomo@6.10.1",
         "pkg:pypi/pytest-xdist@3.8.0",
         "pkg:pypi/pytest@9.1.1",
@@ -21524,6 +21553,7 @@
         "pkg:pypi/psycopg@3.3.4",
         "pkg:pypi/pydantic@2.13.4",
         "pkg:pypi/pymoo@0.6.2",
+        "pkg:pypi/pynacl@1.6.2",
         "pkg:pypi/pyomo@6.10.1",
         "pkg:pypi/pyyaml@6.0.3",
         "pkg:pypi/scikit-learn@1.9.0",
@@ -21718,6 +21748,12 @@
         "pkg:pypi/moocore@0.3.2",
         "pkg:pypi/numpy@2.5.1",
         "pkg:pypi/scipy@1.18.0"
+      ]
+    },
+    {
+      "ref": "pkg:pypi/pynacl@1.6.2",
+      "dependsOn": [
+        "pkg:pypi/cffi@2.1.0"
       ]
     },
     {

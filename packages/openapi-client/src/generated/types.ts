@@ -922,6 +922,38 @@ export type IntakeSummary = {
   version: number;
 };
 
+/** InvitationAcceptedReceipt */
+export type InvitationAcceptedReceipt = {
+  account_id: string;
+  audit_event_id: string;
+  invitation_id: string;
+  status: "accepted";
+  tenant_id: string;
+};
+
+/** InvitationCapabilityError */
+export type InvitationCapabilityError = {
+  error: Record<string, string>;
+};
+
+/** InvitationIssuedPayload */
+export type InvitationIssuedPayload = {
+  audit_event_id: string;
+  expires_at: string;
+  invitation_id: string;
+  status: "invited";
+  tenant_id: string;
+  /** One-time private in-memory custody; never log or persist. */
+  token: string;
+};
+
+/** InvitationRevokedReceipt */
+export type InvitationRevokedReceipt = {
+  audit_event_id: string;
+  invitation_id: string;
+  status: "revoked";
+};
+
 /** Write body for POST /operator/issues/{issue_id}/{action_type}. */
 export type IssueTransitionRequest = {
   actorName?: string | null;
@@ -2068,6 +2100,7 @@ export const API_PATHS = {
   "/api/v1/audit/evidence/exports/{export_id}/legal-hold": ["POST"],
   "/api/v1/audit/evidence/retention/expired": ["GET"],
   "/api/v1/audit/evidence/retention/purge": ["POST"],
+  "/api/v1/auth/invitations/accept": ["POST"],
   "/api/v1/auth/principal": ["GET"],
   "/api/v1/avm/calibration": ["POST"],
   "/api/v1/avm/cases": ["GET", "POST"],
@@ -2291,6 +2324,9 @@ export const API_PATHS = {
   "/api/v1/operator/users": ["GET", "POST"],
   "/api/v1/operator/users/audit-trail": ["GET"],
   "/api/v1/operator/users/create": ["POST"],
+  "/api/v1/operator/users/dev-smoke-journal": ["GET", "POST"],
+  "/api/v1/operator/users/invitations": ["POST"],
+  "/api/v1/operator/users/invitations/{invitation_id}/revoke": ["POST"],
   "/api/v1/operator/users/invite": ["POST"],
   "/api/v1/operator/users/roles": ["GET"],
   "/api/v1/operator/users/{subject_id}": ["GET"],

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "authorization_id": "HUMAN-ODP-DEV-SMOKE-20261010-001",
+  "recorded_at": "2026-10-10T03:11:30Z",
+  "source": "Explicit user reply in this foreground conversation",
+  "assistant_offer": "建立同租戶、純管理員的專用發布驗證帳號，並安全綁定 dev 發布憑證。不動你現有帳號權限、不改 IAM、不放寬驗收。是否同意這個範圍？",
+  "user_reply": "同意",
+  "approved_scope": {
+    "environment": "dev",
+    "repository": "alfloop-dev/odayplus",
+    "tenant_id": "e34f2117-de4b-478c-82fd-13c4ef428d42",
+    "new_identity_purpose": "Dedicated least-privilege release-smoke administrator distinct from the existing business-enabled account",
+    "new_identity_roles": ["platform_admin"],
+    "account_creation": "Only through a supported, reviewed, authenticated platform-admin invitation/account lifecycle; no direct SQL bypass or first-admin bootstrap re-run",
+    "credential_binding": "Securely bind this new identity's own credential to the dev release-smoke username/password settings; no credential values in logs, reports, screenshots or local files",
+    "preserve_existing_account_id": "17e9cb99-db46-4a07-8e61-6bf9b22cf5d2",
+    "preserve_existing_roles": ["auditor", "operations_manager", "platform_admin"],
+    "preserve_existing_account": "All identity, password, tenant, scope axes, clearance, status and other sessions remain unchanged",
+    "no_iam_changes": true,
+    "no_gate_relaxation": true,
+    "no_business_mutation_authority": true,
+    "no_cross_tenant_bypass": true,
+    "no_source_activation_backfill_or_fixture": true,
+    "no_model_promotion": true,
+    "no_full_product_or_F11_self_approval": true
+  },
+  "status": "Explicit human authorization recorded; not evidence of execution, independent source approval, deployment success or full acceptance"
+}

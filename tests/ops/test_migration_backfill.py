@@ -44,6 +44,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0019",
         "0020",
         "0021",
+        "0022",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -260,6 +261,20 @@ def test_machine_status_events_record_lifecycle_migration_is_reachable_from_alem
         for asset in lifecycle_step.assets
         if asset.role == "sql"
     } == {"infra/db/migrations/000027_machine_status_events_record_lifecycle.sql"}
+
+
+def test_invitation_acceptance_budget_migration_is_reachable_from_alembic_head() -> None:
+    """The durable acceptance budget must ship through normal release migrations."""
+    plan = build_migration_plan(environment="dev")
+    budget_step = next(step for step in plan.steps if step.revision == "0022")
+
+    assert budget_step.path.endswith("0022_identity_invitation_acceptance_budget.py")
+    assert {
+        asset.path
+        for asset in budget_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000028_identity_invitation_acceptance_budget.sql"}
+    assert len(budget_step.sha256) == 64
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:
