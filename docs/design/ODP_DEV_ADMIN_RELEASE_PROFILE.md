@@ -382,11 +382,27 @@ profile, tenant and original three-role account readback. It requires an explici
 new username, recipient/custodian assertion, execution UUID and offset-aware
 expiry within one hour. These inputs are proposals, **not** authenticated
 custodian approval, mailbox verification, release admission or durable single-use
-consumption; its receipt explicitly says `execution_authorized=false`. It has no
-executor, CLI or workflow wiring. Human-bound foreground provisioning, encrypted
-matched dev credential binding/recovery and authorized promoted-before-gate
-orchestration still require completion and independent review before use. The
-background worker creates no live account or secrets.
+consumption; its receipt explicitly says `execution_authorized=false`.
+`WebInvitationExecutor.execute(plan, admin_password=..., new_password=...,
+release_sha=..., manifest_digest=...)` now executes the memory-only Web
+lifecycle as a foreground **library**, not an anonymous CLI or workflow hook.
+The trusted coordinator must first verify source approval, exact dev admission
+and promotion, and approved recipient custody. It authenticates `ajoe734` through
+`/login`, binds its cookie to the server principal and exact original account,
+checks recipient collisions before single-use journal reservation, issues the
+invitation through the existing BFF, and accepts through `/auth/invitations`
+without forwarding an admin session. A fresh new-account login must match
+persisted pure-admin scope and strict durable issue/accept provenance. Only the
+two sessions created by this execution are logged out; other existing sessions
+are untouched. Secrets and capabilities never enter a receipt or subprocess.
+An uncertain issue/accept/readback/logout quarantines the root; lost replies do
+not permit automatic retry, reset, delete or replacement. Successful output
+says `credential_binding_verified=false`, `live_gate_passed=false` and
+`deployment_success=false`: it is **not** end-to-end activation authority.
+No CLI or workflow is wired. Encrypted matched dev credential binding/recovery
+and promoted-before-unchanged-gate orchestration remain the exact unfinished
+execution boundary; independent review is required before use. The background
+worker creates no live account or secrets.
 
 ## 6. Operator / coordinator handoff
 

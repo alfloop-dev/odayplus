@@ -1,15 +1,17 @@
-"""Foreground preflight and internal reservation journal; no executor/CLI yet.
+"""Foreground preflight, reservation journal and memory-only Web lifecycle.
 
 The pure validator checks a custodian's NON-SECRET proposed execution binding.
 The optional PostgreSQL journal reserves that exact plan once and can quarantine
 it after an uncertain result. Neither authenticates the custodian, verifies
 release admission/human approval, proves mailbox ownership, or authorizes a cloud
-mutation. Those controls must be implemented before any caller can issue/accept
-an invite or bind credentials. Default workflows do not invoke this module.
+mutation. The Web lifecycle below is callable only by the trusted foreground
+coordinator after source approval and exact release admission; it does not
+implement those control-plane checks or credential binding. Default workflows
+do not invoke this module, and there is intentionally no anonymous CLI.
 
 Account input must come from the existing authenticated identity readback, not
 caller headers or an offline receipt. Credentials/capabilities are not accepted
-in a plan and must remain exclusively in the eventual executor's memory.
+in a plan and remain exclusively in the Web executor's memory.
 """
 
 from __future__ import annotations
@@ -311,3 +313,189 @@ class ProvisioningJournal:
             raise
         except Exception:
             raise ProvisioningRefused("PROVISIONING_JOURNAL_UNAVAILABLE") from None
+
+
+class WebInvitationExecutor:
+    """Execute the supported lifecycle through Web, never directly mutate SQL.
+
+    This is a foreground library entrypoint, NOT an admission/approval service.
+    The coordinator must verify independent source approval, exact dev release
+    admission/promotion, and recipient custody before calling it. A journal or
+    matching string is not that proof. No workflow or CLI calls this entrypoint.
+
+    All HTTP side effects are single-attempt. Once reserved, ANY uncertainty
+    quarantines the root; never reset a password, replace a recipient, revoke
+    another session, delete an account, or retry invite/accept automatically.
+    The returned receipt proves lifecycle readback only, not binding or a gate.
+    """
+
+    _COOKIE = "__Host-oday_web_session"
+
+    def __init__(self, *, web: Any, web_origin: str, journal: ProvisioningJournal) -> None:
+        from urllib.parse import urlsplit
+
+        origin = urlsplit(web_origin)
+        if (origin.scheme != "https" or not origin.hostname or origin.username or origin.password
+                or origin.path or origin.query or origin.fragment
+                or not isinstance(journal, ProvisioningJournal)):
+            raise ProvisioningRefused("PROVISIONING_TRANSPORT_INVALID")
+        self._web = web
+        self._origin = web_origin
+        self._journal = journal
+
+    def _request(
+        self, method: str, path: str, *, cookie: str = "", body: Any = None, status: int = 200,
+    ) -> Any:
+        # No user bearer, actor, tenant or role headers, and no redirects.
+        headers = {"accept": "application/json", "origin": self._origin}
+        if cookie:
+            headers["cookie"] = f"{self._COOKIE}={cookie}"
+        try:
+            response = self._web.request(method, path, authenticated=False, body=body,
+                                         headers=headers, follow_redirects=False)
+            if response.failed or response.status != status or not isinstance(response.payload, dict):
+                raise ValueError("unusable response")
+            return response
+        except Exception:
+            # Never expose upstream payload, exceptions, cookie or credentials.
+            raise ProvisioningRefused("PROVISIONING_WEB_REQUEST_REFUSED") from None
+
+    def _login(self, username: str, password: str) -> str:
+        response = self._request("POST", "/login", body={
+            "username": username, "password": password, "returnTo": "/operator?view=admin",
+        })
+        cookie = response.cookies.get(self._COOKIE)
+        if (response.payload.get("ok") is not True or response.payload.get("subject") != username
+                or not isinstance(cookie, str) or not cookie or len(cookie) > 8192
+                or any(c in cookie for c in ";\r\n")):
+            raise ProvisioningRefused("PROVISIONING_SESSION_INVALID")
+        return cookie
+
+    def _session(self, cookie: str, username: str) -> None:
+        current = self._request("GET", "/auth/session", cookie=cookie).payload
+        if current.get("subject") != username:
+            raise ProvisioningRefused("PROVISIONING_SESSION_INVALID")
+
+    def _users(self, cookie: str) -> list[dict[str, Any]]:
+        records = self._request("GET", "/api/v1/operator/users", cookie=cookie).payload.get("users")
+        if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
+            raise ProvisioningRefused("PROVISIONING_INVENTORY_INVALID")
+        return records
+
+    @staticmethod
+    def _original(records: list[dict[str, Any]]) -> dict[str, Any]:
+        own = [r for r in records if r.get("subject_id") == PRESERVED_ACCOUNT_ID]
+        if len(own) != 1:
+            raise ProvisioningRefused("PROVISIONING_ORIGINAL_ACCOUNT_INVALID")
+        record = own[0]
+        account = {key: record.get(key) for key in ("subject_id", "username", "email", "status", "roles", "scope")}
+        scope = record.get("scope")
+        attrs = record.get("attributes")
+        account["tenant_id"] = scope.get("tenant_id") if isinstance(scope, dict) else None
+        account["identity_source"] = attrs.get("identity_source") if isinstance(attrs, dict) else None
+        _original_account(account)
+        return account
+
+    def _principal(self, cookie: str, account: str, roles: list[str]) -> None:
+        principal = self._request("GET", "/api/v1/auth/principal", cookie=cookie).payload
+        observed = principal.get("roles")
+        if (principal.get("account_id") != account or principal.get("tenant_id") != TENANT_ID
+                or not isinstance(observed, list) or not all(isinstance(r, str) for r in observed)
+                or sorted(observed) != sorted(roles)):
+            raise ProvisioningRefused("PROVISIONING_PRINCIPAL_MISMATCH")
+
+    def execute(
+        self, plan: Any, *, admin_password: str, new_password: str,
+        release_sha: str, manifest_digest: str,
+    ) -> dict[str, Any]:
+        """After foreground approval/admission: invite, accept, read back, logout.
+
+        Secrets are separate memory-only arguments, never part of plan/receipt.
+        Binding must use this same new pair only after this function succeeds.
+        A reserved root cannot be replayed even after successful lifecycle proof.
+        """
+        from delivery_toolchain.e2e.check_live_e2e_gate import _invitation_provenance
+
+        reservation = None
+        admin_cookie = new_cookie = ""
+        result = None
+        failed = False
+        try:
+            if (not isinstance(admin_password, str) or not admin_password
+                    or not isinstance(new_password, str) or not 12 <= len(new_password) <= 1024
+                    or admin_password == new_password):
+                raise ProvisioningRefused("PROVISIONING_CREDENTIAL_INPUT_INVALID")
+            admin_cookie = self._login("ajoe734", admin_password)
+            self._session(admin_cookie, "ajoe734")
+            self._principal(admin_cookie, PRESERVED_ACCOUNT_ID, sorted(PRESERVED_ROLES))
+            records = self._users(admin_cookie)
+            original = self._original(records)
+            checked = validate_foreground_plan(
+                plan, original_account=original, release_sha=release_sha,
+                manifest_digest=manifest_digest, now=self._journal._now(),
+            )
+            if any(str(r.get("username", "")).casefold() == checked.username.casefold()
+                   or str(r.get("email", "")).casefold() == checked.email.casefold() for r in records):
+                raise ProvisioningRefused("PROVISIONING_ACCOUNT_EXISTS")
+            reservation = self._journal.reserve(plan, original_account=original,
+                                                release_sha=release_sha, manifest_digest=manifest_digest)
+            issued = self._request("POST", "/api/v1/operator/users/invitations", cookie=admin_cookie,
+                                   body={"email": checked.email, "lifetime_seconds": 3600}, status=201).payload
+            invitation = issued.get("invitation_id")
+            token = issued.get("token")
+            if (issued.get("status") != "invited" or issued.get("tenant_id") != TENANT_ID
+                    or not isinstance(invitation, str) or str(UUID(invitation)) != invitation
+                    or not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", token)):
+                raise ProvisioningRefused("PROVISIONING_INVITATION_INVALID")
+            accepted = self._request("POST", "/auth/invitations", body={
+                "invitation_id": invitation, "token": token, "username": checked.username,
+                "password": new_password,
+            }, status=201).payload
+            account = accepted.get("account_id")
+            if (accepted.get("status") != "accepted" or accepted.get("invitation_id") != invitation
+                    or accepted.get("tenant_id") != TENANT_ID or not isinstance(account, str)
+                    or str(UUID(account)) != account or account == PRESERVED_ACCOUNT_ID):
+                raise ProvisioningRefused("PROVISIONING_ACCEPTANCE_INVALID")
+            new_cookie = self._login(checked.username, new_password)
+            self._session(new_cookie, checked.username)
+            self._principal(new_cookie, account, ["platform_admin"])
+            after = self._users(new_cookie)
+            if self._original(after) != original:
+                raise ProvisioningRefused("PROVISIONING_ORIGINAL_ACCOUNT_CHANGED")
+            own = [r for r in after if r.get("subject_id") == account and r.get("username") == checked.username
+                   and r.get("email") == checked.email
+                   and r.get("attributes", {}).get("identity_source") == "identity.accounts"]
+            events = self._request("GET", "/api/v1/operator/users/audit-trail", cookie=new_cookie).payload.get("events")
+            provenance = (_invitation_provenance(own[0], events) if len(own) == 1
+                          and isinstance(events, list) and all(isinstance(e, dict) for e in events) else None)
+            if (provenance is None or provenance["invitation_id"] != invitation
+                    or provenance["issuer_account_id"] != PRESERVED_ACCOUNT_ID
+                    or provenance["issue_event_id"] != issued.get("audit_event_id")
+                    or provenance["accept_event_id"] != accepted.get("audit_event_id")):
+                raise ProvisioningRefused("PROVISIONING_PROVENANCE_INVALID")
+            result = {**checked.to_receipt(), "stage": "web-lifecycle-verified",
+                      "account_id": account, **provenance, "credential_binding_verified": False,
+                      "deployment_success": False, "live_gate_passed": False}
+        except Exception:
+            failed = True
+        finally:
+            # Logout only the two sessions created here; never revoke other sessions.
+            for cookie in (new_cookie, admin_cookie):
+                if cookie:
+                    try:
+                        logout = self._request("POST", "/auth/logout", cookie=cookie).payload
+                        if logout.get("ok") is not True:
+                            failed = True
+                        self._request("GET", "/auth/session", cookie=cookie, status=401)
+                    except Exception:
+                        failed = True
+            if failed and reservation is not None:
+                try:
+                    self._journal.require_recovery(reservation)
+                except Exception:
+                    # Reservation itself remains the durable no-retry boundary.
+                    pass
+        if failed or result is None:
+            raise ProvisioningRefused("PROVISIONING_LIFECYCLE_RECOVERY_REQUIRED" if reservation
+                                     else "PROVISIONING_LIFECYCLE_REFUSED") from None
+        return result

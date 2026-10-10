@@ -452,7 +452,8 @@ def test_foreground_preflight_is_pure_and_never_claims_execution(foreground_plan
     assert receipt["stage"] == "preflight-only" and receipt["execution_authorized"] is False
     assert "deployment_success" not in receipt and "account_created" not in receipt
     assert plan["email"] not in json.dumps(receipt)
-    # No CLI, cloud client, database service or workflow integration exists yet.
+    # No anonymous CLI or default workflow integration exists. The foreground
+    # Web executor is a class, not a module-level activation function.
     import delivery_toolchain.release.provision_dev_smoke as module
     assert not hasattr(module, "main") and not hasattr(module, "execute")
 
@@ -721,3 +722,167 @@ def test_journal_refuses_memory_or_different_engine_audit(invitations: Any) -> N
             ProvisioningJournal(engine=engine, audit_log=s.audit)
     finally:
         engine.close()
+
+
+@pytest.fixture
+def web_lifecycle(acceptance: Any, foreground_plan_input: Any, monkeypatch: Any) -> Any:
+    """Offline memory BFF adapter, real PG/router/session boundary, NOT Next.
+
+    No request actor or permission override. The actual Next forwarding tests
+    remain the declared Vitest selection; this adapter is not live evidence.
+    """
+    from datetime import datetime, timedelta
+    from uuid import UUID, uuid4
+    from modules.opsboard.auth import Credentials
+    from shared.identity.credential_service import CredentialService
+    from delivery_toolchain.e2e.check_live_e2e_gate import HttpResponse
+    import delivery_toolchain.release.provision_dev_smoke as module
+
+    s = acceptance
+    monkeypatch.setattr(module, "PRESERVED_ACCOUNT_ID", s.admin)
+    monkeypatch.setattr(module, "TENANT_ID", TENANT)
+    admin_password = "Original-Admin-Credential-7632"
+    s.engine.execute("UPDATE identity.accounts SET username = 'ajoe734' WHERE account_id = ?", (s.admin,))
+    s.engine.execute("UPDATE identity.password_credentials SET phc_hash = ? WHERE account_id = ?",
+                     (CredentialService().hash_password(admin_password), s.admin))
+    plan, _ = foreground_plan_input
+    plan["actor_account_id"], plan["tenant_id"] = s.admin, TENANT
+    now = datetime.fromisoformat(s.engine.query_one("SELECT clock_timestamp() AS now")["now"])
+    plan["expires_at"] = (now + timedelta(minutes=30)).isoformat()
+    journal = module.ProvisioningJournal(engine=s.engine, audit_log=s.audit)
+
+    class MemoryBff:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+            self.sessions: dict[str, dict[str, str]] = {}
+            self.fault = ""
+            self.fault_after = ""
+
+        def request(self, method: str, path: str, **kwargs: Any) -> Any:
+            self.calls.append((method, path))
+            headers = kwargs["headers"]
+            assert kwargs["authenticated"] is False and kwargs["follow_redirects"] is False
+            assert set(headers) <= {"accept", "origin", "cookie"}
+            assert headers["origin"] == "https://web.example.invalid"
+            body = kwargs.get("body")
+            cookie = headers.get("cookie", "").removeprefix("__Host-oday_web_session=")
+            bearer = self.sessions.get(cookie, {})
+            if self.fault == path:
+                raise RuntimeError("private-password-token-never-expose")
+            if path == "/login":
+                row = s.engine.query_one("SELECT a.account_id::text AS id, p.phc_hash FROM identity.accounts a "
+                                         "JOIN identity.password_credentials p ON p.account_id = a.account_id "
+                                         "WHERE a.username = ?", (body["username"],))
+                if row is None or not CredentialService().verify_password(row["phc_hash"], body["password"]):
+                    return HttpResponse(401, {"error": {"code": "AUTH_INVALID_CREDENTIALS"}})
+                cookie = uuid4().hex
+                self.sessions[cookie] = _sign_in(s, row["id"])
+                return HttpResponse(200, {"ok": True, "subject": body["username"]},
+                                    cookies={"__Host-oday_web_session": cookie})
+            outcome = s.boundary.authenticate(Credentials.from_headers(bearer))
+            if path in {"/auth/session", "/api/v1/auth/principal", "/auth/logout"}:
+                if not outcome.authenticated:
+                    return HttpResponse(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
+                principal = outcome.principal
+                if path == "/auth/logout":
+                    s.sessions.revoke_session(UUID(principal.attributes["sid"]), "logout")
+                    return HttpResponse(200, {"ok": True})
+                if path == "/auth/session":
+                    row = s.engine.query_one("SELECT username FROM identity.accounts WHERE account_id = ?",
+                                             (principal.subject_id,))
+                    return HttpResponse(200, {"subject": row["username"]})
+                return HttpResponse(200, {"account_id": principal.subject_id,
+                                         "tenant_id": principal.tenant_id,
+                                         "roles": sorted(r.value for r in principal.roles)})
+            if path == "/auth/invitations":
+                assert not cookie and not bearer
+                response = s.accept_client.post(ACCEPT, json=body)
+            else:
+                response = s.client.request(method, path, headers=bearer, json=body)
+            if self.fault_after == path:
+                raise RuntimeError("private-lost-reply-after-commit")
+            return HttpResponse(response.status_code, response.json())
+
+    web = MemoryBff()
+    executor = module.WebInvitationExecutor(web=web, web_origin="https://web.example.invalid", journal=journal)
+    return s, web, executor, journal, plan, dict(admin_password=admin_password, new_password=PASSWORD,
+        release_sha=plan["release_sha"], manifest_digest=plan["manifest_digest"])
+
+
+def test_web_executor_actual_router_lifecycle_provenance_and_session_cleanup(web_lifecycle: Any, monkeypatch: Any) -> None:
+    import subprocess
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    before = _snapshot(s)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("lifecycle launched a process"))
+    receipt = executor.execute(plan, **args)
+    assert receipt["stage"] == "web-lifecycle-verified"
+    assert receipt["issuer_account_id"] == s.admin
+    assert receipt["account_id"] != s.admin and receipt["tenant_id"] == TENANT
+    assert not receipt["credential_binding_verified"] and not receipt["deployment_success"]
+    assert not receipt["live_gate_passed"] and not receipt["execution_authorized"]
+    assert journal.inspect().stage == "reserved"
+    after = _snapshot(s)
+    assert {k: v for k, v in before.items() if k != "sessions"} == {k: v for k, v in after.items() if k != "sessions"}
+    for existing in before["sessions"]:
+        assert existing in after["sessions"]
+    assert _q(s, "SELECT count(*) FROM identity.sessions WHERE revoked_at IS NOT NULL") == [(2,)]
+    output = json.dumps(receipt) + json.dumps([e.metadata for e in s.audit.list_events()])
+    for secret in (PASSWORD, args["admin_password"], plan["email"]):
+        assert secret not in output
+    assert web.calls.count(("POST", "/auth/invitations")) == 1
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_LIFECYCLE_REFUSED"):
+        executor.execute(plan, **args)
+    assert web.calls.count(("POST", PATH)) == 1
+    assert web.calls.count(("POST", "/auth/invitations")) == 1
+    assert s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("fault", [PATH, "/auth/invitations", "/api/v1/operator/users/audit-trail", "/auth/logout"])
+def test_web_executor_uncertainty_quarantines_no_retry_or_reset(web_lifecycle: Any, fault: str) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    before = _snapshot(s)
+    web.fault = fault
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_LIFECYCLE_RECOVERY_REQUIRED") as error:
+        executor.execute(plan, **args)
+    assert "private-password" not in str(error.value) and error.value.__cause__ is None
+    assert journal.inspect().stage == "recovery-required"
+    assert all("password" not in path and "revoke" not in path for _, path in web.calls)
+    assert _snapshot(s)["password_credentials"] == before["password_credentials"]
+    mutations = [c for c in web.calls if c[0] == "POST" and c[1] in {PATH, "/auth/invitations"}]
+    web.fault = ""
+    with pytest.raises(ProvisioningRefused):
+        executor.execute(plan, **args)
+    assert [c for c in web.calls if c[0] == "POST" and c[1] in {PATH, "/auth/invitations"}] == mutations
+    count = 2 if fault in {"/api/v1/operator/users/audit-trail", "/auth/logout"} else 1
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(count,)]
+
+
+@pytest.mark.parametrize("fault", ["/login", "/auth/session", "/api/v1/auth/principal", "/api/v1/operator/users"])
+def test_web_executor_pre_reservation_failure_never_issues(web_lifecycle: Any, fault: str) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    web.fault = fault
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_LIFECYCLE_REFUSED"):
+        executor.execute(plan, **args)
+    assert journal.inspect() is None
+    assert ("POST", PATH) not in web.calls and ("POST", "/auth/invitations") not in web.calls
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+
+
+@pytest.mark.parametrize("path,count", [(PATH, 1), ("/auth/invitations", 2)])
+def test_web_executor_lost_reply_after_durable_commit_never_retries(web_lifecycle: Any, path: str, count: int) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    web.fault_after = path
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_LIFECYCLE_RECOVERY_REQUIRED"):
+        executor.execute(plan, **args)
+    assert journal.inspect().stage == "recovery-required"
+    assert _q(s, "SELECT count(*) FROM identity.invitations") == [(1,)]
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(count,)]
+    web.fault_after = ""
+    with pytest.raises(ProvisioningRefused):
+        executor.execute(plan, **args)
+    assert web.calls.count(("POST", path)) == 1
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(count,)]
