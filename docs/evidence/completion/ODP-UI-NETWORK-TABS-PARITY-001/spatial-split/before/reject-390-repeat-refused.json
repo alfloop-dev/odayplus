@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal '62ea7fef-0c72-4bc9-b32a-115de1b9156c' is already REJECTED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal '62ea7fef-0c72-4bc9-b32a-115de1b9156c' is already REJECTED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-10T01:08:21.458Z",
+      "details": [],
+      "correlation_id": "13f39a02-f06b-426b-86ae-168a42c86574"
+    }
+  }
+}

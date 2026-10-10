@@ -1,0 +1,60 @@
+[WebServer] 2026/10/10 00:59:11 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/10 00:59:14 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/10 00:59:14 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] 2026/10/10 00:59:19 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/10 00:59:19 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [2369427]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8310 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-10T00:59:23.809315+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "6bd9fc2d-d9d9-425d-b376-d960c684b160", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 1 test using 1 worker
+
+[WebServer] {"timestamp": "2026-10-10T00:59:51.102474+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d0eeb318-55d9-4129-954b-ebffcb338274", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/heatzones/merge-split/evaluate ok"}
+[WebServer] {"timestamp": "2026-10-10T00:59:51.640268+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "16a91caf-7652-4bf4-a225-3d74e654b221", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals/{proposal_id} ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:19.626174+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:19.628245+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:19.636185+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:19.647637+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:20.415767+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791594001386", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:22.455567+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:22.519902+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:22.564442+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:22.718505+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:22.732871+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-79469853-624b-4b22-bcfe-3de7518f3c05", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:22.740771+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791594022132", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:23.553908+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposal-preview-19a41369-71e6-48b0-a844-d04696c939a2", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/heatzones/merge-split/proposals/{proposal_id}/preview ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:27.287424+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:27.491342+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:27.508089+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:27.521521+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:28.325930+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-005-read-HZ-01-demand", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-listings ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:28.429053+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-006-scoring-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-scoring ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:28.443052+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-008-rebalance-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-rebalance ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:28.582439+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-r4-007-reviews-read", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/network-reviews ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:28.772172+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-ae56e23b-17da-4c9d-82b8-ff710db6b1cd", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:29.778030+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791594027176", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+[WebServer] {"timestamp": "2026-10-10T01:00:29.786708+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-hz006-proposals-list-1791594027176", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/heatzones/merge-split/proposals ok"}
+  ✘  1 [chromium] › tests/visual/operator-spatial-durable-parity.spec.ts:21:9 › Spatial SQLite split approve preview decision reload at 390 (2.0m)
+
+
+  1) [chromium] › tests/visual/operator-spatial-durable-parity.spec.ts:21:9 › Spatial SQLite split approve preview decision reload at 390 
+
+    Test timeout of 120000ms exceeded.
+
+    Error: response.json: Test timeout of 120000ms exceeded.
+
+      109 |         await expect(panel.getByTestId("btn-open-reject")).toHaveCount(0);
+      110 |         await capture("auditor-permission");
+    > 111 |         await save("permission-read", { status: deniedListHTTP.status(), response: await deniedListHTTP.json() });
+          |                                                                                                         ^
+      112 |         const before = JSON.parse(execFileSync(path.resolve(".venv/bin/python"), ["-m", "tests.visual.spatial_durable_backend", "--inspect", id], { encoding: "utf8" }));
+      113 |         const denials = [];
+      114 |         for (const action of ["approve", "reject"]) {
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-ui-network-tabs-parity-001/tests/visual/operator-spatial-durable-parity.spec.ts:111:105
+
+    Error Context: test-results/operator-spatial-durable-p-0847f-view-decision-reload-at-390-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/visual/operator-spatial-durable-parity.spec.ts:21:9 › Spatial SQLite split approve preview decision reload at 390 

@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal '838ad59f-b631-4a7f-8e04-00ac65299345' is already APPROVED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal '838ad59f-b631-4a7f-8e04-00ac65299345' is already APPROVED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-10T01:11:37.638Z",
+      "details": [],
+      "correlation_id": "73bb689a-002f-43a6-a5ec-1268a1f45ad8"
+    }
+  }
+}

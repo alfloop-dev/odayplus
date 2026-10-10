@@ -1,0 +1,92 @@
+{
+  "proposal": {
+    "proposal_id": "f686e3e7-5a54-43ac-b575-f3899154086d",
+    "zone_id": "MZ-ff2c42c991842808",
+    "tenant_id": "tenant-a",
+    "composition_kind": "SPLIT_CHILD",
+    "member_cell_ids": [
+      "cell-kaohsiung-00",
+      "cell-kaohsiung-01"
+    ],
+    "member_count": 2,
+    "parent_zone_id": "MZ-ff2c42c991842808",
+    "ndcg_gain": 0,
+    "cannibalization_variance_reduction": 0,
+    "correlation_rho": 1,
+    "disconnect_index": 0.7656,
+    "split_density_ratio": 4.27,
+    "child_partitions": [
+      [
+        "cell-kaohsiung-00"
+      ],
+      [
+        "cell-kaohsiung-01"
+      ]
+    ],
+    "child_zone_ids": [
+      "MZ-19b6c703125aa407",
+      "MZ-8be7a210cca47b48"
+    ],
+    "confidence": 0.8533,
+    "model_version": "heatzone-composition-v1",
+    "policy_version_id": "heatzone-merge-v1:tenant-a",
+    "status": "PROPOSED",
+    "reasons": [
+      "side_labelled_absorption_density_ratio_4.27",
+      "measured_over_8_shared_periods",
+      "barrier:Provincial Highway 17 embankment",
+      "divides_into_2_children_sides_A_B",
+      "source_snapshot:pg16-production-model-inventory-2027-04-01-v1"
+    ],
+    "warnings": [],
+    "created_at": "2026-10-10T01:05:59.748574+00:00",
+    "approved_by": null,
+    "approved_at": null,
+    "rejection_reason": null
+  },
+  "current_active_compositions": [
+    {
+      "composition_id": "a6d85582-2ca0-432b-93ee-ef53b87891dc",
+      "zone_id": "MZ-ff2c42c991842808",
+      "tenant_id": "tenant-a",
+      "member_cell_id": "cell-kaohsiung-00",
+      "composition_kind": "MERGED",
+      "parent_zone_id": null,
+      "decided_by": "explicit-split-parent-fixture",
+      "decided_at": "2026-10-10T01:05:32.559565+00:00",
+      "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+      "model_version": "heatzone-composition-v1",
+      "override_reason": "Synthetic isolated browser-test parent, not a production decision",
+      "reverted_at": null,
+      "created_at": "2026-10-10T01:05:32.559580+00:00",
+      "is_active": true
+    },
+    {
+      "composition_id": "a3b9de8a-a289-4d99-9777-b04876123fbb",
+      "zone_id": "MZ-ff2c42c991842808",
+      "tenant_id": "tenant-a",
+      "member_cell_id": "cell-kaohsiung-01",
+      "composition_kind": "MERGED",
+      "parent_zone_id": null,
+      "decided_by": "explicit-split-parent-fixture",
+      "decided_at": "2026-10-10T01:05:32.562363+00:00",
+      "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+      "model_version": "heatzone-composition-v1",
+      "override_reason": "Synthetic isolated browser-test parent, not a production decision",
+      "reverted_at": null,
+      "created_at": "2026-10-10T01:05:32.562372+00:00",
+      "is_active": true
+    }
+  ],
+  "proposed_zone_id": "MZ-ff2c42c991842808",
+  "proposed_kind": "SPLIT_CHILD",
+  "proposed_member_cells": [
+    "cell-kaohsiung-00",
+    "cell-kaohsiung-01"
+  ],
+  "expected_ndcg_gain": 0,
+  "expected_cannibalization_variance_reduction": 0,
+  "correlation_rho": 1,
+  "disconnect_index": 0.7656,
+  "confidence": 0.8533
+}

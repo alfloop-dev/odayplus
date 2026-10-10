@@ -1,0 +1,72 @@
+[
+  {
+    "zone_id": "MZ-19b6c703125aa407",
+    "tenant_id": "tenant-a",
+    "composition_kind": "SPLIT_CHILD",
+    "member_cell_ids": [
+      "cell-kaohsiung-00"
+    ],
+    "member_count": 1,
+    "parent_zone_id": "MZ-ff2c42c991842808",
+    "decided_by": "spatial-durable-approve-390",
+    "decided_at": "2026-10-10T01:13:05.225105+00:00",
+    "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+    "model_version": "heatzone-composition-v1",
+    "override_reason": "本地 SQLite approve 390 決策；測試生成歷史，不是正式上線核准。",
+    "reverted_at": null,
+    "is_active": true,
+    "records": [
+      {
+        "composition_id": "cc5ba6c3-03e4-4e3e-8b64-4a3e22eea686",
+        "zone_id": "MZ-19b6c703125aa407",
+        "tenant_id": "tenant-a",
+        "member_cell_id": "cell-kaohsiung-00",
+        "composition_kind": "SPLIT_CHILD",
+        "parent_zone_id": "MZ-ff2c42c991842808",
+        "decided_by": "spatial-durable-approve-390",
+        "decided_at": "2026-10-10T01:13:05.225105+00:00",
+        "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+        "model_version": "heatzone-composition-v1",
+        "override_reason": "本地 SQLite approve 390 決策；測試生成歷史，不是正式上線核准。",
+        "reverted_at": null,
+        "created_at": "2026-10-10T01:13:05.225105+00:00",
+        "is_active": true
+      }
+    ]
+  },
+  {
+    "zone_id": "MZ-8be7a210cca47b48",
+    "tenant_id": "tenant-a",
+    "composition_kind": "SPLIT_CHILD",
+    "member_cell_ids": [
+      "cell-kaohsiung-01"
+    ],
+    "member_count": 1,
+    "parent_zone_id": "MZ-ff2c42c991842808",
+    "decided_by": "spatial-durable-approve-390",
+    "decided_at": "2026-10-10T01:13:05.225105+00:00",
+    "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+    "model_version": "heatzone-composition-v1",
+    "override_reason": "本地 SQLite approve 390 決策；測試生成歷史，不是正式上線核准。",
+    "reverted_at": null,
+    "is_active": true,
+    "records": [
+      {
+        "composition_id": "b12f687a-b533-4e50-b91a-4e6ff3b73f2c",
+        "zone_id": "MZ-8be7a210cca47b48",
+        "tenant_id": "tenant-a",
+        "member_cell_id": "cell-kaohsiung-01",
+        "composition_kind": "SPLIT_CHILD",
+        "parent_zone_id": "MZ-ff2c42c991842808",
+        "decided_by": "spatial-durable-approve-390",
+        "decided_at": "2026-10-10T01:13:05.225105+00:00",
+        "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+        "model_version": "heatzone-composition-v1",
+        "override_reason": "本地 SQLite approve 390 決策；測試生成歷史，不是正式上線核准。",
+        "reverted_at": null,
+        "created_at": "2026-10-10T01:13:05.225105+00:00",
+        "is_active": true
+      }
+    ]
+  }
+]

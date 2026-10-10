@@ -1,0 +1,15 @@
+{
+  "browserStatus": 403,
+  "independentStatus": 403,
+  "response": {
+    "detail": "role does not permit view on heatzone",
+    "error": {
+      "code": "forbidden",
+      "message": "role does not permit view on heatzone",
+      "next_action": "Request access for this role or tenant; do not retry as-is.",
+      "occurred_at": "2026-10-10T01:15:51.418Z",
+      "details": [],
+      "correlation_id": "0a2d3814-dbf1-40c1-ac07-87110a7475f4"
+    }
+  }
+}

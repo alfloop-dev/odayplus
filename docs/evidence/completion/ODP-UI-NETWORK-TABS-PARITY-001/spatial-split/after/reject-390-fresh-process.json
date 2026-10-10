@@ -1,0 +1,116 @@
+{
+  "audit_chain": {
+    "issues": [],
+    "ok": true
+  },
+  "compositions": [],
+  "events": [
+    {
+      "action": "reject",
+      "actor": "spatial-durable-reject-390",
+      "correlation_id": "corr-hz006-proposal-reject-477b1ed0-c67d-471c-a395-7defc8329203",
+      "event_id": "cddb958d-4f6b-4dc0-8cde-361dc0594037",
+      "event_type": "heatzone.composition.proposal.rejected.v1",
+      "integrity": {
+        "event_hash": "118a2cb36c578f6eafc9fb26d355d71120d4c3328d27dc38b53f132ec41c2635",
+        "previous_hash": "b3747663d3e27f15faea2f9823678a6ff037e923b95d746c4f708becae9016d4",
+        "sequence": 46,
+        "signature_alg": "sha256-hash-chain",
+        "signature_key_id": "odp-audit-hash-chain-key-v1",
+        "signature_version": "2026-07-15.v1",
+        "worm_sink_id": "file:///home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261010T005052Z-d2aafea7/split-after-reject-390/audit-worm"
+      },
+      "job_id": null,
+      "metadata": {
+        "proposal_id": "477b1ed0-c67d-471c-a395-7defc8329203",
+        "reason": "本地 SQLite reject 390 決策；測試生成歷史，不是正式上線核准。",
+        "rejected_by": "spatial-durable-reject-390"
+      },
+      "occurred_at": "2026-10-10T01:16:09.595311+00:00",
+      "outcome": "rejected",
+      "resource": "heatzone/proposals/477b1ed0-c67d-471c-a395-7defc8329203",
+      "result": "rejected"
+    }
+  ],
+  "evidence_mode": "local-sqlite-generated-history-not-live",
+  "fresh_process": true,
+  "parent_compositions": [
+    {
+      "composition_id": "208ef6c3-be2c-4c85-aad3-e2927c025ded",
+      "composition_kind": "MERGED",
+      "created_at": "2026-10-10T01:15:09.222060+00:00",
+      "decided_at": "2026-10-10T01:15:09.222052+00:00",
+      "decided_by": "explicit-split-parent-fixture",
+      "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+      "is_active": true,
+      "member_cell_id": "cell-kaohsiung-01",
+      "model_version": "heatzone-composition-v1",
+      "override_reason": "Synthetic isolated browser-test parent, not a production decision",
+      "parent_zone_id": null,
+      "reverted_at": null,
+      "tenant_id": "tenant-a",
+      "zone_id": "MZ-ff2c42c991842808"
+    },
+    {
+      "composition_id": "c6763be8-d1ee-4320-ae8c-3c715274a3ba",
+      "composition_kind": "MERGED",
+      "created_at": "2026-10-10T01:15:09.218673+00:00",
+      "decided_at": "2026-10-10T01:15:09.218661+00:00",
+      "decided_by": "explicit-split-parent-fixture",
+      "decision_policy_version_id": "heatzone-merge-v1:tenant-a",
+      "is_active": true,
+      "member_cell_id": "cell-kaohsiung-00",
+      "model_version": "heatzone-composition-v1",
+      "override_reason": "Synthetic isolated browser-test parent, not a production decision",
+      "parent_zone_id": null,
+      "reverted_at": null,
+      "tenant_id": "tenant-a",
+      "zone_id": "MZ-ff2c42c991842808"
+    }
+  ],
+  "proposal": {
+    "approved_at": "2026-10-10T01:16:09.591016+00:00",
+    "approved_by": "spatial-durable-reject-390",
+    "cannibalization_variance_reduction": 0,
+    "child_partitions": [
+      [
+        "cell-kaohsiung-00"
+      ],
+      [
+        "cell-kaohsiung-01"
+      ]
+    ],
+    "child_zone_ids": [
+      "MZ-19b6c703125aa407",
+      "MZ-8be7a210cca47b48"
+    ],
+    "composition_kind": "SPLIT_CHILD",
+    "confidence": 0.8533,
+    "correlation_rho": 1,
+    "created_at": "2026-10-10T01:15:36.569613+00:00",
+    "disconnect_index": 0.7656,
+    "member_cell_ids": [
+      "cell-kaohsiung-00",
+      "cell-kaohsiung-01"
+    ],
+    "member_count": 2,
+    "model_version": "heatzone-composition-v1",
+    "ndcg_gain": 0,
+    "parent_zone_id": "MZ-ff2c42c991842808",
+    "policy_version_id": "heatzone-merge-v1:tenant-a",
+    "proposal_id": "477b1ed0-c67d-471c-a395-7defc8329203",
+    "reasons": [
+      "side_labelled_absorption_density_ratio_4.27",
+      "measured_over_8_shared_periods",
+      "barrier:Provincial Highway 17 embankment",
+      "divides_into_2_children_sides_A_B",
+      "source_snapshot:pg16-production-model-inventory-2027-04-01-v1"
+    ],
+    "rejection_reason": "本地 SQLite reject 390 決策；測試生成歷史，不是正式上線核准。",
+    "split_density_ratio": 4.27,
+    "status": "REJECTED",
+    "tenant_id": "tenant-a",
+    "warnings": [],
+    "zone_id": "MZ-ff2c42c991842808"
+  }
+}

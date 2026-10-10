@@ -1,0 +1,54 @@
+{
+  "box": {
+    "x": 12,
+    "y": 253.890625,
+    "width": 366,
+    "height": 1205.015625,
+    "scrollWidth": 366
+  },
+  "controls": [
+    {
+      "x": 24,
+      "y": 344.671875,
+      "width": 167,
+      "height": 35,
+      "scrollWidth": 165
+    },
+    {
+      "x": 13,
+      "y": 403.671875,
+      "width": 364,
+      "height": 93.234375,
+      "scrollWidth": 360
+    },
+    {
+      "x": 13,
+      "y": 496.90625,
+      "width": 364,
+      "height": 93.234375,
+      "scrollWidth": 360
+    },
+    {
+      "x": 29,
+      "y": 718.71875,
+      "width": 102,
+      "height": 31,
+      "scrollWidth": 100
+    },
+    {
+      "x": 139,
+      "y": 719.71875,
+      "width": 76,
+      "height": 29,
+      "scrollWidth": 76
+    },
+    {
+      "x": 223,
+      "y": 718.71875,
+      "width": 78,
+      "height": 31,
+      "scrollWidth": 76
+    }
+  ],
+  "documentWidth": 390
+}

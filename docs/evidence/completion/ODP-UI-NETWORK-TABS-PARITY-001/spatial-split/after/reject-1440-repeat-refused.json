@@ -1,0 +1,14 @@
+{
+  "status": 422,
+  "response": {
+    "detail": "proposal 'a9b93818-a1d3-4e24-bd44-604b7116aa87' is already REJECTED",
+    "error": {
+      "code": "unprocessable_entity",
+      "message": "proposal 'a9b93818-a1d3-4e24-bd44-604b7116aa87' is already REJECTED",
+      "next_action": "Fix the highlighted fields and resubmit.",
+      "occurred_at": "2026-10-10T01:14:46.599Z",
+      "details": [],
+      "correlation_id": "659f8890-18d2-48f6-90bf-5835ea080160"
+    }
+  }
+}

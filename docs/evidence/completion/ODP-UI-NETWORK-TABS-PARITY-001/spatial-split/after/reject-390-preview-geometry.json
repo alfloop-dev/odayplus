@@ -1,0 +1,126 @@
+{
+  "box": {
+    "x": 12,
+    "y": 253.890625,
+    "width": 366,
+    "height": 1231.609375,
+    "scrollWidth": 366
+  },
+  "controls": [
+    {
+      "x": 24,
+      "y": 344.671875,
+      "width": 167,
+      "height": 35,
+      "scrollWidth": 165
+    },
+    {
+      "x": 13,
+      "y": 403.671875,
+      "width": 364,
+      "height": 93.234375,
+      "scrollWidth": 360
+    },
+    {
+      "x": 13,
+      "y": 496.90625,
+      "width": 364,
+      "height": 93.234375,
+      "scrollWidth": 360
+    },
+    {
+      "x": 29,
+      "y": 718.71875,
+      "width": 102,
+      "height": 31,
+      "scrollWidth": 100
+    },
+    {
+      "x": 139,
+      "y": 719.71875,
+      "width": 76,
+      "height": 29,
+      "scrollWidth": 76
+    },
+    {
+      "x": 223,
+      "y": 718.71875,
+      "width": 78,
+      "height": 31,
+      "scrollWidth": 76
+    }
+  ],
+  "splitFacts": [
+    {
+      "x": 29,
+      "y": 1014.203125,
+      "width": 332,
+      "height": 174.796875,
+      "scrollWidth": 332
+    },
+    {
+      "x": 29,
+      "y": 1035.625,
+      "width": 84,
+      "height": 18.59375,
+      "scrollWidth": 84
+    },
+    {
+      "x": 121,
+      "y": 1035.625,
+      "width": 40,
+      "height": 18.59375,
+      "scrollWidth": 40
+    },
+    {
+      "x": 29,
+      "y": 1062.21875,
+      "width": 332,
+      "height": 48.09375,
+      "scrollWidth": 330
+    },
+    {
+      "x": 38,
+      "y": 1069.21875,
+      "width": 314,
+      "height": 17.046875,
+      "scrollWidth": 314
+    },
+    {
+      "x": 38,
+      "y": 1086.265625,
+      "width": 314,
+      "height": 17.046875,
+      "scrollWidth": 314
+    },
+    {
+      "x": 29,
+      "y": 1116.3125,
+      "width": 332,
+      "height": 48.09375,
+      "scrollWidth": 330
+    },
+    {
+      "x": 38,
+      "y": 1123.3125,
+      "width": 314,
+      "height": 17.046875,
+      "scrollWidth": 314
+    },
+    {
+      "x": 38,
+      "y": 1140.359375,
+      "width": 314,
+      "height": 17.046875,
+      "scrollWidth": 314
+    },
+    {
+      "x": 29,
+      "y": 1170.40625,
+      "width": 332,
+      "height": 18.59375,
+      "scrollWidth": 332
+    }
+  ],
+  "documentWidth": 390
+}
