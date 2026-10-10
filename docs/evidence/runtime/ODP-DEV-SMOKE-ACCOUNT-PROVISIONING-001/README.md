@@ -8,6 +8,35 @@ operation; it is not evidence that any account, credential binding or deployment
 changed. Exact-head required CI and independent Codex review remain mandatory.
 Earlier progress sections below are historical, not current readiness verdicts.
 
+## Current-base and migration-plan CI repair (2026-10-10)
+
+Non-rewriting merge `12147a6efb8cec5a74507ace5bd7b44b65bdcfcd` composes
+`origin/dev=31785c571e062b9bef4512ec3d848391c47621d3` with prior task head
+`7c6e083a848948eb62a26a32ed876fca806fcafc`. Both parents and all task history
+are preserved. The automatic shell merge retains PR1449's tagged-candidate
+cold-start timeout and PR1445's warm-instance behavior alongside the explicit
+foreground rollback-owned hook. There were no conflicts or force pushes.
+
+Original [CI38043511573](https://github.com/alfloop-dev/odayplus/actions/runs/38043511573)
+completed with failed `product-lint-unit` and its downstream `product` aggregate.
+The original failed-job log identifies one failure:
+`tests/ops/test_migration_backfill.py::test_migration_plan_indexes_revision_hashes_and_rollback`
+still expected revisions only through0021; the real planner correctly includes
+this task's0022 acceptance-budget migration. Its exact revision-list assertion
+now includes0022. An additional regression binds0022 to its SQL asset through
+`build_migration_plan`, retaining checksums and normal Alembic reachability.
+No migration, audit, throttle, permission, finite-role or gate policy is relaxed.
+
+Canonical scope and verification include the narrow migration-plan/cold-start
+selection, not a full-suite local rerun. After this repair commit, all declared
+commands must run against the new exact head. Original terminal receipts (head,
+command, selection, exit and duration) are retained in `.orchestrator/evidence`
+and canonical task submission, avoiding a post-verification head change solely
+for evidence. Failed prior-head CI is not relabelled as passing. Required new-head
+CI and independent Codex approval remain prerequisites before use. No live
+login/account, GitHub secret/configuration, IAM, traffic, source or model action
+occurred; source verification is not deployment or activation acceptance.
+
 ## Clean-checkout CI composition repair (2026-10-10)
 
 The original run38039097879 is now **completed/failure**, including
