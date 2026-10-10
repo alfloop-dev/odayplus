@@ -1879,6 +1879,19 @@ export type UrlIntakeRequest = {
   scope: ScopeContext;
 };
 
+/** POST /operator/users/invite — payload for inviting / creating a new user. */
+export type UserInvitePayload = {
+  displayName?: string | null;
+  email: string;
+  initialPassword?: string | null;
+  initial_password?: string | null;
+  name?: string | null;
+  reason?: string;
+  roles: string[];
+  scope?: ScopePayload | null;
+  username: string;
+};
+
 /** POST /operator/users — payload for user role & scope assignment. */
 export type UserSavePayload = {
   actorName?: string | null;
@@ -2277,6 +2290,8 @@ export const API_PATHS = {
   "/api/v1/operator/today": ["GET"],
   "/api/v1/operator/users": ["GET", "POST"],
   "/api/v1/operator/users/audit-trail": ["GET"],
+  "/api/v1/operator/users/create": ["POST"],
+  "/api/v1/operator/users/invite": ["POST"],
   "/api/v1/operator/users/roles": ["GET"],
   "/api/v1/operator/users/{subject_id}": ["GET"],
   "/api/v1/operator/users/{subject_id}/status": ["POST"],
