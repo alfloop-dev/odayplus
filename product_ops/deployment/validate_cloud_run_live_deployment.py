@@ -1721,11 +1721,55 @@ class _ExchangeDeadline:
         self._timer = threading.Timer(seconds, self._expire)
         self._timer.daemon = True
 
+    def remaining(self) -> float:
+        return self._expires_at - time.monotonic()
+
     def register(self, sock: Any) -> None:
+        # Watch a duplicate descriptor: TLS wrapping detaches ``sock`` itself,
+        # but shutting down any descriptor of a connection ends it for all.
+        watched = sock.dup()
         with self._lock:
-            self._sockets.append(sock)
+            self._sockets.append(watched)
             if self.expired.is_set():
-                self._shutdown(sock)
+                self._shutdown(watched)
+
+    def create_connection(
+        self,
+        address: tuple[str, int],
+        timeout: Any = None,
+        source_address: tuple[str, int] | None = None,
+    ) -> socket.socket:
+        """``socket.create_connection`` inside this exchange's bound.
+
+        Every address tried shares the one remaining budget, and the socket is
+        watched as soon as it connects -- before a proxy CONNECT tunnel or a
+        TLS handshake runs on it, both of which read from the peer.
+        """
+        host, port = address
+        last_error: OSError | None = None
+        for family, socktype, proto, _name, sockaddr in socket.getaddrinfo(
+            host, port, 0, socket.SOCK_STREAM
+        ):
+            remaining = self.remaining()
+            if remaining <= 0:
+                break
+            if isinstance(timeout, (int, float)):
+                remaining = min(remaining, timeout)
+            sock = socket.socket(family, socktype, proto)
+            try:
+                sock.settimeout(remaining)
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(sockaddr)
+            except OSError as exc:
+                sock.close()
+                last_error = exc
+                continue
+            self.register(sock)
+            return sock
+        if last_error is not None:
+            raise last_error
+        raise TimeoutError("no connection within the exchange deadline")
 
     def _expire(self) -> None:
         with self._lock:
@@ -1749,6 +1793,10 @@ class _ExchangeDeadline:
     def __exit__(self, *_exc: object) -> None:
         self._timer.cancel()
         self._timer.join()
+        with self._lock:
+            for sock in self._sockets:
+                sock.close()
+            self._sockets.clear()
 
 
 def _deadline_connection(base: type, deadline: _ExchangeDeadline) -> type:
@@ -1762,9 +1810,12 @@ def _deadline_connection(base: type, deadline: _ExchangeDeadline) -> type:
             return version, status, reason
 
     class _DeadlineConnection(base):  # type: ignore[misc, valid-type]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._create_connection = deadline.create_connection
+
         def connect(self) -> None:
             super().connect()
-            deadline.register(self.sock)
             # Install after connect: a proxy CONNECT status is not an origin
             # verdict, nor is an interim 100 Continue status.
             self.response_class = _DeadlineResponse

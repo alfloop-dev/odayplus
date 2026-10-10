@@ -1,7 +1,7 @@
 # ODP-DEV-CANDIDATE-SMOKE-STARTUP-001 — 候選版本 smoke 啟動逾時的有界驗證
 
 - **Task ID**: `ODP-DEV-CANDIDATE-SMOKE-STARTUP-001`
-- **Owner**: `Pi`（2026-10-10 承接；既有實作來自 Claude/Codex）
+- **Owner**: `Claude2`（2026-10-10 12:53 由 Pi 改派；既有實作來自 Claude/Codex/Pi）
 - **Reviewer**: `Codex2`
 - **Composed base**: `origin/dev` `31785c571e062b9bef4512ec3d848391c47621d3`（包含已合併 PR #1449）
 - **Date**: `2026-10-10`
@@ -22,7 +22,7 @@ Runtime Release `38025605232` attempt 2（SHA `0dd210dbe04f…`）artifact `1166
 - candidate smoke 的四個 API GET（`/platform/version`、`/platform/health`、`/readiness`、`/api/v1/operator/bootstrap`）改走既有的 `probe_with_bounded_retry` / `ProbeRetryPolicy`（與 compatibility gate 同一套分類），沒有新框架。
 - 只有 `no_response`（在收到 status line 之前逾時、URLError、連線重設等完全沒收到回應）可重試。任何**收到的回應**——401/403、5xx、非 JSON、非 object JSON、錯誤 release SHA、不健康 readiness/DB/provider/model——第一次就定案、零重試；無法建立的 URL（`invalid_request`）與非 HTTP status line（`malformed_response`）亦零重試。
 - **已收到的 status 不會被抹掉**：status line 到了之後，body（或其後的 headers）讀取失敗、停住或超過時限，`_request` 改拋帶有該 status 的 `ResponseBodyError`（provenance `unreadable_body`），為終局、零重試。例如 401/403/503 的 body 讀到一半逾時，收據記錄 `status=401`、`transient=false`，不會被下一次健康回答取代。
-- **headers/body 使用絕對 wall clock 時限**：watchdog 從 `_request` 開始計時，連線完成後登記 socket；到期 shutdown，喚醒被卡住的 headers/body read，避免逐 byte 慢送不斷重設 socket 閒置時限。完成時亦核對 monotonic deadline，不能因 watchdog 尚未被排程而接受晚到內容。TCP connect、TLS handshake 仍使用 stdlib socket timeout（≤ 剩餘預算）；DNS 解析不能由這個 socket watchdog 中斷，不宣稱 DNS 卡住也有硬性 wall-clock 保證。
+- **整個交換使用同一個絕對 wall clock 時限**：watchdog 從 `_request` 開始計時。連線改由 `_ExchangeDeadline.create_connection` 建立：每個解析出的位址的 TCP connect timeout 夾到**同一個剩餘預算**（多位址不再各自重新取得完整 timeout），TCP 一連上就登記該連線的 duplicate descriptor——在 proxy CONNECT tunnel 讀 headers 與 TLS handshake 之前。到期 shutdown 該 descriptor，同時喚醒 tunnel、handshake、headers、body 任一階段被卡住的 read（TLS wrap 會 detach 原 socket 物件，shutdown 作用在連線本身，因此用 dup 監看）；交換結束時關閉 dup。完成時亦核對 monotonic deadline，不能因 watchdog 尚未被排程而接受晚到內容。proxy CONNECT 的 status 不是 origin verdict：tunnel 階段被截斷時結果為 `no_response`（可重試、仍受總預算約束），不會被記成 200。DNS 解析不能由這個 socket watchdog 中斷，不宣稱 DNS 卡住也有硬性 wall-clock 保證。
 - `smoke` CLI 預設：`attempts=4`、per-attempt timeout 沿用 `--timeout`（15s）、backoff `2s` 指數、上限 `8s`、總預算 `180s`。總預算是**全部 API probe 共用一個**（`deadline_scope=shared_by_api_probes`），每次 attempt 的 timeout 夾到剩餘預算；預算用完就不送出請求並 fail closed。新增 `--smoke-retry-*` 旗標；NaN/inf/負值/0 次一律以 `smoke:retry_policy` fail closed。
 - 直接呼叫 `smoke_checks()` 而未給 policy 時維持單次嘗試（原行為）。
 - 每個原本的 smoke check 名稱與判定不變，且只依真實回答判定；沒有回答一律 fail（例如 version 用盡重試時 `release_sha` 檢查為 `actual=<missing>`）。
@@ -56,12 +56,16 @@ Task-scoped 12:12 canonical note 回報 RuntimeRelease `38044574206`／SHA `3178
   - 含 CR/LF 的 dummy bearer／API invoker／Web invoker token：smoke 與 compatibility 的 report、check detail，以及 CLI 的 report 檔與 stdout/stderr 都不含 token 原文、片段、repr 或 JSON 形式，診斷保留為 `<redacted>`。
   - 原審查 synthetic HTTPError 401/403/503 + `read()` TimeoutError：status 保留、一次 attempt、零 retry。
   - 回應 key/value echo 與 token-bearing transport exception：checks/report 全部 known tokens 遮蔽。
+- 第二輪審查（Codex2 於 `d0054ab3b` 指出 `_DeadlineConnection.connect` 在 `super().connect()` 之後才登記 socket）修正，皆為真實 localhost socket，沒有外部連線：
+  - HTTPS 經 `https_proxy=http://127.0.0.1:<port>`：proxy 回 `HTTP/1.1 200 Connection established` 後每 0.04s 一行 header、永不結束（2s）。`attempts=1`、timeout/deadline 0.2s：1s 內結束，`attempts_exhausted`、`status=null`、`no_response`；並確認 proxy 收到 `CONNECT candidate.invalid:443`。舊 head 實測 2.02s（等到 proxy 自行關閉）→ fail。
+  - 同一 listener 的 backlog 塞滿（SYN 被丟棄）、`getaddrinfo` 回四個位址、`_request(timeout=0.3)`：`TimeoutError("no response within 0.3s")` 且 < 0.6s。舊 head 實測 1.20s（四個位址各 0.3s）→ fail。
+  - TLS handshake record header 宣告 16 KiB 後逐 byte 慢送：1s 內 `no_response`。此項在舊 head 亦通過——CPython 把整個 handshake 當一個操作以 socket timeout 計時——保留為 handshake 也在共用絕對預算內的守護測試，不宣稱它重現了舊缺陷。
 
 ## 5. 驗證
 
 宣告的驗證（`git diff --check`、`uv run --frozen --python 3.12 pytest tests/ops/test_cloud_run_live_deployment.py -q`）由 `delivery_toolchain/git/task_verification.py run --task-id ODP-DEV-CANDIDATE-SMOKE-STARTUP-001` 在送審最終 head 執行；每個 receipt 綁定 exact SHA、command、exit code、duration、selection。receipt 位於該 worktree `.orchestrator/evidence/verification-odp_dev_candidate_smoke_startup_001-<receipt_id>.json`，結果與 receipt IDs 另以 canonical task note 公布；這段說明不是預先宣稱通過。必要 CI 與 Codex2 審查仍須綁定 PR #1450 最新遠端 head，舊 `4c093dccf` 的綠色 CI 不可沿用。
 
-Pi anchor `43881d5f257a1ec66716f5fc14afd11b9470cecf` 的實際收據：
+以下為先前 Pi anchor `43881d5f257a1ec66716f5fc14afd11b9470cecf` 的歷史收據，**不適用於本輪修正後的 head**；本輪新 head 的 exact-head 收據另以 canonical task note 公布：
 
 | Command | Exit | Duration | Receipt ID |
 |---|---:|---:|---|

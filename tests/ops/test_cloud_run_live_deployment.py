@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -7070,6 +7071,145 @@ def test_request_bounds_a_peer_that_never_finishes_its_headers(status: int, mode
     assert result.final.provenance == "unreadable_body"
     assert result.outcome == "rejected"
     assert elapsed < 1.0
+
+
+_PROXY_ENV = (
+    "http_proxy",
+    "HTTP_PROXY",
+    "https_proxy",
+    "HTTPS_PROXY",
+    "all_proxy",
+    "ALL_PROXY",
+    "no_proxy",
+    "NO_PROXY",
+)
+
+
+def _start_raw_trickler(greeting: bytes, drip: bytes) -> tuple[socket.socket, int, list[bytes]]:
+    """Answer each connection with ``greeting``, then ``drip`` every 0.04s for 2s.
+
+    Every chunk arrives well inside a socket inactivity timeout, so only an
+    absolute deadline can end the exchange before the peer gives up.
+    """
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    received: list[bytes] = []
+
+    def serve(conn: socket.socket) -> None:
+        with conn:
+            try:
+                received.append(conn.recv(4096))
+                conn.sendall(greeting)
+                for _ in range(50):
+                    time.sleep(0.04)
+                    conn.sendall(drip)
+            except OSError:
+                return
+
+    def accept() -> None:
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            Thread(target=serve, args=(conn,), daemon=True).start()
+
+    Thread(target=accept, daemon=True).start()
+    return listener, listener.getsockname()[1], received
+
+
+def _assert_no_answer_within_deadline(result: object, elapsed: float) -> None:
+    # Nothing from the origin arrived, so there is no verdict to keep: the
+    # attempt is a bounded no-response, never an answer.
+    assert elapsed < 1.0
+    assert result.outcome == "attempts_exhausted"
+    assert len(result.attempts) == 1
+    assert result.final.status is None
+    assert result.final.provenance == "no_response"
+
+
+def test_request_bounds_a_proxy_that_never_finishes_its_connect_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in _PROXY_ENV:
+        monkeypatch.delenv(name, raising=False)
+    listener, port, received = _start_raw_trickler(
+        b"HTTP/1.1 200 Connection established\r\n", b"x-pad: 1\r\n"
+    )
+    # urllib's default ProxyHandler tunnels HTTPS through a configured proxy;
+    # the proxy is local, so the origin name is never resolved or contacted.
+    monkeypatch.setenv("https_proxy", f"http://127.0.0.1:{port}")
+    try:
+        started = time.monotonic()
+        result = validator.probe_with_bounded_retry(
+            "https://candidate.invalid/platform/version",
+            headers={},
+            policy=_smoke_policy(
+                attempts=1, timeout_seconds=0.2, deadline_seconds=0.2, backoff_seconds=0.0
+            ),
+            sleep=_RecordingSleep(),
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        listener.close()
+
+    assert received and received[0].startswith(b"CONNECT candidate.invalid:443 ")
+    # The proxy's 200 is a tunnel status, not the origin's verdict.
+    _assert_no_answer_within_deadline(result, elapsed)
+
+
+def test_request_bounds_a_peer_that_never_finishes_the_tls_handshake(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in _PROXY_ENV:
+        monkeypatch.delenv(name, raising=False)
+    # A TLS handshake record header promising 16 KiB, then one byte at a time.
+    listener, port, received = _start_raw_trickler(b"\x16\x03\x03\x40\x00", b"\x00")
+    try:
+        started = time.monotonic()
+        result = validator.probe_with_bounded_retry(
+            f"https://127.0.0.1:{port}/platform/version",
+            headers={},
+            policy=_smoke_policy(
+                attempts=1, timeout_seconds=0.2, deadline_seconds=0.2, backoff_seconds=0.0
+            ),
+            sleep=_RecordingSleep(),
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        listener.close()
+
+    assert received and received[0][:1] == b"\x16"
+    _assert_no_answer_within_deadline(result, elapsed)
+
+
+def test_request_connect_attempts_share_one_deadline_across_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in _PROXY_ENV:
+        monkeypatch.delenv(name, raising=False)
+    # A listener whose one-slot backlog is full silently drops further SYNs,
+    # so each connect to it stalls until its own timeout.
+    blackhole = socket.socket()
+    blackhole.bind(("127.0.0.1", 0))
+    blackhole.listen(0)
+    port = blackhole.getsockname()[1]
+    filler = socket.create_connection(("127.0.0.1", port), timeout=1.0)
+    resolved = [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", port))]
+    monkeypatch.setattr(validator.socket, "getaddrinfo", lambda *_args, **_kw: resolved * 4)
+    try:
+        started = time.monotonic()
+        with pytest.raises(TimeoutError, match="no response within 0.3s"):
+            validator._request(f"http://candidate.invalid:{port}/", headers={}, timeout=0.3)
+        elapsed = time.monotonic() - started
+    finally:
+        filler.close()
+        blackhole.close()
+
+    # Four addresses at a fresh 0.3s each would take 1.2s.
+    assert elapsed < 0.6
 
 
 def test_probe_retry_cannot_outrun_its_deadline_on_a_slow_body() -> None:
