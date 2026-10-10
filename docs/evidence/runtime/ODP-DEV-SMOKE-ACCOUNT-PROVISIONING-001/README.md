@@ -77,6 +77,30 @@ public endpoint. The bounded Web/BFF capability adapter and durable abuse
 controls must land before an acceptance HTTP route is enabled. No Web, GH,
 workflow, deployment, IAM or gate changes are part of anchor 2.
 
+## Verification repair checkpoint (after anchor 2)
+
+At `92c35e541d161a33cb963b57e583c1603869e140` the canonical runner
+first recorded both pytest commands as exit 127: the worker PATH omitted the
+standard `/home/lupin/.local/bin` where uv is installed. A same-head retry with
+an explicit infrastructure reason and corrected PATH recorded:
+
+- `git diff --check`: exit 0 (receipt `03ab722bbd22d6cf`).
+- Declared invitation/integration/workflow command: exit 1, 72.45 seconds,
+  six failures (receipt `55e9f4b78546689f`). Real PostgreSQL exposed the core's
+  incorrect comparison of normalized JSONB **text** against Python objects.
+  Acceptance now explicitly parses JSONB and still rejects any non-exact preset.
+  One router test incorrectly claimed the existing must-change check emits a
+  durable denial; it now proves only the actual refusal/no-service-call there.
+- Declared existing gate/operator authorization command: exit 0, 57.964 seconds
+  (receipt `0bafcd49cfd3355e`). No gate change was made.
+
+This repair also refuses invalid/expired/revoked/consumed capabilities before
+constructing an expensive Argon2 credential service, while keeping the locked
+consumption recheck. The negative capability tests now spy that no hasher is
+constructed. The repaired anchor needs its own exact-head receipts; these prior
+receipts do not prove the repair passed. All receipts above were produced by
+`task_verification.py` under `.orchestrator/evidence/`, not handwritten evidence.
+
 ## Remaining work (must precede review)
 
 1. Complete token-only acceptance via the existing Web/BFF trust boundary.

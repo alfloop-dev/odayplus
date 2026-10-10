@@ -232,6 +232,15 @@ class InvitationService:
         if not policy.validate(normalized, username=username).valid:
             raise InvitationRefused("INVITATION_PASSWORD_REJECTED")
         token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
+        # Invalid/consumed capabilities must not force a 64 MiB Argon2 job.
+        # This inexpensive preflight is NOT the consumption check: expiry,
+        # revocation and single-use are rechecked under the write lock below.
+        if self._engine.query_one(
+            "SELECT invitation_id FROM identity.invitations WHERE invitation_id = ? "
+            "AND token_hash = ? AND accepted_at IS NULL AND revoked_at IS NULL "
+            "AND expires_at > clock_timestamp()", (invitation_id, token_hash),
+        ) is None:
+            raise InvitationRefused("INVITATION_UNAVAILABLE")
         # Argon2 outside the critical section; the capability is rechecked below.
         phc = CredentialService().hash_password(normalized)
         params = json.dumps(CredentialService.extract_params_from_phc(phc))
@@ -256,7 +265,14 @@ class InvitationService:
                 raise InvitationRefused("INVITATION_UNAVAILABLE")
             # Do not reinterpret arbitrary legacy/foreign presets or silently
             # drop business grants. Only this exact bounded lifecycle is accepted.
-            if row["preset_roles"] != [Role.PLATFORM_ADMIN.value] or row["preset_scope"] != _scope(tenant):
+            # PostgresEngine normalizes JSONB columns to JSON text (the same
+            # repository contract used by durable identity administration).
+            try:
+                preset_roles = json.loads(row["preset_roles"])
+                preset_scope = json.loads(row["preset_scope"])
+            except (TypeError, ValueError):
+                raise InvitationRefused("INVITATION_PRESET_INVALID") from None
+            if preset_roles != [Role.PLATFORM_ADMIN.value] or preset_scope != _scope(tenant):
                 raise InvitationRefused("INVITATION_PRESET_INVALID")
             if not policy.validate(normalized, username=username, email=row["email"]).valid:
                 raise InvitationRefused("INVITATION_PASSWORD_REJECTED")

@@ -120,7 +120,13 @@ def test_actual_router_authentication_denials_never_reach_service(invitations: A
     assert result.status_code in {401, 403}, result.text
     assert calls == []
     assert _q(s, "SELECT count(*) FROM identity.invitations") == [(0,)]
-    assert any(e.outcome in {"failure", "deny"} for e in s.audit.list_events())
+    if mode != "must_change":
+        assert any(e.outcome in {"failure", "deny"} for e in s.audit.list_events())
+    else:
+        # Existing must-change enforcement rejects before the user permission
+        # dependency records its authorization decision. This incremental suite
+        # proves refusal/no service call, not a new audit implementation there.
+        assert result.json()["detail"] == "PASSWORD_CHANGE_REQUIRED"
 
 
 def test_no_guard_or_document_service_is_not_a_provisioning_shortcut(invitations: Any) -> None:

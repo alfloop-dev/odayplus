@@ -1,8 +1,9 @@
 """Invitation application-layer PostgreSQL regressions; not live evidence.
 
 Reuse the existing real identity/auth/session stack rather than introduce a
-parallel auth harness. HTTP/BFF/provisioning adapters are not implemented by
-this anchor, so these tests do not claim actual invitation-router coverage.
+parallel auth harness. This file tests the internal transaction service; actual
+issuer/revoker router coverage lives in test_dev_smoke_provisioning.py. The
+acceptance Web/BFF and foreground binding adapters are not yet implemented.
 """
 
 from __future__ import annotations
@@ -169,7 +170,7 @@ def test_email_and_casefolded_username_collisions_never_overwrite(invitations: A
 
 
 @pytest.mark.parametrize("state", ["wrong_token", "expired", "revoked", "accepted"])
-def test_invalid_or_consumed_capability_cannot_create_or_reset(invitations: Any, state: str) -> None:
+def test_invalid_or_consumed_capability_cannot_create_or_reset(invitations: Any, monkeypatch: Any, state: str) -> None:
     s = invitations
     issued = _issue(s)
     token = issued.token
@@ -182,6 +183,11 @@ def test_invalid_or_consumed_capability_cannot_create_or_reset(invitations: Any,
     else:
         _accept(s, issued)
     before = _q(s, "SELECT row_to_json(t)::text FROM identity.password_credentials t ORDER BY account_id")
+
+    def forbidden_hasher() -> Any:
+        pytest.fail("invalid capability reached expensive credential construction")
+
+    monkeypatch.setattr("shared.identity.invitation_service.CredentialService", forbidden_hasher)
     with pytest.raises(InvitationRefused, match="INVITATION_UNAVAILABLE"):
         _accept(s, issued, token=token)
     assert _q(s, "SELECT row_to_json(t)::text FROM identity.password_credentials t ORDER BY account_id") == before
