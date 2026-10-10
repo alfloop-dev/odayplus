@@ -30,7 +30,7 @@ from tests.identity.test_identity_user_role_management import (
     _sign_in,
 )
 from tests.identity.test_identity_user_role_management import (
-    stack as identity_stack,  # existing PostgreSQL/auth-boundary pytest fixture
+    stack as identity_stack,  # noqa: F401 — pytest fixture registration
 )
 
 PASSWORD = "Independent-Smoke-Credential-7319"
@@ -41,10 +41,11 @@ BUDGET_MIGRATION = Path("infra/db/migrations/000028_identity_invitation_acceptan
 
 
 @pytest.fixture
-def stack(identity_stack: Any) -> Any:
-    with identity_stack.db.connect(autocommit=True) as conn:
+def stack(request: pytest.FixtureRequest) -> Any:
+    base = request.getfixturevalue("identity_stack")
+    with base.db.connect(autocommit=True) as conn:
         conn.execute(BUDGET_MIGRATION.read_text(encoding="utf-8"))
-    return identity_stack
+    return base
 
 
 @pytest.fixture

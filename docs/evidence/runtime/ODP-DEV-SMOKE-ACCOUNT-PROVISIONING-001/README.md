@@ -62,7 +62,10 @@ revision was missing from the canonical boundary inventory. The prescribed
 `check_code_boundaries.py --write-inventory` then exited **0**, classified 1220
 files, and added only revision0022 as product-operations tooling. The inventory
 is committed before the fresh final-head declarations; no boundary waiver or
-full-suite escalation was used.
+full-suite escalation was used. The next dry-run at `d1900ea56df1` exited **1**
+on fixture import/redefinition lint. The task's wrapper now obtains the existing
+registered PostgreSQL fixture via `request.getfixturevalue`, with the intentional
+fixture alias import marked locally; no leased production files were auto-edited.
 
 No live login/account/secret/configuration/IAM/traffic/source/model action was
 performed. Required exact-head CI, independent Codex approval, merge and the
