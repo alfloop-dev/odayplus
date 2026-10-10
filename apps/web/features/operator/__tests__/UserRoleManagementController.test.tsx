@@ -453,6 +453,8 @@ describe("UserRoleManagementController", () => {
     expect(modal.querySelector("strong")).toHaveTextContent("invited-manager");
     expect(modal.querySelector("strong")).not.toHaveTextContent(accountId);
     expect(modal).toHaveTextContent(accountId); // separate invitation ID, not login name
+    expect(modal).toHaveTextContent("系統未自動寄送邀請；收件者是否收到尚未確認");
+    expect(modal).toHaveTextContent("複製成功不代表已交付或接受邀請");
     expect(screen.queryByTestId(`user-row-${accountId}`)).not.toBeInTheDocument();
   });
 

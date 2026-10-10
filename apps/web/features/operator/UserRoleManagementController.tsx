@@ -677,7 +677,7 @@ export function UserRoleManagementController({
                 </label>
                 <div style={{ display: "grid", gridTemplateColumns: isNewUser ? "1fr 1fr" : "1fr 1fr 1fr", gap: "10px" }}>
                   <div>
-                    <label style={{ fontSize: "11px", color: "#475569" }}>使用者 ID (Subject ID)</label>
+                    <label style={{ fontSize: "11px", color: "#475569" }}>{isNewUser ? "登入名稱 (Username)" : "使用者 ID (Subject ID)"}</label>
                     <input
                       type="text"
                       value={editSubjectId}
@@ -891,10 +891,11 @@ export function UserRoleManagementController({
           >
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px", color: "#16a34a" }}>
               <span style={{ fontSize: "20px" }}>✓</span>
-              <h3 style={{ margin: 0, fontSize: "16px", color: "#0f172a" }}>邀請已發出（一次性邀請憑證）</h3>
+              <h3 style={{ margin: 0, fontSize: "16px", color: "#0f172a" }}>邀請已建立（一次性邀請憑證）</h3>
             </div>
             <p style={{ fontSize: "13px", color: "#475569", marginBottom: "16px", lineHeight: "1.5" }}>
               登入名稱 <strong>{invitedCredentials.username}</strong> 的帳號尚未建立。請私下交付邀請 ID 與 token；收件者於 /auth/invitations 輸入並設定密碼，首次登入仍需改密碼。憑證僅顯示一次，請勿放入 URL、日誌或公開訊息。
+              <br />系統未自動寄送邀請；收件者是否收到尚未確認。複製成功不代表已交付或接受邀請。
               <br />邀請 ID：{invitedCredentials.invitationId}<br />到期時間：{invitedCredentials.expiresAt}
             </p>
             <div
