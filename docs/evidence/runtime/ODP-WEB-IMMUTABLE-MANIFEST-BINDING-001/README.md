@@ -45,7 +45,12 @@ Declared before implementation through the canonical status writer:
 uv run --frozen pytest tests/contract/test_web_release_manifest_binding.py tests/ops/test_conditional_oidc_deployment.py tests/ops/test_cloud_run_live_deployment.py tests/release/test_release_profile.py -q
 bash -n product_ops/deployment/deploy_cloud_run_waji.sh
 git diff --check origin/dev...HEAD
+uv run --frozen ruff check tests/contract/test_web_release_manifest_binding.py
+uv run --frozen python delivery_toolchain/governance/check_code_boundaries.py
 ```
+
+The last two preflight checks were added to the declaration after the initial
+anchor. The generated boundary inventory adds only this new test's row.
 
 The new contract executes the actual shell export and both actual inline
 stdlib serializers with isolated synthetic metadata; it never runs the deploy
@@ -56,7 +61,25 @@ by the existing `release_identity_failures` guard. Independently missing or
 mismatched API/Web SHA, profile and digest are refused without substitution.
 The offline readback projection is not an authenticated HTTP/BFF runtime test.
 
-Verification is pending at the initial anchor. Exact-head terminal exit codes
-and canonical verification receipts will be recorded before submission. Required
-remote CI and independent Codex2 approval remain mandatory; source tests alone
-are not live immutable-manifest acceptance or full-product/model/F11 acceptance.
+At source anchor `4a7b929e5f26012c4e2a25cf08d3e3826fd052d7`, the focused
+and existing deploy/profile suites completed with **exit 0** in 88.003 seconds;
+shell syntax and committed diff checks also exited 0. Pytest used double-quiet
+output with no numeric summary; skips and one existing Starlette deprecation
+warning are retained in receipt `cfca056fdead20b0`, not treated as live proof.
+The first attempt exited 127 because worker PATH omitted the installed user
+`uv`; that failed receipt is preserved. Recovery prepended
+`/home/lupin/.local/bin` and used `UV_PROJECT_ENVIRONMENT=$PANTHEON_STATUS_ROOT/.venv`
+with `UV_NO_SYNC=1`, so no dependency environment was mutated.
+
+Ruff passed. Boundary preflight initially refused the stale generated inventory;
+`uv run --frozen python delivery_toolchain/governance/check_code_boundaries.py
+--write-inventory` regenerated its single new test row and passed (1212 files).
+These are verification repairs, not policy exemptions.
+
+The final evidence/inventory commit is measured again at its **exact HEAD**
+before `task_finalize.sh`: `task_verification.py run` writes actual terminal
+exit-code/SHA/command receipts under `.orchestrator/evidence/verification-*`.
+Those ignored machine receipts and the canonical task note bind the submitted
+head without a circular self-SHA edit to this document. Required remote CI and
+independent Codex2 approval remain mandatory; source tests alone are not live
+immutable-manifest acceptance or full-product/model/F11 acceptance.
