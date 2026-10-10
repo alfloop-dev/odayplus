@@ -444,9 +444,13 @@ rollback-owned rollout orchestration remain independent coordinator obligations.
 
 The workflow now **consumes an already staged bundle**, never invokes the
 lifecycle/writer. It injects the secret only for `inputs.environment=dev` and
-the **admitted** `dev-admin` profile, not a deploy-time profile proposal. A
-populated dev secret therefore leaves normal `full` releases on their original
-credential/gate path. An explicitly supplied bundle outside that scope remains
+the **admitted** `dev-admin` profile, not a deploy-time profile proposal. The
+admitted profile is the same effective value as `ODP_RELEASE_PROFILE`: the manual
+`admission` output for `phase=deploy` OR the `automatic_admission` output for
+`phase=auto` (the skipped job's output is empty), so the standing automatic
+dev-admin release consumes the staged bundle exactly like a manual one. A
+populated dev secret therefore leaves normal `full` releases (manual or automatic)
+on their original credential/gate path. An explicitly supplied bundle outside that scope remains
 a strict preflight refusal; it is not silently ignored. Its strict memory-only
 reader rejects nonempty malformed,
 partial, duplicate-key or wrong-scope JSON before cloud mutation, with no legacy
@@ -459,6 +463,37 @@ quarantine or execution/plan/account mismatch blocks; a secret's presence alone
 cannot authorize recovery. No decoded pair enters shell, arguments, files or
 workflow outputs. Standing bundle creation provenance is not relabelled when a
 later admitted candidate uses it. Without a bundle the existing binding is unchanged.
+
+**Post-accepted-deploy path.** The supported activation does not need a second
+cloud rollout or a re-used consumed lease. Once the reviewed source is merged and
+the ordinary dev Runtime Release (normally the automatic `phase=auto` dev-admin
+run) has deployed and live-gated it, the trusted foreground coordinator builds
+`WebInvitationExecutor` with `DeployedDevReleaseObserver(repository=...)` instead
+of `ConsumedDevAdmissionObserver`. On every observation it re-reads GitHub's own
+dev deployment history through the canonical `automatic_dev.previous_deployment`
+(newest live-changing attempt decides; failed-after-commit, unproven restoration,
+expired artifacts or missing environment proof refuse), then re-applies
+`validate_manifest`/`validate_release_admission`, the exact SHA/digest, dev-admin
+profile and sources-off posture to the retained deployed manifest. A newer deploy
+of any other release during the lifecycle refuses and quarantines. It uses the
+operator's own `gh` authentication for the pinned repository, refuses inside an
+Actions run, issues/consumes no lease and dispatches nothing.
+`DevCredentialBundleExecutor.execute` then invites, accepts and stages the bundle
+against the already-serving release (the authenticated serving-pair readback,
+recorded consent and exact source/CI observers are unchanged). The next ordinary
+admitted dev-admin release consumes it and runs the unchanged finite gate with
+the fresh pure admin. `ForegroundDevSmokeRollout` refuses this observer: a deployed
+release's record never authorizes launching another rollout.
+
+**Existing account baseline.** The consent receipt's
+`preserve_existing_roles` list is an immutable historical record, not a state to
+force or restore. The executor reads the existing account freshly through the
+authenticated user inventory, requires the verified session principal to agree,
+and uses that ACTUAL state as the before-baseline; the after-readback must equal
+it exactly. The actual roles must keep `platform_admin` (the issuer) and stay
+within the recorded set (e.g. the observed `auditor`+`platform_admin` after its
+owner removed `operations_manager`). A role outside that bound or a change during
+execution refuses or quarantines; nothing is re-granted.
 
 `DevCredentialBundleExecutor.execute_and_check_gate` additionally composes the
 acknowledged lifecycle/binding with the canonical `evaluate_gate` in the **same
@@ -608,13 +643,15 @@ is not standing-binding activation or deployment proof.
 
 - `deploy-dev.yml` adds the build-phase input `release_profile` (`full` |
   `dev-admin`, default `full`), the admission job output `release_profile`,
-  and the deploy job env `ODP_RELEASE_PROFILE`, which comes from admission
-  only. The Cloud Run deploy step reads `vars.ODP_DEV_ADMIN_USERNAME`,
+  and the deploy job env `ODP_RELEASE_PROFILE`, which comes from the manual or
+  automatic admission output only. The Cloud Run deploy step reads `vars.ODP_DEV_ADMIN_USERNAME`,
   `secrets.ODP_DEV_ADMIN_PASSWORD`, optional `secrets.ODP_DEV_ADMIN_INITIAL_PASSWORD`,
   and `vars.ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE`. Optional dev-only secret
   `ODP_DEV_ADMIN_CREDENTIAL_BUNDLE` replaces the matched pair and suppresses every
   old initial/bootstrap fallback when present (§5.7); malformed bundles refuse
-  before mutation. It is consumed, never provisioned, by the workflow.
+  before mutation. It is injected only for dev with the same effective admitted
+  `dev-admin` profile (manual or automatic). It is consumed, never provisioned,
+  by the workflow; provisioning is the foreground post-accepted-deploy path.
 - `build_release_handoff.py --release-profile`. Its GitHub output adds
   `release_profile`.
 - `check_release_phase.py --release-profile` (default `full`) in the

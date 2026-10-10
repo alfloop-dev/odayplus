@@ -4,8 +4,10 @@ The pure validator checks a custodian's NON-SECRET proposed execution binding.
 The optional PostgreSQL journal reserves that exact plan once and can quarantine
 it after an uncertain result. Neither authenticates the custodian, verifies
 release human approval, proves mailbox ownership, or authorizes a cloud mutation.
-The Web lifecycle below requires a consumed-dev-admission observer pinned by
-the trusted foreground coordinator and rechecks it before mutations. Independent
+The Web lifecycle below requires a dev admission observer pinned by the trusted
+foreground coordinator and rechecks it before mutations: either the consumed
+exact-dev lease of a foreground rollout, or (post-accepted-deploy) a fresh read
+of the live dev release's own normal manual-or-automatic deployment record. Independent
 source approval is freshly observed through independently pinned GitHub PR/review/CI
 roots. The canonical recorded user consent and foreground-approved scoped plan
 are supported without another social approval or mailbox-deliverability ceremony.
@@ -497,6 +499,65 @@ class ConsumedDevAdmissionObserver:
         )
 
 
+class DeployedDevReleaseObserver:
+    """Fresh read of the CURRENT live dev release's own normal deployment record.
+
+    Post-accepted-deploy alternative to ``ConsumedDevAdmissionObserver``: an
+    ordinary Runtime Release (manual signed-lease deploy OR automatic standing
+    dev authority) already admitted, promoted and live-gated this exact release.
+    Nothing here issues, consumes or replays a lease, dispatches a workflow or
+    launches a second rollout. Every observation re-reads GitHub's deployment
+    history through the canonical ``automatic_dev.previous_deployment`` (newest
+    live-changing attempt decides; failed-after-commit or unproven restoration
+    refuses), then re-applies the canonical admission predicates to the retained
+    deployed manifest. A newer deploy of another release therefore refuses.
+
+    Foreground only: GitHub reads use the operator's own ``gh`` authentication
+    for the pinned repository. Inside an Actions run (``GITHUB_RUN_ID`` set) the
+    reader would exclude that run's own attempt, so it refuses instead. There is
+    no injectable reader, cached pass boolean or receipt-based alternative.
+    """
+
+    def __init__(self, *, repository: str) -> None:
+        if repository != REPOSITORY:
+            raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED")
+
+    def observe(self, *, release_sha: str, manifest_digest: str, now: datetime) -> None:
+        import os
+
+        from delivery_toolchain.release import automatic_dev
+        from delivery_toolchain.release.release_manifest import (
+            manifest_release_profile,
+            validate_manifest,
+            validate_release_admission,
+        )
+
+        try:
+            if (not _aware(now) or not isinstance(release_sha, str) or not _SHA.fullmatch(release_sha)
+                    or not isinstance(manifest_digest, str) or not _DIGEST.fullmatch(manifest_digest)
+                    or os.environ.get("GITHUB_REPOSITORY") != REPOSITORY
+                    or os.environ.get("GITHUB_RUN_ID")):
+                raise ValueError
+            found = automatic_dev.previous_deployment()
+            if found is None:
+                raise ValueError
+            manifest, run = found
+            if (validate_manifest(manifest, expected_candidate_sha=release_sha,
+                                  expected_digest=manifest_digest)
+                    or validate_release_admission(manifest, environment="dev")
+                    or manifest_release_profile(manifest) != "dev-admin"
+                    or manifest.get("external_sources_expected_enabled") != []
+                    or run.get("path") != automatic_dev.WORKFLOW
+                    or run.get("event") != "workflow_dispatch"
+                    or run.get("repository", {}).get("full_name") != REPOSITORY
+                    or run.get("head_repository", {}).get("full_name") != REPOSITORY
+                    or str(run.get("display_title", "")).split()[:3] != ["Runtime", "Release", "dev"]):
+                raise ValueError
+        except Exception:
+            # Never surface GitHub/gh output, artifact contents or Refused text.
+            raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED") from None
+
+
 def _journal_session(method: Any) -> Any:
     @wraps(method)
     def execute(self: Any, *args: Any, **kwargs: Any) -> Any:
@@ -697,7 +758,8 @@ class WebInvitationExecutor:
 
     def __init__(
         self, *, web: Any, web_origin: str, journal: ProvisioningJournal | RemoteProvisioningJournal,
-        admission: ConsumedDevAdmissionObserver, custody: RecordedUserAuthorization | GitHubCustodyApprovalObserver,
+        admission: ConsumedDevAdmissionObserver | DeployedDevReleaseObserver,
+        custody: RecordedUserAuthorization | GitHubCustodyApprovalObserver,
         source: GitHubSourceApprovalObserver,
     ) -> None:
         from urllib.parse import urlsplit
@@ -709,7 +771,7 @@ class WebInvitationExecutor:
                 or (type(journal) is RemoteProvisioningJournal
                     and (journal._web is not web or journal._origin != web_origin))):
             raise ProvisioningRefused("PROVISIONING_TRANSPORT_INVALID")
-        if type(admission) is not ConsumedDevAdmissionObserver:
+        if type(admission) not in (ConsumedDevAdmissionObserver, DeployedDevReleaseObserver):
             raise ProvisioningRefused("PROVISIONING_DEV_ADMISSION_UNVERIFIED")
         if type(custody) not in (RecordedUserAuthorization, GitHubCustodyApprovalObserver):
             raise ProvisioningRefused("PROVISIONING_CUSTODY_APPROVAL_UNVERIFIED")
@@ -1346,7 +1408,10 @@ class ForegroundDevSmokeRollout:
     """
 
     def __init__(self, *, binding: DevCredentialBundleExecutor) -> None:
-        if type(binding) is not DevCredentialBundleExecutor:
+        # A rollout needs its own consumed exact-dev admission. An already
+        # deployed release's record never authorizes a second cloud rollout.
+        if (type(binding) is not DevCredentialBundleExecutor
+                or type(binding._lifecycle._admission) is not ConsumedDevAdmissionObserver):
             raise ProvisioningRefused("PROVISIONING_ROLLOUT_CONFIG_INVALID")
         self._binding = binding
 

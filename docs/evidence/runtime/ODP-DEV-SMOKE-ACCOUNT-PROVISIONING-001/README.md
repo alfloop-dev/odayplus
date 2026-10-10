@@ -8,6 +8,52 @@ operation; it is not evidence that any account, credential binding or deployment
 changed. Exact-head required CI and independent Codex review remain mandatory.
 Earlier progress sections below are historical, not current readiness verdicts.
 
+## PR1448 re-review P1 repair + post-accepted-deploy path (2026-10-10, Claude2)
+
+Codex rejected exact head `d858e9511b655e326a3c385043971799e135322e`: bundle
+injection read only the manual `admission` output, so every automatic
+(`phase=auto`) dev-admin release received an empty bundle and fell back to the
+legacy pair. Green CI38048372207 at that head did not cover this wiring.
+
+- **Workflow.** `ODP_DEV_ADMIN_CREDENTIAL_BUNDLE` is now gated on the same
+  effective admitted profile as `ODP_RELEASE_PROFILE`:
+  `(needs.admission.outputs.release_profile || needs.automatic_admission.outputs.release_profile) == 'dev-admin'`,
+  still dev-only. Full (manual or automatic) stays non-injected; the shell's
+  strict malformed/explicitly-misplaced refusal is unchanged.
+- **Regression.** `tests/contract/test_runtime_release_workflow.py` evaluates the
+  workflow's own `if`/`outputs`/`env` expression text with a minimal Actions
+  `&&`/`||`/`==` evaluator (not a re-typed model): deploy/dev-admin,
+  deploy/full, auto/dev-admin, auto/full with a populated secret and distinct
+  manual/automatic job outputs (skipped job → empty output); staging/production
+  never receive it and non-dev auto never deploys. The real shell preflight is
+  parametrized by phase. Restoring the old expression fails four cases.
+- **Existing account baseline.** Pi's 12:06 fresh readback shows `ajoe734` now
+  has `auditor`+`platform_admin` (scope unchanged), so the hard-coded
+  consent-time triple made the executor unrunnable. The receipt list is now an
+  immutable upper bound: actual roles come from the fresh authenticated user
+  inventory, must agree with the verified principal, must keep
+  `platform_admin` and stay within the recorded set, and the after-readback must
+  equal that before-state exactly. Nothing is restored or re-granted; a
+  mid-lifecycle change quarantines (PostgreSQL/router regression).
+- **Post-accepted-deploy path.** `DeployedDevReleaseObserver` lets the existing
+  `WebInvitationExecutor`/`DevCredentialBundleExecutor` run against the release
+  that the ordinary (normally automatic) dev-admin Runtime Release already
+  deployed and gated. Every observation re-reads GitHub deployment history via the
+  canonical `automatic_dev.previous_deployment` and re-applies manifest/admission,
+  exact SHA/digest, dev-admin and sources-off checks; a newer deploy of another
+  release refuses/quarantines before PUT. No lease issue/consume, workflow dispatch,
+  shell or second rollout; `ForegroundDevSmokeRollout` refuses this observer. The
+  staged bundle is consumed by the next ordinary admitted dev-admin release (which
+  this workflow fix makes true for automatic runs).
+
+Declared verification runs once on the final head through
+`delivery_toolchain/git/task_verification.py`; per-command receipts (head,
+command, selection, exit, duration) live in `.orchestrator/evidence` and the
+task submission, not copied here. Exact-head required CI and independent Codex
+review remain prerequisites. No live login/account, secret/configuration, IAM,
+traffic or deployment action was performed by this worker; source delivery is
+not activation or deployment acceptance.
+
 ## PR1448 independent-review composition repair (2026-10-10)
 
 Codex rejected exact head `45370d65e218e8e247d0c17d25afafbb94774529`:

@@ -2482,3 +2482,201 @@ def test_foreground_rollout_refuses_before_shell_or_live_login(
             gcp_project="offline-project", deploy_env=env, report_path=tmp_path / "gate.json", **args,
         )
     assert not web.calls and not github.calls and journal.inspect() is None
+
+
+@pytest.fixture
+def deployed_dev_release(consumed_dev_admission: Any, monkeypatch: Any) -> Any:
+    """Canonical deployment-history reader over an OFFLINE GitHub API spy.
+
+    ``automatic_dev.previous_deployment`` and its artifact/attempt/environment
+    proofs are real; only the ``gh api`` transport is replaced.
+    """
+    from types import SimpleNamespace
+
+    from delivery_toolchain.release import automatic_dev as auto
+    from tests.release.test_automatic_dev_deployment import deploy_run, fake_api
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "alfloop-dev/odayplus")
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    manifest = consumed_dev_admission["manifest"]
+    seen: list[str] = []
+
+    def install(mode: str = "auto", **kwargs: Any) -> None:
+        kwargs.setdefault("run", deploy_run(display_title=f"Runtime Release dev {mode} {manifest['candidate_sha']}"))
+        monkeypatch.setattr(auto, "api", fake_api(manifest, seen=seen, **kwargs))
+
+    install()
+    return SimpleNamespace(manifest=manifest, install=install, seen=seen, sha=manifest["candidate_sha"],
+                           digest=manifest["manifest_digest"], now=consumed_dev_admission["now"])
+
+
+def _other_deployed_release(manifest: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """A NEWER completed dev deploy of a different release, plus its record."""
+    from copy import deepcopy
+
+    from delivery_toolchain.release import automatic_dev as auto
+    from delivery_toolchain.release.release_manifest import compute_manifest_digest
+    from tests.release.test_automatic_dev_deployment import deploy_run
+
+    other = deepcopy(manifest)
+    other["candidate_sha"] = "f" * 40
+    other["manifest_digest"] = compute_manifest_digest(other)
+    old = deploy_run(display_title=f"Runtime Release dev auto {manifest['candidate_sha']}")
+    new = deploy_run(id=91, display_title=f"Runtime Release dev auto {other['candidate_sha']}")
+    job = {"name": auto.DEPLOY_JOB, "conclusion": "success"}
+    return other, dict(runs=[new, old], run_manifests={91: other}, run_jobs={
+        (91, 1): [{**job, "completed_at": "2026-10-10T13:00:00Z"}],
+        (90, 1): [{**job, "completed_at": "2026-10-10T12:00:00Z"}],
+    })
+
+
+@pytest.mark.parametrize("mode", ["auto", "deploy"])
+def test_deployed_release_observer_rereads_manual_or_automatic_live_record(
+    deployed_dev_release: Any, monkeypatch: Any, mode: str,
+) -> None:
+    import subprocess
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        REPOSITORY,
+        DeployedDevReleaseObserver,
+    )
+    d = deployed_dev_release
+    d.install(mode)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("observer launched a process"))
+    observer = DeployedDevReleaseObserver(repository=REPOSITORY)
+    observer.observe(release_sha=d.sha, manifest_digest=d.digest, now=d.now)
+    first = len(d.seen)
+    assert first and any(path.endswith("/zip") for path in d.seen)
+    # No cached pass: every observation re-reads history and the artifact.
+    observer.observe(release_sha=d.sha, manifest_digest=d.digest, now=d.now)
+    assert len(d.seen) == 2 * first
+    assert not any("dispatches" in path or "lease" in path for path in d.seen)
+
+
+@pytest.mark.parametrize("fault", [
+    "sha", "digest", "full-profile", "newer-release", "failed-live-step", "no-deployment",
+    "github-unavailable", "inside-actions", "foreign-repository", "naive-clock",
+])
+def test_deployed_release_observer_refuses_without_echo(
+    deployed_dev_release: Any, monkeypatch: Any, fault: str,
+) -> None:
+    from copy import deepcopy
+
+    from delivery_toolchain.release import automatic_dev as auto
+    from delivery_toolchain.release.provision_dev_smoke import (
+        REPOSITORY,
+        DeployedDevReleaseObserver,
+        ProvisioningRefused,
+    )
+    from delivery_toolchain.release.release_manifest import compute_manifest_digest
+    from tests.release.test_automatic_dev_deployment import deploy_run, fake_api
+
+    d = deployed_dev_release
+    sha, digest, now = d.sha, d.digest, d.now
+    if fault == "sha":
+        sha = "f" * 40
+    elif fault == "digest":
+        digest = "sha256:" + "0" * 64
+    elif fault == "full-profile":
+        full = deepcopy(d.manifest)
+        full.pop("release_profile")
+        full["manifest_digest"] = digest = compute_manifest_digest(full)
+        monkeypatch.setattr(auto, "api", fake_api(
+            full, run=deploy_run(display_title=f"Runtime Release dev auto {sha}")))
+    elif fault == "newer-release":
+        _, history = _other_deployed_release(d.manifest)
+        d.install(**history)
+    elif fault == "failed-live-step":
+        d.install(job_result="failure")
+    elif fault == "no-deployment":
+        d.install(job_result=None)
+    elif fault == "github-unavailable":
+        def unavailable(path: str, **kwargs: Any) -> Any:
+            raise auto.Refused("private-gh-error-output")
+        monkeypatch.setattr(auto, "api", unavailable)
+    elif fault == "inside-actions":
+        monkeypatch.setenv("GITHUB_RUN_ID", "38044574206")
+    elif fault == "foreign-repository":
+        monkeypatch.setenv("GITHUB_REPOSITORY", "foreign/repository")
+    else:
+        now = now.replace(tzinfo=None)
+    with pytest.raises(ProvisioningRefused) as error:
+        DeployedDevReleaseObserver(repository=REPOSITORY).observe(
+            release_sha=sha, manifest_digest=digest, now=now)
+    assert str(error.value) == "PROVISIONING_DEV_ADMISSION_UNVERIFIED"
+    assert error.value.__cause__ is None and "private" not in str(error.value)
+
+
+def test_deployed_release_observer_pins_repository() -> None:
+    from delivery_toolchain.release.provision_dev_smoke import (
+        DeployedDevReleaseObserver,
+        ProvisioningRefused,
+    )
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_DEV_ADMISSION_UNVERIFIED"):
+        DeployedDevReleaseObserver(repository="foreign/repository")
+
+
+def test_post_deploy_binding_invites_accepts_and_stages_without_rollout(
+    encrypted_binding: Any, deployed_dev_release: Any, monkeypatch: Any,
+) -> None:
+    """Already-deployed normal release -> invite/accept/encrypted staging.
+
+    No lease consumption, workflow dispatch, shell or second rollout. The
+    staged bundle is consumed later by an ordinary admitted dev-admin deploy.
+    """
+    import subprocess
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        REPOSITORY,
+        DeployedDevReleaseObserver,
+        ForegroundDevSmokeRollout,
+        ProvisioningRefused,
+    )
+    s, web, journal, binding, remote, _, plan, args = encrypted_binding
+    binding._lifecycle._admission = DeployedDevReleaseObserver(repository=REPOSITORY)
+    # A deployed release's record never authorizes launching another rollout.
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_ROLLOUT_CONFIG_INVALID"):
+        ForegroundDevSmokeRollout(binding=binding)
+    before = _snapshot(s)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("post-deploy path launched a process"))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("post-deploy path launched a process"))
+    receipt = binding.execute(plan, **args)
+    assert receipt["stage"] == "binding-acknowledged" and len(remote.uploads) == 1
+    assert receipt["release_sha"] == deployed_dev_release.sha
+    assert not receipt["deployment_success"] and not receipt["live_gate_passed"]
+    assert any(path.endswith("/zip") for path in deployed_dev_release.seen)
+    assert journal.inspect().stage == "reserved" and binding.inspect()["stage"] == "binding-acknowledged"
+    after = _snapshot(s)
+    assert {k: v for k, v in before.items() if k != "sessions"} == {k: v for k, v in after.items() if k != "sessions"}
+    assert s.audit.verify_chain().ok
+
+
+def test_post_deploy_binding_newer_deploy_mid_lifecycle_quarantines_before_put(
+    encrypted_binding: Any, deployed_dev_release: Any, monkeypatch: Any,
+) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import (
+        REPOSITORY,
+        DeployedDevReleaseObserver,
+        ProvisioningRefused,
+    )
+    s, web, journal, binding, remote, _, plan, args = encrypted_binding
+    binding._lifecycle._admission = DeployedDevReleaseObserver(repository=REPOSITORY)
+    _, history = _other_deployed_release(deployed_dev_release.manifest)
+    original_request = web.request
+
+    def request(method: str, path: str, **kwargs: Any) -> Any:
+        response = original_request(method, path, **kwargs)
+        if method == "POST" and path == PATH:
+            deployed_dev_release.install(**history)  # another release went live
+        return response
+
+    monkeypatch.setattr(web, "request", request)
+    # The lifecycle itself quarantines its reservation; no binding intent exists.
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_BINDING_REFUSED") as error:
+        binding.execute(plan, **args)
+    assert error.value.__cause__ is None and binding.inspect() is None
+    assert not remote.uploads and ("POST", "/auth/invitations") not in web.calls
+    assert journal.inspect().stage == "recovery-required"
+    with pytest.raises(ProvisioningRefused):
+        binding.execute(plan, **args)
+    assert web.calls.count(("POST", PATH)) == 1 and not remote.uploads
