@@ -998,6 +998,9 @@ payload = {
     # Normalised to full|dev-admin at the top of this script; the default only
     # matters when this serializer is exercised on its own.
     "ODP_RELEASE_PROFILE": os.environ.get("ODP_RELEASE_PROFILE", "full"),
+    # Same admitted MANIFEST_DIGEST export as the API; never infer Web identity
+    # from an API response. Missing metadata stays empty and fails strict readback.
+    "ODP_RELEASE_MANIFEST_DIGEST": os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""),
     "ODP_REQUIRE_LIVE_DATA": os.environ["ODP_REQUIRE_LIVE_DATA"],
     "ODP_DATA_BINDING_MODE": os.environ["ODP_DATA_BINDING_MODE"],
     "ODP_PRODUCT_MODE": os.environ["ODP_PRODUCT_MODE"],
