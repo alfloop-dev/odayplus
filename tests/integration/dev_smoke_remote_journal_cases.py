@@ -15,8 +15,10 @@ def _recorded_authorization(plan: Any) -> Any:
     from pathlib import Path
 
     from delivery_toolchain.release.provision_dev_smoke import RecordedUserAuthorization
-    record = json.loads(Path(
-        "support/handoffs/dev-smoke-principal-isolation-20261009/USER-AUTHORIZATION-20261010.json"
+    # The tracked sanitized copy is available in a clean CI checkout; the
+    # foreground support handoff is intentionally untracked worker context.
+    record = json.loads((Path(__file__).resolve().parents[2] /
+        "docs/evidence/runtime/ODP-DEV-SMOKE-ACCOUNT-PROVISIONING-001/USER-AUTHORIZATION-20261010.json"
     ).read_text())
     # Explicit OFFLINE projection, not approval for these test IDs.
     record["approved_scope"]["tenant_id"] = plan["tenant_id"]

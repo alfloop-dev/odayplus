@@ -213,7 +213,9 @@ API_SEGMENT_MARKERS = (
 # Web candidate deploy -> smoke -> promotion -> public invoker wait -> live E2E gate.
 WEB_SEGMENT_MARKERS = (
     'echo "Deploying immutable Web candidate',
-    '--output "${LIVE_E2E_REPORT}"',
+    # Include the closing branch of the foreground socket / normal gate
+    # conditional, not just the last argv line inside its else branch.
+    '--output "${LIVE_E2E_REPORT}"\nfi',
 )
 
 HARNESS = r"""

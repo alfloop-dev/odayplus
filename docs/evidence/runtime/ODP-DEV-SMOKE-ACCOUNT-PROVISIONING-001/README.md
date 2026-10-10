@@ -8,6 +8,41 @@ operation; it is not evidence that any account, credential binding or deployment
 changed. Exact-head required CI and independent Codex review remain mandatory.
 Earlier progress sections below are historical, not current readiness verdicts.
 
+## Clean-checkout CI composition repair (2026-10-10)
+
+The original run38039097879 is now **completed/failure**, including
+product-lint-unit job114175628362. Its original failed log establishes eleven
+missing-untracked-authorization fixture errors, same-engine audit composition
+failures (including preflight), eight incomplete extracted-shell failures and
+an obsolete two-inline-Python assertion. The already anchored login-budget /
+SBOM / NOTICE repair addresses its separate security failures; no original
+failure is relabelled as passing.
+
+The offline authorization projection now reads the **tracked sanitized evidence
+copy**, rooted at the test file, not worker-seeded support context. Production
+consent provenance is unchanged. Production-shaped composition doubles now
+construct the actual `DurableAuditLog` on their own probe engine and explicitly
+provide offline schema metadata. Unreachable engines still refuse runtime
+queries. No invitation audit guard or permission check is weakened. The shell
+harness extracts the closing `fi` as well as the normal gate argv; the locked-
+Python test allows the fixed stdlib-only socket hook only after AST checking
+all inline imports. These are offline composition checks, never live evidence.
+
+The narrow validator/test contacts were communicated on PR1450 and canonical
+startup-task notes. At edit time that task was frozen in `review` with no active
+helper lease. No startup retry implementation or appended PR1450 tests were
+changed. Both PRs must preserve these disjoint changes during base composition.
+Canonical scope and verification declarations now include only the six affected
+regression files, not a full-suite local rerun. New-head terminal receipts and
+required CI are still pending at this anchor.
+
+Current canonical coordinator context reports a **separate** audited removal of
+operations_manager from ajoe734 at08:42; the historical three-role preservation
+record is not a fresh live baseline. This worker does not restore roles, log in,
+create/bind an account or run a second rollout. The foreground preservation
+preflight must fail closed on a changed baseline; source delivery cannot claim
+present live preservation or deployment acceptance.
+
 ## PR #1448 security CI repair (2026-10-10)
 
 Fetched canonical `origin/dev` remains `0dd210dbe04fb420825abbddc08c8d3141de9ab1`.

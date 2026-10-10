@@ -17,6 +17,7 @@ from modules.opsboard.application.operator_live_repository import OperatorLiveRe
 from shared.infrastructure.persistence.assisted_listing_intake import (
     DurableAssistedIntakeStore,
 )
+from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
 
 
@@ -26,7 +27,12 @@ class _ProductionStubEngine:
     is_production = True
     dialect = "postgresql"
 
-    def query(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+    def query(self, sql: str, *_args: Any, **_kwargs: Any) -> list[Any]:
+        if sql == "PRAGMA table_info(durable_audit_events)":
+            return [{"name": name} for name in (
+                "sequence", "previous_hash", "event_hash", "signature_key_id",
+                "signature_version", "signature_alg", "worm_sink_id",
+            )]
         return []
 
     def query_one(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
@@ -34,7 +40,11 @@ class _ProductionStubEngine:
 
 
 class _UnreachableStubEngine(_ProductionStubEngine):
-    def query(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+    def query(self, sql: str, *_args: Any, **_kwargs: Any) -> list[Any]:
+        # Offline schema metadata allows construction; every runtime probe
+        # still fails. This is not evidence of a reachable database.
+        if sql == "PRAGMA table_info(durable_audit_events)":
+            return super().query(sql)
         raise ConnectionError("database unreachable")
 
     def query_one(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
@@ -46,6 +56,7 @@ def _production_like_bundle(engine: Any) -> Any:
         _memory_bundle(),
         mode="postgresql",
         engine=engine,
+        audit_log=DurableAuditLog(engine),
         assisted_intake_store=DurableAssistedIntakeStore(SimpleNamespace(engine=engine)),
     )
 
