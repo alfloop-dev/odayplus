@@ -1017,6 +1017,16 @@ def test_binding_uncertain_or_partial_remote_result_never_retries(encrypted_bind
     assert binding.inspect()["stage"] == journal.inspect().stage == "recovery-required"
     assert len([c for c in remote.calls if c[0] == "PUT"]) == 1
     assert len(remote.uploads) == (0 if fault == "refused" else 1)
+    if remote.uploads:
+        import base64
+        from nacl.public import SealedBox
+        from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, credential_bundle_acknowledged
+        # Even a remote-committed secret from a lost reply must NOT activate a
+        # quarantined root when a subsequent normal workflow sees the bundle.
+        bundle = json.loads(SealedBox(encrypted_binding[5]).decrypt(
+            base64.b64decode(remote.uploads[0]["encrypted_value"])))
+        consumed = read_dev_credential_bundle(json.dumps(bundle), environment="dev", release_profile="dev-admin")
+        assert not credential_bundle_acknowledged(consumed, s.service.get_audit_trail(tenant_id=TENANT))
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(2,)]
     assert _snapshot(s)["password_credentials"] == before["password_credentials"]
     restarted = DevCredentialBundleExecutor(lifecycle=binding._lifecycle, store=binding._store)

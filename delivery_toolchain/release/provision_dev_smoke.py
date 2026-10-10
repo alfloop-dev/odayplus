@@ -670,7 +670,7 @@ def credential_bundle_acknowledged(bundle: DevCredentialBundle, events: list[Any
                         or m["execution_id"] != bundle.execution_id or m["execution_authorized"] is not False
                         or m["secret_values_redacted"] is not True or not _SHA.fullmatch(m["release_sha"])
                         or not _DIGEST.fullmatch(m["manifest_digest"])
-                        or not re.fullmatch(r"[0-9a-f]{64}", m["plan_digest"])):
+                        or not _DIGEST.fullmatch(m["plan_digest"])):
                     return False
                 if cls is DevCredentialBundleExecutor and (
                         m["account_id"] != bundle.account_id or m["secret_name"] != GitHubDevSecretStore.NAME

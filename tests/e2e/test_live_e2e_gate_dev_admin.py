@@ -1768,7 +1768,7 @@ def test_gate_cli_malformed_bundle_refuses_before_network_or_output(monkeypatch:
 def bundle_journal_events() -> list[dict[str, Any]]:
     from delivery_toolchain.release.provision_dev_smoke import AUTHORIZATION_ID, ProvisioningJournal, DevCredentialBundleExecutor
     common = {"authorization_id": AUTHORIZATION_ID, "execution_id": credential_bundle_input()["execution_id"],
-              "plan_digest": "0" * 64, "release_sha": "b" * 40, "manifest_digest": "sha256:" + "a" * 64,
+              "plan_digest": "sha256:" + "0" * 64, "release_sha": "b" * 40, "manifest_digest": "sha256:" + "a" * 64,
               "tenant_id": ADMIN_TENANT_ID, "execution_authorized": False, "secret_values_redacted": True}
     events = []
     for i, (cls, stage) in enumerate(((ProvisioningJournal, "reserved"),
@@ -1806,7 +1806,7 @@ def test_gate_matches_bundle_account_and_requires_real_invitation(mismatch: str)
     elif mismatch == "wrong_execution":
         journals[-1]["metadata"]["execution_id"] = INVITATION_ID
     elif mismatch == "wrong_plan":
-        journals[-1]["metadata"]["plan_digest"] = "f" * 64
+        journals[-1]["metadata"]["plan_digest"] = "sha256:" + "f" * 64
     elif mismatch == "duplicate_ack":
         journals.append(deepcopy(journals[-1]))
     elif mismatch == "claimed_verified":

@@ -441,7 +441,10 @@ is not standing-binding activation or deployment proof.
   and the deploy job env `ODP_RELEASE_PROFILE`, which comes from admission
   only. The Cloud Run deploy step reads `vars.ODP_DEV_ADMIN_USERNAME`,
   `secrets.ODP_DEV_ADMIN_PASSWORD`, optional `secrets.ODP_DEV_ADMIN_INITIAL_PASSWORD`,
-  and `vars.ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE`.
+  and `vars.ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE`. Optional dev-only secret
+  `ODP_DEV_ADMIN_CREDENTIAL_BUNDLE` replaces the matched pair and suppresses every
+  old initial/bootstrap fallback when present (§5.7); malformed bundles refuse
+  before mutation. It is consumed, never provisioned, by the workflow.
 - `build_release_handoff.py --release-profile`. Its GitHub output adds
   `release_profile`.
 - `check_release_phase.py --release-profile` (default `full`) in the
