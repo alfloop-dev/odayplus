@@ -1,10 +1,11 @@
-"""Foreground dev-smoke provisioning preflight; deliberately no executor/CLI yet.
+"""Foreground preflight and internal reservation journal; no executor/CLI yet.
 
-This pure validator checks a custodian's NON-SECRET proposed execution binding.
-It does not authenticate that custodian, verify release admission, consume a
-one-time authorization, prove mailbox ownership, or authorize a cloud mutation.
-Those controls must be implemented before any caller can issue/accept an invite
-or bind credentials. Default workflows do not import or invoke this module.
+The pure validator checks a custodian's NON-SECRET proposed execution binding.
+The optional PostgreSQL journal reserves that exact plan once and can quarantine
+it after an uncertain result. Neither authenticates the custodian, verifies
+release admission/human approval, proves mailbox ownership, or authorizes a cloud
+mutation. Those controls must be implemented before any caller can issue/accept
+an invite or bind credentials. Default workflows do not invoke this module.
 
 Account input must come from the existing authenticated identity readback, not
 caller headers or an offline receipt. Credentials/capabilities are not accepted
@@ -13,11 +14,17 @@ in a plan and must remain exclusively in the eventual executor's memory.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
+
+from shared.audit import AuditEvent
+from shared.infrastructure.persistence.audit_log import DurableAuditLog
+from shared.infrastructure.persistence.postgresql import PostgresEngine
 
 AUTHORIZATION_ID = "HUMAN-ODP-DEV-SMOKE-20261010-001"
 REPOSITORY = "alfloop-dev/odayplus"
@@ -100,7 +107,7 @@ def validate_foreground_plan(
     A matching authorization_id is just a reference to the bounded human scope.
     Neither it nor recipient_control/recipient_custodian authenticates approval.
     The future foreground orchestrator must independently verify those facts and
-    durably consume execution_id against this exact tuple before any mutation.
+    durably reserve this exact tuple before any account/configuration mutation.
     """
     if (not isinstance(plan, dict) or set(plan) != _PLAN_KEYS
             or not all(type(value) is str for value in plan.values())
@@ -142,3 +149,165 @@ def validate_foreground_plan(
     # verified delivery. Explicit owner-controlled custody still needs proof.
     return ForegroundPlan(execution_id, release_sha, manifest_digest, username,
                           email, plan["recipient_custodian"], expires_at)
+
+
+@dataclass(frozen=True)
+class JournalReservation:
+    """Internal bookkeeping only; never a bearer capability or approval proof."""
+
+    execution_id: str
+    plan_digest: str
+    event_id: str
+    stage: str
+
+    def to_receipt(self) -> dict[str, Any]:
+        return {**vars(self), "authorization_id": AUTHORIZATION_ID,
+                "execution_authorized": False, "secret_values_redacted": True}
+
+
+class ProvisioningJournal:
+    """Append-only reservation/quarantine, NOT an executor or authorization check.
+
+    A future trusted foreground executor must independently authenticate the
+    human/custodian/admission and live account readback BEFORE reserving. A plan,
+    digest or journal receipt alone grants nothing. This class changes only the
+    existing durable audit journal, never identity rows or GitHub configuration.
+
+    The root authorization (not just the chosen UUID) may be reserved once across
+    processes. A crash, expiry or uncertain remote result never releases it for
+    a fresh account/binding attempt. Recovery is explicit readback/quarantine;
+    there is intentionally no reset, retry or resume API in this increment.
+    """
+
+    _CORRELATION = f"dev-smoke-provisioning:{AUTHORIZATION_ID}"
+    _ACTOR = "system:dev-smoke-provisioning-journal"
+    _TYPE = "release.dev_smoke.reservation"
+    _KEYS = frozenset({
+        "authorization_id", "execution_id", "plan_digest", "release_sha", "manifest_digest",
+        "tenant_id", "stage", "execution_authorized", "secret_values_redacted",
+    })
+
+    def __init__(self, *, engine: PostgresEngine, audit_log: DurableAuditLog) -> None:
+        if (not isinstance(engine, PostgresEngine) or not isinstance(audit_log, DurableAuditLog)
+                or audit_log._engine is not engine):
+            raise ProvisioningRefused("PROVISIONING_JOURNAL_PERSISTENCE_REQUIRED")
+        self._engine = engine
+        self._audit = audit_log
+
+    def _lock(self) -> None:
+        self._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (self._CORRELATION,))
+
+    def _now(self) -> datetime:
+        return datetime.fromisoformat(self._engine.query_one("SELECT clock_timestamp() AS now")["now"])
+
+    def _events(self) -> list[AuditEvent]:
+        # Existing correlation-index read verifies each event's signed integrity.
+        events = self._audit.list_events(correlation_id=self._CORRELATION)
+        if len(events) > 2:
+            raise ProvisioningRefused("PROVISIONING_JOURNAL_INVALID")
+        for index, event in enumerate(events):
+            metadata = event.metadata
+            if (event.event_type != self._TYPE or event.actor != self._ACTOR
+                    or event.resource != self._CORRELATION or event.outcome != "success"
+                    or event.action != "DEV_SMOKE_RESERVATION"
+                    or set(metadata) != self._KEYS
+                    or metadata["authorization_id"] != AUTHORIZATION_ID
+                    or metadata["tenant_id"] != TENANT_ID
+                    or metadata["stage"] != ("reserved" if index == 0 else "recovery-required")
+                    or metadata["execution_authorized"] is not False
+                    or metadata["secret_values_redacted"] is not True):
+                raise ProvisioningRefused("PROVISIONING_JOURNAL_INVALID")
+            if index and {k: v for k, v in metadata.items() if k != "stage"} != {
+                k: v for k, v in events[0].metadata.items() if k != "stage"
+            }:
+                raise ProvisioningRefused("PROVISIONING_JOURNAL_INVALID")
+        return events
+
+    @staticmethod
+    def _receipt(event: AuditEvent) -> JournalReservation:
+        return JournalReservation(event.metadata["execution_id"], event.metadata["plan_digest"],
+                                  event.event_id, event.metadata["stage"])
+
+    def reserve(
+        self, plan: Any, *, original_account: Any, release_sha: str, manifest_digest: str,
+    ) -> JournalReservation:
+        """Atomic exact-plan reservation using DB time, not caller/workflow time.
+
+        Even an identical second request is refused: no idempotent response may
+        be mistaken for permission to repeat a remote side effect. All plan
+        fields (including recipient, custodian, expiry and release tuple) are
+        hashed together in memory; no email or arbitrary input reaches audit.
+        """
+        try:
+            with self._engine.lock:
+                self._lock()
+                now = self._now()
+                checked = validate_foreground_plan(
+                    plan, original_account=original_account, release_sha=release_sha,
+                    manifest_digest=manifest_digest, now=now,
+                )
+                if self._events():
+                    raise ProvisioningRefused("PROVISIONING_ALREADY_RESERVED")
+                digest = "sha256:" + hashlib.sha256(json.dumps(
+                    plan, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+                ).encode()).hexdigest()
+                event = self._audit.record(AuditEvent(
+                    event_type=self._TYPE, actor=self._ACTOR, action="DEV_SMOKE_RESERVATION",
+                    resource=self._CORRELATION, correlation_id=self._CORRELATION,
+                    outcome="success", occurred_at=now,
+                    metadata={
+                        "authorization_id": AUTHORIZATION_ID, "execution_id": checked.execution_id,
+                        "plan_digest": digest, "release_sha": checked.release_sha,
+                        "manifest_digest": checked.manifest_digest, "tenant_id": TENANT_ID,
+                        "stage": "reserved", "execution_authorized": False,
+                        "secret_values_redacted": True,
+                    },
+                ))
+                receipt = self._receipt(event)
+            # Return only after commit; an audit failure/commit failure is not success.
+            return receipt
+        except ProvisioningRefused:
+            raise
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_JOURNAL_UNAVAILABLE") from None
+
+    def inspect(self) -> JournalReservation | None:
+        """Read-only restart evidence; never permission to retry a reservation."""
+        try:
+            with self._engine.lock:
+                self._lock()
+                events = self._events()
+                return self._receipt(events[-1]) if events else None
+        except ProvisioningRefused:
+            raise
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_JOURNAL_UNAVAILABLE") from None
+
+    def require_recovery(self, reservation: JournalReservation) -> JournalReservation:
+        """Quarantine the exact reserved tuple after any uncertain external result.
+
+        Can be recorded after expiry. Does not accept free-form error text,
+        tokens, password, email or remote response bodies. There is no automatic
+        compensating password reset, account deletion or configuration rollback.
+        """
+        try:
+            with self._engine.lock:
+                self._lock()
+                events = self._events()
+                if (not events or not isinstance(reservation, JournalReservation)
+                        or reservation != self._receipt(events[0])):
+                    raise ProvisioningRefused("PROVISIONING_RESERVATION_MISMATCH")
+                if len(events) != 1:
+                    raise ProvisioningRefused("PROVISIONING_RECOVERY_ALREADY_RECORDED")
+                event = self._audit.record(AuditEvent(
+                    event_type=self._TYPE, actor=self._ACTOR, action="DEV_SMOKE_RESERVATION",
+                    resource=self._CORRELATION, correlation_id=self._CORRELATION,
+                    outcome="success", occurred_at=self._now(),
+                    metadata={**events[0].metadata, "stage": "recovery-required"},
+                ))
+                receipt = self._receipt(event)
+            return receipt
+        except ProvisioningRefused:
+            raise
+        except Exception:
+            raise ProvisioningRefused("PROVISIONING_JOURNAL_UNAVAILABLE") from None

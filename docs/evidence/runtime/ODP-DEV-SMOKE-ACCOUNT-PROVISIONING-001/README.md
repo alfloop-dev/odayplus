@@ -415,3 +415,43 @@ independent Codex review remain incomplete. No new live execution is enabled.
 The base receipts above do not attest this later source increment; it needs its
 own measured head. No account, password, other session, IAM, source/model,
 secret/configuration or deployment was accessed or changed by this worker.
+
+## Internal reservation journal increment (2026-10-10, not execution approval)
+
+`provision_dev_smoke.py` now includes an **internal PostgreSQL reservation
+journal** alongside the pure preflight. It is not an executor, CLI, HTTP endpoint,
+workflow hook or human/custodian verifier. Neither its constructor, plan digest,
+receipt nor stored event authorizes account creation or a GitHub mutation.
+The eventual trusted foreground orchestrator must independently authenticate the
+human approval/custodian, admission tuple and fresh original-account readback
+before calling it. Recipient-control assertions remain assertions, not proof.
+
+The journal revalidates the complete plan against DB time while holding a
+transactional advisory lock keyed by the root authorization. It hashes all plan
+fields together in memory (including recipient/custodian, execution UUID, exact
+candidate/manifest and expiry), then appends one same-engine durable audit event.
+No clear email, credentials, capability, arbitrary error or remote payload is
+persisted. System journal attribution deliberately does not impersonate the
+existing administrator or claim that a server-authenticated admin acted.
+
+A second reservation is refused even with an identical request, different UUID,
+new candidate or recipient. Audit/commit errors cannot return a success receipt.
+A restart can inspect the integrity-verified record and append an exact-reservation
+`recovery-required` quarantine after expiry, but cannot release/reset/retry the
+root or automatically reset a password, delete an account or roll back secrets.
+This is bookkeeping, **not a completed encrypted binding/recovery implementation**.
+Receipts continue to say `execution_authorized=false`.
+
+Declared integration coverage adds independent-PG-pool concurrency, root replay
+with changed tuple/recipient, DB-clock expiry, secret-bearing plan rejection,
+append-then-fail transaction rollback, restart/readback, exact reservation mismatch,
+failed quarantine rollback and tampered audit refusal. Process/invitation spies
+and original identity-table snapshots prove this layer does not invoke a worker,
+CLI or invitation/account operation. All inputs remain offline test fixtures;
+no live identity or configuration was inspected or changed.
+
+New-head verification is recorded separately after this source anchor. Trusted
+foreground approval/custody, memory-only Web invite/accept, encrypted matched
+GitHub dev binding and recovery, promoted-before-unchanged-gate orchestration,
+required exact-head CI, independent Codex review and formal review submission
+remain outstanding. PR1445 deployment/inventory is untouched. Not review-ready.

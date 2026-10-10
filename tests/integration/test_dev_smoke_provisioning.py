@@ -508,3 +508,216 @@ def test_foreground_preflight_requires_exact_original_inventory(foreground_plan_
         context["now"] = context["now"].replace(tzinfo=None)
     with pytest.raises(ProvisioningRefused):
         validate_foreground_plan(plan, **context)
+
+
+@pytest.fixture
+def provisioning_journal(invitations: Any, foreground_plan_input: Any) -> Any:
+    """Real PG journal with OFFLINE proposed inputs, not foreground approval."""
+    from datetime import datetime, timedelta
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningJournal
+    s = invitations
+    plan, context = foreground_plan_input
+    now = datetime.fromisoformat(s.engine.query_one("SELECT clock_timestamp() AS now")["now"])
+    plan["expires_at"] = (now + timedelta(minutes=30)).isoformat()
+    context.pop("now")
+    return s, ProvisioningJournal(engine=s.engine, audit_log=s.audit), plan, context
+
+
+def test_journal_reservation_is_nonsecret_bookkeeping_not_account_creation(
+    provisioning_journal: Any, monkeypatch: Any,
+) -> None:
+    import subprocess
+    s, journal, plan, context = provisioning_journal
+    before = _snapshot(s)
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("journal launched an executor or an identity lifecycle operation")
+
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(InvitationService, "issue", forbidden)
+    monkeypatch.setattr(InvitationService, "accept", forbidden)
+    assert journal.inspect() is None
+    reserved = journal.reserve(plan, **context)
+    assert reserved.stage == "reserved" and reserved.execution_id == plan["execution_id"]
+    assert reserved.plan_digest.startswith("sha256:")
+    assert journal.inspect() == reserved
+    events = s.audit.list_events(correlation_id=journal._CORRELATION)
+    assert len(events) == 1
+    assert events[0].actor != context["original_account"]["subject_id"]
+    encoded = json.dumps({"events": [e.metadata for e in events], "receipt": reserved.to_receipt()})
+    assert plan["email"] not in encoded and plan["recipient_custodian"] not in encoded
+    assert reserved.to_receipt()["execution_authorized"] is False
+    assert "deployment_success" not in encoded and "account_created" not in encoded
+    assert _snapshot(s) == before
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+    assert _q(s, "SELECT count(*) FROM identity.invitations") == [(0,)]
+    assert s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("change", [None, "execution_id", "release_sha", "email", "username", "recipient_custodian"])
+def test_journal_root_can_never_be_reserved_twice(provisioning_journal: Any, change: str | None) -> None:
+    from uuid import uuid4
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, journal, plan, context = provisioning_journal
+    reserved = journal.reserve(plan, **context)
+    if change == "execution_id":
+        plan[change] = str(uuid4())
+    elif change == "release_sha":
+        plan[change] = context[change] = "c" * 40
+    elif change == "email":
+        plan[change] = "other-owner@example.invalid"
+    elif change == "username":
+        plan[change] = "other.smoke"
+    elif change == "recipient_custodian":
+        plan[change] = "other-custodian"
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_ALREADY_RESERVED"):
+        journal.reserve(plan, **context)
+    assert journal.inspect() == reserved
+    assert len(s.audit.list_events(correlation_id=journal._CORRELATION)) == 1
+
+
+def test_journal_serializes_single_use_across_independent_pg_connections(provisioning_journal: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningJournal, ProvisioningRefused
+    s, journal, plan, context = provisioning_journal
+    engine = PostgresEngine(s.db.url(), bootstrap=False, validate_schema=False)
+    try:
+        other = ProvisioningJournal(engine=engine, audit_log=DurableAuditLog(engine))
+
+        def reserve(current: Any) -> str:
+            try:
+                return current.reserve(plan, **context).stage
+            except ProvisioningRefused as exc:
+                return exc.code
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(reserve, (journal, other)))
+        assert sorted(outcomes) == ["PROVISIONING_ALREADY_RESERVED", "reserved"]
+        assert journal.inspect() == other.inspect()
+        assert len(s.audit.list_events(correlation_id=journal._CORRELATION)) == 1
+        assert s.audit.verify_chain().ok
+    finally:
+        engine.close()
+
+
+def test_journal_audit_failure_rolls_back_and_reports_no_secret(provisioning_journal: Any, monkeypatch: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, journal, plan, context = provisioning_journal
+    record = s.audit.record
+
+    def fail_after_append(event: Any) -> Any:
+        record(event)
+        raise RuntimeError("private-password-or-token")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(s.audit, "record", fail_after_append)
+        with pytest.raises(ProvisioningRefused, match="PROVISIONING_JOURNAL_UNAVAILABLE") as error:
+            journal.reserve(plan, **context)
+    assert "private" not in str(error.value) and error.value.__cause__ is None
+    assert journal.inspect() is None
+    assert journal.reserve(plan, **context).stage == "reserved"
+    assert s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("invalid", ["expired", "secret", "original_roles", "release", "clock"])
+def test_journal_revalidates_before_reserving(provisioning_journal: Any, monkeypatch: Any, invalid: str) -> None:
+    from datetime import UTC, datetime
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, journal, plan, context = provisioning_journal
+    if invalid == "expired":
+        plan["expires_at"] = "2000-01-01T00:00:00+00:00"
+    elif invalid == "secret":
+        plan["password"] = "private-credential-input"
+    elif invalid == "original_roles":
+        context["original_account"]["roles"].remove("operations_manager")
+    elif invalid == "release":
+        context["release_sha"] = "c" * 40
+    else:
+        # Caller cannot supply a convenient old timestamp to extend expiry.
+        monkeypatch.setattr(journal, "_now", lambda: datetime(2100, 1, 1, tzinfo=UTC))
+    with pytest.raises(ProvisioningRefused) as error:
+        journal.reserve(plan, **context)
+    assert "private" not in str(error.value)
+    assert journal.inspect() is None
+    assert _q(s, "SELECT count(*) FROM identity.invitations") == [(0,)]
+
+
+def test_journal_restart_quarantine_after_expiry_never_releases_root(provisioning_journal: Any, monkeypatch: Any) -> None:
+    from datetime import UTC, datetime
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningJournal, ProvisioningRefused
+    s, journal, plan, context = provisioning_journal
+    reserved = journal.reserve(plan, **context)
+    engine = PostgresEngine(s.db.url(), bootstrap=False, validate_schema=False)
+    try:
+        restarted = ProvisioningJournal(engine=engine, audit_log=DurableAuditLog(engine))
+        assert restarted.inspect() == reserved
+        monkeypatch.setattr(restarted, "_now", lambda: datetime(2100, 1, 1, tzinfo=UTC))
+        recovery = restarted.require_recovery(reserved)
+        assert recovery.stage == "recovery-required" and recovery.plan_digest == reserved.plan_digest
+        assert recovery.event_id != reserved.event_id
+        assert journal.inspect() == recovery
+        assert recovery.to_receipt()["execution_authorized"] is False
+        with pytest.raises(ProvisioningRefused, match="PROVISIONING_ALREADY_RESERVED"):
+            journal.reserve(plan, **context)
+        with pytest.raises(ProvisioningRefused, match="PROVISIONING_RECOVERY_ALREADY_RECORDED"):
+            journal.require_recovery(reserved)
+        assert s.audit.verify_chain().ok
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("field", ["execution_id", "plan_digest", "event_id", "stage"])
+def test_journal_recovery_requires_exact_original_reservation(provisioning_journal: Any, field: str) -> None:
+    from dataclasses import replace
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    _, journal, plan, context = provisioning_journal
+    reserved = journal.reserve(plan, **context)
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_RESERVATION_MISMATCH"):
+        journal.require_recovery(replace(reserved, **{field: "private-mismatched-input"}))
+    assert journal.inspect() == reserved
+
+
+def test_journal_failed_recovery_append_preserves_reservation(provisioning_journal: Any, monkeypatch: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, journal, plan, context = provisioning_journal
+    reserved = journal.reserve(plan, **context)
+    record = s.audit.record
+
+    def fail_after_append(event: Any) -> Any:
+        record(event)
+        raise RuntimeError("private-remote-error")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(s.audit, "record", fail_after_append)
+        with pytest.raises(ProvisioningRefused, match="PROVISIONING_JOURNAL_UNAVAILABLE"):
+            journal.require_recovery(reserved)
+    assert journal.inspect() == reserved
+    assert journal.require_recovery(reserved).stage == "recovery-required"
+    assert s.audit.verify_chain().ok
+
+
+def test_journal_tampered_readback_fails_closed(provisioning_journal: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, journal, plan, context = provisioning_journal
+    reserved = journal.reserve(plan, **context)
+    # Offline corruption injection only: never a supported lifecycle operation.
+    s.engine.execute("UPDATE durable_audit_events SET actor = 'forged-actor' WHERE event_id = ?",
+                     (reserved.event_id,))
+    for operation in (journal.inspect, lambda: journal.reserve(plan, **context),
+                      lambda: journal.require_recovery(reserved)):
+        with pytest.raises(ProvisioningRefused, match="PROVISIONING_JOURNAL_UNAVAILABLE"):
+            operation()
+
+
+def test_journal_refuses_memory_or_different_engine_audit(invitations: Any) -> None:
+    from shared.audit.events import InMemoryAuditLog
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningJournal, ProvisioningRefused
+    s = invitations
+    with pytest.raises(ProvisioningRefused, match="PROVISIONING_JOURNAL_PERSISTENCE_REQUIRED"):
+        ProvisioningJournal(engine=s.engine, audit_log=InMemoryAuditLog())
+    engine = PostgresEngine(s.db.url(), bootstrap=False, validate_schema=False)
+    try:
+        with pytest.raises(ProvisioningRefused, match="PROVISIONING_JOURNAL_PERSISTENCE_REQUIRED"):
+            ProvisioningJournal(engine=engine, audit_log=s.audit)
+    finally:
+        engine.close()
