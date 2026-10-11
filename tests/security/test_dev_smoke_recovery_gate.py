@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -28,6 +29,14 @@ def foreground_gate(owned_sessions: Any, monkeypatch: Any):
     def setup(failure=""):
         with owned_sessions() as (owner, budget, clock, receipts, p, session_calls, original, target):
             raw, events, user = recovery_consumer_inputs()
+            # Relocate the historical synthetic packet to this plan's clock;
+            # otherwise the strict root <=1h expiry correctly rejects it.
+            delta = datetime.now(UTC) - datetime(2026, 10, 11, 5, tzinfo=UTC) - timedelta(seconds=60)
+            for event in events:
+                event["timestamp"] = (datetime.fromisoformat(event["timestamp"]) + delta).isoformat()
+                for key in ("expires_at", "capability_expires_at"):
+                    if key in event["metadata"]:
+                        event["metadata"][key] = (datetime.fromisoformat(event["metadata"][key]) + delta).isoformat()
             digest = receipts._digest
             # Synthetic progress ONLY; not source/rotation/staging/session proof.
             budget.begin("preflight")
@@ -72,6 +81,11 @@ def foreground_gate(owned_sessions: Any, monkeypatch: Any):
                     "account_id": raw["account_id"], "tenant_id": raw["tenant_id"], "roles": ["platform_admin"]}),
             }))
             calls = []
+            barrier = driver._before_cleanup
+            def inspected_barrier(checks):
+                driver._failed_checks = [c.name for c in checks if c.ok is not True]
+                barrier(checks)
+            monkeypatch.setattr(driver, "_before_cleanup", inspected_barrier)
             def roundtrip(client, method, path, *, authenticated, body, headers):
                 calls.append(("api" if client._api else "web", method, path, budget._active[0]))
                 if failure == "transport" and path == "/api/v1/operator/users/audit-trail":
@@ -114,7 +128,10 @@ def test_parent_full_samepair_actual_canonical_evaluator(foreground_gate: Any, t
     import pickle
     from shared.identity.dev_smoke_recovery import RecoveryRefused
     with foreground_gate() as (driver, actions, owner, budget, p, calls, sessions, original, target, events):
-        receipt = driver.execute(actions)
+        try:
+            receipt = driver.execute(actions)
+        except RecoveryRefused:
+            pytest.fail(f"canonical gate stopped; failed checks={getattr(driver, '_failed_checks', [])}; calls={calls}")
         assert receipt["gate_passed"] is True and receipt["checks_count"] > 60
         assert receipt["credential_binding_verified"] is False and receipt["full_product_acceptance"] is False
         assert receipt["original_incident_session_cleanup"] == "unknown"
