@@ -61,6 +61,21 @@ not be erased. Correct pending-review display source/state pair, no role widenin
 or denial retry. All original production composition cases now exit0 preliminary;
 new exact final-head proofs/normal hosted CI/independent review still required.
 
+### Hosted inventory-contract followup (Pi)
+
+Actual002 CI38135926649 completedFAIL:4 Python inventory guard fixtures still
+hardcoded125, while the real composed inventory and strict production constant
+are129/18.7671 passed/23 skipped is not whole success. Retain that failure;
+update the strict test table, NOT the production exact-count check, to accept
+129/18 only and reject122/125/126/128/130,17files,unparseable/nonzero command.
+Local full selection39passed/1failed solely because test Git --no-hardlinks
+copies exhausted local disk (ownedpytest2345=8.3GB). Original log retained;
+clean only that newly owned fixture directory. Final full selection uses real
+same-SHA shallow Git evidence clone (not archive/fake repo/Manager allocation),
+with exact source/tree/dependency verification and owned-temp cleanup. No
+assertion, count, dependency or verification-policy waiver. New exact-head
+source proofs, normal hosted CI and independent approval remain required.
+
 ## Historical original source evidence (unchanged)
 
 Recorded 2026-10-09 by Claude2. Base `origin/dev` 963090d6f. Design reference:
