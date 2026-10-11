@@ -1843,6 +1843,7 @@ def test_real_owned_login_lost_body_retains_only_new_valid_cookie(tls_recovery_s
 def account_observer_payloads(p: dict, actions=None) -> dict:
     """Synthetic safe readbacks; NOT real account/source/admission evidence."""
     from copy import deepcopy
+
     from shared.identity import dev_smoke_recovery as d
     bundle, events, target = recovery_consumer_inputs()
     now = datetime.now(UTC)
@@ -1893,7 +1894,6 @@ def install_account_observer(monkeypatch: Any, payloads: dict, calls: list) -> N
 
 def test_account_preflight_reconciliation_same_owner_and_memory_baseline(owned_sessions: Any,
                                                                        monkeypatch: Any, tmp_path: Path) -> None:
-    from delivery_toolchain.release import recover_dev_smoke as r
     with owned_sessions() as (owner, budget, clock, receipts, p, calls, original, target):
         reads = []
         payloads = account_observer_payloads(p)
@@ -2028,6 +2028,7 @@ def test_rotation_reconciliation_never_resumes_or_ignores_preservation(owned_ses
 ])
 def test_real_observation_https_fixed_read_routes_no_retry(tls_recovery_server: Any, operation: str, path: str) -> None:
     import time
+
     from delivery_toolchain.release import recover_dev_smoke as r
     with tls_recovery_server(recovery_http_reply()) as (origin, ca, observed):
         attempt = r.RecoveryObservationHTTPSAttempt(origin=origin, address="127.0.0.1", ca_pem=ca)

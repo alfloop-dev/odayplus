@@ -730,7 +730,11 @@ def _validate_account_observations(payloads: dict, *, plan: dict, actions) -> tu
     """
     from shared.identity import dev_smoke_recovery as domain
     from shared.identity.dev_smoke_journal import (
-        PRESERVED_ACCOUNT_ID, DevSmokeBindingJournal, ProvisioningJournal, _DIGEST, _SHA,
+        _DIGEST,
+        _SHA,
+        PRESERVED_ACCOUNT_ID,
+        DevSmokeBindingJournal,
+        ProvisioningJournal,
     )
     from shared.identity.invitation_provenance import invitation_provenance
 
@@ -820,7 +824,7 @@ def _validate_account_observations(payloads: dict, *, plan: dict, actions) -> tu
     historical = [old[0], next(e for e in events if e["event_id"] == domain.ISSUE_EVENT_ID),
                   next(e for e in events if e["event_id"] == domain.ACCEPT_EVENT_ID), old[1]]
     historical_times = [datetime.fromisoformat(e["timestamp"]) for e in historical]
-    if not all(a <= b for a, b in zip(historical_times, historical_times[1:])):
+    if not all(a <= b for a, b in zip(historical_times, historical_times[1:], strict=False)):
         raise ValueError
     current = payloads["recovery"]
     if (set(current) != {"reservation", "binding", "execution_authorized", "secret_values_redacted"}
@@ -882,7 +886,7 @@ def _validate_account_observations(payloads: dict, *, plan: dict, actions) -> tu
         ordered = [old[0], next(e for e in events if e["event_id"] == domain.ISSUE_EVENT_ID),
                    next(e for e in events if e["event_id"] == domain.ACCEPT_EVENT_ID), old[1], roots[0], *caps]
         times = [datetime.fromisoformat(e["timestamp"]) for e in ordered]
-        if not all(a <= b for a, b in zip(times, times[1:])):
+        if not all(a <= b for a, b in zip(times, times[1:], strict=False)):
             raise ValueError
     # Keep safe public identity facts in parent memory ONLY; never serialize the
     # returned private snapshot. Compare ALL accounts, not only the target.
