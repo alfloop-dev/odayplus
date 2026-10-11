@@ -402,6 +402,72 @@ recovery execution, GitHub201, full gate/consumer or deployment evidence. The fu
 reviewed foreground coordinator and all previously documented execution blockers
 remain mandatory BEFORE effects.
 
+## Native fresh-job consumer — implemented narrow ingress PROPOSAL, NOT approved
+
+`dev-smoke-credential-consumer.yml` and `consume_dev_smoke.py` supply a separate
+manual protected-dev, NO-BUILD/NO-DEPLOY consumer. This is real source integration,
+not an executed workflow, decrypted-value receipt or approval. The proposed
+boundary is explicitly different from the preceding universal no-plaintext-env
+rule: GitHub's trusted runner->shell->single Python launch projects the encrypted
+matched bundle into native process environment. This narrow native CI ingress
+MUST receive independent security approval of the exact complete source and be
+covered by the final authorized operational plan BEFORE recovery effects. It
+never licenses plaintext foreground env/argv/files, a disposable credential child,
+foreground GH PAT in CI or unreviewed/offline live dispatch. Rejection of this
+amendment remains an execution blocker, not a silently waived rule.
+
+Frozen dependencies are installed BEFORE bundle projection. Only the consuming
+step receives the bundle; no user credential is interpolated into shell source.
+The trusted Python process removes bundle, all legacy/bootstrap inputs and native
+OIDC request handles, parses strict schema2 without fallback, individually masks
+nested fields, and keeps the pair in memory. Only the EXISTING native read-only
+GitHub token is scoped back into env for canonical gh metadata helpers; no bundle,
+password or invoker token is inherited by them. Transient OS fork memory/dump/swap
+limitations are not called provable isolation or zeroization.
+
+Native origin is NOT accepted from GITHUB_ACTIONS=true or a public run id alone.
+The consumer verifies a fresh signed GitHub RS256 OIDC token using issuer-pinned
+bounded JWKS and existing frozen cryptography (no new dependency/key). Exact repo,
+protected dev environment/ref, actor/id, workflow/source SHA, hosted runner,
+manual event, run/id/attempt and NumericDate lifetime are bound. Wrong signatures,
+unsigned JWTs, duplicate keys, ambiguous keys, unknown hosts, redirects and bounded
+body/lifetime refusals cannot proceed to the gate. Its authenticated own GitHub
+run is also verified; no source approval is inferred from the environment.
+
+Google transport identity uses only the observed EXISTING dev WIF provider and
+GSA. The process exchanges a second native OIDC token through Google STS and the
+existing IAM generateIdToken endpoint, with exact API audience; all values stay
+in memory. There is no gcloud child, credential key/file, auth-action output file,
+invoker env, new IAM/trust/resource or provider activation. Config drift refuses.
+
+Existing exact whole-tree/source-review/latest reviewed+candidate CI predicates
+remain. Current ordinary Runtime Release history is revalidated with canonical
+manifest/admission predicates. The foreground-only DeployedDevReleaseObserver
+guard is NOT changed or bypassed: the new CI observer first cryptographically
+proves its own distinct NO-DEPLOY workflow, so excluding its run from the separate
+deployment workflow history cannot hide a live-changing attempt. No cached pass,
+consumed-lease replay, fresh build, tag move or competing rollout is introduced.
+
+The unchanged canonical FULL dev-admin gate receives the pair in memory and owns
+fresh target login, actual principal/lineage/negative probes and own logout/replay
+checks, including HTML-form session cleanup. Its authenticated audit observation
+must show exactly one recovery201 ACK strictly BEFORE the new run was created;
+older/same-job snapshots cannot produce consumption evidence. The reviewed
+foreground coordinator must dispatch only AFTER real ACK. A failed ordering or
+missing ACK still fails the gate/result and never permits resume or a write.
+
+Native credential-step bounds reserve preflight180 + gate300 + cleanup60 seconds
+in one monotonic540 envelope (NOT measured production ceilings). Signal-bound
+HTTP refuses late work; cleanup gets a separate reserved absolute window, not a
+refreshed full budget. OS-stuck calls are UNKNOWN/failure, not hard-real-time
+success. Only a minimal allowlisted positive result is retained; raw gate details,
+audit blobs, cookies, JWTs, passwords/PHCs and password-derived hashes are never
+artifacts. Missing gate/cleanup or failed/late job produces no consumption receipt.
+Mocked pipeline and ephemeral OFFLINE RSA/HTTP tests are explicitly not live
+consumption or F11 evidence. External writer exclusion, full foreground coordinator,
+actual budget measurements, independent review/deployment and final execution
+plan remain unresolved. This source increment does not authorize effects.
+
 ## Required subsequent increments (not implemented)
 
 1. Independent review of migration/capability/session-fence domain increments;
@@ -449,12 +515,12 @@ Native Actions secrets are snapshotted for a job; a job already started before
 PUT cannot fetch the new decrypted value. GitHub's public secrets API exposes
 metadata/ciphertext input, not plaintext retrieval. Existing CLI gate transport
 uses a plaintext environment variable and violates the proposal's no-plaintext-
-env/argv/file custody rule. No native memory-only consumer transport is present
-in this increment. A later design must either implement and independently review
-an actual native trusted secret-input boundary, or explicitly propose a narrow
-independently approved amendment for native CI env-to-memory ingress (individual
-field masking, no inheritance to children/artifacts/logs, no foreground GH PAT,
-no fallback, no same-job refresh). Such amendment is **not approved here**.
+env/argv/file custody rule. The newly implemented native env-to-memory consumer
+above is an EXPLICIT narrow boundary amendment PROPOSAL, **not approved here**.
+It resolves a source implementation gap but cannot establish approval, measured
+runtime viability or actual fresh consumption by itself. Independent review of
+the exact whole composition and this native launch boundary, plus the final
+operational plan, remain mandatory. No fallback or same-job refresh is permitted.
 A cosmetic commit/rebuild, second rollout, imagined decryption or mocked consumer
 receipt cannot resolve this gap. Hold effects until the real normally admitted
 fresh consumer and finite measured budget exist.

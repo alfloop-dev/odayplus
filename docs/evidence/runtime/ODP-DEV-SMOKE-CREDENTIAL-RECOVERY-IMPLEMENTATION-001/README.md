@@ -591,6 +591,47 @@ retrieval or a silent env waiver. Independent Codex2 review, ordinary deployment
 and an exact reviewed foreground plan remain mandatory BEFORE effects. Old
 quarantine/NULL binding and original interrupted-session uncertainty unchanged.
 
+## Foreground native fresh-consumer source checkpoint (2026-10-11)
+
+Foreground Pi continued real source engineering in the SAME Manager allocation,
+not another inventory/credential operation. The scheduling hold superseded the
+active source-only worker (original terminal143 retained); its d3405d690 action
+anchor and770023573 failure checkpoint were clean/preserved. No credentials or
+live effect were interrupted. Canonical owner/expanded file scope and existing
+Manager path/branch were verified, task_start validated the current allocation,
+and no competing active writer remained before edits. No new worktree/lease authority was created.
+
+Added the real protected-dev manual NO-BUILD/NO-DEPLOY workflow and consumer
+entrypoint, strict native matched-bundle ingress/no fallback, cryptographic native
+GitHub OIDC run/source proof, canonical full-tree review/CI/current ordinary
+admission, memory-only existing WIF/SA token exchange, canonical dev-admin gate,
+authenticated ACK-before-run ordering, both login-flow cleanup proofs and minimal
+allowlisted consumption report. A passing env flag/mock report cannot attest a
+native runner: RS256 is verified against issuer-pinned JWKS; source/ref/environment/
+actor/id/run/attempt/hosted-runner and expiry must match. No new IAM/key/resource,
+plaintext invoker file/env, gcloud child, secret write, source/provider activation
+or rollout was added. Source WIF bindings were observed as public GitHub dev vars
+only, not claimed as executed token generation.
+
+This is an explicit NARROW NATIVE CI ENV-TO-MEMORY CUSTODY AMENDMENT PROPOSAL;
+independent exact-tree security approval/final operational plan are NOT supplied
+by the code. Foreground no-plaintext-env rules remain. The real consumer workflow
+has NOT been dispatched; mocked pipelines/ephemeral RSA fixtures are NOT live
+GitHub decrypted consumption evidence or F11 acceptance.
+
+Working-tree focused diagnostics reached85 passing source/security/workflow tests,
+Ruff passed, diff check passed and the actual boundary generator/check passed1230
+files. Initial unused-import/style failures, absent optional PyJWT collection,
+and four synthetic harness-index failures were not suppressed; existing frozen
+cryptography replaced the absent dependency with fixed standard RS256
+cryptography-library verification, NO install/lock rewrite. The harness was corrected to preserve the
+explicit sole native read-only GH-token helper exception while proving pair/OIDC/
+legacy credentials absent. No live secrets/data were used. These working-tree
+results are NOT transferred to the future anchor head: exact-head canonical
+receipts must follow the source commit. Complete task-wide final verification,
+review, deployment, foreground coordinator/actual201 transport, external writer
+exclusion, measured budget and operational execution remain incomplete.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret

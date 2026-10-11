@@ -1,0 +1,403 @@
+"""Synthetic/offline native consumer contracts, NOT decrypted/live CI proof."""
+from __future__ import annotations
+
+import base64
+import json
+import pickle
+import time
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+from delivery_toolchain.release import consume_dev_smoke as c
+from tests.security.test_dev_smoke_recovery import recovery_consumer_inputs
+
+SHA = "a" * 40
+DIGEST = "sha256:" + "b" * 64
+NOW = datetime(2026, 10, 11, 7, tzinfo=UTC)
+
+
+def native_environment() -> dict[str, str]:
+    return {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": c.REPOSITORY,
+            "GITHUB_REF": "refs/heads/dev", "GITHUB_SHA": SHA,
+            "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ID": "123",
+            "GITHUB_ACTOR": c.REVIEW_WRITER, "GITHUB_RUN_ATTEMPT": "1"}
+
+
+def run_record() -> dict:
+    return {"id": 123, "repository": {"full_name": c.REPOSITORY},
+            "head_repository": {"full_name": c.REPOSITORY}, "head_sha": SHA,
+            "head_branch": "dev", "event": "workflow_dispatch", "path": c.WORKFLOW,
+            "actor": {"login": c.REVIEW_WRITER, "id": c.REVIEW_WRITER_ID},
+            "status": "in_progress", "conclusion": None, "run_attempt": 1,
+            "created_at": (NOW - timedelta(seconds=5)).isoformat()}
+
+
+def raw_inputs() -> dict[str, str]:
+    raw, _, _ = recovery_consumer_inputs()
+    return {c.SECRET_INPUTS[0]: json.dumps(raw), c.SECRET_INPUTS[1]: "offline-native-github-read-token",
+            c.SECRET_INPUTS[2]: "offline-native-oidc-request-token",
+            c.SECRET_INPUTS[3]: "https://pipelines.actions.githubusercontent.com/offline/oidctoken"}
+
+
+def passing_gate_report() -> dict:
+    names = ["admin:credential_bundle_account_bound", "admin:credential_bundle_durable_acknowledgement",
+             "session:logout", "session:revoked_session_refused", "admin:logout_revokes_admin_api",
+             "session:html_form_logout", "session:html_form_revoked_session_refused"]
+    return {"ok": True, "checks": [{"name": name, "ok": True, "detail": "synthetic"} for name in names]}
+
+
+def test_native_pair_is_individually_masked_and_removed_before_any_child() -> None:
+    env = {**native_environment(), **raw_inputs()}
+    masks = []
+    inputs = c.take_native_inputs(env, masker=masks.append)
+    assert inputs.bundle.schema_version == 2
+    assert masks == [inputs.bundle.username, inputs.bundle.password, inputs.github_token,
+                     inputs.oidc_request_token, inputs.oidc_request_url]
+    assert not inputs.invoker_token
+    assert not set(c.SECRET_INPUTS + c.LEGACY_INPUTS) & set(env)
+    assert inputs.bundle.password not in repr(inputs)
+    with pytest.raises(c.ConsumerRefused):
+        pickle.dumps(inputs)
+
+
+@pytest.mark.parametrize("legacy", c.LEGACY_INPUTS)
+def test_mixed_legacy_never_falls_back_and_all_credentials_are_popped(legacy: str) -> None:
+    env = {**raw_inputs(), legacy: "offline-legacy"}
+    with pytest.raises(c.ConsumerRefused, match="^DEV_SMOKE_NATIVE_CONSUMER_REFUSED$"):
+        c.take_native_inputs(env, masker=lambda _: pytest.fail("must refuse before mask/gate"))
+    assert not env
+
+
+@pytest.mark.parametrize("failure", ["empty", "invalid", "duplicate", "schema1", "no-oidc", "no-gh"])
+def test_invalid_native_input_has_static_refusal_and_no_retained_environment(failure: str) -> None:
+    env = raw_inputs()
+    if failure == "empty":
+        env[c.SECRET_INPUTS[0]] = ""
+    elif failure == "invalid":
+        env[c.SECRET_INPUTS[0]] = '{"password":"do-not-echo"'
+    elif failure == "duplicate":
+        env[c.SECRET_INPUTS[0]] = '{"schema_version":2,' + env[c.SECRET_INPUTS[0]][1:]
+    elif failure == "schema1":
+        raw = json.loads(env[c.SECRET_INPUTS[0]])
+        raw["schema_version"] = 1
+        env[c.SECRET_INPUTS[0]] = json.dumps(raw)
+    else:
+        env.pop(c.SECRET_INPUTS[2 if failure == "no-oidc" else 1])
+    with pytest.raises(c.ConsumerRefused) as exc:
+        c.take_native_inputs(env, masker=lambda _: None)
+    assert str(exc.value) == "DEV_SMOKE_NATIVE_CONSUMER_REFUSED"
+    assert not env
+
+
+def test_authenticated_manual_native_run_is_exact_dev_source_not_a_passing_boolean() -> None:
+    assert c.validate_run(run_record(), native_environment(), expected_sha=SHA, now=NOW) == NOW - timedelta(seconds=5)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("path", ".github/workflows/deploy-dev.yml"), ("head_sha", "c" * 40),
+    ("head_branch", "other"), ("event", "push"), ("id", 124),
+    ("status", "completed"), ("conclusion", "success"),
+    ("created_at", (NOW + timedelta(seconds=1)).isoformat()),
+    ("created_at", (NOW - timedelta(minutes=21)).isoformat()),
+])
+def test_wrong_run_cannot_supply_consumer_authority(field: str, value) -> None:
+    run = run_record()
+    run[field] = value
+    with pytest.raises(c.ConsumerRefused):
+        c.validate_run(run, native_environment(), expected_sha=SHA, now=NOW)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("GITHUB_ACTIONS", "false"), ("GITHUB_REPOSITORY", "other/repo"),
+    ("GITHUB_REF", "refs/heads/other"), ("GITHUB_SHA", "c" * 40),
+    ("GITHUB_RUN_ID", "124"), ("GITHUB_ACTOR", "other"),
+])
+def test_substituted_native_context_refuses(field: str, value: str) -> None:
+    env = native_environment()
+    env[field] = value
+    with pytest.raises(c.ConsumerRefused):
+        c.validate_run(run_record(), env, expected_sha=SHA, now=NOW)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("actor", {"login": "other", "id": c.REVIEW_WRITER_ID}),
+    ("actor", {"login": c.REVIEW_WRITER, "id": 1}),
+    ("repository", {"full_name": "other/repo"}),
+    ("head_repository", {"full_name": "other/repo"}),
+])
+def test_authenticated_repository_actor_id_not_just_display_name(field: str, value) -> None:
+    run = run_record()
+    run[field] = value
+    with pytest.raises(c.ConsumerRefused):
+        c.validate_run(run, native_environment(), expected_sha=SHA, now=NOW)
+
+
+def test_safe_result_never_persists_arbitrary_gate_details_or_claims_full_acceptance() -> None:
+    report = passing_gate_report()
+    report["checks"][0]["detail"] = "PRIVATE_PASSWORD PHC BEARER COOKIE DO_NOT_PERSIST"
+    report["audit"] = "DO_NOT_PERSIST"
+    safe = c.safe_consumption_report(report, ack_times=[NOW - timedelta(seconds=10)], job_created=NOW,
+                                    sha=SHA, digest=DIGEST, run_id="123")
+    assert "DO_NOT_PERSIST" not in json.dumps(safe)
+    assert safe["full_product_acceptance"] is False
+    assert safe["recovery_rotation_performed"] is False and safe["secret_write_performed"] is False
+
+
+@pytest.mark.parametrize("acks", [[], [NOW], [NOW + timedelta(seconds=1)], [NOW, NOW]])
+def test_before_ack_or_duplicate_ack_job_is_never_actual_fresh_consumption(acks: list[datetime]) -> None:
+    with pytest.raises(c.ConsumerRefused):
+        c.safe_consumption_report(passing_gate_report(), ack_times=acks, job_created=NOW,
+                                  sha=SHA, digest=DIGEST, run_id="123")
+
+
+@pytest.mark.parametrize("failure", ["gate", "missing-binding", "logout", "html-logout", "bad-extra"])
+def test_incomplete_canonical_gate_or_cleanup_never_records_consumption(failure: str) -> None:
+    report = passing_gate_report()
+    if failure == "gate":
+        report["ok"] = False
+    elif failure == "missing-binding":
+        report["checks"] = report["checks"][1:]
+    elif failure == "bad-extra":
+        report["checks"].append({"name": "runtime-failure", "ok": False})
+    else:
+        report["checks"][2 if failure == "logout" else 5]["ok"] = False
+    with pytest.raises(c.ConsumerRefused):
+        c.safe_consumption_report(report, ack_times=[NOW - timedelta(seconds=1)], job_created=NOW,
+                                  sha=SHA, digest=DIGEST, run_id="123")
+
+
+def test_real_absolute_signal_cancels_slow_request_without_logging_credentials() -> None:
+    class Slow:
+        def request(self, *args, **kwargs):
+            time.sleep(0.2)
+            pytest.fail("late request must not return success")
+    start = time.monotonic()
+    web = c._ObservedWeb(Slow(), execution_id="offline", deadline=start + 0.03, cleanup_deadline=start + 0.09)
+    response = web.request("GET", "/api/v1/operator/users/audit-trail")
+    assert response.status == 0 and response.failed
+    assert time.monotonic() - start < 0.15
+
+
+def test_cleanup_uses_reserved_absolute_deadline_not_refreshed_work_budget() -> None:
+    class Cleanup:
+        def request(self, method, path, **kwargs):
+            return c.gate.HttpResponse(200, {"ok": True})
+    now = time.monotonic()
+    web = c._ObservedWeb(Cleanup(), execution_id="offline", deadline=now - 1, cleanup_deadline=now + 0.2)
+    assert web.request("POST", "/auth/logout").status == 200
+    assert web.request("POST", "/login").status == 0
+
+
+@pytest.fixture(scope="module")
+def offline_signing_key():
+    # Ephemeral isolated fixture, never an operational JWT key or persisted key.
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+def oidc_claims() -> dict:
+    now = int(time.time())
+    return {"iss": c.OIDC_ISSUER, "aud": c.NATIVE_AUDIENCE, "iat": now - 1, "nbf": now - 1,
+            "exp": now + 120, "sub": f"repo:{c.REPOSITORY}:environment:dev",
+            "repository": c.REPOSITORY, "ref": "refs/heads/dev", "environment": "dev",
+            "event_name": "workflow_dispatch", "actor": c.REVIEW_WRITER, "actor_id": str(c.REVIEW_WRITER_ID),
+            "sha": SHA, "workflow_sha": SHA, "workflow_ref": f"{c.REPOSITORY}/{c.WORKFLOW}@refs/heads/dev",
+            "run_id": "123", "run_attempt": "1", "runner_environment": "github-hosted"}
+
+
+def _encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def signed_offline_token(key, claims):
+    header = {"kid": "offline-only", "alg": "RS256", "typ": "JWT"}
+    message = _encode(json.dumps(header).encode()) + "." + _encode(json.dumps(claims).encode())
+    signature = key.sign(message.encode(), padding.PKCS1v15(), hashes.SHA256())
+    numbers = key.public_key().public_numbers()
+    public = {"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "offline-only",
+              "e": _encode(numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8)),
+              "n": _encode(numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8))}
+    return message + "." + _encode(signature), {"keys": [public]}
+
+
+def test_native_identity_requires_real_signature_and_job_source_claims(offline_signing_key):
+    token, jwks = signed_offline_token(offline_signing_key, oidc_claims())
+    c.verify_native_oidc(token, jwks, native_environment(), now=datetime.now(UTC))
+    replacement = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _, wrong_jwks = signed_offline_token(replacement, oidc_claims())
+    with pytest.raises(c.ConsumerRefused):
+        c.verify_native_oidc(token, wrong_jwks, native_environment(), now=datetime.now(UTC))
+
+
+@pytest.mark.parametrize("key,value", [
+    ("repository", "other/repo"), ("ref", "refs/heads/other"), ("environment", "production"),
+    ("event_name", "push"), ("actor_id", "1"), ("run_id", "124"), ("run_attempt", "2"),
+    ("sha", "c" * 40), ("workflow_sha", "c" * 40), ("workflow_ref", "other/workflow"),
+    ("runner_environment", "self-hosted"), ("aud", "other-audience"),
+    ("sub", "repo:alfloop-dev/odayplus:ref:refs/heads/dev"),
+])
+def test_other_signed_native_context_cannot_attest_this_consumer(offline_signing_key, key, value):
+    claims = oidc_claims()
+    claims[key] = value
+    token, jwks = signed_offline_token(offline_signing_key, claims)
+    with pytest.raises(c.ConsumerRefused):
+        c.verify_native_oidc(token, jwks, native_environment(), now=datetime.now(UTC))
+
+
+def test_plain_env_flags_or_unsigned_jwt_are_not_native_proof(offline_signing_key):
+    _, jwks = signed_offline_token(offline_signing_key, oidc_claims())
+    token = _encode(b'{"alg":"none","typ":"JWT"}') + "." + _encode(json.dumps(oidc_claims()).encode()) + "."
+    with pytest.raises(c.ConsumerRefused):
+        c.verify_native_oidc(token, jwks, native_environment(), now=datetime.now(UTC))
+
+
+@pytest.mark.parametrize("failure", [None, "oidc", "source", "admission", "gate"])
+def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatch, failure):
+    # Entirely MOCKED authority/runtime; no network/live receipt. Proves wiring.
+    import httpx
+    env = native_environment()
+    inputs = c.take_native_inputs(raw_inputs(), masker=lambda _: None)
+    run = run_record()
+    run["created_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    calls = []
+
+    class Github:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def get(self, path):
+            assert path.endswith("/actions/runs/123")
+            return httpx.Response(200, json=run)
+
+    def observe(kind):
+        calls.append(kind)
+        isolated = tuple(key for key in c.SECRET_INPUTS if key != "GH_TOKEN") + c.LEGACY_INPUTS
+        assert not set(isolated) & set(env)
+        if failure == kind:
+            raise c.ConsumerRefused()
+
+    class Source:
+        def __init__(self, **kwargs):
+            pass
+        def observe(self, **kwargs):
+            observe("source")
+        def close(self):
+            pass
+
+    def mocked_gate(config, **kwargs):
+        observe("gate")
+        assert config.dev_admin_bundle_schema_version == 2
+        assert config.dev_admin_password == inputs.bundle.password
+        assert not config.bootstrap_admin_password and not config.dev_admin_initial_password
+        # Mimic actual audit observation; NOT an authenticated/live receipt.
+        kwargs["web_http"].ack_times.append(datetime.now(UTC) - timedelta(seconds=10))
+        return [], passing_gate_report()
+
+    monkeypatch.setattr(httpx, "Client", Github)
+    monkeypatch.setattr(c, "_native_oidc", lambda *args: observe("oidc"))
+    monkeypatch.setattr(c, "GitHubSourceApprovalObserver", Source)
+    monkeypatch.setattr(c, "_current_admission", lambda **kwargs: observe("admission"))
+    monkeypatch.setattr(c, "_native_transport_identity", lambda *args: "offline-generated-invoker")
+    monkeypatch.setattr(c.gate, "evaluate_gate", mocked_gate)
+    if failure:
+        with pytest.raises(c.ConsumerRefused):
+            c.consume(inputs=inputs, environment=env, sha=SHA, digest=DIGEST, pull_number=1, reviewed_head=SHA)
+        assert calls[-1] == failure
+    else:
+        result = c.consume(inputs=inputs, environment=env, sha=SHA, digest=DIGEST, pull_number=1, reviewed_head=SHA)
+        assert result["gate_passed"] is True and result["full_product_acceptance"] is False
+        assert calls == ["oidc", "source", "admission", "gate"]
+    assert "GH_TOKEN" not in env
+
+
+@pytest.mark.parametrize("claim,value", [
+    ("exp", 1), ("iat", True), ("nbf", int(time.time()) + 3600),
+    ("iat", int(time.time()) - 3600),
+])
+def test_native_token_lifetime_and_numeric_dates_cannot_be_forged(offline_signing_key, claim, value):
+    claims = oidc_claims()
+    claims[claim] = value
+    token, keys = signed_offline_token(offline_signing_key, claims)
+    with pytest.raises(c.ConsumerRefused):
+        c.verify_native_oidc(token, keys, native_environment(), now=datetime.now(UTC))
+
+
+def test_ambiguous_jwks_and_duplicate_json_refuse(offline_signing_key):
+    token, keys = signed_offline_token(offline_signing_key, oidc_claims())
+    keys["keys"].append(dict(keys["keys"][0]))
+    with pytest.raises(c.ConsumerRefused):
+        c.verify_native_oidc(token, keys, native_environment(), now=datetime.now(UTC))
+    with pytest.raises(c.ConsumerRefused):
+        c._unique_json(b'{"field":1,"field":2}')
+    with pytest.raises(c.ConsumerRefused):
+        c._unique_json(b'{"field":NaN}')
+
+
+@pytest.mark.parametrize("body,status,mime", [
+    (b'{"keys":[]}', 200, "application/json"),
+    (b'{"keys":[],"keys":[]}', 200, "application/json"),
+    (b"x" * 70_000, 200, "application/json"),
+    (b'{"keys":[]}', 302, "application/json"),
+    (b'{"keys":[]}', 200, "text/html"),
+])
+def test_native_oidc_documents_have_real_stream_bounds(body, status, mime):
+    import httpx
+    transport = httpx.MockTransport(lambda _: httpx.Response(status, content=body, headers={"content-type": mime}))
+    with httpx.Client(transport=transport) as client:
+        if body == b'{"keys":[]}' and status == 200 and mime == "application/json":
+            assert c._bounded_json(client, "https://offline.invalid") == {"keys": []}
+        else:
+            with pytest.raises(c.ConsumerRefused):
+                c._bounded_json(client, "https://offline.invalid")
+
+
+@pytest.mark.parametrize("failure", [None, "provider", "sa", "sts", "iam", "oidc-host"])
+def test_existing_google_wif_is_memory_only_and_exact_identity(monkeypatch, failure):
+    from urllib.parse import parse_qs
+
+    import httpx
+    inputs = c.take_native_inputs(raw_inputs(), masker=lambda _: None)
+    env = {"GOOGLE_WIF_PROVIDER": c.WIF_PROVIDER, "GOOGLE_SERVICE_ACCOUNT": c.GOOGLE_SERVICE_ACCOUNT}
+    calls = []
+    if failure == "provider":
+        env["GOOGLE_WIF_PROVIDER"] = "projects/other/provider"
+    if failure == "sa":
+        env["GOOGLE_SERVICE_ACCOUNT"] = "other@other.iam.gserviceaccount.com"
+    if failure == "oidc-host":
+        inputs.oidc_request_url = "https://untrusted.invalid/oidc"
+
+    def responder(request):
+        calls.append(str(request.url).split("?")[0])
+        if request.url.host == "pipelines.actions.githubusercontent.com":
+            assert parse_qs(request.url.query.decode())["audience"] == [c.WIF_PROVIDER]
+            assert request.headers["Authorization"] == "Bearer offline-native-oidc-request-token"
+            return httpx.Response(200, json={"value": "offline-subject-jwt"})
+        if request.url.host == "sts.googleapis.com":
+            body = json.loads(request.content)
+            assert body["audience"] == "//iam.googleapis.com/" + c.WIF_PROVIDER
+            assert body["subjectToken"] == "offline-subject-jwt"
+            if failure == "sts":
+                return httpx.Response(403, json={"error": "synthetic denied"})
+            return httpx.Response(200, json={"access_token": "offline-federated-token", "token_type": "Bearer", "expires_in": 300})
+        assert str(request.url) == f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{c.GOOGLE_SERVICE_ACCOUNT}:generateIdToken"
+        assert request.headers["Authorization"] == "Bearer offline-federated-token"
+        assert json.loads(request.content) == {"audience": c.API_ORIGIN, "includeEmail": True}
+        return httpx.Response(403 if failure == "iam" else 200, json={"token": "offline-generated-invoker"})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: real_client(transport=httpx.MockTransport(responder), **kwargs))
+    monkeypatch.setattr(c, "_mask", lambda _: None)
+    if failure:
+        with pytest.raises(c.ConsumerRefused):
+            c._native_transport_identity(inputs, env)
+        if failure in {"provider", "sa", "oidc-host"}:
+            assert not calls
+    else:
+        assert c._native_transport_identity(inputs, env) == "offline-generated-invoker"
+        assert len(calls) == 3
+    assert not set(c.SECRET_INPUTS + c.LEGACY_INPUTS) & set(env)
