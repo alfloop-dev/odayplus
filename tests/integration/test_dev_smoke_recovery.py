@@ -200,6 +200,7 @@ def test_mounted_role_session_denial_precedes_malformed_dto_and_domain(recovery_
         monkeypatch.setattr(RecoveryCapabilityService, name, lambda *a, **kw: calls.append((a, kw)))
     response = s.client.post(RECOVERY_PATH, headers={**headers, "content-type": "application/json"}, content=b'{"password":"private-input"')
     assert response.status_code in {401, 403}
+    assert response.headers["cache-control"] == "no-store"
     assert "private-input" not in response.text
     assert calls == [] and snapshot(s) == before
     assert s.audit.list_events(correlation_id=RecoveryJournal._CORRELATION) == []

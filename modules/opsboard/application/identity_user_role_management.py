@@ -200,7 +200,8 @@ class IdentityUserRoleManagementService:
             # this same authenticated, tenant-filtered administration read. The
             # consumer must refuse uncertain roots, not infer ACK from a secret.
             if (not event.event_type.startswith(IDENTITY_EVENT_PREFIX)
-                    and event.event_type not in {"release.dev_smoke.reservation", "release.dev_smoke.binding"}):
+                    and event.event_type not in {"release.dev_smoke.reservation", "release.dev_smoke.binding",
+                                                 "identity.dev_smoke.recovery", "identity.dev_smoke.recovery_capability"}):
                 continue
             meta = dict(event.metadata or {})
             if event.event_type in {"identity.dev_smoke.recovery", "identity.dev_smoke.recovery_capability"}:
