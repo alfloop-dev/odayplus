@@ -1053,6 +1053,95 @@ readiness is claimed. External writer exclusion, measured production reserves,
 final reviewed plan, independent review and normal deployment still block effects.
 Old89 quarantine/NULL binding and interrupted original17 cleanup UNKNOWN remain.
 
+## Concrete preflight-to-HOLD coordinator checkpoint (2026-10-11)
+
+Anchors `ff5711a82226` / `3da88578fb342cbc24b7e6997d959dc560c546fa`
+compose real typed checkout/source/current ordinary-admission/account/release/
+old-quarantine/invitation/absent-bundle observers and owned original-session
+cleanup. The real canonical gate config is prevalidated BEFORE login; no arbitrary
+callbacks, caller baseline/pass receipt or exclusion/approval boolean is accepted.
+Source/admission are actually reread after account/metadata observations; even a
+same-SHA replacement run/attempt stops. Per-observer starts/terminals share the
+same absolute preflight deadline. The constructor checks that admission's fixed
+canonical validator uses the same independently verified candidate checkout.
+
+This is a diagnostic **preflight-to-HOLD**, not the missing effect/fresh-job
+coordinator. It unconditionally stops before reserve/issue/rotate/intent/PUT/ACK/
+gate/dispatch because genuine external writer exclusion is unavailable. It cleans
+only its known fresh original cookie once; there is NO new root to quarantine.
+Lost login/logout/receipt remains UNKNOWN, and the historical original-admin
+incident session cleanup remains UNKNOWN. Owned custody and observers are closed;
+no retry/readback/resume or caller switch can turn observation into effects.
+Native application-credential implementation, approval of its proposed custody
+boundary, measured production bounds and final operational-plan review are
+explicit additional blockers. No foreground-exclusive native files were edited.
+
+Offline composition fixtures use synthetic GitHub/Web records, real canonical
+source/admission history selection, strict account/provenance validation, durable
+phase receipts and owned session cleanup. Local checkout/manifest-child transport
+is explicitly mocked ONLY in these composition cases; its actual bounded original
+child handles/canonical predicates have separate existing regressions. Fixtures
+are NOT live admission, writer exclusion, consent or decrypted-value proof.
+
+The initial gate/preflight test failure at `ff5711` changed a synthetic live STEP
+but incorrectly left the job successful. Fixed the JOB and original live-step
+conclusions, not the canonical successful-job predicate. Added simulated absolute
+phase expiry; simulation is not production timing measurement. The failed receipt
+remains retained unchanged. A commit-message length rejection was corrected before
+creating the follow-up anchor; no failed test was relabelled successful.
+
+All11 original shared-policy receipt JSONs are retained in receipts/. Original
+terminal exit/duration is completion proof; no grep wait, count-only rerun, late
+head reassignment or fabricated summary. Each command ran at the clean listed
+head with documented user-bin PATH and permitted offline NODE_ENV=test:
+
+| Clean measured head | Selection (exact command in JSON) | Receipt | Exit | Seconds |
+| --- | --- | --- | --- | --- |
+|ff5711a82226|gate/preflight tests, inconsistent synthetic job failure|754df5f912306bab|1|16.746|
+|ff5711a82226|two-file frozen Ruff|bd7225bd8c5f7c4b|0|0.553|
+|3da88578fb34|gate/preflight47 cases|ff920a616627e142|0|21.029|
+|3da88578fb34|two-file frozen Ruff|99fae964e3998a6b|0|0.438|
+|3da88578fb34|declared diff check|f9abcfe8761ed9ab|0|0.043|
+|3da88578fb34|existing security recovery/canonical dev-admin gate regression|f638f838c312d0b1|0|47.084|
+|3da88578fb34|declared boundary check|cea3b71bbf72d611|0|11.564|
+|3da88578fb34|declared six-file PG/API/BFF/invitation/journal/decoder/fullgate/workflow regression|4db8c92c6124efc4|0|681.026|
+|3da88578fb34|declared Web typecheck|b88f09c49eaf01be|0|10.759|
+|3da88578fb34|declared native consumer102 OFFLINE cases|133cc5e62675e7ce|0|11.852|
+|3da88578fb34|actual Web lint|16aa07f722bc32e2|0|6.605|
+
+The full declared six-file selection has NO displayed skip: the actual production
+Web-store PG child was available WITH the existing frozen Node graph, not rerun
+merely for counting. BYTE-COPIED donor root/Web dependencies came only from the
+already declared invitation worktree; workspace relative links therefore resolve
+THIS candidate source. Root package-lock SHA256 matches donor AND origin/dev:
+`bb287c16ade4a4a83abe9792499adab7ad8c38607fb6750dbd45f41e89edf9e2`.
+Node22.23.2 / existing Corepack pnpm9.15.9 ran with network disabled and explicit
+root/Web .bin PATH; a scratch pnpm shim only execs the existing Corepack binary.
+Missing optional .bin diagnostic paths returned exit2 during setup, not a test
+pass or dependency installation. No frozen-lock rewrite, install, host-wide scan
+or package upgrade. Temporary graph copies were removed before handoff. Web lint
+has an explicit reason distinguishing its command from the policy's shared
+apps/web typecheck selection fingerprint; typecheck was not cosmetically rerun.
+
+Latest remote dev remains e995aa26032542160a177d421ad13157dd6db058. No branch
+sync/cherry-pick/frozen delivery edit occurred. This subsequent evidence commit
+has a different SHA and does not inherit these source-anchor receipts. Final
+exact-head entire-composition/Web300kB verification and PR submission remain due.
+The existing gate/preflight test command was explicitly declared through a live
+canonical task note; canonical verification-list addition was requested before
+final review. Native e46's empty application bearer still blocks the real canonical
+native gate; its102 offline passes are not actual consumption/full-gate authority.
+
+NEXT: resolve native application-credential/custody viability in the assigned
+foreground-exclusive lane and compose the separately normally authorized actual
+fresh-job boundary. Genuine external writer exclusion must be independently
+established; this diagnostic cannot manufacture it or start effects without it.
+Final reviewed operational plan, production measured reserves, independent Codex2
+security review and ordinary deployment/current admission remain before-effects
+gates. After complete source composition, final exact-head declared/full/Web
+budget receipts and task_finalize real PR are mandatory. This is meaningful
+pushed source progress, NOT a ready/awaiting-review or completed-recovery claim.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
