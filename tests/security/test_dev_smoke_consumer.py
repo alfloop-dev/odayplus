@@ -364,7 +364,7 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
 @pytest.mark.parametrize("claim,value", [
     ("exp", 1), ("iat", True), ("nbf", int(time.time()) + 3600),
     ("iat", int(time.time()) - 3600),
-])
+], ids=["expired", "boolean-numeric-date", "future-not-before", "stale-issued-at"])
 def test_native_token_lifetime_and_numeric_dates_cannot_be_forged(offline_signing_key, claim, value):
     claims = oidc_claims()
     claims[claim] = value

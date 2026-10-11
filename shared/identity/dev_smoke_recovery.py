@@ -377,7 +377,6 @@ class RecoveryCapabilityService(RecoveryJournal):
     _CAP_CORRELATION = f"dev-smoke-recovery-capability:{AUTHORIZATION_ID}"
     _CAP_TYPE = "identity.dev_smoke.recovery_capability"
     _TOKEN = re.compile(r"[A-Za-z0-9_-]{43}\Z")
-    _TABLE = "identity.dev_smoke_recovery_capabilities"
     _CAP_KEYS = _PLAN_KEYS | {
         "plan_digest", "root_event_id", "issuer_session_id", "capability_id",
         "capability_expires_at", "stage", "issue_event_id", "revoked_target_sessions",
@@ -461,7 +460,7 @@ class RecoveryCapabilityService(RecoveryJournal):
                 if type(lifetime_seconds) is not int or not 1 <= lifetime_seconds <= 600:
                     raise RecoveryRefused("RECOVERY_CAPABILITY_LIFETIME_INVALID")
                 if self._cap_events() or self._engine.query_one(
-                        f"SELECT capability_id FROM {self._TABLE} WHERE authorization_id = ?",
+                        "SELECT capability_id FROM identity.dev_smoke_recovery_capabilities WHERE authorization_id = ?",
                         (AUTHORIZATION_ID,)) is not None:
                     raise RecoveryRefused("RECOVERY_CAPABILITY_ALREADY_ISSUED")
                 now = self._identity._now()
@@ -475,7 +474,7 @@ class RecoveryCapabilityService(RecoveryJournal):
                 event = self._record_cap(root, capability_id=cap_id, expires=expires,
                                          stage="issued", now=now)
                 self._engine.execute(
-                    f"INSERT INTO {self._TABLE} (authorization_id, capability_id, execution_id, "
+                    "INSERT INTO identity.dev_smoke_recovery_capabilities (authorization_id, capability_id, execution_id, "
                     "plan_digest, root_event_id, issue_event_id, tenant_id, target_account_id, "
                     "issuer_account_id, issuer_session_id, token_hash, issued_at, expires_at, "
                     "original_credential_updated_at, target_credential_updated_at, "
@@ -519,7 +518,7 @@ class RecoveryCapabilityService(RecoveryJournal):
                    capability_id: str, token_hash: str) -> tuple[AuditEvent, dict[str, Any]]:
         root = self._active(principal, reservation)
         row = self._engine.query_one(
-            f"SELECT * FROM {self._TABLE} WHERE authorization_id = ? "
+            "SELECT * FROM identity.dev_smoke_recovery_capabilities WHERE authorization_id = ? "
             "AND capability_id = ? AND token_hash = ? FOR UPDATE",
             (AUTHORIZATION_ID, capability_id, token_hash),
         )
@@ -590,7 +589,7 @@ class RecoveryCapabilityService(RecoveryJournal):
                     expires=datetime.fromisoformat(row["expires_at"]), stage="rotated", now=now,
                     issue_event_id=row["issue_event_id"], revoked_count=revoked)
                 self._engine.execute(
-                    f"UPDATE {self._TABLE} SET consumed_at = ?, rotation_event_id = ? "
+                    "UPDATE identity.dev_smoke_recovery_capabilities SET consumed_at = ?, rotation_event_id = ? "
                     "WHERE authorization_id = ?", (now, event.event_id, AUTHORIZATION_ID),
                 )
             return {"status": "rotated", "account_id": TARGET_ACCOUNT_ID, "tenant_id": TENANT_ID,
@@ -664,10 +663,10 @@ class RecoveryBindingJournal(RecoveryCapabilityService):
         # SHARE locks until append commits; self-change/logout writers must wait.
         original, target = self._account(PRESERVED_ACCOUNT_ID), self._account(TARGET_ACCOUNT_ID)
         row = self._engine.query_one(
-            f"SELECT capability_id, execution_id, plan_digest, root_event_id, issue_event_id, "
+            "SELECT capability_id, execution_id, plan_digest, root_event_id, issue_event_id, "
             "tenant_id, target_account_id, issuer_account_id, issuer_session_id, issued_at, expires_at, "
             "consumed_at, rotation_event_id, original_credential_updated_at, target_credential_updated_at, "
-            f"original_credential_revision, target_credential_revision FROM {self._TABLE} "
+            "original_credential_revision, target_credential_revision FROM identity.dev_smoke_recovery_capabilities "
             "WHERE authorization_id = ? FOR SHARE", (AUTHORIZATION_ID,),
         )
         if (row is None or row["consumed_at"] is None or row["rotation_event_id"] is None

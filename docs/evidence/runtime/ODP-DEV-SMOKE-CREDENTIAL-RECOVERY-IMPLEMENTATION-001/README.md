@@ -1282,6 +1282,44 @@ the shared ignored receiptstore and the canonical task note to avoid a post-test
 commit invalidating exact-head proof. Review submission is only through the
 actual `task_finalize.sh` PR/atomic-status flow, not a fabricated handoff.
 
+## Submitted04a972f7 CI repair (2026-10-11, foreground Pi)
+
+PR1459's genuine CI38139616828 failed two independent source gates:
+product-lint-unit's xdist workers collected different node IDs because four
+negative lineage parameters minted random UUIDs during import, with one more
+in the new gate test. Product-security found five Bandit B608 SQL construction
+sites in RecoveryCapabilityService/RecoveryBindingJournal. The aggregate product
+failure correctly reflected those failures. Neither is treated as transient,
+approved source or reason to replay the same head.
+
+Foreground same-owner Pi acquired the existing Manager allocation after verifying
+no active recovery writer and placing a canonical temporary source scheduling
+hold. task_start validated the existing branch/worktree; canonical scope added
+the already tracked gate test plus actual xdist and SAST regression selections.
+No archived head/history, consent, actor/provider, dependency, scan policy or
+production gate was rewritten.
+
+Fixed query identifiers are now literal schema-qualified table names. Every
+value remains bound via existing parameterized calls; the subclass-overridable
+table identifier/f-string surface is removed, NOT hidden behind nosec/baselines.
+Negative tests retain random wrong UUID values but declare stable descriptive
+IDs. The native consumer's collection-time NumericDate parameters likewise have
+stable IDs to prevent the same intermittent xdist issue. No single-process-only
+workaround, xdist disable, reduced test selection or weakened negative assertion
+is introduced. Original submitted04a and CI failures remain evidence.
+
+Focused changed-Python Ruff/diff diagnostics pass in the working tree. These are
+not transferred to the new repair anchor. All seven updated canonical commands,
+including actual two-worker negative/gate/native tests and unchanged real SAST,
+MUST produce final exact-head receipts before legitimate resubmission. The
+frozen Node graph is temporarily reused only after byte-identical package-lock,
+root/Web package definitions were checked; no install/lock edit. Production
+Web/PostgreSQL store test must execute, not be credited from a missing-Node skip.
+
+This is source CI repair, NOT live recovery/native consumption or independent
+security/custody approval. The external-writer boundary and operational plan
+remain unmet; the composed preflight still unconditionally HOLDs before effects.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret

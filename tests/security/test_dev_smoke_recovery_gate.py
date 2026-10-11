@@ -205,7 +205,9 @@ def test_gate_quarantine_before_remaining_owned_cleanup(foreground_gate: Any, fa
 @pytest.mark.parametrize("field,value", [("bearer_token", ""), ("api_transport_token", ""),
     ("release_profile", "full"), ("expected_deployment", "staging"), ("expected_sha", "c" * 40),
     ("expected_manifest_digest", ""), ("external_provider_mode", "live"), ("allow_http", True),
-    ("dev_admin_initial_password", "OFFLINE-PRIVATE-MARKER"), ("dev_admin_bundle_account_id", str(uuid4()))])
+    ("dev_admin_initial_password", "OFFLINE-PRIVATE-MARKER"), ("dev_admin_bundle_account_id", str(uuid4()))],
+    ids=["application-bearer", "transport-bearer", "full-profile", "staging", "wrong-sha",
+         "missing-manifest", "live-providers", "plaintext-http", "initial-password", "other-account"])
 def test_gate_prevalidates_config_without_io(foreground_gate: Any, field: str, value: Any) -> None:
     from dataclasses import replace
 

@@ -1137,7 +1137,10 @@ def test_same_session_actions_safe_lineage_custody_and_durable_sequence(same_ses
     ("consume", "tenant_id", str(uuid4())), ("consume", "revoked_target_sessions", True),
     ("consume", "issue_event_id", str(uuid4())), ("consume", "credential_binding_verified", 0),
     ("consume", "rotation_event_id", "invalid"), ("consume", "password", "PRIVATE-MARKER"),
-])
+], ids=["reserve-plan", "reserve-execution", "reserve-authority", "reserve-redaction",
+        "issue-execution", "issue-token", "issue-expiry", "issue-zero-capability",
+        "consume-original-account", "consume-other-tenant", "consume-session-count",
+        "consume-other-issue", "consume-binding", "consume-invalid-rotation", "consume-private-extra"])
 def test_same_session_malformed_committed_reply_stops_unknown(same_session_actions: Any, tmp_path: Path,
                                                             action: str, field: str, value: Any) -> None:
     import json
@@ -1437,7 +1440,7 @@ def test_binding_terminal_storage_failure_poison_ack_even_after_real201(same_ses
     ("root_event_id", str(uuid4())), ("rotation_event_id", str(uuid4())),
     ("issuer_session_id", "not-a-session"), ("put_status", True),
     ("credential_binding_verified", 0), ("password", "PRIVATE-MARKER"),
-])
+], ids=["other-root", "other-rotation", "invalid-session", "boolean-status", "binding-type", "private-extra"])
 def test_binding_reply_lineage_and_exact_shape_refuse(same_session_actions: Any, field: str, value: Any) -> None:
     from delivery_toolchain.release.recover_dev_smoke import RecoveryActionRefused
     def corrupt(action, payload):
