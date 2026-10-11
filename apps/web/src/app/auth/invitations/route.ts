@@ -56,8 +56,13 @@ async function boundedJson(body: ReadableStream<Uint8Array> | null): Promise<unk
 const ACCEPT_SCRIPT = `
 const form = document.getElementById("accept-invitation");
 const result = document.getElementById("result");
+let submittingOrFinished = false;
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  // Disabling the button alone does not fence Enter/programmatic duplicate events.
+  if (submittingOrFinished) return;
+  submittingOrFinished = true;
+  let correctionAllowed = false;
   const button = form.querySelector("button");
   button.disabled = true;
   result.textContent = "接受邀請中…";
@@ -68,17 +73,40 @@ form.addEventListener("submit", async (event) => {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify(payload), cache: "no-store", redirect: "error",
     });
+    const receipt = await response.json();
     if (response.status === 201) {
+      const ids = ["invitation_id", "account_id", "tenant_id", "audit_event_id"];
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (receipt?.status !== "accepted" ||
+          ids.some((key) => typeof receipt[key] !== "string" || !uuid.test(receipt[key])) ||
+          receipt.invitation_id.toLowerCase() !== payload.invitation_id.toLowerCase()) {
+        throw new Error("unconfirmed acceptance");
+      }
       form.reset();
       form.hidden = true;
       result.textContent = "帳號已建立。請前往登入；營運邀請首次登入需再次改密碼。";
+    } else if (response.status === 422 &&
+        ["INVITATION_INPUT_INVALID", "INVITATION_ACCOUNT_INPUT_INVALID", "INVITATION_PASSWORD_REJECTED"]
+          .includes(receipt?.error?.code)) {
+      // Only a definite, recognized validation refusal permits manual correction.
+      correctionAllowed = true;
+      result.textContent = "本次輸入未通過驗證，未執行建立帳號。請修正登入名稱或密碼後送出。";
+    } else if (response.status === 409 &&
+        ["INVITATION_UNAVAILABLE", "INVITATION_ACCOUNT_EXISTS", "INVITATION_PENDING_EXISTS"]
+          .includes(receipt?.error?.code)) {
+      result.textContent = "邀請目前無法接受，可能已使用、到期或撤銷。已停止送出，請聯絡管理員確認現有帳號與邀請狀態。";
     } else {
-      result.textContent = "無法接受邀請。請檢查憑證、登入名稱與密碼政策，或聯絡邀請管理員確認到期與撤銷狀態。";
+      throw new Error("unconfirmed acceptance");
     }
   } catch {
-    result.textContent = "服務暫時無法連線；請確認邀請是否已接受後再嘗試。";
+    // A lost/malformed/5xx response may follow a committed acceptance. Never
+    // turn uncertainty into invalid credentials or permit this page to resubmit.
+    result.textContent = "接受結果尚未確認，帳號可能已建立。已停止送出，請勿重新提交或重建帳號；可前往登入，或請管理員查核接受紀錄。";
   } finally {
-    button.disabled = false;
+    if (correctionAllowed) {
+      submittingOrFinished = false;
+      button.disabled = false;
+    }
   }
 });
 `;

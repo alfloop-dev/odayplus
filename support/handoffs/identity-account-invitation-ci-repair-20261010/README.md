@@ -1,8 +1,38 @@
 # ODP-IDENTITY-ACCOUNT-INVITATION-001 — CI repair
 
-Owner: Pi · Reviewer: Codex2 · PR: [#1447](https://github.com/alfloop-dev/odayplus/pull/1447)
+Owner: Pi · Current reviewer: Codex · PR: [#1447](https://github.com/alfloop-dev/odayplus/pull/1447)
 
-**Current checkpoint (2026-10-10 22:57 UTC):** merge `014781053779`
+## Unknown acceptance outcome repair (2026-10-11)
+
+This is a meaningful follow-up to submitted `b1100be162f0`, not a cosmetic CI
+refresh. Owner-side offline execution of the actual GET page's inline handler
+showed that transport rejection and503 both re-enabled the form; a second manual
+submit caused a second POST. This was **not automatic retry or a demonstrated
+server duplicate-account vulnerability**: atomic single-use acceptance remains.
+But503 was displayed as an invalid invitation and an uncertain, possibly
+committed outcome was not fenced. Original b110 CI run38093359605 also retains
+its contradictory `change-scope` status=in_progress/conclusion=success/completed
+metadata; no check was forged, re-run or waived to clear that independent issue.
+
+The handler now fences duplicate events before the first await, keeps unknown
+transport/5xx/malformed or mismatched201 outcomes stopped with explicit possible
+commit guidance, and prevents same-page resubmission after confirmed success.
+Recognized409 refuses without claiming the account does not exist; only a
+recognized noncommitting422 permits manual input correction. Inputs are cleared
+only on a valid matching acceptance receipt. No secret logging/storage, URL
+capabilities, new/reissued invitation or account reset is introduced.
+
+Tests execute the production handler extracted from the actual GET response in
+an offline Node VM, not a duplicated implementation. They cover in-flight and
+terminal double events, lost replies,503, malformedJSON/201, mismatched invitation,
+unrecognized422, recognized validation correction, definite409 and success.
+Current `origin/dev` e995aa260325 is merged without rewriting history; its frozen
+recovery design is unchanged. General invitation remains separate from recovery
+of the already accepted dev-smoke identity. Exact-head declared checks, fresh CI
+and independent review are mandatory before release; **not yet claimed here**.
+The earlier reviewer names/checkpoints below remain historical records.
+
+**Historical checkpoint (2026-10-10 22:57 UTC):** merge `014781053779`
 composes current `origin/dev` `d50cd331a53b` without rewriting task history;
 source `7c7b01c2ada5` additionally clarifies that recipient delivery is unknown.
 Fresh focused verification passes, including actual Web/Pg/API auth. Submit the
