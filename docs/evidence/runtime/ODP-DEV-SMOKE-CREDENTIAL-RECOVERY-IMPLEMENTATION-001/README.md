@@ -55,6 +55,15 @@ No frozen plan/invitation delivery was edited or cherry-picked.
 
 PR1459 rejected head703703682 is preserved, not reset/amended. History-preserving
 merge71ab654b0 composes origin/dev1286834caf3a (fetched before work), conflict-free.
+Pre-submission readback then found origin/dev359e480a46df (merged invitationPR1447).
+Normal merge dc331d8a0c0a retains both parents and all official merged invitation
+adapters/contracts/regressions; its password-test import conflict was resolved by
+retaining BOTH test suites' imports, not choosing one side. All final-head checks
+must be rerun on this composed tree; a4008f946's passing receipts are historical.
+Its first Web build/budget argv spelling (`NODE_ENV=production` as executable)
+exited127; correcting to bare declared pnpm with inherited production env yielded
+exit0 build/budget. Those failure receipts and shared-selection duplicate refusals
+remain recorded, not relabelled. Canonical task notes name exact final receipts.
 Anchor90560f073 returns the self-password-change CAS's committed revision and
 forwards it to production replacement-session insertion. Mounted production-store
 SQL adapter regression verifies successful password change, no caller revision,
