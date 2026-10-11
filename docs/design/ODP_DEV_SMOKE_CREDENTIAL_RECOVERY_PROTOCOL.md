@@ -468,6 +468,49 @@ consumption or F11 evidence. External writer exclusion, full foreground coordina
 actual budget measurements, independent review/deployment and final execution
 plan remain unresolved. This source increment does not authorize effects.
 
+## One-shot encrypted staging increment (unapproved; NOT a full coordinator)
+
+`SameSessionRecoveryActions` adds once-only binding-intent and ACK using the
+SAME retained original-admin cookie. Exact mounted binding metadata must match
+plan/root/capability/issue/rotation and safe flags; ACK must retain the intent's
+issuer-session ID. Reconciliation must finish in the budget before intent, but
+this adapter cannot independently authenticate that caller-driven reconciliation.
+It is not session ownership, account preflight or writer-exclusion proof.
+
+`RecoveryGitHubSecretAttempt` implements bounded authenticated GitHub HTTPS with
+independently pinned human custodian, numeric repository ID, dev public-key ID/
+bytes and numeric API address, verified CA/hostname/SNI, no DNS/proxy/redirect/
+retry/reconnect/children. Prepare and the immediately-before-PUT observation each
+freshly check /user, exact repository, absent secret metadata and the SAME pinned
+key. One absolute phase deadline covers all reads/TLS/send/parsing, with the
+existing aggregate64KiB/body16KiB framing limits. No plaintext value is retrieved.
+The store builds strict schema2 from the actions' retained SAME random pair and
+actual intent/rotation IDs, encrypts with the existing frozen PyNaCl sealed box,
+and makes ONE PUT of only key ID/ciphertext after a durable PUT-start receipt.
+
+Only an original fully framed HTTP201 with empty success body AND successful
+terminal fsync enables the actions' ACK. No public201 argument, passing callback,
+metadata readback or later GET reconstructs it.204/lost/malformed/late response,
+key/custodian/repository/absence drift, custody loss or receipt failure poisons
+normal progression; the caller must take the bounded quarantine/cleanup lanes.
+A failed ACK never permits another PUT/ACK. The primitive itself does not own
+cleanup/quarantine orchestration, full gate or normally admitted fresh dispatch.
+
+Offline mocked metadata and ephemeral loopback TLS test actual encrypted request
+composition and original201/lost/204/redirect/truncated replies. Fixture-only
+sealed-box decryption is NOT GitHub decrypted-value or fresh-consumer proof.
+No live GitHub/account/session/secret operation was performed. Managed-memory
+reference release is not provable zeroization.
+
+**External writer exclusion is STILL unresolved.** Absence plus this once-only
+store/local budget does not exclude another API writer; GitHub PUT is not
+conditional-create. The incomplete full coordinator MUST refuse BEFORE rotation
+until a genuine independently reviewed exclusion boundary exists. These primitives
+expose no exclusion boolean/lock proof and must not be used live by themselves.
+Full source/admission/Web+API/account/provenance preflight, session ownership,
+measured reserves, full gate/cleanup/fresh-job composition and custody approval
+remain outstanding. This increment is durable source progress, not completion.
+
 ## Required subsequent increments (not implemented)
 
 1. Independent review of migration/capability/session-fence domain increments;
@@ -493,10 +536,12 @@ plan remain unresolved. This source increment does not authorize effects.
    lost reply, session/custody loss or receipt failure stops and quarantines NEW
    execution. Later readback never resumes authority. Never replay the old600s
    creation child or remove local uncertainty barriers.
-5. One encrypted dev-only same-pair PUT after durable intent, fresh absence AND
-   genuine external writer exclusion, independently pinned custodian/key/repo.
-   Require actual201 before ACK;204, lost reply, ACK failure or gate uncertainty
-   quarantines, with no overwrite/read/delete/retry/rollback compensation.
+5. Compose the new one-shot encrypted staging and actual201-to-ACK primitives
+   into the full coordinator ONLY after genuine external writer exclusion,
+   independently pinned custodian/key/repo and real reconciliation. The primitives
+   above do NOT establish those authorities.204, lost reply, ACK failure or gate
+   uncertainty must trigger orchestration of bounded new-root quarantine/cleanup,
+   with no overwrite/read/delete/retry/rollback compensation.
 6. Complete canonical same-pair gate, actual matching Web/API SHA/profile/digest,
    original preservation, exact provenance and cleanup of only execution-owned
    sessions. Independently normally admitted fresh-job actual bundle consumer

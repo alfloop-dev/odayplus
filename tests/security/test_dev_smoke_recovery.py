@@ -1040,7 +1040,7 @@ def same_session_actions(tmp_path: Path, monkeypatch: Any):
         custody = r.ParentMemoryCustody()
         actions = r.SameSessionRecoveryActions(p, budget=budget, custody=custody,
                     origin="https://offline.invalid", address="127.0.0.1", cookie="synthetic-admin-cookie")
-        ids = {key: str(uuid4()) for key in ("root", "cap", "issue", "rotate", "quarantine")}
+        ids = {key: str(uuid4()) for key in ("root", "cap", "issue", "rotate", "quarantine", "intent", "ack", "session")}
         calls = []
         def execute(attempt, *, method, cookie, deadline, body):
             calls.append((method, cookie, deadline, body))
@@ -1063,6 +1063,15 @@ def same_session_actions(tmp_path: Path, monkeypatch: Any):
                             "secret_values_redacted": True},
                 "quarantine": {"reservation": {**root, "event_id": ids["quarantine"], "stage": "recovery-required"}},
             }
+            binding = {**p, "plan_digest": actions._digest, "root_event_id": ids["root"],
+                       "issuer_session_id": ids["session"], "capability_id": ids["cap"],
+                       "capability_issue_event_id": ids["issue"], "rotation_event_id": ids["rotate"],
+                       "secret_name": "ODP_DEV_ADMIN_CREDENTIAL_BUNDLE", "execution_authorized": False,
+                       "credential_binding_verified": False, "secret_values_redacted": True}
+            replies["binding-intent"] = {"binding": {**binding, "stage": "binding-intent", "put_status": 0,
+                                                   "audit_event_id": ids["intent"]}}
+            replies["binding-acknowledged"] = {"binding": {**binding, "stage": "binding-acknowledged",
+                                                         "put_status": 201, "audit_event_id": ids["ack"]}}
             payload = replies[body["action"]]
             if reply_filter is not None:
                 payload = reply_filter(body["action"], payload)
@@ -1254,3 +1263,234 @@ def test_same_session_unknown_issue_or_rotation_only_quarantines(same_session_ac
         assert len(calls) == before
         actions.quarantine()
         assert calls[-1][3]["action"] == "quarantine" and len(calls) == before + 1
+
+
+@pytest.fixture
+def recovery_secret_store(monkeypatch: Any):
+    """Mocked GitHub metadata plus an offline sealed-box key, NEVER authority.
+
+    Decryption by this fixture proves ciphertext composition only; GitHub cannot
+    retrieve a plaintext secret. Real loopback TLS PUT tests are separate below.
+    """
+    import base64
+    from contextlib import contextmanager
+
+    from nacl.public import PrivateKey
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+
+    @contextmanager
+    def setup(*, status=201, fault="", real_put=False):
+        key = PrivateKey.generate()
+        public = base64.b64encode(bytes(key.public_key)).decode()
+        store = r.RecoveryGitHubSecretAttempt(token="offline-gh-token", custodian_login="bounded-custodian",
+                    custodian_id=123, repository_id=456, key_id="offline-key-id", public_key=public,
+                    address="127.0.0.1")
+        calls = []
+        original = store._request
+        def request(method, path, *, deadline, body=None):
+            calls.append((method, path, deadline, body))
+            if method == "PUT":
+                if real_put:
+                    return original(method, path, deadline=deadline, body=body)
+                if fault == "lost":
+                    raise r.RecoveryHTTPRefused(outcome="unknown", http_status=None)
+                return r.RecoveryHTTPResult(status, {})
+            if path == "/user":
+                payload = {"type": "User", "id": 123, "login": "bounded-custodian"}
+                if fault == "custodian":
+                    payload["id"] = 999
+            elif path.startswith("/repos/"):
+                payload = {"full_name": "alfloop-dev/odayplus", "id": 456}
+                if fault == "repository":
+                    payload["id"] = 999
+            elif path.endswith("/public-key"):
+                payload = {"key_id": "offline-key-id", "key": public}
+                if fault == "key":
+                    payload["key_id"] = "changed-key"
+            else:
+                return r.RecoveryHTTPResult(200 if fault == "exists" else 404, {})
+            return r.RecoveryHTTPResult(200, payload)
+        monkeypatch.setattr(store, "_request", request)
+        try:
+            yield store, key, calls
+        finally:
+            store.close()
+    return setup
+
+
+def reconcile_and_intent(actions: Any, budget: Any) -> dict:
+    actions.reserve()
+    actions.issue()
+    actions.rotate()
+    budget.begin("reconcile")
+    budget.finish(outcome="completed")  # explicitly synthetic, NOT actual fresh login proof
+    return actions.binding_intent()
+
+
+def test_same_pair_durable_intent_sealed_put_original201_then_ack(same_session_actions: Any,
+        recovery_secret_store: Any, tmp_path: Path) -> None:
+    import base64
+    import json
+    import pickle
+
+    from nacl.public import SealedBox
+
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle
+    from delivery_toolchain.release.recover_dev_smoke import RecoveryActionRefused
+
+    with same_session_actions() as (actions, budget, clock, custody, receipts, p, ids, action_calls):
+        with recovery_secret_store() as (store, key, calls):
+            prepared = store.prepare(deadline=clock.value + 10)
+            assert prepared["execution_authorized"] is False
+            intent = reconcile_and_intent(actions, budget)
+            receipt = store.put(actions)
+            assert receipt["http_status"] == 201 and receipt["credential_binding_verified"] is False
+            put = [c for c in calls if c[0] == "PUT"]
+            assert len(put) == 1 and len(calls) == 9  # four metadata GETs twice, ONE PUT
+            assert len({c[2] for c in calls[4:]}) == 1  # no per-request allowance refresh
+            clear = SealedBox(key).decrypt(base64.b64decode(put[0][3]["encrypted_value"]))
+            bundle = read_dev_credential_bundle(clear.decode(), environment="dev", release_profile="dev-admin")
+            assert bundle.password == custody.password and bundle.username == "odp-dev-smoke"
+            assert bundle.recovery_lineage.binding_intent_event_id == intent["audit_event_id"]
+            assert bundle.recovery_lineage.rotation_event_id == ids["rotate"]
+            assert "token" not in json.loads(clear) and "ajoe734" not in clear.decode()
+            ack = actions.binding_acknowledge()
+            assert ack["put_status"] == 201 and ack["issuer_session_id"] == intent["issuer_session_id"]
+            assert action_calls[-1][3] == {"action": "binding-acknowledged", "reservation": actions._root,
+                                          "intent_event_id": ids["intent"], "put_status": 201}
+            text = "".join(path.read_text() for path in (tmp_path / p["execution_id"]).glob("*.json"))
+            assert all(marker not in text for marker in (custody.password, custody.capability, "offline-gh-token"))
+            assert "offline-gh-token" not in repr(store)
+            with pytest.raises(RecoveryRefused, match="SERIALIZATION_REFUSED"):
+                pickle.dumps(store)
+            with pytest.raises(RecoveryActionRefused):
+                store.put(actions)
+            assert len([c for c in calls if c[0] == "PUT"]) == 1
+
+
+@pytest.mark.parametrize("status,fault", [(204, ""), (500, ""), (201, "lost")])
+def test_unknown_put_never_ack_retries_or_reconstructs(same_session_actions: Any,
+        recovery_secret_store: Any, status: int, fault: str) -> None:
+    from delivery_toolchain.release.recover_dev_smoke import RecoveryActionRefused
+    with same_session_actions() as (actions, budget, clock, custody, receipts, p, ids, action_calls):
+        with recovery_secret_store(status=status, fault=fault) as (store, key, calls):
+            store.prepare(deadline=clock.value + 10)
+            reconcile_and_intent(actions, budget)
+            with pytest.raises(RecoveryActionRefused) as caught:
+                store.put(actions)
+            assert caught.value.outcome == "unknown"
+            with pytest.raises(RecoveryActionRefused):
+                actions.binding_acknowledge()
+            with pytest.raises(RecoveryActionRefused):
+                store.put(actions)
+            assert len([c for c in calls if c[0] == "PUT"]) == 1
+            actions.quarantine()
+            assert action_calls[-1][3]["action"] == "quarantine"
+            assert all(c[3]["action"] != "binding-acknowledged" for c in action_calls)
+
+
+@pytest.mark.parametrize("fault", ["custodian", "repository", "key", "exists"])
+def test_preflight_pins_absence_fail_before_put_no_retry(recovery_secret_store: Any, fault: str) -> None:
+    import time
+    with recovery_secret_store(fault=fault) as (store, key, calls):
+        with pytest.raises(RecoveryRefused, match="PREFLIGHT_REFUSED"):
+            store.prepare(deadline=time.monotonic() + 5)
+        before = len(calls)
+        with pytest.raises(RecoveryRefused):
+            store.prepare(deadline=time.monotonic() + 5)
+        assert len(calls) == before and not any(c[0] != "GET" for c in calls)
+
+
+@pytest.mark.parametrize("phase", ["intent", "put", "ack"])
+def test_binding_terminal_storage_failure_poison_ack_even_after_real201(same_session_actions: Any,
+        recovery_secret_store: Any, monkeypatch: Any, phase: str) -> None:
+    from delivery_toolchain.release.recover_dev_smoke import RecoveryActionRefused
+    with same_session_actions() as (actions, budget, clock, custody, receipts, p, ids, action_calls):
+        with recovery_secret_store() as (store, key, calls):
+            store.prepare(deadline=clock.value + 10)
+            actions.reserve()
+            actions.issue()
+            actions.rotate()
+            budget.begin("reconcile")
+            budget.finish(outcome="completed")
+            original = receipts.append
+            def broken(**kwargs):
+                if kwargs["phase"] == phase and kwargs["stage"] == "terminal":
+                    raise OSError("PRIVATE-MARKER")
+                original(**kwargs)
+            monkeypatch.setattr(receipts, "append", broken)
+            if phase != "intent":
+                actions.binding_intent()
+            if phase == "ack":
+                store.put(actions)
+            operation = actions.binding_intent if phase == "intent" else (lambda: store.put(actions)) if phase == "put" else actions.binding_acknowledge
+            with pytest.raises(RecoveryActionRefused) as caught:
+                operation()
+            assert "PRIVATE-MARKER" not in repr(caught.value)
+            with pytest.raises(RecoveryActionRefused):
+                actions.binding_acknowledge()
+            assert len([c for c in calls if c[0] == "PUT"]) == (0 if phase == "intent" else 1)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("root_event_id", str(uuid4())), ("rotation_event_id", str(uuid4())),
+    ("issuer_session_id", "not-a-session"), ("put_status", True),
+    ("credential_binding_verified", 0), ("password", "PRIVATE-MARKER"),
+])
+def test_binding_reply_lineage_and_exact_shape_refuse(same_session_actions: Any, field: str, value: Any) -> None:
+    from delivery_toolchain.release.recover_dev_smoke import RecoveryActionRefused
+    def corrupt(action, payload):
+        if action == "binding-intent":
+            payload["binding"][field] = value
+        return payload
+    with same_session_actions(reply_filter=corrupt) as (actions, budget, clock, custody, receipts, p, ids, calls):
+        with pytest.raises(RecoveryActionRefused) as caught:
+            reconcile_and_intent(actions, budget)
+        assert caught.value.outcome == "unknown"
+        assert actions._intent is None
+        with pytest.raises(RecoveryActionRefused):
+            actions.binding_acknowledge()
+        assert all(c[3]["action"] != "binding-acknowledged" for c in calls)
+
+
+@pytest.mark.parametrize("reply_kind", ["201", "lost", "204", "redirect", "truncated201"])
+def test_real_tls_encrypted_put_status_and_complete_reply_fence(same_session_actions: Any,
+        recovery_secret_store: Any, tls_recovery_server: Any, reply_kind: str) -> None:
+    import base64
+    import json
+
+    from nacl.public import SealedBox
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+    reply = {"201": recovery_http_reply(b"", status=201), "lost": b"",
+             "204": recovery_http_reply(b"", status=204), "redirect": recovery_http_reply(status=302),
+             "truncated201": recovery_http_reply(b'{"ok":true}', status=201)[:-2]}[reply_kind]
+    with same_session_actions() as (actions, budget, clock, custody, receipts, p, ids, action_calls):
+        with recovery_secret_store(real_put=True) as (store, key, calls):
+            store.prepare(deadline=clock.value + 10)
+            reconcile_and_intent(actions, budget)
+            with tls_recovery_server(reply) as (origin, ca, observed):
+                # ONLY isolated loopback certificate; production origin is fixed
+                # api.github.com with verified normal CA/hostname/SNI.
+                store._transport = r.RecoveryHTTPSAttempt(origin=origin, address="127.0.0.1", ca_pem=ca)
+                if reply_kind == "201":
+                    store.put(actions)
+                    actions.binding_acknowledge()
+                else:
+                    with pytest.raises(r.RecoveryActionRefused) as caught:
+                        store.put(actions)
+                    assert caught.value.outcome == "unknown"
+                    with pytest.raises(r.RecoveryActionRefused):
+                        actions.binding_acknowledge()
+            assert len(observed) == 1
+            header, body = observed[0]
+            assert header.startswith(b"PUT /repositories/456/environments/dev/secrets/ODP_DEV_ADMIN_CREDENTIAL_BUNDLE ")
+            encrypted = json.loads(body)
+            assert set(encrypted) == {"key_id", "encrypted_value"}
+            clear = json.loads(SealedBox(key).decrypt(base64.b64decode(encrypted["encrypted_value"])))
+            assert clear["password"] == custody.password
+            assert custody.password.encode() not in body and custody.capability.encode() not in body
+            with pytest.raises(r.RecoveryActionRefused):
+                store.put(actions)
+            assert len([c for c in calls if c[0] == "PUT"]) == 1

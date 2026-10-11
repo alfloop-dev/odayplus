@@ -1,11 +1,10 @@
-"""Foreground recovery primitives and bounded read-only checkout observer.
+"""Foreground recovery/staging primitives, NOT a complete recovery executor.
 
-NOT a recovery executor. No CLI, credential-bearing subprocess, secret writer
-or admission shortcut. The one-use HTTPS primitive is not a coordinator.
-The eventual coordinator must compose fresh
-source/admission observations, genuine writer exclusion and a reviewed native
-consumer BEFORE effects. These objects cannot grant that authority or resume a
-persisted execution. Do not construct them with live secrets in a worker.
+No CLI, credential-bearing subprocess or admission shortcut. One-use HTTPS and
+sealed staging primitives are not a coordinator. The eventual coordinator must
+compose fresh source/admission/account/session observations, genuine writer
+exclusion and a reviewed native consumer BEFORE effects. These objects cannot
+grant that authority or resume a persisted execution. No live worker use.
 """
 from __future__ import annotations
 
@@ -662,12 +661,13 @@ class RecoveryActionRefused(RecoveryRefused):
 
 
 class SameSessionRecoveryActions:
-    """Once-only reserve/issue/rotate/quarantine over the SAME memory cookie.
+    """Once-only recovery/binding actions over the SAME memory cookie.
 
     NOT a session owner or execution coordinator. Trusted foreground must first
     complete real preflight, independently reviewed authority/exclusion/consumer
     gates, and persist its preflight terminal through the supplied budget. No
-    login, GET/readback/resume, binding/PUT/ACK or credential-bearing child exists.
+    login, GET/readback/resume or credential-bearing child exists. ACK requires
+    the concrete store's original201 plus durable terminal, not a supplied status.
     A lost reserve reply leaves no locally proven root: quarantine completion is
     UNKNOWN until separately authorized reconciliation, never a reserve retry.
     """
@@ -695,7 +695,9 @@ class SameSessionRecoveryActions:
         self._budget, self._custody = budget, custody
         self._origin, self._address, self._ca, self._cookie = origin, address, ca_pem, cookie
         self._root = None
-        self._capability_id = self._issue_event_id = ""
+        self._capability_id = self._issue_event_id = self._rotation_event_id = ""
+        self._intent = None
+        self._put_status = None
         self._stopped = self._quarantined = False
         self._attempted: set[str] = set()
         self._events: set[str] = set()
@@ -829,7 +831,74 @@ class SameSessionRecoveryActions:
         except Exception:
             self._stopped = True
             raise RecoveryActionRefused(outcome="refused", http_status=None) from None
-        return self._call("rotate", body, validate)
+        safe = self._call("rotate", body, validate)
+        self._rotation_event_id = safe["rotation_event_id"]
+        return safe
+
+    def _binding_reply(self, payload: dict, *, stage: str) -> tuple[dict, str]:
+        from shared.identity.dev_smoke_journal import CREDENTIAL_BUNDLE_SECRET_NAME
+        if set(payload) != {"binding"} or type(payload["binding"]) is not dict:
+            raise ValueError
+        value = payload["binding"]
+        expected = {
+            **self._plan, "plan_digest": self._digest, "root_event_id": self._root["event_id"],
+            "issuer_session_id": value.get("issuer_session_id"),
+            "capability_id": self._capability_id, "capability_issue_event_id": self._issue_event_id,
+            "rotation_event_id": self._rotation_event_id, "secret_name": CREDENTIAL_BUNDLE_SECRET_NAME,
+            "stage": stage, "put_status": 0 if stage == "binding-intent" else 201,
+            "execution_authorized": False, "credential_binding_verified": False,
+            "secret_values_redacted": True, "audit_event_id": value.get("audit_event_id"),
+        }
+        if (set(value) != set(expected) or value != expected
+                or not _uuid(value["issuer_session_id"]) or type(value["put_status"]) is not int
+                or value["execution_authorized"] is not False
+                or value["credential_binding_verified"] is not False
+                or value["secret_values_redacted"] is not True
+                or (self._intent is not None and any(value[k] != self._intent[k]
+                    for k in set(expected) - {"stage", "put_status", "audit_event_id"}))):
+            raise ValueError
+        return dict(value), value["audit_event_id"]
+
+    def binding_intent(self) -> dict:
+        # Budget requires completed reconciliation; that is NOT independent
+        # proof of preflight/session ownership or permission to bypass exclusion.
+        if not self._rotation_event_id or self._root is None:
+            self._stopped = True
+            raise RecoveryActionRefused(outcome="refused", http_status=None)
+        safe = self._call("intent", {"action": "binding-intent", "reservation": dict(self._root)},
+                          lambda payload: self._binding_reply(payload, stage="binding-intent"))
+        self._intent = dict(safe)
+        return safe
+
+    def binding_acknowledge(self) -> dict:
+        # No public status argument. Only the concrete single-attempt store below
+        # can supply original201 after durable PUT completion in this process.
+        if self._intent is None or self._put_status != 201:
+            self._stopped = True
+            raise RecoveryActionRefused(outcome="refused", http_status=None)
+        return self._call("ack", {"action": "binding-acknowledged", "reservation": dict(self._root),
+                                 "intent_event_id": self._intent["audit_event_id"], "put_status": 201},
+                          lambda payload: self._binding_reply(payload, stage="binding-acknowledged"))
+
+    def _bundle(self) -> dict:
+        from shared.identity.dev_smoke_journal import REPOSITORY
+        from shared.identity.dev_smoke_recovery import recovery_bundle_lineage
+        if (self._intent is None or self._stopped or self._quarantined or os.getpid() != self._pid):
+            raise RecoveryRefused("RECOVERY_BINDING_INPUT_REFUSED")
+        lineage = {
+            "plan_digest": self._digest, "root_event_id": self._root["event_id"],
+            "capability_id": self._capability_id, "capability_issue_event_id": self._issue_event_id,
+            "rotation_event_id": self._rotation_event_id,
+            "binding_intent_event_id": self._intent["audit_event_id"],
+            **{k: self._plan[k] for k in ("old_execution_id", "old_plan_digest", "old_quarantine_event_id",
+                                         "invitation_id", "issue_event_id", "accept_event_id")},
+        }
+        recovery_bundle_lineage(lineage)
+        return {"schema_version": 2, "authorization_id": AUTHORIZATION_ID,
+                "execution_id": self._plan["execution_id"], "repository": REPOSITORY,
+                "environment": "dev", "tenant_id": TENANT_ID, "account_id": TARGET_ACCOUNT_ID,
+                "username": "odp-dev-smoke", "password": self._custody.password,
+                "recovery_lineage": lineage}
 
     def quarantine(self) -> dict:
         # May record uncertainty after custody loss; uses ONLY retained own cookie
@@ -845,3 +914,227 @@ class SameSessionRecoveryActions:
     def close(self) -> None:
         self._stopped = True
         self._cookie = ""  # NOT logout proof or provable memory zeroization
+
+
+class RecoveryGitHubSecretAttempt:
+    """Pinned bounded HTTPS staging primitive, NOT execution/exclusion authority.
+
+    Trusted foreground independently pins human custodian, repository numeric ID,
+    dev public key and numeric api.github.com address. Every observation freshly
+    authenticates /user, repository, absence and exact key. This cannot exclude
+    another API writer: the full coordinator MUST refuse BEFORE rotation until
+    genuine external exclusion is established. No CLI/callback/boolean lock or
+    writer-exclusion receipt is accepted or invented here.
+
+    One prepare, ONE sealed-box PUT, no value GET/delete/retry/overwrite. The
+    same-session actions own the retained pair/intent and original201-to-ACK
+    fence. Native custody approval, source/admission/preflight and session/gate
+    coordinator remain separate BEFORE-effects prerequisites.
+    """
+
+    def __init__(self, *, token: str, custodian_login: str, custodian_id: int,
+                 repository_id: int, key_id: str, public_key: str, address: str,
+                 ca_pem: str | None = None) -> None:
+        import base64
+        import re
+
+        from shared.identity.dev_smoke_journal import _CUSTODIAN, CREDENTIAL_BUNDLE_SECRET_NAME
+        self._pid, self._prepare_used, self._put_used, self._prepared = os.getpid(), False, False, False
+        try:
+            if (type(token) is not str or not 1 <= len(token) <= 8192
+                    or any(ord(c) <= 32 or ord(c) >= 127 for c in token)
+                    or type(custodian_login) is not str or not _CUSTODIAN.fullmatch(custodian_login)
+                    or any(type(v) is not int or not 0 < v < 2**63 for v in (custodian_id, repository_id))
+                    or type(key_id) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", key_id)
+                    or type(public_key) is not str
+                    or len(base64.b64decode(public_key, validate=True)) != 32):
+                raise ValueError
+            self._transport = RecoveryHTTPSAttempt(origin="https://api.github.com", address=address,
+                                                    ca_pem=ca_pem)
+        except Exception:
+            raise RecoveryRefused("RECOVERY_SECRET_CONFIG_INVALID") from None
+        self._token, self._login, self._identity, self._repo = token, custodian_login, custodian_id, repository_id
+        self._key_id, self._public_key = key_id, public_key
+        self._path = f"/repositories/{repository_id}/environments/dev/secrets"
+        self._secret_path = f"{self._path}/{CREDENTIAL_BUNDLE_SECRET_NAME}"
+
+    def __repr__(self) -> str:
+        return "RecoveryGitHubSecretAttempt(<redacted>)"
+
+    def __reduce_ex__(self, protocol: int):
+        raise RecoveryRefused("RECOVERY_SECRET_SERIALIZATION_REFUSED")
+
+    def _request(self, method: str, path: str, *, deadline: float, body: dict | None = None) -> RecoveryHTTPResult:
+        """Internal fixed-path request; same absolute TLS/read/framing limits.
+
+        GET of the named secret is metadata-only (404 required); public GitHub
+        API has NO plaintext value retrieval. No user-supplied route is exported.
+        Empty201 is accepted only after complete framing/EOF, never status alone.
+        """
+        import http.client
+        import socket
+
+        from shared.identity.dev_smoke_journal import REPOSITORY
+        status, submitted = None, False
+        raw = tls = connection = response = None
+        try:
+            if (os.getpid() != self._pid or not self._token
+                    or type(deadline) not in (int, float) or not math.isfinite(deadline)
+                    or not 0 < deadline - time.monotonic() <= 2400
+                    or (method, path) not in {
+                        ("GET", "/user"), ("GET", f"/repos/{REPOSITORY}"),
+                        ("GET", self._secret_path), ("GET", f"{self._path}/public-key"),
+                        ("PUT", self._secret_path),
+                    } or (method == "GET" and body is not None)
+                    or (method == "PUT" and (type(body) is not dict
+                        or set(body) != {"key_id", "encrypted_value"}))):
+                raise ValueError
+            encoded = None if body is None else json.dumps(body, separators=(",", ":"), allow_nan=False).encode()
+            if encoded is not None and len(encoded) > 16384:
+                raise ValueError
+            transport = self._transport
+            raw = socket.socket(socket.AF_INET6 if transport._ipv6 else socket.AF_INET, socket.SOCK_STREAM)
+            raw.settimeout(_http_remaining(deadline))
+            raw.connect((transport._address, transport._port))
+            raw.settimeout(_http_remaining(deadline))
+            tls = transport._context.wrap_socket(raw, server_hostname=transport._host)
+            connection = http.client.HTTPConnection(transport._host, transport._port)
+            connection.auto_open = 0
+            connection.sock = _DeadlineSocket(tls, deadline)
+            headers = {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {self._token}",
+                       "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "odayplus-dev-smoke-recovery",
+                       "Connection": "close"}
+            if encoded is not None:
+                headers["Content-Type"] = "application/json"
+            submitted = True
+            connection.request(method, path, body=encoded, headers=headers)
+            response = connection.getresponse()
+            status = response.status
+            lengths = response.headers.get_all("Content-Length", [])
+            transfers = response.headers.get_all("Transfer-Encoding", [])
+            if (len(lengths) > 1 or len(transfers) > 1 or (lengths and transfers)
+                    or (lengths and (not lengths[0].isascii() or not lengths[0].isdigit() or int(lengths[0]) > 16384))
+                    or (transfers and transfers[0].lower() != "chunked") or response.headers.defects
+                    or status not in {200, 201, 404}):
+                raise ValueError
+            clear = response.read(16385)
+            if (len(clear) > 16384 or (lengths and len(clear) != int(lengths[0])) or response.read(1)):
+                raise ValueError
+            payload = {}
+            if clear:
+                if (len(response.headers.get_all("Content-Type", [])) != 1
+                        or response.headers.get_content_type() != "application/json"):
+                    raise ValueError
+                def unique(pairs):
+                    result = {}
+                    for key, value in pairs:
+                        if key in result:
+                            raise ValueError
+                        result[key] = value
+                    return result
+                payload = json.loads(clear, object_pairs_hook=unique,
+                                     parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+                if type(payload) is not dict:
+                    raise ValueError
+            _http_remaining(deadline)
+            return RecoveryHTTPResult(status, payload)
+        except Exception:
+            raise RecoveryHTTPRefused(outcome="unknown" if submitted and method == "PUT" else "refused",
+                                      http_status=status) from None
+        finally:
+            for resource in (response, connection, tls, raw):
+                if resource is not None:
+                    try:
+                        resource.close()
+                    except Exception:
+                        pass
+
+    def _observe(self, *, deadline: float) -> None:
+        from shared.identity.dev_smoke_journal import REPOSITORY
+        user = self._request("GET", "/user", deadline=deadline)
+        if (user.http_status != 200 or user.payload.get("type") != "User"
+                or type(user.payload.get("id")) is not int or user.payload["id"] != self._identity
+                or type(user.payload.get("login")) is not str
+                or user.payload["login"].casefold() != self._login.casefold()):
+            raise ValueError
+        repo = self._request("GET", f"/repos/{REPOSITORY}", deadline=deadline)
+        if (repo.http_status != 200 or repo.payload.get("full_name") != REPOSITORY
+                or type(repo.payload.get("id")) is not int or repo.payload["id"] != self._repo):
+            raise ValueError
+        absent = self._request("GET", self._secret_path, deadline=deadline)
+        if absent.http_status != 404:
+            raise ValueError  # absence is necessary, NOT exclusion
+        key = self._request("GET", f"{self._path}/public-key", deadline=deadline)
+        if (key.http_status != 200 or key.payload.get("key_id") != self._key_id
+                or key.payload.get("key") != self._public_key):
+            raise ValueError
+        _http_remaining(deadline)
+
+    def prepare(self, *, deadline: float) -> dict:
+        try:
+            if self._prepare_used or self._put_used:
+                raise ValueError
+            self._prepare_used = True
+            self._observe(deadline=deadline)
+            self._prepared = True
+        except Exception:
+            raise RecoveryRefused("RECOVERY_SECRET_PREFLIGHT_REFUSED") from None
+        return {"stage": "secret-metadata-observed", "execution_authorized": False,
+                "credential_binding_verified": False, "secret_values_redacted": True}
+
+    def put(self, actions: SameSessionRecoveryActions) -> dict:
+        """Durable intent -> fresh pins/absence -> one sealed PUT -> terminal.
+
+        No caller-supplied bundle, success201 or callback. A terminal-fsync failure
+        AFTER real201 poisons ACK too. This is not an exclusion-enforcing complete
+        coordinator and must never be invoked live without its missing preflight.
+        """
+        import base64
+
+        from nacl.public import PublicKey, SealedBox
+
+        started, outcome, status = False, "refused", None
+        try:
+            if (self._put_used or not self._prepared or os.getpid() != self._pid
+                    or type(actions) is not SameSessionRecoveryActions or actions._stopped
+                    or actions._quarantined or actions._intent is None
+                    or actions._plan["custodian"].casefold() != self._login.casefold()
+                    or "put" in actions._attempted):
+                raise ValueError
+            self._put_used = True
+            actions._attempted.add("put")
+            actions._budget.begin("put")
+            started = True
+            clear = json.dumps(actions._bundle(), sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+            encrypted = SealedBox(PublicKey(base64.b64decode(self._public_key, validate=True))).encrypt(clear)
+            del clear  # best-effort reference release, NOT zeroization
+            self._observe(deadline=actions._budget.call_deadline)
+            reply = self._request("PUT", self._secret_path, deadline=actions._budget.call_deadline,
+                                  body={"key_id": self._key_id, "encrypted_value": base64.b64encode(encrypted).decode()})
+            status, outcome = reply.http_status, "unknown"
+            if status != 201 or reply.payload:
+                raise ValueError
+            outcome = actions._budget.finish(outcome="completed", http_status=status)
+            started = False
+            if outcome != "completed":
+                raise ValueError
+            actions._put_status = status  # original201 AND durable completion; never from GET
+            return {"stage": "encrypted-put-acknowledged", "http_status": status,
+                    "execution_authorized": False, "credential_binding_verified": False,
+                    "secret_values_redacted": True}
+        except Exception as exc:
+            self._put_used = True
+            if isinstance(exc, RecoveryHTTPRefused):
+                outcome, status = exc.outcome, exc.http_status
+            if type(actions) is SameSessionRecoveryActions:
+                actions._stopped = True
+                if started:
+                    try:
+                        outcome = actions._budget.finish(outcome=outcome, http_status=status)
+                    except Exception:
+                        outcome = "unknown"
+            raise RecoveryActionRefused(outcome=outcome, http_status=status) from None
+
+    def close(self) -> None:
+        self._token = ""
+        self._put_used = self._prepare_used = True
