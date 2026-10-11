@@ -492,8 +492,8 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     expect(finalMapState?.featureIds).toContain("HZ-01");
     expect(pageErrors.filter((msg) => msg.includes("Worker") || msg.includes("maplibre"))).toEqual([]);
 
-    await page.getByRole("button", { name: /Fit Brand Fit/ }).click();
-    await page.getByRole("button", { name: /HZ-02 ·/ }).click();
+    await page.getByRole("button", { name: "Oday G2 適配" }).click();
+    await page.locator('[data-testid="find-areas-tray"] [data-zone-id="HZ-02"]').click();
     await expect(page.getByTestId("heat-zone-map")).toHaveAttribute(
       "data-selected-zone",
       "HZ-02",

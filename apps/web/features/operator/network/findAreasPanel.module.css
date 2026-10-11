@@ -1,0 +1,623 @@
+/*
+ * Network 找區域 (Find Areas) — Package 10 S05 layout:
+ * 206px lens/legend rail · map + recommended tray · 330px zone detail.
+ * Muted text uses #5a6478 rather than the design's #6e7891 so small copy
+ * keeps 4.5:1 contrast on white (VDC-003).
+ */
+
+.panel {
+  display: grid;
+  grid-template-columns: 206px minmax(0, 1fr) 330px;
+  gap: 14px;
+  align-items: start;
+  min-width: 0;
+  color: #1c2333;
+}
+
+.side,
+.center {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.side {
+  gap: 12px;
+}
+
+.center {
+  gap: 10px;
+}
+
+.card {
+  box-sizing: border-box;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 13px 14px;
+}
+
+.cardKicker {
+  margin: 0 0 8px;
+  color: #5a6478;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.lensList {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lensButton {
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #3a4362;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  padding: 6px 11px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.lensButton:hover {
+  border-color: #b9c4ee;
+}
+
+.lensButton[aria-pressed="true"] {
+  border-color: #2e3a97;
+  background: #2e3a97;
+  color: #ffffff;
+}
+
+.lensButton:focus-visible,
+.trayCard:focus-visible,
+.primaryAction:focus-visible,
+.secondaryAction:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
+.legend {
+  color: #5a6478;
+  font-size: 10.5px;
+  line-height: 1.9;
+}
+
+.legend .cardKicker {
+  margin-bottom: 6px;
+}
+
+.legend ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend i {
+  flex: none;
+  border-radius: 50%;
+}
+
+.swatchHigh,
+.swatchMid,
+.swatchWatch,
+.swatchLow {
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid;
+}
+
+.swatchHigh {
+  border-color: #0e7c8c;
+  background: rgba(14, 124, 140, 0.35);
+}
+
+.swatchMid {
+  border-color: #2e3a97;
+  background: rgba(46, 58, 151, 0.3);
+}
+
+.swatchWatch {
+  border-color: #96610b;
+  background: rgba(208, 135, 0, 0.3);
+}
+
+.swatchLow {
+  border-color: #b42318;
+  background: rgba(180, 35, 24, 0.25);
+}
+
+.dotListing,
+.dotCandidate,
+.dotBlocked {
+  width: 10px;
+  height: 10px;
+  box-shadow: 0 0 0 1px #d6dce8;
+  border: 2px solid #ffffff;
+}
+
+.dotListing {
+  background: #2b6cb0;
+}
+
+.dotCandidate {
+  background: #6b46c1;
+}
+
+.dotBlocked {
+  background: #c05621;
+}
+
+/* Map: 426px frame like the design; the shared map chrome is hidden here. */
+.mapFrame {
+  position: relative;
+  box-sizing: border-box;
+  height: 426px;
+  overflow: hidden;
+  border: 1px solid #dce4ec;
+  border-radius: 14px;
+  background: #e9eff3;
+}
+
+.mapFrame :global([data-testid="heat-zone-map"]) {
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.mapFrame :global([data-testid="heat-zone-map-canvas"]) {
+  height: 100%;
+  min-height: 0;
+}
+
+.mapFrame :global([data-testid="heat-zone-map-unavailable"]) {
+  height: 100%;
+  box-sizing: border-box;
+  align-content: center;
+  border: 0;
+}
+
+.mapFrame :global([data-testid="heat-zone-map"] > [aria-label="Map layer controls"]),
+.mapFrame :global([data-testid="map-boundary-config"]),
+.mapFrame :global([data-testid="map-boundary-alert"]),
+.mapFrame :global([data-testid="map-state-panel"]),
+.mapFrame :global([data-testid="map-evidence-fallback"]),
+.mapFrame :global([data-testid="heat-zone-map"] > [aria-label="Map legend"]) {
+  display: none;
+}
+
+.mapLoading {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: #5a6478;
+  font-size: 12px;
+}
+
+.trayHeading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.trayHeading h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.trayHeading span {
+  color: #5a6478;
+  font-size: 10.5px;
+}
+
+.trayGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.trayCard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid #e3e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.trayCard:hover {
+  border-color: #b9c4ee;
+}
+
+.trayCard[aria-current="true"] {
+  border-color: #b9c4ee;
+  background: #f1f4fd;
+}
+
+.trayCardTop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.trayCardTop strong {
+  min-width: 0;
+  color: #1c2333;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.score,
+.bigScore {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+  font-weight: 600;
+}
+
+.score {
+  font-size: 16px;
+}
+
+.score[data-tier="high"],
+.bigScore[data-tier="high"] {
+  color: #0e7c8c;
+}
+
+.score[data-tier="mid"],
+.bigScore[data-tier="mid"] {
+  color: #2e3a97;
+}
+
+.score[data-tier="watch"],
+.bigScore[data-tier="watch"] {
+  color: #96610b;
+}
+
+.score[data-tier="low"],
+.bigScore[data-tier="low"] {
+  color: #b42318;
+}
+
+.trayMeta,
+.traySub {
+  color: #5a6478;
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.geocoder {
+  min-width: 0;
+}
+
+.geocoder > :first-child {
+  margin-bottom: 0;
+}
+
+.geocodeReceipt {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  border: 1px solid #c6e6eb;
+  border-radius: 10px;
+  background: #f2fbfc;
+  color: #3a4362;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 9px 12px;
+  overflow-wrap: anywhere;
+}
+
+.geocodeReceipt strong {
+  color: #0e7c8c;
+  font-size: 12px;
+}
+
+/* Zone detail */
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  box-sizing: border-box;
+  min-width: 0;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 15px 16px;
+}
+
+.detailTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detailTitleRow h3 {
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.trackedPill {
+  flex: none;
+  border-radius: 999px;
+  background: #e2f4f6;
+  color: #0b6774;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 8px;
+}
+
+.bigScore {
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.detailSub {
+  margin: 2px 0 0;
+  color: #5a6478;
+  font-size: 10.5px;
+}
+
+.kvTable {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.kvTable div {
+  display: flex;
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.kvTable dt {
+  flex: none;
+  width: 70px;
+  color: #5a6478;
+}
+
+.kvTable dd {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: #3a4362;
+  line-height: 1.5;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.bullets h4 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.bullets[data-tone="why"] h4 {
+  color: #1e7f4f;
+}
+
+.bullets[data-tone="risk"] h4 {
+  color: #96610b;
+}
+
+.bullets ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bullets li {
+  display: flex;
+  gap: 7px;
+  color: #3a4362;
+  font-size: 11px;
+  line-height: 1.55;
+  padding: 2px 0;
+}
+
+.bullets li::before {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: #2e9e63;
+}
+
+.bullets[data-tone="risk"] li::before {
+  background: #d08700;
+}
+
+.nextBox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  border: 1px solid #d9dff5;
+  border-radius: 9px;
+  background: #eef1fb;
+  color: #2a3354;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  padding: 8px 11px;
+}
+
+.nextBox span {
+  flex: none;
+  color: #2e3a97;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.primaryAction,
+.secondaryAction {
+  width: 100%;
+  cursor: pointer;
+  font: inherit;
+}
+
+.primaryAction {
+  margin-bottom: 5px;
+  border: 0;
+  border-radius: 9px;
+  background: #2e3a97;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 14px;
+}
+
+.primaryAction:hover {
+  background: #263080;
+}
+
+.secondaryAction {
+  border: 1px solid #d6dce8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #3a4362;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 12px;
+}
+
+.secondaryAction:hover:not(:disabled) {
+  border-color: #b9c4ee;
+  color: #2e3a97;
+}
+
+.secondaryAction:disabled {
+  cursor: not-allowed;
+  color: #5a6478;
+  background: #f6f8fb;
+}
+
+.secondaryAction[aria-pressed="true"] {
+  color: #0b6774;
+}
+
+.empty {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  color: #5a6478;
+  font-size: 13px;
+}
+
+/* 760–1159px: the detail drops below the lens rail and the map column. */
+@media (max-width: 1159px) {
+  .panel {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  .detail {
+    grid-column: 1 / -1;
+  }
+
+  .trayGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/*
+ * Phones: one column, nothing wider than the viewport (VDC-002). Lenses become
+ * one scrollable row, the zone detail follows the map, the legend collapses
+ * into a wrapping row under the tray.
+ */
+@media (max-width: 759px) {
+  .panel {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .side,
+  .center {
+    display: contents;
+  }
+
+  .side > .card:first-child {
+    order: 1;
+  }
+
+  .mapFrame {
+    order: 2;
+    height: 300px;
+  }
+
+  .detail {
+    order: 3;
+    grid-column: auto;
+  }
+
+  .tray {
+    order: 4;
+  }
+
+  .geocoder {
+    order: 5;
+  }
+
+  .legend {
+    order: 6;
+  }
+
+  .lensList {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+  }
+
+  .lensButton {
+    flex: none;
+  }
+
+  .trayGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .legend ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 14px;
+  }
+}

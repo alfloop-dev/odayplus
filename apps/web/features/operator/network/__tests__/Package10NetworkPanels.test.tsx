@@ -210,6 +210,53 @@ describe("Package 10 Network non-intake panels", () => {
     expect(onToggleCompare).toHaveBeenCalledWith("CS-1001");
   });
 
+  it("scopes the board, counts, selection and batch run to one HeatZone", () => {
+    const onScoreAll = vi.fn();
+    const onClearZoneScope = vi.fn();
+    const readyInZone: ScoringCandidate = {
+      ...candidates[0],
+      id: "CS-1004",
+      recommendation: null,
+      score: null,
+      scored: false,
+    };
+    const { rerender } = render(
+      <CandidatePanel
+        candidates={[candidates[1], ...candidates, readyInZone]}
+        fallbackRows={[]}
+        onClearZoneScope={onClearZoneScope}
+        onScoreAll={onScoreAll}
+        zoneScope={{ id: "HZ-01", label: "信義松仁生活圈" }}
+      />,
+    );
+
+    const board = screen.getByTestId("network-candidate-table");
+    expect(within(board).getByTestId("candidate-row-CS-1001")).toBeInTheDocument();
+    expect(within(board).getByTestId("candidate-row-CS-1004")).toBeInTheDocument();
+    expect(within(board).queryByTestId("candidate-row-CS-1003")).toBeNull();
+    // HZ-05's blocked candidate leads the input but must not be preselected.
+    expect(screen.getByTestId("candidate-row-CS-1001")).toHaveAttribute("data-active", "true");
+    expect(screen.getByTestId("candidate-zone-scope")).toHaveTextContent("本區：信義松仁生活圈（2）");
+    expect(screen.getByRole("button", { name: /^缺資料/ })).toHaveTextContent("0");
+    fireEvent.click(screen.getByTestId("candidate-score-all"));
+    expect(onScoreAll).toHaveBeenCalledWith(["CS-1004"]);
+    fireEvent.click(screen.getByTestId("candidate-zone-scope-clear"));
+    expect(onClearZoneScope).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <CandidatePanel
+        candidates={candidates}
+        fallbackRows={[]}
+        onClearZoneScope={onClearZoneScope}
+        onScoreAll={onScoreAll}
+        zoneScope={{ id: "HZ-09", label: "空白區" }}
+      />,
+    );
+    expect(screen.queryByTestId("network-candidate-table")).toBeNull();
+    expect(screen.getByTestId("candidate-empty")).toHaveTextContent("空白區 尚無候選點。");
+    expect(screen.getByTestId("candidate-score-all")).toBeDisabled();
+  });
+
   it("renders the single SiteScore report and a dense batch table from the same API model", () => {
     render(
       <SiteScorePanel

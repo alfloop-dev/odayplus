@@ -9,12 +9,15 @@ export function NetworkShell({
   children,
   onTabChange,
   steps,
+  tabCounts,
   tabs,
 }: {
   activeTab: number;
   children: ReactNode;
   onTabChange: (tabIndex: number) => void;
   steps: ExpansionStep[];
+  /** Package 10 count badge per tab; zero or missing shows no badge. */
+  tabCounts?: ReadonlyArray<number | null | undefined>;
   tabs: readonly string[];
 }) {
   return (
@@ -23,6 +26,7 @@ export function NetworkShell({
       <nav className={styles.tabs} aria-label="Network tabs" role="tablist">
         {tabs.map((tab, index) => {
           const [label, englishLabel] = tab.split(" / ");
+          const count = tabCounts?.[index] ?? 0;
           return (
             <button
               aria-controls="network-active-panel"
@@ -37,6 +41,11 @@ export function NetworkShell({
             >
               <span>{label}</span>
               {englishLabel ? <small>{englishLabel}</small> : null}
+              {count > 0 ? (
+                <span className={styles.tabCount} data-testid={`network-tab-count-${index}`}>
+                  {count}
+                </span>
+              ) : null}
             </button>
           );
         })}
