@@ -905,6 +905,49 @@ custody amendment review, normal deployment and final reviewed plan still block
 all effects. Old quarantine/NULL binding and original incident-session UNKNOWN
 are unchanged.
 
+## Admission increment: original measured receipts (2026-10-11)
+
+Anchored source `fe233b518a67` exposed a genuine custody boundary issue: canonical
+manifest validation internally starts Git with its default environment. The test
+that denied credential-bearing children failed; it was NOT waived. Source fix
+`45d40a37d88bc5b275bab6019c2ae8c0c4ced080` isolates only NON-SECRET manifest and
+tuple input in a fixed bounded child, with sanitized env/no inherited FDs, whole-
+group cancellation/reaping and candidate-object absence refusal before fetch.
+The regression now inspects that actual child boundary, not a mocked validator.
+Initial Ruff errors were corrected; original failed receipts remain below.
+
+All commands used the shared verification policy on clean exact anchors,
+standard user-bin uv PATH and allowed offline `NODE_ENV=test`. Original terminal
+exit/duration decides completion; no summary counting rerun. Ten receipt JSONs
+are retained without changing their measured SHAs:
+
+| Clean measured head | Selection (exact command in JSON) | Receipt | Exit | Seconds |
+| --- | --- | --- | --- | --- |
+|fe233b518a67|security recovery pytest; canonical internal-Git custody regression|21a911e77e079e70|1|25.184|
+|fe233b518a67|two-file frozen Ruff; import/shadowing findings|f981909911290d70|1|0.083|
+|fe233b518a67|`git diff --check`|3f692c0a99f5416a|0|0.019|
+|45d40a37d88b|same security recovery selection; corrected boundary|20c59df81379d2d3|0|24.579|
+|45d40a37d88b|two-file frozen Ruff|c840bf3d25ee5726|0|0.074|
+|45d40a37d88b|`git diff --check`|fef283a7dcad7e25|0|0.017|
+|45d40a37d88b|declared frozen code-boundary check|8b1f1ec040c76f57|0|10.168|
+|45d40a37d88b|declared six-file PG/API/BFF/invitation/journal/decoder/fullgate/workflow selection|f0bd02a674d64aac|0|614.074|
+|45d40a37d88b|existing canonical automatic-dev deployment regressions|22e6c986ece8a6d9|0|37.767|
+|45d40a37d88b|declared consumer security/workflow selection|0da8d8a9e2053361|0|7.939|
+
+The six-file selection has one absent frozen-Node Web-store PG skip, NOT credited
+as Web proof. No prior Web/head receipts were reassigned. This subsequent evidence
+commit has a different SHA and does not inherit the source anchor's verification;
+final exact-head declared/Web typecheck/lint/300kB verification remains due.
+
+Source/admission observers are now concrete bounded adapters, not admitted flags.
+NEXT: complete the actual foreground coordinator with canonical full samepair gate,
+quarantine BEFORE own cleanup and the separately normally authorized fresh-job
+consumer boundary; then final exact-head declared/Web checks and task_finalize PR
+to Codex2. Genuine writer exclusion, measured production reserves, independently
+reviewed native custody amendment, ordinary deployment and exact final execution
+plan remain before-effects blockers. No operational permission or final review
+readiness is claimed by this incremental checkpoint.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
