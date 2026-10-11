@@ -1,13 +1,41 @@
-# Dev-smoke credential recovery — implementation protocol (incremental)
+# Dev-smoke credential recovery — source/security review protocol
 
 Task: ODP-DEV-SMOKE-CREDENTIAL-RECOVERY-IMPLEMENTATION-001 · Pi · Codex2
 
-**In progress, not independently approved, not deployed, NOT executable.**
+**Source review candidate, not independently approved, not deployed, NOT executable.**
 Authorization HUMAN-ODP-DEV-SMOKE-RECOVERY-20261011-001 records real foreground
 user message `bf235b62` (“授權”) at 2026-10-11T03:27:01.286Z. It is bounded
 consent, not a completed execution plan, runtime admission or permission for a
 worker to access credentials. The historical incident recovery design remains
 unchanged. No live effects have been performed by this task.
+
+## Whole-composition review disposition
+
+The numbered/increment sections below preserve their historical engineering
+boundaries; later sections supersede earlier statements about missing adapters.
+The implemented source includes the mounted authenticated recovery surface,
+same-engine atomic target-only rotation/session fences, strict lineage and bounded
+foreground primitives, real full canonical gate integration, and separate native
+NO-DEPLOY consumer. It does NOT include an effect/fresh-job dispatch coordinator:
+the only composed preflight entrypoint unconditionally HOLDs before reserve or
+rotation because no genuine external-writer exclusion can be established by the
+existing resources. There is no hidden approval flag or live worker entrypoint.
+
+Codex2's whole-tree security review must cover migrations/Web insertion races,
+permission-before-body and CSRF/no-store boundaries, one-attempt/uncertain-response
+semantics, original-account/session preservation, legacy quarantine rejection,
+strict same-pair provenance, finite custody/deadline/cleanup lanes and the explicit
+native env-to-memory amendment. This source review is separate from accepting
+that amendment for operational custody, measuring production reserves or approving
+an exact execution plan. No source/CI success supplies those authorities.
+
+Before ANY credential effect, a genuinely exclusive external-writer boundary,
+independently approved native custody/configuration, normal merged deployment,
+fresh exact account/release/source/admission reconciliation, measured reserves,
+and a reviewed foreground effect-to-fresh-job coordinator/plan remain mandatory.
+If existing grants/resources cannot meet them without widening IAM, continue HOLD;
+do not improvise locks, callbacks, boolean receipts, dispatch or retry. The final
+verification declaration/receipt locations are in the task evidence packet.
 
 ## Implemented domain increment
 

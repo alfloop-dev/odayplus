@@ -1,6 +1,51 @@
-# Recovery implementation evidence — internal root/capability increments
+# Recovery implementation evidence — source/security review packet
 
-Owner Pi · independent reviewer Codex2 · task in progress.
+Owner Pi · independent reviewer Codex2 · no operational approval.
+
+## Submission boundary and final verification declaration
+
+The full task-branch composition now contains the mounted same-account API/BFF,
+PG capability/rotation/session fences, strict recovery-lineage consumer, bounded
+foreground custody/observation/action/staging/gate primitives, and separate native
+NO-DEPLOY consumer. The chronological increment notes below are historical, not
+claims that their older receipts verify the submission SHA.
+
+`ForegroundRecoveryPreflight.observe_and_hold` unconditionally stops before
+credential effects. Genuine external-writer exclusion is unavailable with the
+existing GitHub API/resources; an effect/fresh-job dispatch coordinator is
+therefore deliberately absent. Independent review is requested for the implemented
+source and the explicitly proposed native CI custody amendment, NOT an executable
+recovery plan, permission to dispatch, deployment admission or F11 acceptance.
+The protocol document lists the exact remaining before-effects blockers.
+
+Final verification is run only AFTER this packet is committed, on the clean
+submission anchor. The five canonical commands are read from the LIVE status
+root by `task_verification.py`. Additional declared selections are:
+
+- `uv run --frozen --python 3.12 pytest tests/security/test_dev_smoke_recovery_gate.py tests/release/test_automatic_dev_deployment.py -q`
+- `pnpm --dir apps/web test src/lib/auth/__tests__/identityStore.test.ts src/lib/auth/__tests__/localAuth.test.ts src/lib/auth/__tests__/sessionStore.test.ts src/app/login/__tests__/route.test.ts src/lib/auth/__tests__/login.test.ts src/lib/auth/__tests__/loginThrottleRoute.test.ts 'src/app/api/v1/[...path]/route.test.ts'`
+- `pnpm --dir apps/web lint`
+- `pnpm --dir apps/web build`
+- `pnpm --dir apps/web bundle:budget`
+- `uv run --frozen --python 3.12 python delivery_toolchain/openapi/check_drift.py --base-ref origin/dev`
+- Frozen Python3.12 Ruff on every changed Python file (exact expanded command
+  retained in its receipt).
+
+Original final-head command/exit/duration/selection receipts are written to the
+existing `.orchestrator/evidence/` store and identified by a canonical task note
+before `task_finalize.sh` publishes the real PR. They are NOT predicted here or
+copied onto a different SHA by a post-test evidence commit. The committed
+`receipts/` below preserve earlier successful AND failed measurements unchanged.
+No test is repeated merely for counts. A failure prevents a passing submission
+claim; any source repair requires a new clean anchor and exact-head verification.
+
+Offline pytest/Vitest use `NODE_ENV=test`; the production Next build/budget use
+`NODE_ENV=production`. Existing frozen donor Node dependencies are privately
+byte-copied, not installed or upgraded; workspace links resolve this candidate.
+The package-lock must match the donor AND `origin/dev` before any tests. The
+actual TypeScript-store PG child must run, not be credited from a skipped case.
+The canonical 300kB route budget is unchanged. Build products/dependency copies
+are disposable local verification artifacts, not runtime or credential evidence.
 
 Base verified by `git fetch origin dev` and equal HEAD/origin-dev
 `e995aa26032542160a177d421ad13157dd6db058` on the allocated task branch.
