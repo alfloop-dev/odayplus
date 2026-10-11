@@ -450,7 +450,13 @@ The trusted Python process removes bundle, all legacy/bootstrap inputs and nativ
 OIDC request handles, parses strict schema2 without fallback, individually masks
 nested fields, and keeps the pair in memory. Only the EXISTING native read-only
 GitHub token is scoped back into env for canonical gh metadata helpers; no bundle,
-password or invoker token is inherited by them. Transient OS fork memory/dump/swap
+password or invoker token is inherited by them. `previous_deployment_metadata`
+uses the same latest-attempt/history/ZIP selection as `previous_deployment`, but
+returns explicitly UNVALIDATED metadata without starting manifest/Git predicates.
+The consumer removes GH_TOKEN BEFORE all canonical manifest/admission/Git work
+in its sanitized child. Ordinary `previous_deployment` still validates that same
+metadata with canonical admission; no existing release gate is weakened.
+Transient OS fork memory/dump/swap
 limitations are not called provable isolation or zeroization.
 
 Native origin is NOT accepted from GITHUB_ACTIONS=true or a public run id alone.
@@ -483,6 +489,17 @@ must show exactly one recovery201 ACK strictly BEFORE the new run was created;
 older/same-job snapshots cannot produce consumption evidence. The reviewed
 foreground coordinator must dispatch only AFTER real ACK. A failed ordering or
 missing ACK still fails the gate/result and never permits resume or a write.
+
+The native wrapper retains execution-owned cookies in memory from EVERY login
+reply, including malformed replies, and unconditionally cleans them on evaluator
+early return or exception. Each original cookie gets at most ONE logout attempt;
+canonical logout is observed, not repeated. Original-cookie session401 and denied
+principal readback are mandatory before returning success. Lost login replies
+without a usable cookie, lost/malformed logout acknowledgement or late/unavailable
+cleanup remain UNKNOWN even if a later read is401; no blanket revocation, retry,
+recovery authority or consumption receipt is introduced. Cookie reference release
+is best effort, not proof of zeroization. The original interrupted admin session
+is outside this new consumer's owned inventory and remains unproven.
 
 Native credential-step bounds reserve preflight180 + gate300 + cleanup60 seconds
 in one monotonic540 envelope (NOT measured production ceilings). Signal-bound

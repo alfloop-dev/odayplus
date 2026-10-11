@@ -253,7 +253,9 @@ def test_plain_env_flags_or_unsigned_jwt_are_not_native_proof(offline_signing_ke
         c.verify_native_oidc(token, jwks, native_environment(), now=datetime.now(UTC))
 
 
-@pytest.mark.parametrize("failure", [None, "oidc", "source", "admission", "gate", "canonical"])
+@pytest.mark.parametrize("failure", [None, "oidc", "source", "admission", "gate", "canonical",
+    "canonical-users", "canonical-audit", "canonical-ack", "canonical-principal",
+    "canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown"])
 def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatch, failure):
     # Entirely MOCKED authority/runtime; no network/live receipt. Proves wiring.
     import httpx
@@ -315,7 +317,7 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
     monkeypatch.setattr(c, "NativeSourceApprovalObserver", Source)
     monkeypatch.setattr(c, "_current_admission", lambda **kwargs: observe("admission"))
     monkeypatch.setattr(c, "_native_gate_identity", lambda *args: ("offline-generated-invoker", "offline-generated-application"))
-    if failure == "canonical":
+    if failure and failure.startswith("canonical"):
         # REAL canonical evaluator, synthetic HTTP and authority only. This
         # catches config:operator_credential without a passing-report mock.
         from tests.e2e import test_live_e2e_gate_dev_admin as f
@@ -327,12 +329,37 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
             monkeypatch.setattr(module, name, value)
         api = f.base.FakeHttp(f.api_routes())
         api._bearer_token = "offline-generated-application"
-        web = f.AdminWeb(f.web_routes(**{
+        routes = f.web_routes(**{
             "GET /api/v1/operator/users [session]": f.base.response(200, {"users": [user]}),
             "GET /api/v1/operator/users/audit-trail [session]": f.base.response(200, {"events": events}),
             "GET /api/v1/auth/principal [session]": f.base.response(200, {
                 "account_id": raw["account_id"], "tenant_id": raw["tenant_id"], "roles": ["platform_admin"]}),
-        }))
+        })
+        paths = {"canonical-users": "GET /api/v1/operator/users [session]",
+                 "canonical-audit": "GET /api/v1/operator/users/audit-trail [session]",
+                 "canonical-principal": "GET /api/v1/auth/principal [session]"}
+        if failure in paths:
+            routes[paths[failure]] = f.base.response(503, {})
+        if failure == "canonical-ack":
+            routes["GET /api/v1/operator/users/audit-trail [session]"] = f.base.response(200, {"events": []})
+        if failure in {"canonical-malformed-login", "canonical-lost-login"}:
+            def login(body, headers):
+                if body.get("password") != inputs.bundle.password:
+                    return f.base.response(401, {"error": {"code": "AUTH_INVALID_CREDENTIALS"}})
+                if failure == "canonical-lost-login":
+                    raise TimeoutError("offline lost reply after possible commit")
+                return f.base.response(200, {"ok": False}, cookies={f.SESSION_COOKIE: f.SESSION_VALUE})
+            routes["anon POST /login"] = login
+        if failure == "canonical-logout-unknown":
+            routes["POST /auth/logout [session]"] = f.base.response(0, error="offline lost logout reply")
+        def form_login(body, headers):
+            if body.get("username") == inputs.bundle.username and body.get("password") == inputs.bundle.password:
+                web.logged_out = False
+                return f.base.response(303, location=c.WEB_ORIGIN + "/operator?view=admin",
+                                       cookies={f.SESSION_COOKIE: f.FRESH_SESSION_VALUE})
+            return f.base.response(303, location=c.WEB_ORIGIN + "/login?error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin")
+        routes["form POST /login"] = form_login
+        web = f.AdminWeb(routes)
         def api_client(*args, **kwargs):
             assert kwargs["bearer_token"] == api._bearer_token
             assert kwargs["transport_token"] == "offline-generated-invoker"
@@ -343,16 +370,31 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
         def inspected_evaluate(*args, **kwargs):
             checks, report = canonical_evaluate(*args, **kwargs)
             failed = [check.name for check in checks if check.ok is not True]
-            if failed:
+            if failure == "canonical" and failed:
                 pytest.fail(f"OFFLINE canonical evaluator failed checks: {failed}")
             return checks, report
         monkeypatch.setattr(c.gate, "evaluate_gate", inspected_evaluate)
     else:
         monkeypatch.setattr(c.gate, "evaluate_gate", mocked_gate)
     if failure and failure != "canonical":
-        with pytest.raises(c.ConsumerRefused):
+        with pytest.raises(c.ConsumerRefused) as refused:
             c.consume(inputs=inputs, environment=env, sha=SHA, digest=DIGEST, pull_number=1, reviewed_head=SHA)
-        assert calls[-1] == failure
+        if failure.startswith("canonical"):
+            logout_headers = [headers for path, headers in web.headers_seen if path == "POST /auth/logout"]
+            cookies = [headers["cookie"] for headers in logout_headers]
+            assert len(cookies) == len(set(cookies))  # no retry, even lost logout
+            if failure == "canonical-lost-login":
+                assert not cookies and refused.value.cleanup_state == "unknown"
+            else:
+                assert f"{f.SESSION_COOKIE}={f.SESSION_VALUE}" in cookies
+                assert web.logged_out
+                for cookie in cookies:
+                    assert any(path == "GET /auth/session" and headers.get("cookie") == cookie
+                               for path, headers in web.headers_seen)
+                    assert any(path == "GET /api/v1/auth/principal" and headers.get("cookie") == cookie
+                               for path, headers in web.headers_seen)
+        else:
+            assert calls[-1] == failure
     else:
         result = c.consume(inputs=inputs, environment=env, sha=SHA, digest=DIGEST, pull_number=1, reviewed_head=SHA)
         assert result["gate_passed"] is True and result["full_product_acceptance"] is False
@@ -557,7 +599,7 @@ def test_native_gh_env_exception_is_only_canonical_metadata_not_manifest_git(mon
         if failure == "validator":
             raise ValueError("offline validator failure")
         return b""
-    monkeypatch.setattr(automatic_dev, "previous_deployment", metadata)
+    monkeypatch.setattr(automatic_dev, "previous_deployment_metadata", metadata)
     monkeypatch.setattr(recover_dev_smoke, "_bounded_observer_child", validator)
     if failure:
         with pytest.raises(ValueError):
@@ -578,7 +620,7 @@ def test_native_manifest_actual_child_never_inherits_credentials_and_missing_git
     monkeypatch.setenv("ODP_DEV_ADMIN_PASSWORD", "offline-parent-password-must-not-reach-git")
     run = {"path": automatic_dev.WORKFLOW, "event": "workflow_dispatch",
            "repository": {"full_name": c.REPOSITORY}, "head_repository": {"full_name": c.REPOSITORY}}
-    monkeypatch.setattr(automatic_dev, "previous_deployment", lambda: ({"candidate_sha": SHA}, run))
+    monkeypatch.setattr(automatic_dev, "previous_deployment_metadata", lambda: ({"candidate_sha": SHA}, run))
     actual_popen = subprocess.Popen
     launches = []
     def popen(args, **kwargs):
@@ -595,3 +637,56 @@ def test_native_manifest_actual_child_never_inherits_credentials_and_missing_git
     assert exc.value.exit_code is not None and exc.value.exit_code != 0
     assert len(launches) == 1
     assert "GH_TOKEN" not in c.os.environ
+
+
+def test_real_deployment_history_artifact_chain_never_runs_manifest_git_with_token(monkeypatch):
+    """Actual history/ZIP/validator chain; only gh HTTP is synthetic, no admission proof."""
+    import subprocess
+
+    from delivery_toolchain.release import automatic_dev, recover_dev_smoke
+    from tests.release import test_automatic_dev_deployment as f
+
+    inputs = c.take_native_inputs(raw_inputs(), masker=lambda _: None)
+    monkeypatch.setenv("GITHUB_REPOSITORY", c.REPOSITORY)
+    monkeypatch.setenv("GITHUB_RUN_ID", "123")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    manifest = f.sources_off_manifest(
+        components={name: {"image": f"registry.example.invalid/{name}@sha256:" + str(i) * 64}
+                    for i, name in enumerate(automatic_dev.COMPONENTS, 1)},
+        release_profile={"name": "dev-admin", "target_environment": "dev", "model_readiness": "not_claimed"},
+    )
+    metadata_calls = []
+    fake_api = f.fake_api(manifest, seen=metadata_calls)
+    actual_run = subprocess.run
+    def run(args, **kwargs):
+        if args[:2] == ["gh", "api"]:
+            assert c.os.environ["GH_TOKEN"] == inputs.github_token
+            path = args[2].removeprefix(f"repos/{c.REPOSITORY}/")
+            data = fake_api(path, raw=path.endswith("/zip"))
+            return subprocess.CompletedProcess(args, 0, data if isinstance(data, bytes) else json.dumps(data).encode(), b"")
+        assert "GH_TOKEN" not in c.os.environ  # ordinary default validation is also token-free
+        return actual_run(args, **kwargs)
+    actual_child = recover_dev_smoke._bounded_observer_child
+    children = []
+    def child(args, **kwargs):
+        assert "GH_TOKEN" not in c.os.environ
+        assert json.loads(kwargs["input_bytes"]) == manifest
+        children.append(args)
+        return actual_child(args, **kwargs)
+    actual_validate = automatic_dev.validate_release_admission
+    def validate(*args, **kwargs):
+        assert "GH_TOKEN" not in c.os.environ
+        return actual_validate(*args, **kwargs)
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(recover_dev_smoke, "_bounded_observer_child", child)
+    monkeypatch.setattr(automatic_dev, "validate_release_admission", validate)
+    c._current_admission(sha=manifest["candidate_sha"], digest=manifest["manifest_digest"],
+                         inputs=inputs, environment=c.os.environ, deadline=time.monotonic() + 30)
+    assert len(children) == 1
+    assert any(path.endswith("/zip") for path in metadata_calls)
+    assert any("attempts/1/jobs" in path for path in metadata_calls)
+    assert "GH_TOKEN" not in c.os.environ
+    # Ordinary previous_deployment retains the canonical validation; metadata
+    # extraction is NOT a new admission bypass for the existing release caller.
+    monkeypatch.setattr(automatic_dev, "api", fake_api)
+    assert automatic_dev.previous_deployment()[0] == manifest

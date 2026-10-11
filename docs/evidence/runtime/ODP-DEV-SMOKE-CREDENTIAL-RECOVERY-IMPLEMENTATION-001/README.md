@@ -19,11 +19,11 @@ recovery plan, permission to dispatch, deployment admission or F11 acceptance.
 The protocol document lists the exact remaining before-effects blockers.
 
 Final verification is run only AFTER this packet is committed, on the clean
-submission anchor. The five canonical commands are read from the LIVE status
+submission anchor. The canonical commands are read from the LIVE status
 root by `task_verification.py`. Additional declared selections are:
 
 - `uv run --frozen --python 3.12 pytest tests/security/test_dev_smoke_recovery_gate.py tests/release/test_automatic_dev_deployment.py -q`
-- `pnpm --dir apps/web test src/lib/auth/__tests__/identityStore.test.ts src/lib/auth/__tests__/localAuth.test.ts src/lib/auth/__tests__/sessionStore.test.ts src/app/login/__tests__/route.test.ts src/lib/auth/__tests__/login.test.ts src/lib/auth/__tests__/loginThrottleRoute.test.ts 'src/app/api/v1/[...path]/route.test.ts'`
+- `pnpm --dir apps/web test src/lib/auth/__tests__/password.test.ts src/lib/auth/__tests__/identityStore.test.ts src/lib/auth/__tests__/localAuth.test.ts src/lib/auth/__tests__/sessionStore.test.ts src/app/login/__tests__/route.test.ts src/lib/auth/__tests__/login.test.ts src/lib/auth/__tests__/loginThrottleRoute.test.ts 'src/app/api/v1/[...path]/route.test.ts'`
 - `pnpm --dir apps/web lint`
 - `pnpm --dir apps/web build`
 - `pnpm --dir apps/web bundle:budget`
@@ -50,6 +50,42 @@ are disposable local verification artifacts, not runtime or credential evidence.
 Base verified by `git fetch origin dev` and equal HEAD/origin-dev
 `e995aa26032542160a177d421ad13157dd6db058` on the allocated task branch.
 No frozen plan/invitation delivery was edited or cherry-picked.
+
+## Reviewer repair and required base composition (2026-10-11)
+
+PR1459 rejected head703703682 is preserved, not reset/amended. History-preserving
+merge71ab654b0 composes origin/dev1286834caf3a (fetched before work), conflict-free.
+Anchor90560f073 returns the self-password-change CAS's committed revision and
+forwards it to production replacement-session insertion. Mounted production-store
+SQL adapter regression verifies successful password change, no caller revision,
+no newer credential read, own old-session revocation and other-account preservation.
+The production change now refuses stale verification rather than overwriting a
+concurrent recovery. Dedicated adapter negatives cover missing/stale revisions.
+
+Native consumer repair retains ONLY newly owned cookies in memory, including
+malformed login responses; evaluator users/audit/missing-ACK/principal early
+failures and exceptions still cause once-only logout and original-cookie session/
+principal verification within the existing absolute reserve. Lost login custody
+or logout acknowledgement remains UNKNOWN, with no retry/account-wide revocation
+or positive consumption report. Canonical gate checks/provenance are not waived.
+
+`automatic_dev.previous_deployment_metadata` extracts the SAME latest-attempt/
+restoration/environment/artifact history without manifest/Git validation. The
+ordinary `previous_deployment` continues to validate by default. The native caller
+removes GH_TOKEN BEFORE all manifest/Git work in its existing sanitized child.
+Regression runs the actual history/ZIP/child-validator chain with only gh HTTP
+stubbed (not a mocked `previous_deployment` success).
+
+Exploratory focused Web command first exited127 (pnpm absent). The documented
+frozen donor dependencies and cached Corepack9.15.9, Node22.23.2 were reused with
+matching root lock hash vs origin/dev, network disabled and explicit .bin PATH.
+Focused Web tests then exited0 (14 passed,1 isolated PG test skipped); that skip
+is NOT PG proof. Uncommitted native/release regression exited0 twice; the second
+selection intentionally included the newly added real metadata-chain regression.
+These exploratory runs are not immutable final-head receipts. Full declared
+exact-head verification follows the committed repair; original failures remain
+failures. No live credentials, account/session/secret/cloud/recovery effects or
+custody/deployment approval. All preflight HOLDs and old uncertainty remain.
 
 ## Scope
 

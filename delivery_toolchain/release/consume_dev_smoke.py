@@ -63,7 +63,8 @@ _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 class ConsumerRefused(RuntimeError):
-    def __init__(self) -> None:
+    def __init__(self, *, cleanup_state: str = "unknown") -> None:
+        self.cleanup_state = cleanup_state
         super().__init__("DEV_SMOKE_NATIVE_CONSUMER_REFUSED")
 
 
@@ -360,20 +361,77 @@ def _absolute_deadline(deadline: float):
 
 
 class _ObservedWeb:
-    """Only safe ACK times retained; the canonical gate still validates full lineage."""
+    """Memory-only owned cookies plus safe ACK times; no account-wide cleanup.
+
+    A login may commit even when its reply is lost or malformed. Such custody
+    loss is UNKNOWN, never successful cleanup, and cannot authorize another login.
+    """
     def __init__(self, client: Any, *, execution_id: str, deadline: float, cleanup_deadline: float) -> None:
         self.client = client
         self.execution_id = execution_id
         self.deadline = deadline
         self.cleanup_deadline = cleanup_deadline
         self.ack_times: list[datetime] = []
+        self._owned: dict[str, dict[str, bool]] = {}
+        self._cleanup_unknown = False
+        self._cleaning = False
+
+    def cleanup_owned_sessions(self) -> bool:
+        """One logout per owned cookie, even after evaluator early return/exception.
+
+        Never retry a lost logout; later 401 cannot erase its uncertainty. The
+        absolute reserve bounds every request and the whole finite inventory.
+        """
+        self._cleaning = True
+        try:
+            for cookie, state in self._owned.items():
+                headers = {"accept": "application/json", "origin": WEB_ORIGIN,
+                           "cookie": f"__Host-oday_web_session={cookie}"}
+                if not state["logout_attempted"]:
+                    self.request("POST", "/auth/logout", authenticated=False,
+                                 headers=headers, follow_redirects=False)
+                # Always verify using the ORIGINAL cookie, not a cleared jar.
+                session = self.request("GET", "/auth/session", authenticated=False,
+                                       headers=headers, follow_redirects=False)
+                principal = self.request("GET", "/api/v1/auth/principal", authenticated=False,
+                                         headers=headers, follow_redirects=False)
+                if (not state["logout_acknowledged"] or session.failed or session.status != 401
+                        or principal.failed or principal.status not in {401, 403}):
+                    self._cleanup_unknown = True
+            return not self._cleanup_unknown
+        finally:
+            self._owned.clear()  # Best effort reference release, not zeroization.
+            self._cleaning = False
 
     def request(self, method: str, path: str, **kwargs: Any) -> Any:
-        cleanup = path in {"/auth/logout", "/auth/session", "/api/v1/auth/principal"} and time.monotonic() >= self.deadline
+        header = (kwargs.get("headers") or {}).get("cookie", "")
+        cookie = header.removeprefix("__Host-oday_web_session=")
+        state = self._owned.get(cookie)
+        if method == "POST" and path == "/auth/logout" and state is not None:
+            if state["logout_attempted"]:
+                self._cleanup_unknown = True
+                return gate.HttpResponse(status=0, error="native consumer duplicate logout refused")
+            state["logout_attempted"] = True  # Intent before the single request.
+        cleanup = path in {"/auth/logout", "/auth/session", "/api/v1/auth/principal"} and (self._cleaning or time.monotonic() >= self.deadline)
         limit = self.cleanup_deadline if cleanup else self.deadline
         try:
             with _absolute_deadline(limit):
                 response = self.client.request(method, path, **kwargs)
+            if method == "POST" and path == "/login":
+                issued = response.cookies.get("__Host-oday_web_session", "")
+                if isinstance(issued, str) and issued and len(issued) <= 8192 and not any(ch in issued for ch in ";\r\n"):
+                    if len(self._owned) >= 4 or issued in self._owned:
+                        self._cleanup_unknown = True
+                    else:
+                        self._owned[issued] = {"logout_attempted": False, "logout_acknowledged": False}
+                elif response.failed or response.status not in {401, 303} or any(response.cookies.values()):
+                    self._cleanup_unknown = True
+                elif response.status == 303 and "error=AUTH_INVALID_CREDENTIALS" not in response.location:
+                    self._cleanup_unknown = True
+            if method == "POST" and path == "/auth/logout" and state is not None:
+                state["logout_acknowledged"] = (not response.failed and response.status == 200
+                    and response.payload.get("ok") is True
+                    and response.cookies.get("__Host-oday_web_session") == "")
             if method == "GET" and path == "/api/v1/operator/users/audit-trail" and response.status == 200:
                 events = response.payload.get("events", [])
                 for event in events:
@@ -384,6 +442,8 @@ class _ObservedWeb:
                         self.ack_times.append(_aware(event["timestamp"]))
             return response
         except Exception:
+            if method == "POST" and path == "/login":
+                self._cleanup_unknown = True
             return gate.HttpResponse(status=0, error="native consumer bounded request refused")
 
 
@@ -401,7 +461,7 @@ def _current_admission(*, sha: str, digest: str, inputs: NativeInputs,
     # absolute-deadline process-group adapter. Exec/fork is NOT memory isolation.
     environment["GH_TOKEN"] = inputs.github_token
     try:
-        found = automatic_dev.previous_deployment()
+        found = automatic_dev.previous_deployment_metadata()
     finally:
         environment.pop("GH_TOKEN", None)
     if found is None:
@@ -459,6 +519,7 @@ def consume(*, inputs: NativeInputs, environment: dict[str, str], sha: str, dige
     import httpx
 
     started = time.monotonic()
+    web = None
     # Direct HTTP observers need no credential environment. GH_TOKEN is scoped
     # only inside the existing canonical metadata helper below.
     try:
@@ -504,8 +565,9 @@ def consume(*, inputs: NativeInputs, environment: dict[str, str], sha: str, dige
             deadline=started + 480, cleanup_deadline=started + 540)
         web = _ObservedWeb(gate._web_client(config, correlation), execution_id=inputs.bundle.execution_id,
                            deadline=started + 480, cleanup_deadline=started + 540)
-        # The canonical gate owns actual login/negative probes/logout. Do not
-        # spawn its CLI or populate credential env/per-field fallback.
+        # Canonical checks are unchanged; this wrapper also owns unconditional
+        # cleanup on every evaluator exit, including early provenance refusal.
+        # Never spawn the CLI or populate credential env/per-field fallback.
         _, report = gate.evaluate_gate(config, http=api, web_http=web,
             worker_driver=gate.ScheduledWorkerDriver(), correlation_id=correlation,
             now=datetime.now(UTC).isoformat())
@@ -517,6 +579,8 @@ def consume(*, inputs: NativeInputs, environment: dict[str, str], sha: str, dige
         raise ConsumerRefused() from None
     finally:
         environment.pop("GH_TOKEN", None)
+        if web is not None and not web.cleanup_owned_sessions():
+            raise ConsumerRefused(cleanup_state="unknown") from None
 
 
 def main() -> int:
