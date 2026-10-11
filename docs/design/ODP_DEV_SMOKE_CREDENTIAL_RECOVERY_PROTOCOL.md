@@ -511,6 +511,44 @@ Full source/admission/Web+API/account/provenance preflight, session ownership,
 measured reserves, full gate/cleanup/fresh-job composition and custody approval
 remain outstanding. This increment is durable source progress, not completion.
 
+## Owned Web session increment (unapproved; NOT a full coordinator)
+
+`OriginalPasswordMemory` accepts only an already-approved foreground in-process
+password, with redacted representation, pickle/PID/closed fencing and no env,
+argv, file or worker loader. It is NOT authorization or a new custody-ingress
+approval. `ForegroundOwnedWebSessions` owns one fresh original login during
+preflight and one same-pair target login during reconciliation. Fixed Web
+login/session/principal/logout adapters reuse the absolute numeric-connect TLS
+transport; the recovery route's required-cookie/status contract stays separate.
+Every login and own logout has a durable allowlisted sub-operation start/terminal
+inside its active phase. Cookies remain private memory, never phase receipts.
+
+The login response must issue one Secure/HttpOnly/Path=/, domain-free host cookie,
+return the exact requested username, and match fresh session and API principal
+readbacks (fixed UUID/tenant, actual original auditor+platform_admin or target
+pureadmin). Successful validation PLUS terminal persistence precedes composing
+once-only recovery actions with that same original cookie. A validated own cookie
+is retained for cleanup even if the login body is malformed/lost; a missing cookie
+leaves session creation/cleanup UNKNOWN. Neither case allows a new login, a
+session-list sweep, account-wide original revocation or later continuation.
+
+Cleanup attempts each known execution-owned cookie once, using POST logout200
+then GET session401 with the ORIGINAL cookie, not the response's deleted cookie.
+It does not claim cleanup of an unknown login or the historical interrupted
+original-admin session. Quarantine must be orchestrated BEFORE cleanup while the
+original session is retained; this primitive does not automatically quarantine,
+reconcile accounts, run the full gate or dispatch the fresh consumer. PID/custody,
+receipt/deadline or principal uncertainty stops progression. Close releases
+references only, not a logout/zeroization proof. Offline mocks/loopback TLS are
+not live login, admitted deployment, recovery or consumer evidence.
+
+Full source/latest review-CI/current admission, matching actual Web+API tuple,
+original/target/account/old NULL quarantine/invitation reconciliation, whole-gate
+and fresh-job orchestration, genuine external writer exclusion, measured budgets,
+native ingress approval and independently reviewed final operational plan remain
+required before effects. No worker received a live password/cookie or called a
+live account, session, secret or cloud service.
+
 ## Required subsequent increments (not implemented)
 
 1. Independent review of migration/capability/session-fence domain increments;

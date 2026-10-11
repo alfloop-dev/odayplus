@@ -133,9 +133,10 @@ class ExclusivePhaseReceipts:
 
     def append(self, *, phase: str, stage: str, outcome: str, elapsed: float,
                remaining: float, event_id: str = "", exit_code: int | None = None,
-               http_status: int | None = None) -> None:
+               http_status: int | None = None, operation: str = "") -> None:
         try:
-            if (self._poisoned or self._fd is None or phase not in _CEILINGS
+            if (operation not in {"", "original-login", "target-login", "original-logout", "target-logout"}
+                    or self._poisoned or self._fd is None or phase not in _CEILINGS
                     or stage not in {"start", "terminal"}
                     or outcome not in ({"pending"} if stage == "start" else _OUTCOMES)
                     or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0
@@ -149,6 +150,7 @@ class ExclusivePhaseReceipts:
                 "schema_version": 1, "authorization_id": AUTHORIZATION_ID,
                 "execution_id": self._execution, "plan_digest": self._digest,
                 "sequence": self._sequence, "phase": phase, "stage": stage, "outcome": outcome,
+                "operation": operation,
                 "elapsed_seconds": elapsed, "remaining_seconds": remaining,
                 "event_id": event_id, "exit_code": exit_code, "http_status": http_status,
                 "execution_authorized": False, "credential_binding_verified": False,
@@ -449,9 +451,15 @@ class RecoveryHTTPRefused(RecoveryRefused):
     No upstream body, cookie, capability or exception text belongs in receipts.
     """
 
-    def __init__(self, *, outcome: str, http_status: int | None) -> None:
+    def __init__(self, *, outcome: str, http_status: int | None, cookie: str = "") -> None:
         super().__init__("RECOVERY_HTTPS_ATTEMPT_REFUSED")
         self.outcome, self.http_status = outcome, http_status
+        # Only a newly issued, validated own cookie, retained for cleanup even
+        # when the login body is lost. Never a receipt/report/serialization field.
+        self._cookie = cookie
+
+    def __reduce_ex__(self, protocol: int):
+        raise RecoveryRefused("RECOVERY_HTTP_SERIALIZATION_REFUSED")
 
 
 @dataclass(frozen=True)
@@ -464,6 +472,7 @@ class RecoveryHTTPResult:
 
     http_status: int
     payload: dict = field(repr=False)
+    cookie: str = field(default="", repr=False)
 
     def __reduce_ex__(self, protocol: int):
         raise RecoveryRefused("RECOVERY_HTTP_SERIALIZATION_REFUSED")
@@ -567,6 +576,13 @@ class RecoveryHTTPSAttempt:
 
     def execute(self, *, method: str, cookie: str, deadline: float,
                 body: dict | None = None) -> RecoveryHTTPResult:
+        return self._execute_request(method=method, cookie=cookie, deadline=deadline,
+                                     body=body, path=self.PATH, statuses={200, 201})
+
+    def _execute_request(self, *, method: str, cookie: str, deadline: float,
+                         body: dict | None, path: str, statuses: set[int],
+                         cookie_mode: str = "none") -> RecoveryHTTPResult:
+        # Private common framing engine, not an arbitrary-path public API.
         import http.client
         import socket
 
@@ -576,8 +592,10 @@ class RecoveryHTTPSAttempt:
         status = None
         raw = tls = connection = response = None
         submitted = False
+        issued_cookie = ""
         try:
-            if (method not in {"GET", "POST"} or type(cookie) is not str or not 0 < len(cookie) <= 8192
+            if (method not in {"GET", "POST"} or type(cookie) is not str
+                    or not (0 <= len(cookie) <= 8192 if cookie_mode == "login" else 0 < len(cookie) <= 8192)
                     or any(ord(c) <= 32 or ord(c) >= 127 or c in ';"\\,' for c in cookie)
                     or type(deadline) not in (int, float) or not math.isfinite(deadline)
                     or not 0 < deadline - time.monotonic() <= 2400
@@ -598,14 +616,36 @@ class RecoveryHTTPSAttempt:
             connection.auto_open = 0  # never reconnect after a closed/lost socket
             connection.sock = _DeadlineSocket(tls, deadline)
             # Preserve the exact independently pinned origin for BFF CSRF.
-            headers = {"Accept": "application/json", "Origin": self._origin,
-                       "Cookie": f"__Host-oday_web_session={cookie}", "Connection": "close"}
+            headers = {"Accept": "application/json", "Origin": self._origin, "Connection": "close"}
+            if cookie:
+                headers["Cookie"] = f"__Host-oday_web_session={cookie}"
             if encoded is not None:
                 headers["Content-Type"] = "application/json"
             submitted = True  # a partial send may have committed; never reconstruct
-            connection.request(method, self.PATH, body=encoded, headers=headers)
+            connection.request(method, path, body=encoded, headers=headers)
             response = connection.getresponse()
             status = response.status
+            # Parse the cookie independently BEFORE body/framing validation, so
+            # a real own session with a lost body remains eligible for cleanup.
+            cookies = response.headers.get_all("Set-Cookie", [])
+            if cookie_mode == "login" and status == 200:
+                from http.cookies import SimpleCookie
+                if len(cookies) != 1 or len(cookies[0]) > 9000:
+                    raise ValueError
+                parsed = SimpleCookie()
+                parsed.load(cookies[0])
+                if set(parsed) != {"__Host-oday_web_session"}:
+                    raise ValueError
+                item = parsed["__Host-oday_web_session"]
+                value = item.value
+                if (not item["secure"] or not item["httponly"] or item["path"] != "/"
+                        or item["domain"] or item["samesite"].lower() != "lax"
+                        or not 0 < len(value) <= 8192
+                        or any(ord(c) <= 32 or ord(c) >= 127 or c in ';"\\,' for c in value)):
+                    raise ValueError
+                issued_cookie = value
+            elif cookies and cookie_mode != "logout":
+                raise ValueError  # no session replacement during own GETs
             lengths = response.headers.get_all("Content-Length", [])
             transfers = response.headers.get_all("Transfer-Encoding", [])
             if (len(lengths) > 1 or len(transfers) > 1 or (lengths and transfers)
@@ -616,7 +656,7 @@ class RecoveryHTTPSAttempt:
                     or len(response.headers.get_all("Content-Type", [])) != 1
                     or response.headers.get_content_type() != "application/json"
                     or response.headers.get_all("Cache-Control", []) != ["no-store"]
-                    or status not in {200, 201}):
+                    or status not in statuses):
                 raise ValueError
             clear = response.read(16385)
             if len(clear) > 16384 or (lengths and len(clear) != int(lengths[0])):
@@ -639,10 +679,10 @@ class RecoveryHTTPSAttempt:
             if type(payload) is not dict:
                 raise ValueError
             _http_remaining(deadline)  # parsing/EOF is not permission beyond expiry
-            return RecoveryHTTPResult(status, payload)
+            return RecoveryHTTPResult(status, payload, issued_cookie)
         except Exception:
             raise RecoveryHTTPRefused(outcome="unknown" if submitted and method == "POST" else "refused",
-                                      http_status=status) from None
+                                      http_status=status, cookie=issued_cookie) from None
         finally:
             for resource in (response, connection, tls, raw):
                 if resource is not None:
@@ -650,6 +690,237 @@ class RecoveryHTTPSAttempt:
                         resource.close()
                     except Exception:
                         pass  # no cleanup exception/body may escape redaction
+
+
+class OriginalPasswordMemory:
+    """Already-approved foreground memory input, NOT custody approval/ingress.
+
+    Never loads from environment, argv, files or a worker handoff. The trusted
+    foreground still owns authorization and OS custody; reference release is
+    not zeroization. Fork/pickle/reuse after close refuse without echoing input.
+    """
+
+    __slots__ = ("_pid", "_password", "_closed")
+
+    def __init__(self, password: str) -> None:
+        if type(password) is not str or not 0 < len(password) <= 1024:
+            raise RecoveryRefused("RECOVERY_ORIGINAL_MEMORY_INVALID")
+        self._pid, self._password, self._closed = os.getpid(), password, False
+
+    def __repr__(self) -> str:
+        return "OriginalPasswordMemory(<redacted>)"
+
+    def __reduce_ex__(self, protocol: int):
+        raise RecoveryRefused("RECOVERY_CUSTODY_SERIALIZATION_REFUSED")
+
+    @property
+    def password(self) -> str:
+        if self._closed or os.getpid() != self._pid:
+            raise RecoveryRefused("RECOVERY_CUSTODY_LOST")
+        return self._password
+
+    def close(self) -> None:
+        self._password, self._closed = "", True
+
+
+class OwnedSessionHTTPSAttempt(RecoveryHTTPSAttempt):
+    """Fixed Web login/session/principal/logout only; one request, no retries.
+
+    Uses the SAME absolute TLS/framing engine, but cannot change the recovery
+    route's required cookie/status predicates. No supplied path/actor/tenant.
+    """
+
+    def execute_session(self, operation: str, *, cookie: str, deadline: float,
+                        username: str = "", password: str = "") -> RecoveryHTTPResult:
+        try:
+            if (operation not in {"login", "session", "principal", "logout", "revoked"}
+                    or (operation == "login" and (cookie != "" or username not in {"ajoe734", "odp-dev-smoke"}
+                        or type(password) is not str or not 0 < len(password) <= 1024))
+                    or (operation != "login" and (username or password))):
+                raise ValueError
+            path = {"login": "/login", "session": "/auth/session", "principal": "/api/v1/auth/principal",
+                    "logout": "/auth/logout", "revoked": "/auth/session"}[operation]
+            method = "POST" if operation in {"login", "logout"} else "GET"
+            body = ({"username": username, "password": password, "returnTo": "/operator?view=admin"}
+                    if operation == "login" else {} if operation == "logout" else None)
+            return self._execute_request(method=method, cookie=cookie, deadline=deadline, body=body,
+                    path=path, statuses={401} if operation == "revoked" else {200},
+                    cookie_mode=operation if operation in {"login", "logout"} else "none")
+        except RecoveryHTTPRefused:
+            raise
+        except Exception:
+            self._used = True
+            raise RecoveryHTTPRefused(outcome="refused", http_status=None) from None
+
+
+class ForegroundOwnedWebSessions:
+    """Own only two fresh sessions created here, not pre-existing/incident ones.
+
+    One original login during preflight, one target login during reconciliation.
+    Each login/own-logout has an fsynced sub-operation start/terminal inside the
+    coordinator's active phase. Missing login reply means UNKNOWN even if no
+    cookie was recovered; it never permits another login or blanket revocation.
+    A valid newly issued cookie survives malformed/lost body for cleanup only.
+    No credentials are accepted from a plan or copied to children/environment.
+
+    This is a session primitive, NOT full source/admission/account/provenance
+    preflight, gate, writer exclusion, fresh-job dispatch or authority. Caller
+    must quarantine BEFORE own cleanup, while the original cookie is retained.
+    """
+
+    def __init__(self, *, original: OriginalPasswordMemory, target: ParentMemoryCustody,
+                 budget: ForegroundRecoveryBudget, origin: str, address: str,
+                 ca_pem: str | None = None) -> None:
+        try:
+            if (type(original) is not OriginalPasswordMemory or type(target) is not ParentMemoryCustody
+                    or type(budget) is not ForegroundRecoveryBudget or budget._stopped):
+                raise ValueError
+            if original.password == target.password:
+                raise ValueError
+            OwnedSessionHTTPSAttempt(origin=origin, address=address, ca_pem=ca_pem)
+        except Exception:
+            raise RecoveryRefused("RECOVERY_OWNED_SESSION_CONFIG_INVALID") from None
+        self._pid, self._original, self._target, self._budget = os.getpid(), original, target, budget
+        self._origin, self._address, self._ca = origin, address, ca_pem
+        self._cookies = {"original": "", "target": ""}
+        self._verified: set[str] = set()
+        self._attempted: set[str] = set()
+        self._stopped = self._closed = self._actions_created = False
+        self._unknown_login = False
+
+    def __repr__(self) -> str:
+        return "ForegroundOwnedWebSessions(<redacted>)"
+
+    def __reduce_ex__(self, protocol: int):
+        raise RecoveryRefused("RECOVERY_CUSTODY_SERIALIZATION_REFUSED")
+
+    def _request(self, operation: str, *, cookie: str = "", username: str = "", password: str = ""):
+        attempt = OwnedSessionHTTPSAttempt(origin=self._origin, address=self._address, ca_pem=self._ca)
+        return attempt.execute_session(operation, cookie=cookie, deadline=self._budget.call_deadline,
+                                       username=username, password=password)
+
+    def _operation(self, role: str, action: str, perform) -> None:
+        operation = f"{role}-{action}"
+        started, terminal = False, False
+        status, outcome = None, "refused"
+        phase = "cleanup" if action == "logout" else "preflight" if role == "original" else "reconcile"
+        try:
+            if (self._closed or os.getpid() != self._pid or operation in self._attempted
+                    or (self._stopped and action != "logout") or self._budget._active is None
+                    or self._budget._active[0] != phase):
+                raise ValueError
+            self._attempted.add(operation)
+            elapsed, remaining = self._budget._time()
+            self._budget._receipts.append(phase=phase, operation=operation, stage="start",
+                                         outcome="pending", elapsed=elapsed, remaining=remaining)
+            started = True
+            status = perform()
+            _http_remaining(self._budget.call_deadline)
+            elapsed, remaining = self._budget._time()
+            self._budget._receipts.append(phase=phase, operation=operation, stage="terminal",
+                    outcome="completed", elapsed=elapsed, remaining=remaining, http_status=status)
+            terminal = True
+            return
+        except Exception as exc:
+            self._stopped = self._budget._stopped = True
+            if isinstance(exc, RecoveryHTTPRefused):
+                status, outcome = exc.http_status, exc.outcome
+                if action == "login" and exc._cookie:
+                    self._cookies[role] = exc._cookie  # cleanup ONLY, never validated login
+            elif started:
+                outcome = "unknown"
+            if action == "login" and started:
+                self._unknown_login = True
+            if started and not terminal:
+                try:
+                    elapsed, remaining = self._budget._time()
+                    self._budget._receipts.append(phase=phase, operation=operation, stage="terminal",
+                            outcome=outcome, elapsed=elapsed, remaining=remaining, http_status=status)
+                except Exception:
+                    outcome = "unknown"
+            if action == "login" and self._budget._active is not None:
+                try:
+                    self._budget.finish(outcome="unknown", http_status=status)
+                except Exception:
+                    pass  # local no-retry barrier remains; persistence is unknown
+            raise RecoveryActionRefused(outcome=outcome, http_status=status) from None
+
+    def login(self, role: str) -> None:
+        if role not in {"original", "target"}:
+            self._stopped = self._budget._stopped = True
+            raise RecoveryActionRefused(outcome="refused", http_status=None)
+
+        def perform():
+            from shared.identity.dev_smoke_journal import PRESERVED_ACCOUNT_ID
+            username = "ajoe734" if role == "original" else "odp-dev-smoke"
+            password = self._original.password if role == "original" else self._target.password
+            result = self._request("login", username=username, password=password)
+            if result.cookie:
+                self._cookies[role] = result.cookie  # retain BEFORE any further validation
+            if (not result.cookie or set(result.payload) != {"ok", "subject", "returnTo"}
+                    or result.payload != {"ok": True, "subject": username, "returnTo": "/operator?view=admin"}
+                    or result.payload["ok"] is not True):
+                raise ValueError
+            session = self._request("session", cookie=result.cookie).payload
+            if (set(session) != {"subject", "expiresAt"} or session["subject"] != username
+                    or type(session["expiresAt"]) is not int or session["expiresAt"] <= datetime.now(UTC).timestamp()):
+                raise ValueError
+            principal = self._request("principal", cookie=result.cookie).payload
+            roles = ["auditor", "platform_admin"] if role == "original" else ["platform_admin"]
+            if (principal.get("account_id") != (PRESERVED_ACCOUNT_ID if role == "original" else TARGET_ACCOUNT_ID)
+                    or principal.get("tenant_id") != TENANT_ID or type(principal.get("roles")) is not list
+                    or any(type(r) is not str for r in principal["roles"]) or sorted(principal["roles"]) != roles):
+                raise ValueError
+            return 200
+
+        self._operation(role, "login", perform)
+        self._verified.add(role)  # never usable BEFORE durable terminal
+
+    def recovery_actions(self, plan: dict[str, str]):
+        # Primitive composition only, not proof that full preflight was performed.
+        if (self._closed or self._stopped or os.getpid() != self._pid or self._actions_created
+                or "original" not in self._verified):
+            raise RecoveryRefused("RECOVERY_OWNED_SESSION_UNAVAILABLE")
+        self._actions_created = True
+        return SameSessionRecoveryActions(plan, budget=self._budget, custody=self._target,
+                origin=self._origin, address=self._address, ca_pem=self._ca, cookie=self._cookies["original"])
+
+    def cleanup(self) -> dict:
+        # One aggregate reserved cleanup phase; each owned logout still gets its
+        # own durable start. A missing cookie cannot establish cleanup of an
+        # unknown login. Keep trying only OTHER known own cookies, never retry.
+        if self._closed or os.getpid() != self._pid:
+            raise RecoveryRefused("RECOVERY_OWNED_SESSION_UNAVAILABLE")
+        self._budget.begin("cleanup")
+        failed = self._unknown_login
+        try:
+            for role in ("target", "original"):
+                cookie = self._cookies[role]
+                if not cookie:
+                    continue
+                def perform():
+                    result = self._request("logout", cookie=cookie)
+                    if result.payload.get("ok") is not True:
+                        raise ValueError
+                    revoked = self._request("revoked", cookie=cookie)  # ORIGINAL cookie, not the deletion value
+                    if revoked.payload.get("error", {}).get("code") != "WEB_SESSION_REQUIRED":
+                        raise ValueError
+                    return 401
+                try:
+                    self._operation(role, "logout", perform)
+                except RecoveryActionRefused:
+                    failed = True
+            outcome = self._budget.finish(outcome="unknown" if failed else "completed")
+        finally:
+            self.close()
+        if outcome != "completed":
+            raise RecoveryActionRefused(outcome="unknown", http_status=None)
+        return {"own_session_cleanup": "completed", "original_incident_session_cleanup": "unknown",
+                "execution_authorized": False, "credential_binding_verified": False, "secret_values_redacted": True}
+
+    def close(self) -> None:
+        self._closed = self._stopped = True
+        self._cookies = {"original": "", "target": ""}  # NOT logout/zeroization proof
 
 
 class RecoveryActionRefused(RecoveryRefused):

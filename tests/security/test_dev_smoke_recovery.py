@@ -1611,3 +1611,188 @@ def test_real_github_tls_absolute_deadline_with_dribble(tls_recovery_server: Any
         assert len(observed) == (1 if phase == "headers" else 0)
     finally:
         store.close()
+
+
+@pytest.fixture
+def owned_sessions(tmp_path: Path, monkeypatch: Any):
+    from contextlib import contextmanager
+    from shared.identity.dev_smoke_journal import PRESERVED_ACCOUNT_ID
+    from delivery_toolchain.release import recover_dev_smoke as r
+
+    @contextmanager
+    def setup(failure=""):
+        budget, clock, receipts, p = foreground_budget(tmp_path, monkeypatch)
+        original = r.OriginalPasswordMemory("OFFLINE-ORIGINAL-PASSWORD")
+        target = r.ParentMemoryCustody()
+        owner = r.ForegroundOwnedWebSessions(original=original, target=target, budget=budget,
+                    origin="https://offline.invalid", address="127.0.0.1")
+        calls = []
+        def execute(self, operation, *, cookie, deadline, username="", password=""):
+            calls.append((operation, cookie, deadline, username, password))
+            role = "original" if username == "ajoe734" or cookie == "offline-original-cookie" else "target"
+            subject = "ajoe734" if role == "original" else "odp-dev-smoke"
+            if operation == "login":
+                assert password == (original.password if role == "original" else target.password)
+                if failure == "login_lost":
+                    raise r.RecoveryHTTPRefused(outcome="unknown", http_status=None)
+                if failure == "body_lost":
+                    raise r.RecoveryHTTPRefused(outcome="unknown", http_status=200, cookie=f"offline-{role}-cookie")
+                return r.RecoveryHTTPResult(200, {"ok": True, "subject": subject,
+                    "returnTo": "/operator?view=admin"}, f"offline-{role}-cookie")
+            assert cookie in {"offline-original-cookie", "offline-target-cookie"}
+            if operation == "session":
+                return r.RecoveryHTTPResult(200, {"subject": "wrong" if failure == "subject" else subject,
+                                                  "expiresAt": 2**40})
+            if operation == "principal":
+                return r.RecoveryHTTPResult(200, {"account_id": PRESERVED_ACCOUNT_ID if role == "original" else TARGET_ACCOUNT_ID,
+                    "tenant_id": "wrong" if failure == "tenant" else TENANT_ID,
+                    "roles": (["operations_manager", "platform_admin"] if failure == "roles" else
+                              ["auditor", "platform_admin"] if role == "original" else ["platform_admin"])})
+            if operation == "logout":
+                if failure == "logout":
+                    raise r.RecoveryHTTPRefused(outcome="unknown", http_status=503)
+                return r.RecoveryHTTPResult(200, {"ok": True})
+            return r.RecoveryHTTPResult(401, {"error": {"code": "wrong" if failure == "revoked" else "WEB_SESSION_REQUIRED"}})
+        monkeypatch.setattr(r.OwnedSessionHTTPSAttempt, "execute_session", execute)
+        try:
+            yield owner, budget, clock, receipts, p, calls, original, target
+        finally:
+            owner.close()
+            original.close()
+            target.close()
+            receipts.close()
+    return setup
+
+
+def test_owned_session_pair_once_durable_same_cookie_cleanup_and_redaction(owned_sessions: Any,
+                                                                        tmp_path: Path) -> None:
+    import pickle
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with owned_sessions() as (owner, budget, clock, receipts, p, calls, original, target):
+        budget.begin("preflight")
+        owner.login("original")
+        assert budget.finish(outcome="completed") == "completed"
+        actions = owner.recovery_actions(p)
+        assert actions._cookie == "offline-original-cookie"
+        with pytest.raises(RecoveryRefused):
+            owner.recovery_actions(p)
+        for phase in ("reserve", "issue", "rotate"):  # synthetic, NOT execution proof
+            budget.begin(phase)
+            budget.finish(outcome="completed")
+        budget.begin("reconcile")
+        owner.login("target")
+        budget.finish(outcome="completed")
+        budget.begin("quarantine")
+        budget.finish(outcome="completed")  # synthetic, not server quarantine
+        safe = owner.cleanup()
+        assert safe["own_session_cleanup"] == "completed"
+        assert safe["original_incident_session_cleanup"] == "unknown"
+        assert [c[0] for c in calls] == ["login", "session", "principal"] * 2 + ["logout", "revoked"] * 2
+        assert [c[1] for c in calls[-4:]] == ["offline-target-cookie"] * 2 + ["offline-original-cookie"] * 2
+        text = "".join(f.read_text() for f in (tmp_path / p["execution_id"]).glob("*.json"))
+        assert all(secret not in text + repr(owner) + repr(original) + repr(safe)
+                   for secret in (original.password, target.password, "offline-original-cookie", "offline-target-cookie"))
+        records = [json.loads(f.read_text()) for f in sorted((tmp_path / p["execution_id"]).glob("*.json"))]
+        assert [v["stage"] for v in records if v["operation"] == "original-login"] == ["start", "terminal"]
+        for value in (original, owner):
+            with pytest.raises(RecoveryRefused, match="SERIALIZATION_REFUSED"):
+                pickle.dumps(value)
+        with pytest.raises(RecoveryRefused):
+            owner.cleanup()
+
+
+@pytest.mark.parametrize("failure", ["login_lost", "body_lost", "subject", "tenant", "roles", "logout", "revoked"])
+def test_owned_session_uncertainty_no_retry_or_blanket_cleanup(owned_sessions: Any, failure: str) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with owned_sessions(failure) as (owner, budget, clock, receipts, p, calls, original, target):
+        budget.begin("preflight")
+        if failure in {"logout", "revoked"}:
+            owner.login("original")
+            budget.finish(outcome="completed")
+            budget.begin("quarantine")
+            budget.finish(outcome="completed")
+        else:
+            with pytest.raises(r.RecoveryActionRefused):
+                owner.login("original")
+            with pytest.raises(RecoveryRefused):
+                owner.recovery_actions(p)
+            with pytest.raises(r.RecoveryActionRefused):
+                owner.login("original")
+        with pytest.raises(r.RecoveryActionRefused, match="STOPPED"):
+            owner.cleanup()
+        assert sum(c[0] == "login" for c in calls) == 1
+        assert sum(c[0] == "logout" for c in calls) == (0 if failure == "login_lost" else 1)
+        assert all(c[1] in {"", "offline-original-cookie"} for c in calls)
+
+
+@pytest.mark.parametrize("failure", ["start", "terminal", "fork", "custody", "deadline"])
+def test_owned_session_receipt_custody_deadline_fail_stop(owned_sessions: Any, monkeypatch: Any, failure: str) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with owned_sessions() as (owner, budget, clock, receipts, p, calls, original, target):
+        budget.begin("preflight")
+        append = r.ExclusivePhaseReceipts.append
+        if failure in {"start", "terminal"}:
+            def broken(self, **kwargs):
+                if kwargs.get("operation") == "original-login" and kwargs["stage"] == failure:
+                    raise OSError("OFFLINE-PRIVATE-MARKER")
+                return append(self, **kwargs)
+            monkeypatch.setattr(r.ExclusivePhaseReceipts, "append", broken)
+        elif failure == "fork":
+            monkeypatch.setattr(r.os, "getpid", lambda: owner._pid + 1)
+        elif failure == "custody":
+            original.close()
+        else:
+            clock.value += 601
+        with pytest.raises(r.RecoveryActionRefused) as caught:
+            owner.login("original")
+        assert "OFFLINE-PRIVATE-MARKER" not in str(caught.value)
+        assert len(calls) == (3 if failure == "terminal" else 0)
+        with pytest.raises(RecoveryRefused):
+            owner.recovery_actions(p)
+
+
+@pytest.mark.parametrize("bad_cookie", [False, True])
+def test_real_owned_login_https_csrf_cookie_validation_and_one_attempt(tls_recovery_server: Any,
+                                                                       bad_cookie: bool) -> None:
+    import time
+    from delivery_toolchain.release import recover_dev_smoke as r
+    extra = (b"Set-Cookie: __Host-oday_web_session=offline-cookie; Path=/; HttpOnly; SameSite=Lax" +
+             (b"; Domain=localhost" if bad_cookie else b"; Secure") + b"\r\n")
+    with tls_recovery_server(recovery_http_reply(b'{"ok":true,"subject":"ajoe734","returnTo":"/operator?view=admin"}',
+                                               extra=extra)) as (origin, ca, observed):
+        attempt = r.OwnedSessionHTTPSAttempt(origin=origin, address="127.0.0.1", ca_pem=ca)
+        if bad_cookie:
+            with pytest.raises(r.RecoveryHTTPRefused) as caught:
+                attempt.execute_session("login", cookie="", username="ajoe734", password="OFFLINE-PASSWORD",
+                                        deadline=time.monotonic() + 2)
+            assert caught.value.outcome == "unknown" and caught.value._cookie == ""
+        else:
+            result = attempt.execute_session("login", cookie="", username="ajoe734", password="OFFLINE-PASSWORD",
+                                             deadline=time.monotonic() + 2)
+            assert result.cookie == "offline-cookie" and "offline-cookie" not in repr(result)
+        with pytest.raises(r.RecoveryHTTPRefused):
+            attempt.execute_session("login", cookie="", username="ajoe734", password="OFFLINE-PASSWORD",
+                                    deadline=time.monotonic() + 2)
+    assert len(observed) == 1
+    headers, body = observed[0]
+    assert headers.startswith(b"POST /login HTTP/1.1") and b"Cookie:" not in headers
+    assert f"Origin: {origin}".encode() in headers
+    assert json.loads(body)["password"] == "OFFLINE-PASSWORD"
+
+
+def test_real_owned_login_lost_body_retains_only_new_valid_cookie(tls_recovery_server: Any) -> None:
+    import pickle
+    import time
+    from delivery_toolchain.release import recover_dev_smoke as r
+    reply = (b"HTTP/1.1 200 fixture\r\nSet-Cookie: __Host-oday_web_session=offline-cookie; Path=/; Secure; HttpOnly; SameSite=Lax\r\n"
+             b"Content-Length: 500\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n\r\n{\"ok\":")
+    with tls_recovery_server(reply) as (origin, ca, observed):
+        attempt = r.OwnedSessionHTTPSAttempt(origin=origin, address="127.0.0.1", ca_pem=ca)
+        with pytest.raises(r.RecoveryHTTPRefused) as caught:
+            attempt.execute_session("login", cookie="", username="ajoe734", password="OFFLINE-PASSWORD",
+                                    deadline=time.monotonic() + 2)
+        assert caught.value._cookie == "offline-cookie" and caught.value.outcome == "unknown"
+        assert "offline-cookie" not in str(caught.value) + repr(caught.value)
+        with pytest.raises(RecoveryRefused, match="SERIALIZATION_REFUSED"):
+            pickle.dumps(caught.value)
+    assert len(observed) == 1
