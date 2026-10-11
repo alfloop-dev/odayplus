@@ -1078,6 +1078,8 @@ class RecoveryGitHubSecretAttempt:
             self._observe(deadline=deadline)
             self._prepared = True
         except Exception:
+            self._prepared = False
+            self._put_used = True
             raise RecoveryRefused("RECOVERY_SECRET_PREFLIGHT_REFUSED") from None
         return {"stage": "secret-metadata-observed", "execution_authorized": False,
                 "credential_binding_verified": False, "secret_values_redacted": True}

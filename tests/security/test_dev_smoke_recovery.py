@@ -1494,3 +1494,120 @@ def test_real_tls_encrypted_put_status_and_complete_reply_fence(same_session_act
             with pytest.raises(r.RecoveryActionRefused):
                 store.put(actions)
             assert len([c for c in calls if c[0] == "PUT"]) == 1
+
+
+@pytest.mark.parametrize("fault", ["key", "custodian", "repository", "exists", "late"])
+def test_fresh_observation_drift_stops_before_put_after_intent(same_session_actions: Any,
+        recovery_secret_store: Any, monkeypatch: Any, fault: str) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with same_session_actions() as (actions, budget, clock, custody, receipts, p, ids, action_calls):
+        with recovery_secret_store() as (store, key, calls):
+            store.prepare(deadline=clock.value + 10)
+            reconcile_and_intent(actions, budget)
+            original = store._request
+            def drift(method, path, **kwargs):
+                result = original(method, path, **kwargs)
+                if fault == "key" and path.endswith("/public-key"):
+                    result.payload["key"] = "changed-key"
+                elif fault == "custodian" and path == "/user":
+                    result.payload["id"] = 999
+                elif fault == "repository" and path.startswith("/repos/"):
+                    result.payload["id"] = 999
+                elif fault == "exists" and path == store._secret_path:
+                    return r.RecoveryHTTPResult(200, {})
+                elif fault == "late":
+                    clock.value += 81
+                return result
+            monkeypatch.setattr(store, "_request", drift)
+            with pytest.raises(r.RecoveryActionRefused):
+                store.put(actions)
+            assert not any(c[0] == "PUT" for c in calls)
+            with pytest.raises(r.RecoveryActionRefused):
+                actions.binding_acknowledge()
+            actions.quarantine()
+            assert action_calls[-1][3]["action"] == "quarantine"
+
+
+def test_repeated_prepare_poison_prevents_put_even_after_passing_observation(same_session_actions: Any,
+        recovery_secret_store: Any) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with same_session_actions() as (actions, budget, clock, custody, receipts, p, ids, action_calls):
+        with recovery_secret_store() as (store, key, calls):
+            store.prepare(deadline=clock.value + 10)
+            with pytest.raises(RecoveryRefused):
+                store.prepare(deadline=clock.value + 10)
+            reconcile_and_intent(actions, budget)
+            with pytest.raises(r.RecoveryActionRefused):
+                store.put(actions)
+            assert not any(c[0] == "PUT" for c in calls)
+
+
+def test_no_public_ack_status_or_intent_skip(same_session_actions: Any, recovery_secret_store: Any) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with same_session_actions() as (actions, budget, clock, custody, receipts, p, ids, action_calls):
+        reconcile_and_intent(actions, budget)
+        with pytest.raises(r.RecoveryActionRefused):
+            actions.binding_acknowledge()  # intent alone can never acknowledge PUT
+        assert not any(c[3]["action"] == "binding-acknowledged" for c in action_calls)
+        with pytest.raises(TypeError):
+            actions.binding_acknowledge(put_status=201)
+
+
+@pytest.mark.parametrize("failure", ["lost", "wrong_session", "wrong_status", "extra"])
+def test_ack_uncertainty_after201_never_resumes(same_session_actions: Any,
+        recovery_secret_store: Any, failure: str) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    def corrupt(action, payload):
+        if action == "binding-acknowledged":
+            if failure == "lost":
+                raise r.RecoveryHTTPRefused(outcome="unknown", http_status=None)
+            if failure == "wrong_session":
+                payload["binding"]["issuer_session_id"] = str(uuid4())
+            elif failure == "wrong_status":
+                payload["binding"]["put_status"] = 204
+            elif failure == "extra":
+                payload["binding"]["password"] = "PRIVATE-MARKER"
+        return payload
+    with same_session_actions(reply_filter=corrupt) as (actions, budget, clock, custody, receipts, p, ids, action_calls):
+        with recovery_secret_store() as (store, key, calls):
+            store.prepare(deadline=clock.value + 10)
+            reconcile_and_intent(actions, budget)
+            store.put(actions)
+            with pytest.raises(r.RecoveryActionRefused) as caught:
+                actions.binding_acknowledge()
+            assert caught.value.outcome == "unknown" and "PRIVATE-MARKER" not in repr(caught.value)
+            before = len(action_calls)
+            with pytest.raises(r.RecoveryActionRefused):
+                actions.binding_acknowledge()
+            with pytest.raises(r.RecoveryActionRefused):
+                store.put(actions)
+            assert len(action_calls) == before and len([c for c in calls if c[0] == "PUT"]) == 1
+            actions.quarantine()
+
+
+@pytest.mark.parametrize("phase", ["headers", "handshake"])
+def test_real_github_tls_absolute_deadline_with_dribble(tls_recovery_server: Any, phase: str) -> None:
+    import base64
+    import time
+
+    from nacl.public import PrivateKey
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+    public = base64.b64encode(bytes(PrivateKey.generate().public_key)).decode()
+    store = r.RecoveryGitHubSecretAttempt(token="offline-gh-token", custodian_login="bounded-custodian",
+                custodian_id=123, repository_id=456, key_id="offline-key-id", public_key=public,
+                address="127.0.0.1")
+    try:
+        with tls_recovery_server(recovery_http_reply(b"", status=201), dribble=phase == "headers",
+                                 handshake_pause=0.7 if phase == "handshake" else 0) as (origin, ca, observed):
+            store._transport = r.RecoveryHTTPSAttempt(origin=origin, address="127.0.0.1", ca_pem=ca)
+            start = time.monotonic()
+            with pytest.raises(r.RecoveryHTTPRefused) as caught:
+                store._request("PUT", store._secret_path, deadline=start + 0.25,
+                               body={"key_id": "offline-key-id", "encrypted_value": "OFFLINE-CIPHERTEXT"})
+            assert time.monotonic() - start < 0.6
+            assert caught.value.outcome == ("unknown" if phase == "headers" else "refused")
+            assert caught.value.http_status is None
+        assert len(observed) == (1 if phase == "headers" else 0)
+    finally:
+        store.close()
