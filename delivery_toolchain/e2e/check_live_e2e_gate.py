@@ -841,7 +841,10 @@ def validate_config(config: GateConfig) -> list[CheckResult]:
     bundle_ids = (config.dev_admin_bundle_account_id, config.dev_admin_bundle_tenant_id,
                   config.dev_admin_bundle_execution_id)
     if any(bundle_ids) or config.dev_admin_bundle_schema_version != 1 or config.dev_admin_bundle_recovery_lineage is not None:
-        from shared.identity.dev_smoke_recovery import RecoveryBundleLineage, recovery_bundle_lineage
+        from shared.identity.dev_smoke_recovery import (
+            RecoveryBundleLineage,
+            recovery_bundle_lineage,
+        )
         coherent = False
         try:
             coherent = (config.dev_admin and config.expected_deployment == "dev"

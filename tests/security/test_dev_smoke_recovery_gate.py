@@ -8,12 +8,18 @@ from uuid import uuid4
 
 import pytest
 
-from tests.security.test_dev_smoke_recovery import (
-    MANIFEST,
-    SHA,
-    owned_sessions,  # noqa: F401 - shared pytest fixture
-    recovery_consumer_inputs,
-)
+from tests.security import test_dev_smoke_recovery as shared_tests
+from tests.security.test_dev_smoke_recovery import MANIFEST, SHA, recovery_consumer_inputs
+
+
+@pytest.fixture
+def owned_sessions(tmp_path: Any, monkeypatch: Any):
+    return shared_tests.owned_sessions.__wrapped__(tmp_path, monkeypatch)
+
+
+@pytest.fixture
+def tls_recovery_server(tmp_path: Any):
+    return shared_tests.tls_recovery_server.__wrapped__(tmp_path)
 
 
 @pytest.fixture
@@ -68,7 +74,11 @@ def foreground_gate(owned_sessions: Any, monkeypatch: Any):
             raw["recovery_lineage"]["plan_digest"] = digest
             if failure == "":
                 import json
-                from delivery_toolchain.release.provision_dev_smoke import credential_bundle_acknowledged, read_dev_credential_bundle
+
+                from delivery_toolchain.release.provision_dev_smoke import (
+                    credential_bundle_acknowledged,
+                    read_dev_credential_bundle,
+                )
                 parsed = read_dev_credential_bundle(json.dumps(actions._bundle()), environment="dev", release_profile="dev-admin")
                 assert credential_bundle_acknowledged(parsed, events, target_account=user)
             config = gate.GateConfig(api_url=f.base.API_URL, web_url=owner._origin, expected_sha=SHA,
@@ -141,6 +151,7 @@ def foreground_gate(owned_sessions: Any, monkeypatch: Any):
 def test_parent_full_samepair_actual_canonical_evaluator(foreground_gate: Any, tmp_path: Any) -> None:
     import json
     import pickle
+
     from shared.identity.dev_smoke_recovery import RecoveryRefused
     with foreground_gate() as (driver, actions, owner, budget, p, calls, sessions, original, target, events):
         try:
@@ -205,3 +216,80 @@ def test_gate_prevalidates_config_without_io(foreground_gate: Any, field: str, v
             r.ForegroundSamePairGate(p, sessions=owner, gate_config=replace(driver._config, **{field: value}),
                                      api_address="127.0.0.1")
         assert not calls and "OFFLINE-PRIVATE-MARKER" not in repr(caught.value)
+
+
+@pytest.mark.parametrize("bad", ["none", "duplicate", "truncated", "redirect", "dribble", "insecure_cookie"])
+def test_actual_gate_tls_fixed_origin_bounded_framing_no_forwarding(tls_recovery_server: Any,
+        monkeypatch: Any, bad: str) -> None:
+    import socket
+    import time
+    from types import SimpleNamespace
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+    from shared.identity.dev_smoke_recovery import RecoveryRefused
+    body = b'{"ok":true,"ok":false}' if bad == "duplicate" else b'{"ok":true}'
+    extra = b"Location: https://other.invalid/secret\r\n" if bad == "redirect" else b""
+    if bad == "insecure_cookie":
+        extra = b"Set-Cookie: __Host-oday_web_session=offline-cookie; Path=/; SameSite=Lax\r\n"
+    reply = shared_tests.recovery_http_reply(body, status=303 if bad == "redirect" else 200, extra=extra)
+    if bad == "truncated":
+        reply = reply[:-3]
+    retained = []
+    with tls_recovery_server(reply, dribble=bad == "dribble") as (origin, ca, observed):
+        def no_dns(*args, **kwargs):
+            raise AssertionError("gate DNS forbidden")
+        monkeypatch.setattr(socket, "getaddrinfo", no_dns)
+        monkeypatch.setenv("HTTPS_PROXY", "http://not-a-proxy.invalid")
+        owner = SimpleNamespace(_config=SimpleNamespace(web_url=origin), _correlation="corr-offline",
+                    _budget=SimpleNamespace(call_deadline=time.monotonic() + (0.15 if bad == "dribble" else 2)),
+                    _bytes=0, _retain_cookies=retained.append)
+        client = r._ForegroundGateHTTPSClient(owner, api=False, origin=origin, address="127.0.0.1", ca_pem=ca)
+        kwargs = dict(authenticated=False, body={}, headers={"origin": origin})
+        if bad in {"duplicate", "truncated", "dribble", "insecure_cookie"}:
+            with pytest.raises(RecoveryRefused) as caught:
+                client._roundtrip("POST", "/login", **kwargs)
+            assert "offline-cookie" not in repr(caught.value)
+        else:
+            result = client._roundtrip("POST", "/login", **kwargs)
+            assert result.status == (303 if bad == "redirect" else 200)
+        assert len(observed) == 1  # no redirect, proxy, DNS, retry or reconnect
+        header, request_body = observed[0]
+        assert b"authorization:" not in header.lower() and request_body == b"{}"
+        if bad == "insecure_cookie":
+            assert retained == [{"__Host-oday_web_session": "offline-cookie"}]  # cleanup only
+
+
+@pytest.mark.parametrize("failure", ["start_receipt", "terminal_receipt", "absolute_timer"])
+def test_gate_receipt_loss_and_absolute_timer_never_resume(foreground_gate: Any, monkeypatch: Any,
+                                                         failure: str) -> None:
+    import time
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with foreground_gate() as (driver, actions, owner, budget, p, calls, sessions, original, target, events):
+        append = r.ExclusivePhaseReceipts.append
+        if failure.endswith("receipt"):
+            def uncertain_receipt(self, **kwargs):
+                if (kwargs["phase"] == "gate" and kwargs.get("operation", "") == ""
+                        and kwargs["stage"] == ("start" if failure == "start_receipt" else "terminal")):
+                    raise OSError("OFFLINE-PRIVATE-MARKER")
+                return append(self, **kwargs)
+            monkeypatch.setattr(r.ExclusivePhaseReceipts, "append", uncertain_receipt)
+        else:
+            monkeypatch.setitem(r._CEILINGS, "gate", 0.1)
+            roundtrip = r._ForegroundGateHTTPSClient._roundtrip
+            def stalled(client, method, path, **kwargs):
+                if path == "/api/v1/operator/users/audit-trail":
+                    time.sleep(0.5)  # actual parent timer, NOT a synthetic timeout receipt
+                return roundtrip(client, method, path, **kwargs)
+            monkeypatch.setattr(r._ForegroundGateHTTPSClient, "_roundtrip", stalled)
+        started = time.monotonic()
+        with pytest.raises(r.RecoveryActionRefused):
+            driver.execute(actions)
+        if failure == "absolute_timer":
+            assert time.monotonic() - started < 0.45
+        assert budget._stopped and owner._closed
+        assert driver._failure_receipt()["quarantine"] == "completed"
+        assert sum(c[2] == "quarantine" for c in calls) == 1
+        assert len([c for c in sessions if c[0] == "logout"]) == 2
+        if failure == "start_receipt":
+            assert not any(c[3] == "gate" for c in calls)
