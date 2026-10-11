@@ -425,6 +425,7 @@ export function OperatorConsole({
   const [searchValue, setSearchValue] = useState("");
   const [hasHydratedPreferences, setHasHydratedPreferences] = useState(false);
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const topbarRef = useRef<HTMLElement>(null);
 
   const [shellEnvelope, setShellEnvelope] = useState<OperatorShellEnvelope>(() =>
     normalizeShellEnvelope(undefined, { allowFixtureFallback: fixturesAllowed }),
@@ -518,6 +519,28 @@ export function OperatorConsole({
   const isTodayContent = canRenderWorkspace && activeWorkspaceId === "today";
   const isGovernContent = canRenderWorkspace && activeWorkspaceId === "govern";
   const dataModeBanner = dataModeBannerCopy(shellDataStatus, fixturesAllowed);
+
+  useEffect(() => {
+    const topbar = topbarRef.current;
+    if (!topbar) return;
+    const root = document.documentElement;
+    const property = "--operator-sticky-header-height";
+    const previousValue = root.style.getPropertyValue(property);
+    const updateHeight = () => {
+      const height = Math.ceil(topbar.getBoundingClientRect().height);
+      if (height > 0) root.style.setProperty(property, `${height}px`);
+    };
+    updateHeight();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateHeight);
+    observer?.observe(topbar);
+    window.addEventListener("resize", updateHeight);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateHeight);
+      if (previousValue) root.style.setProperty(property, previousValue);
+      else root.style.removeProperty(property);
+    };
+  }, []);
 
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
@@ -1181,7 +1204,7 @@ export function OperatorConsole({
       data-intake-detail-open={intakeDetailOpen ? "true" : undefined}
       data-testid="operator-console"
     >
-      <header className={styles.topbar} data-screen-label="Top Navigation">
+      <header ref={topbarRef} className={styles.topbar} data-screen-label="Top Navigation">
         <div className={styles.topbarInner} data-testid="operator-topbar-inner">
           <div className={styles.brandCluster} aria-label="Oday Plus Operator Console">
             <span className={styles.brandMark}>O+</span>

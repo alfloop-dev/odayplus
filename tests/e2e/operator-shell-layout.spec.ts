@@ -179,6 +179,24 @@ test.describe("Operator shared header layout", () => {
         expect(reference.innerWidth).toBe(1720);
         expect(reference.innerX).toBe((width - 1720) / 2);
       }
+
+      // Native focus/anchor scrolling must leave controls below the sticky
+      // header, including its taller wrapped mobile/tablet form. A low-height
+      // viewport supplies genuine scrolling space without modifying the DOM.
+      await page.setViewportSize({ width, height: 360 });
+      await openWorkspace(page, "network");
+      await page.evaluate(() => document.fonts.ready);
+      const radarTab = page.getByTestId("network-tab-1");
+      await expect(radarTab).toBeVisible();
+      await radarTab.evaluate((element) => element.scrollIntoView({ block: "start", behavior: "instant" }));
+      const scrolled = await radarTab.evaluate((element) => ({
+        controlTop: element.getBoundingClientRect().top,
+        headerBottom: document.querySelector('[data-screen-label="Top Navigation"]')!.getBoundingClientRect().bottom,
+      }));
+      expect(scrolled.controlTop, "native scrolling placed the tab under the sticky header")
+        .toBeGreaterThanOrEqual(scrolled.headerBottom);
+      await radarTab.click();
+      await expect(radarTab).toHaveAttribute("aria-selected", "true");
     });
   }
 
