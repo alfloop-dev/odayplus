@@ -1,5 +1,28 @@
 # ODP-UI-NETWORK-FIND-AREAS-PARITY-001 — Network 找區域 vs Package 10
 
+## Direct foreground history repair — 2026-10-11 Pi
+
+Existing reviewer P2 reproduced without remounting: candidates zone -> clear ->
+URL acknowledgment -> same-tab Back kept the cleared override and leaked other
+zones' rows. Two correct pre-fix regressions actually failed on those visible
+rows. An earlier test-only enabled-batch assertion also failed; it was corrected
+rather than enabling an unavailable action or widening a role. Both failures
+are retained separately. Track the source URL's tab AND normalized zone in the
+click-time override; release when either changes. Existing hydration guard is
+preserved before URL acknowledgment. Four new cases cover HZ-01/HZ-02 Back +
+Forward, empty-zone Back (no rows/batch disabled), and another same-tab zone URL.
+All19 existing/new Package10 cases passed offline at this source increment.
+
+This is a direct Pi implementation, disjoint from the active recovery worker.
+Original owner/reviewer churn remains2/failedClaude2; Pi is a genuine new owner,
+not Claude2 impersonation. No live credentials, business writes, fake user rows,
+operator role grant or Human/VDC/F11 approval. Normal current-dev composition,
+exact composed-source checks/build/300kB/geometry and independent review remain
+required. The historical screenshots/tests BELOW belong to the old963090d6/9e6
+fixture source, not new-head or live acceptance; do not transfer their receipts.
+
+## Historical original source evidence (unchanged)
+
 Recorded 2026-10-09 by Claude2. Base `origin/dev` 963090d6f. Design reference:
 `docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/oday-plus-console-r7-standalone.html`
 (S05 `nwAreas` / `nwVals` / `flowVals`). Audit:

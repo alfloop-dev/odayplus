@@ -39,19 +39,26 @@ function unavailableBinding<T>(): ApiBinding<T> {
   };
 }
 
-function renderFindAreas(
+function findAreasElement(
   activeRoleId: "expansion-manager" | "ops-lead" = "expansion-manager",
   zones?: { heatZones?: OperatorHeatZone[]; selectedHeatZoneId?: string },
 ) {
-  return render(
+  return (
     <NetworkFindAreasWorkspace
       activeRoleId={activeRoleId}
       heatZones={zones?.heatZones}
       liveCandidates={unavailableBinding<Candidate>()}
       liveHeatZones={unavailableBinding<OperatorHeatZone>()}
       selectedHeatZoneId={zones?.selectedHeatZoneId}
-    />,
+    />
   );
+}
+
+function renderFindAreas(
+  activeRoleId: "expansion-manager" | "ops-lead" = "expansion-manager",
+  zones?: { heatZones?: OperatorHeatZone[]; selectedHeatZoneId?: string },
+) {
+  return render(findAreasElement(activeRoleId, zones));
 }
 
 function lastPushedParams() {
@@ -212,6 +219,65 @@ describe("Network Find Areas — Package 10 content", () => {
     expect(screen.queryByTestId(/^candidate-row-/)).toBeNull();
     expect(screen.getByTestId("candidate-empty")).toHaveTextContent("中山南京東路 尚無候選點。");
     expect(screen.getByTestId("candidate-score-all")).toBeDisabled();
+  });
+
+  it.each([
+    ["HZ-02", "CS-1003", "CS-1002"],
+    ["HZ-01", "CS-1002", "CS-1003"],
+  ])("restores same-tab %s on Back and unscoped rows on Forward after clear acknowledgment", (zone, own, other) => {
+    const scoped = `ws=network&tab=candidates&zone=${zone}`;
+    navigation.search = scoped;
+    const view = renderFindAreas();
+    const assertScoped = () => {
+      expect(screen.getByTestId(`candidate-row-${own}`)).toBeInTheDocument();
+      expect(screen.queryByTestId(`candidate-row-${other}`)).toBeNull();
+    };
+    assertScoped();
+    fireEvent.click(screen.getByTestId("candidate-zone-scope-clear"));
+    // Click-time hydration guard applies before Next acknowledges the URL.
+    expect(screen.getByTestId(`candidate-row-${other}`)).toBeInTheDocument();
+    const unscoped = lastPushedParams().toString();
+    expect(lastPushedParams().has("zone")).toBe(false);
+    navigation.search = unscoped;
+    view.rerender(findAreasElement()); // URL ACK, not a workspace remount
+    navigation.search = scoped;
+    view.rerender(findAreasElement()); // Back, tab remains candidates
+    assertScoped();
+    navigation.search = unscoped;
+    view.rerender(findAreasElement()); // Forward, tab remains candidates
+    expect(screen.getByTestId(`candidate-row-${own}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`candidate-row-${other}`)).toBeInTheDocument();
+    expect(screen.queryByTestId("candidate-zone-scope")).toBeNull();
+  });
+
+  it("restores a same-tab empty zone after clear acknowledgment without leaking other rows", () => {
+    const emptyZone: OperatorHeatZone = { ...fixtures.HEAT_ZONE_FIXTURES[1], id: "HZ-03", label: "空區", rank: 3 };
+    const zones = { heatZones: [...fixtures.HEAT_ZONE_FIXTURES, emptyZone] };
+    const scoped = "ws=network&tab=candidates&zone=HZ-03";
+    navigation.search = scoped;
+    const view = renderFindAreas("expansion-manager", zones);
+    expect(screen.getByTestId("candidate-empty")).toHaveTextContent("空區 尚無候選點。");
+    fireEvent.click(screen.getByTestId("candidate-zone-scope-clear"));
+    navigation.search = lastPushedParams().toString();
+    view.rerender(findAreasElement("expansion-manager", zones));
+    expect(screen.getByTestId("candidate-row-CS-1002")).toBeInTheDocument();
+    navigation.search = scoped;
+    view.rerender(findAreasElement("expansion-manager", zones));
+    expect(screen.queryByTestId(/^candidate-row-/)).toBeNull();
+    expect(screen.getByTestId("candidate-empty")).toHaveTextContent("空區 尚無候選點。");
+    expect(screen.getByTestId("candidate-score-all")).toBeDisabled();
+  });
+
+  it("honors another zone URL on the same tab after the clear URL was acknowledged", () => {
+    navigation.search = "ws=network&tab=candidates&zone=HZ-02";
+    const view = renderFindAreas();
+    fireEvent.click(screen.getByTestId("candidate-zone-scope-clear"));
+    navigation.search = lastPushedParams().toString();
+    view.rerender(findAreasElement());
+    navigation.search = "ws=network&tab=candidates&zone=HZ-01";
+    view.rerender(findAreasElement());
+    expect(screen.getByTestId("candidate-row-CS-1002")).toBeInTheDocument();
+    expect(screen.queryByTestId("candidate-row-CS-1003")).toBeNull();
   });
 
   it("restores the zone scope from the URL and clears it on request or tab change", () => {

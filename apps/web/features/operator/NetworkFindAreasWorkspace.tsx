@@ -582,14 +582,18 @@ export function NetworkFindAreasWorkspace({
   // `initialTabId`, and a tab selection that only existed in the pushed URL was
   // silently dropped — the Listing Radar click was lost and Find Areas stayed
   // on screen. The selection is therefore committed to workspace state at click
-  // time and stays authoritative until the URL reports a different tab, at
-  // which point the URL (deep link, back/forward) takes over again.
+  // time and stays authoritative while the source tab+zone URL is unchanged.
+  // Acknowledged navigation or same-tab Back/Forward releases the override;
+  // tab-only comparison would retain a cleared scope over a restored zone.
+  const urlCandidateZoneId = searchParams.get(CANDIDATE_ZONE_PARAM) || null;
   const [tabOverride, setTabOverride] = useState<{
     from: number;
+    fromZoneId: string | null;
     requested: number;
     candidateZoneId: string | null;
   } | null>(null);
-  const overrideApplies = tabOverride !== null && tabOverride.from === urlTab;
+  const overrideApplies = tabOverride !== null && tabOverride.from === urlTab
+    && tabOverride.fromZoneId === urlCandidateZoneId;
   const activeTab = overrideApplies ? tabOverride.requested : urlTab;
   // 「查看本區候選點」 scopes the Candidates tab to one HeatZone. The scope is
   // carried in the URL (`zone=<heatZoneId>`) so a reload or back/forward
@@ -599,11 +603,12 @@ export function NetworkFindAreasWorkspace({
       ? null
       : overrideApplies
         ? tabOverride.candidateZoneId
-        : searchParams.get(CANDIDATE_ZONE_PARAM) || null;
+        : urlCandidateZoneId;
 
   useEffect(() => {
-    setTabOverride((current) => (current !== null && current.from !== urlTab ? null : current));
-  }, [urlTab]);
+    setTabOverride((current) => (current !== null
+      && (current.from !== urlTab || current.fromZoneId !== urlCandidateZoneId) ? null : current));
+  }, [urlTab, urlCandidateZoneId]);
   const [networkSnapshot, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
   const [networkApiError, setNetworkApiError] = useState<string | null>(null);
   const [networkLoadState, setNetworkLoadState] = useState<OperatorDataAvailability>(
@@ -729,6 +734,7 @@ export function NetworkFindAreasWorkspace({
   const changeActiveTab = useCallback((tabIndex: number, extraParams?: Record<string, string>) => {
     setTabOverride({
       from: urlTab,
+      fromZoneId: urlCandidateZoneId,
       requested: tabIndex,
       candidateZoneId: tabIndex === 2 ? extraParams?.[CANDIDATE_ZONE_PARAM] || null : null,
     });
@@ -744,7 +750,7 @@ export function NetworkFindAreasWorkspace({
       typeof window === "undefined" ? "" : window.location.hash,
     );
     router.push(href, { scroll: false });
-  }, [pathname, router, searchParams, urlTab]);
+  }, [pathname, router, searchParams, urlTab, urlCandidateZoneId]);
 
   const snapshotHeatZones = networkSnapshot?.heatZones?.length
     ? networkSnapshot.heatZones
