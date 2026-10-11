@@ -66,7 +66,7 @@ no foreground executor or bundle-provenance integration. No store/receipt alone
 supplies human/source/admission/exclusion authority. Tests use isolated PostgreSQL
 fixtures with incident IDs as inputs, not fabricated live recovery receipts.
 
-## Credential/session fence domain increment (Web integration pending)
+## Credential/session fence increment (unapproved source; no live proof)
 
 Expand-only `000030` / Alembic `0024` adds a non-secret monotonic credential
 revision. The DB trigger advances it on PHC/algorithm/must-change changes, even
@@ -87,23 +87,38 @@ Isolated PG tests exercise independent pools, insert lock timeout during an
 uncommitted rotation, stale/missing revision refusal after commit, and future-clock
 pre-rotation session revocation. No database credentials or live effects are used.
 
-**Not yet end-to-end login proof:** origin/dev Web `/login` verifies a PHC and
-later inserts a session without carrying its revision. Consequently this DB
-increment intentionally fails closed for target logins after recovery until the
-Web adapter is completed; it is NOT ready to deploy or execute. Web
-`updatePasswordHash` also needs revision compare-and-swap: an old-PHC verifier's
-rehash must never overwrite a concurrent rotation. Obtain manager-serialized
-identityStore/localAuth/sessionStore/login scope; return the revision read with
-PHC through authentication, atomically CAS rehash (returning its new revision),
-and pass the verified revision to insertion. Do not fetch a later revision and
-attach it to an earlier password verification. Mock tests cannot substitute for
-this production path, and no blanket account/session denial is the final design.
+Canonical scope was expanded for the four Web adapters; the current Manager
+worktree lease/active-worker and canonical task scope readbacks show this worker
+owns the task and no active overlapping writer. No frozen invitation source was
+edited. Web `identityStore` now reads the revision WITH its PHC as text (no JS
+number truncation), rehashes by revision CAS and returns that UPDATE's committed
+revision. `localAuth` carries the verified revision, replacing it only with the
+result of its own successful CAS. A failed rehash retains the OLD revision;
+it cannot overwrite a concurrent rotation or fetch a newer revision to relabel
+an old verification. `/login` passes that server-only value to `sessionStore`,
+not any submitted JSON/header value. Production local-password insertion
+requires a revision; the atomic DB trigger refuses drift before a cookie can be
+sealed. Unconfigured/missing migration fails closed, not mock/legacy fallback.
+
+Unit production-store SQL/propagation tests and mounted login tests check CAS,
+missing/stale revision, no cookie on refusal and no credential/revision response.
+A recovery PG fixture can invoke the actual production Web stores through the
+existing frozen-lock Vitest environment: target rotation3 refuses old revision2
+insertion/rehash, unchanged new PHC authenticates, current revision3 creates a
+session, only that test-owned session is cleaned up, and a successful rehash
+returns4. This child receives only ISOLATED fixture database configuration, never
+foreground credentials. Python-only environments explicitly skip that Web-store
+proof if the declared Node environment is missing; such a skip cannot count as
+Web verification. These offline tests are not deployed source/runtime proof or
+permission to execute. Legacy serving writers without revision remain fail-closed
+for the recovered target; ordinary deployment must compose all adapters and the
+migration before any recovery. No blanket session denial is the final design.
 
 ## Required subsequent increments (not implemented)
 
 1. Independent review of migration/capability/session-fence domain increments;
-   no rollout/effects may use this unreviewed source. Complete the serialized Web
-   verified-revision and CAS-rehash integration plus real store/route tests above.
+   no rollout/effects may use this unreviewed source. Verify the complete clean
+   source composition including Web verified-revision/CAS and real PG/route tests.
    Complete transport failure tests including lost reply after committed rotation
    (never automatic resume).
 2. Official bounded authenticated API/BFF mounting with CSRF/service transport,

@@ -20,6 +20,8 @@ export interface PasswordCredential {
   accountId: string;
   phcHash: string;
   mustChange: boolean;
+  /** Revision read WITH the verified PHC; never fetch a newer one after verify. */
+  credentialRevision?: string;
 }
 
 export interface IdentityStore {
@@ -36,8 +38,8 @@ export interface IdentityStore {
   getPasswordCredential(accountId: string): Promise<PasswordCredential | null>;
   /** Verify password against stored Argon2id hash. Returns { valid, newHash? }. */
   verifyPassword(phcHash: string, password: string): Promise<{ valid: boolean; newHash: string | null }>;
-  /** Update the stored password hash (for rehash-on-verify). */
-  updatePasswordHash(accountId: string, newHash: string): Promise<void>;
+  /** CAS rehash against the verified revision; returns the committed revision. */
+  updatePasswordHash(accountId: string, newHash: string, expectedRevision?: string): Promise<string | void>;
   /** Hash a new password for storage. */
   hashPassword(password: string): Promise<string>;
   /** Update password credential with new hash. */
@@ -146,7 +148,7 @@ export class PostgresIdentityStore implements IdentityStore {
   async getPasswordCredential(accountId: string): Promise<PasswordCredential | null> {
     const pool = await this.pool();
     const result = await pool.query(
-      `SELECT account_id, phc_hash, must_change
+      `SELECT account_id, phc_hash, must_change, credential_revision::text
        FROM identity.password_credentials
        WHERE account_id = $1`,
       [accountId],
@@ -157,6 +159,7 @@ export class PostgresIdentityStore implements IdentityStore {
       accountId: row.account_id,
       phcHash: row.phc_hash,
       mustChange: row.must_change,
+      credentialRevision: row.credential_revision,
     };
   }
 
@@ -190,14 +193,22 @@ export class PostgresIdentityStore implements IdentityStore {
     }
   }
 
-  async updatePasswordHash(accountId: string, newHash: string): Promise<void> {
+  async updatePasswordHash(accountId: string, newHash: string, expectedRevision?: string): Promise<string> {
+    if (!expectedRevision || !/^[1-9][0-9]{0,18}$/.test(expectedRevision)) {
+      throw new Error("CREDENTIAL_REVISION_REQUIRED");
+    }
     const pool = await this.pool();
-    await pool.query(
+    const result = await pool.query(
       `UPDATE identity.password_credentials
        SET phc_hash = $2, updated_at = now()
-       WHERE account_id = $1`,
-      [accountId, newHash],
+       WHERE account_id = $1 AND credential_revision = $3::bigint
+       RETURNING credential_revision::text`,
+      [accountId, newHash, expectedRevision],
     );
+    if (result.rowCount !== 1) throw new Error("CREDENTIAL_REVISION_CHANGED");
+    // The DB revision trigger runs before RETURNING; this is the revision of
+    // our successful CAS, not an unrelated later credential read.
+    return result.rows[0].credential_revision;
   }
 
   async hashPassword(password: string): Promise<string> {
@@ -243,7 +254,7 @@ export class PostgresIdentityStore implements IdentityStore {
  * In-memory mock identity store for testing.
  */
 export class MockIdentityStore implements IdentityStore {
-  private accounts: Map<string, IdentityAccount & { phcHash: string; mustChange: boolean }> = new Map();
+  private accounts: Map<string, IdentityAccount & { phcHash: string; mustChange: boolean; credentialRevision: string }> = new Map();
 
   constructor(
     entries?: Array<{
@@ -265,6 +276,7 @@ export class MockIdentityStore implements IdentityStore {
         status: e.status,
         phcHash: e.password, // For mock, store plaintext and do constant-time compare
         mustChange: e.mustChange ?? false,
+        credentialRevision: "1",
       });
     }
   }
@@ -312,6 +324,7 @@ export class MockIdentityStore implements IdentityStore {
           accountId: entry.accountId,
           phcHash: entry.phcHash,
           mustChange: entry.mustChange,
+          credentialRevision: entry.credentialRevision,
         };
       }
     }
@@ -327,13 +340,16 @@ export class MockIdentityStore implements IdentityStore {
     return { valid: constantTimeEqual(phcHash, password), newHash: null };
   }
 
-  async updatePasswordHash(accountId: string, newHash: string): Promise<void> {
+  async updatePasswordHash(accountId: string, newHash: string, expectedRevision?: string): Promise<string> {
     for (const [key, entry] of this.accounts.entries()) {
       if (entry.accountId === accountId) {
-        this.accounts.set(key, { ...entry, phcHash: newHash });
-        break;
+        if (entry.credentialRevision !== expectedRevision) throw new Error("CREDENTIAL_REVISION_CHANGED");
+        const credentialRevision = entry.phcHash === newHash ? entry.credentialRevision : String(BigInt(entry.credentialRevision) + 1n);
+        this.accounts.set(key, { ...entry, phcHash: newHash, credentialRevision });
+        return credentialRevision;
       }
     }
+    throw new Error("CREDENTIAL_REVISION_CHANGED");
   }
 
   async hashPassword(password: string): Promise<string> {
@@ -343,7 +359,9 @@ export class MockIdentityStore implements IdentityStore {
   async changePassword(accountId: string, newHash: string): Promise<void> {
     for (const [key, entry] of this.accounts.entries()) {
       if (entry.accountId === accountId) {
-        this.accounts.set(key, { ...entry, phcHash: newHash, mustChange: false });
+        const credentialRevision = entry.phcHash !== newHash || entry.mustChange
+          ? String(BigInt(entry.credentialRevision) + 1n) : entry.credentialRevision;
+        this.accounts.set(key, { ...entry, phcHash: newHash, mustChange: false, credentialRevision });
         return;
       }
     }

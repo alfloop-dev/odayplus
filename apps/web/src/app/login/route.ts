@@ -604,6 +604,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       accessToken,
       subject: authResult.account.username,
       tenantId: authResult.account.tenantId,
+      verifiedCredentialRevision: authResult.verifiedCredentialRevision,
       idleTimeoutMs: DEFAULT_SESSION_IDLE_TIMEOUT_MS,
       absoluteLifetimeMs: MAX_SESSION_ABSOLUTE_LIFETIME_MS,
     });

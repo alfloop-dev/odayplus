@@ -653,3 +653,31 @@ def test_credential_revision_advances_even_when_transaction_timestamps_collide(r
         assert (first["credential_revision"], second["credential_revision"]) == (2, 3)
         s.engine.execute("UPDATE identity.password_credentials SET credential_revision = 100 WHERE account_id = ?", (TARGET_ACCOUNT_ID,))
         assert s.capabilities._credential_revisions() == ("1", "3")
+
+
+def test_actual_web_postgres_stores_refuse_old_verified_revision_after_rotation(recovery: Any) -> None:
+    import os
+    import subprocess
+    from shared.identity.credential_service import CredentialService
+    s = recovery
+    root_path = Path.cwd()
+    binary = root_path / "node_modules/.bin/vitest"
+    if not binary.is_file():
+        pytest.skip("production Web store PG proof requires the existing frozen-lock Node test environment")
+    # Two actual credential revisions: fixture1 -> old verified PHC2 -> rotation3.
+    # No real human password/capability/token is provided to this worker or child.
+    service = CredentialService()
+    old_phc = service.hash_password("Old-offline-password-729!")
+    s.engine.execute("UPDATE identity.password_credentials SET phc_hash = ? WHERE account_id = ?", (old_phc, TARGET_ACCOUNT_ID))
+    assert service.verify_password(old_phc, "Old-offline-password-729!")
+    root, cap = issue(s)
+    assert consume(s, root, cap)["status"] == "rotated"
+    assert s.capabilities._credential_revisions() == ("1", "3")
+    result = subprocess.run(
+        [str(binary), "run", "src/lib/auth/__tests__/identityStore.test.ts"],
+        cwd=root_path / "apps/web", env={**os.environ, "NODE_ENV": "test",
+            "ODP_TEST_RECOVERY_DATABASE_URL": s.db.url()},
+        timeout=60, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert s.capabilities._credential_revisions() == ("1", "4")
