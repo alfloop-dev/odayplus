@@ -99,7 +99,7 @@ def test_authenticated_manual_native_run_is_exact_dev_source_not_a_passing_boole
 @pytest.mark.parametrize("field,value", [
     ("path", ".github/workflows/deploy-dev.yml"), ("head_sha", "c" * 40),
     ("head_branch", "other"), ("event", "push"), ("id", 124),
-    ("status", "completed"), ("conclusion", "success"),
+    ("status", "completed"), ("conclusion", "success"), ("run_attempt", True),
     ("created_at", (NOW + timedelta(seconds=1)).isoformat()),
     ("created_at", (NOW - timedelta(minutes=21)).isoformat()),
 ])
@@ -270,14 +270,19 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
             return self
         def __exit__(self, *args):
             pass
-        def get(self, path):
-            assert path.endswith("/actions/runs/123")
-            return httpx.Response(200, json=run)
+        def stream(self, method, path, **kwargs):
+            from contextlib import contextmanager
+            assert method == "GET" and path.endswith("/actions/runs/123")
+            @contextmanager
+            def response():
+                yield httpx.Response(200, json=run)
+            return response()
 
     def observe(kind):
         calls.append(kind)
         isolated = tuple(key for key in c.SECRET_INPUTS if key != "GH_TOKEN") + c.LEGACY_INPUTS
         assert not set(isolated) & set(env)
+        assert "GH_TOKEN" not in env  # direct HTTP never opens the helper exception
         if failure == kind:
             raise c.ConsumerRefused()
 
@@ -300,7 +305,7 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
 
     monkeypatch.setattr(httpx, "Client", Github)
     monkeypatch.setattr(c, "_native_oidc", lambda *args: observe("oidc"))
-    monkeypatch.setattr(c, "GitHubSourceApprovalObserver", Source)
+    monkeypatch.setattr(c, "NativeSourceApprovalObserver", Source)
     monkeypatch.setattr(c, "_current_admission", lambda **kwargs: observe("admission"))
     monkeypatch.setattr(c, "_native_transport_identity", lambda *args: "offline-generated-invoker")
     monkeypatch.setattr(c.gate, "evaluate_gate", mocked_gate)
@@ -401,3 +406,134 @@ def test_existing_google_wif_is_memory_only_and_exact_identity(monkeypatch, fail
         assert c._native_transport_identity(inputs, env) == "offline-generated-invoker"
         assert len(calls) == 3
     assert not set(c.SECRET_INPUTS + c.LEGACY_INPUTS) & set(env)
+
+
+def source_observer_options():
+    return dict(token="offline-native-github-read-token", pull_number=1, reviewed_head=SHA,
+                review_writer_login=c.REVIEW_WRITER, review_writer_id=c.REVIEW_WRITER_ID,
+                workflow_id=c.CI_WORKFLOW_ID, checks_app_id=c.CHECKS_APP_ID,
+                required_checks=c.REQUIRED_CHECKS)
+
+
+@pytest.mark.parametrize("body,status,headers", [
+    (b'[{"state":"success"}]', 200, {}),
+    (b'{"status":"ok"}', 200, {}),
+    (b'{"status":"ok","status":"bad"}', 200, {}),
+    (b'{"count":NaN}', 200, {}),
+    (b'{}', 403, {}),
+    (b'{}', 302, {"location": "https://untrusted.invalid/private"}),
+    (b'{}', 200, {"link": '<https://api.github.com/next>; rel="next"'}),
+    (b'"not-a-record"', 200, {}),
+    (b'{"large":"' + b'x' * (2 * 1024 * 1024) + b'"}', 200, {}),
+])
+def test_native_source_stream_is_bounded_unambiguous_and_never_follows_pages(body, status, headers):
+    import httpx
+    calls = []
+    def responder(request):
+        calls.append(str(request.url))
+        assert request.headers["Authorization"] == "Bearer offline-native-github-read-token"
+        return httpx.Response(status, content=body, headers={"content-type": "application/json", **headers})
+    observer = c.NativeSourceApprovalObserver(**source_observer_options(),
+                                              transport=httpx.MockTransport(responder))
+    try:
+        if body in (b'[{"state":"success"}]', b'{"status":"ok"}'):
+            assert observer._get("pulls/1") == json.loads(body)
+        else:
+            with pytest.raises(c.ConsumerRefused):
+                observer._get("pulls/1")
+        assert calls == [f"https://api.github.com/repos/{c.REPOSITORY}/pulls/1"]
+    finally:
+        observer.close()
+
+
+def test_native_source_actual_client_has_no_proxy_trust(monkeypatch):
+    import httpx
+    real_client = httpx.Client
+    options = []
+    def client(**kwargs):
+        options.append(kwargs)
+        return real_client(**kwargs)
+    monkeypatch.setenv("HTTPS_PROXY", "http://untrusted.invalid:3128")
+    monkeypatch.setattr(httpx, "Client", client)
+    observer = c.NativeSourceApprovalObserver(**source_observer_options())
+    try:
+        assert options[-1]["trust_env"] is False
+        assert options[-1]["follow_redirects"] is False
+        assert options[-1]["base_url"] == "https://api.github.com"
+    finally:
+        observer.close()
+
+
+def test_native_source_still_uses_canonical_whole_tree_approval_predicates():
+    assert c.NativeSourceApprovalObserver.observe is c.GitHubSourceApprovalObserver.observe
+    assert c.NativeSourceApprovalObserver._ci is c.GitHubSourceApprovalObserver._ci
+
+
+@pytest.mark.parametrize("failure", [None, "helper", "validator"])
+def test_native_gh_env_exception_is_only_canonical_metadata_not_manifest_git(monkeypatch, failure):
+    from delivery_toolchain.release import automatic_dev, recover_dev_smoke
+    inputs = c.take_native_inputs(raw_inputs(), masker=lambda _: None)
+    env = native_environment()
+    calls = []
+    deadline = time.monotonic() + 30
+    manifest = {"candidate_sha": SHA, "release_profile": "dev-admin"}
+    run = {"path": automatic_dev.WORKFLOW, "event": "workflow_dispatch",
+           "repository": {"full_name": c.REPOSITORY}, "head_repository": {"full_name": c.REPOSITORY}}
+    def metadata():
+        calls.append("metadata")
+        assert env["GH_TOKEN"] == inputs.github_token
+        assert not set(c.LEGACY_INPUTS) & set(env)
+        if failure == "helper":
+            raise ValueError("offline metadata failure")
+        return manifest, run
+    def validator(args, **kwargs):
+        calls.append("validator")
+        assert "GH_TOKEN" not in env
+        projected = kwargs["input_bytes"]
+        assert json.loads(projected) == manifest
+        assert kwargs["deadline"] == deadline
+        assert args[0] == c.sys.executable and args[-2:] == (SHA, DIGEST)
+        for private in (inputs.bundle.password, inputs.github_token, inputs.oidc_request_token,
+                        inputs.oidc_request_url):
+            assert private not in repr(args) and private.encode() not in projected
+        if failure == "validator":
+            raise ValueError("offline validator failure")
+        return b""
+    monkeypatch.setattr(automatic_dev, "previous_deployment", metadata)
+    monkeypatch.setattr(recover_dev_smoke, "_bounded_observer_child", validator)
+    if failure:
+        with pytest.raises(ValueError):
+            c._current_admission(sha=SHA, digest=DIGEST, inputs=inputs, environment=env, deadline=deadline)
+    else:
+        c._current_admission(sha=SHA, digest=DIGEST, inputs=inputs, environment=env, deadline=deadline)
+    assert calls == (["metadata"] if failure == "helper" else ["metadata", "validator"])
+    assert "GH_TOKEN" not in env
+
+
+def test_native_manifest_actual_child_never_inherits_credentials_and_missing_git_never_fetches(monkeypatch):
+    # Genuine local subprocess boundary. Synthetic missing source is NOT admission.
+    import subprocess
+
+    from delivery_toolchain.release import automatic_dev, recover_dev_smoke
+    inputs = c.take_native_inputs(raw_inputs(), masker=lambda _: None)
+    monkeypatch.setenv("GH_TOKEN", "offline-parent-secret-must-not-reach-git")
+    monkeypatch.setenv("ODP_DEV_ADMIN_PASSWORD", "offline-parent-password-must-not-reach-git")
+    run = {"path": automatic_dev.WORKFLOW, "event": "workflow_dispatch",
+           "repository": {"full_name": c.REPOSITORY}, "head_repository": {"full_name": c.REPOSITORY}}
+    monkeypatch.setattr(automatic_dev, "previous_deployment", lambda: ({"candidate_sha": SHA}, run))
+    actual_popen = subprocess.Popen
+    launches = []
+    def popen(args, **kwargs):
+        launches.append((args, kwargs))
+        assert not set(c.SECRET_INPUTS + c.LEGACY_INPUTS) & set(kwargs["env"])
+        assert kwargs["close_fds"] is True and kwargs["start_new_session"] is True
+        assert "shell" not in kwargs
+        assert "fetch" not in args[2]  # fixed cat-file refusal before validator can fetch
+        return actual_popen(args, **kwargs)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    with pytest.raises(recover_dev_smoke.ObserverRefused) as exc:
+        c._current_admission(sha=SHA, digest=DIGEST, inputs=inputs, environment=c.os.environ,
+                             deadline=time.monotonic() + 20)
+    assert exc.value.exit_code is not None and exc.value.exit_code != 0
+    assert len(launches) == 1
+    assert "GH_TOKEN" not in c.os.environ

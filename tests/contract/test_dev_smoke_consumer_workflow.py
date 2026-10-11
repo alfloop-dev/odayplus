@@ -17,10 +17,23 @@ def test_consumer_is_fresh_manual_dev_job_not_another_build_or_deploy():
     job = w['jobs']['consume']
     assert job['environment'] == 'dev' and job['timeout-minutes'] == '12'
     assert "github.ref == 'refs/heads/dev'" in job['if']
-    assert w['permissions'] == {'contents': 'read', 'actions': 'read', 'deployments': 'read', 'id-token': 'write'}
+    assert w['permissions'] == {'contents': 'read', 'actions': 'read', 'deployments': 'read',
+                                'pull-requests': 'read', 'statuses': 'read', 'checks': 'read',
+                                'id-token': 'write'}
     text = PATH.read_text()
     assert 'docker build' not in text and 'gcloud run' not in text and 'gh workflow run' not in text
     assert 'cancel-in-progress: false' in text
+
+
+def test_canonical_source_metadata_permissions_are_read_only_not_a_pat_workaround():
+    permissions = workflow()['permissions']
+    # Existing observer reads pulls/{id}, commits/{sha}/statuses, and
+    # check-suites/{id}/check-runs. actions:read alone grants none of these.
+    assert {key: permissions[key] for key in ('pull-requests', 'statuses', 'checks')} == {
+        'pull-requests': 'read', 'statuses': 'read', 'checks': 'read',
+    }
+    assert {key for key, value in permissions.items() if value == 'write'} == {'id-token'}
+    assert 'permissions' not in workflow()['jobs']['consume']
 
 
 def test_only_trusted_consuming_step_receives_pair_no_global_secret_inheritance():

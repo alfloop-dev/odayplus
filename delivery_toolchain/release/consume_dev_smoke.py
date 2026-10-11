@@ -120,7 +120,8 @@ def validate_run(run: Any, environment: dict[str, str], *, expected_sha: str, no
                 or environment.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
                 or environment.get("GITHUB_ACTIONS") != "true"
                 or environment.get("GITHUB_ACTOR") != REVIEW_WRITER
-                or environment.get("GITHUB_RUN_ATTEMPT") != "1" or run.get("run_attempt") != 1
+                or environment.get("GITHUB_RUN_ATTEMPT") != "1"
+                or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
                 or str(run["id"]) != environment.get("GITHUB_RUN_ID")
                 or run["repository"]["full_name"] != REPOSITORY
                 or run["head_repository"]["full_name"] != REPOSITORY
@@ -141,7 +142,7 @@ def _b64url(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
-def _unique_json(data: bytes) -> dict[str, Any]:
+def _unique_json(data: bytes, *, allow_list: bool = False) -> Any:
     def pairs(items: Any) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for key, value in items:
@@ -152,7 +153,7 @@ def _unique_json(data: bytes) -> dict[str, Any]:
     def constant(_value: str) -> Any:
         raise ConsumerRefused()
     parsed = json.loads(data, object_pairs_hook=pairs, parse_constant=constant)
-    if type(parsed) is not dict:
+    if type(parsed) not in ((dict, list) if allow_list else (dict,)):
         raise ConsumerRefused()
     return parsed
 
@@ -204,17 +205,45 @@ def verify_native_oidc(token: str, jwks: Any, environment: dict[str, str], *, no
 
 
 def _bounded_json(client: Any, url: str, *, headers: Any = None,
-                  method: str = "GET", json_payload: Any = None) -> dict[str, Any]:
+                  method: str = "GET", json_payload: Any = None,
+                  max_bytes: int = 65_536, allow_list: bool = False) -> Any:
     with client.stream(method, url, headers=headers, json=json_payload) as response:
-        if (response.status_code != 200 or response.headers.get("content-type", "").split(";")[0]
+        if (response.status_code != 200 or 'rel="next"' in response.headers.get("link", "")
+                or response.headers.get("content-type", "").split(";")[0]
                 not in {"application/json", "application/jwk-set+json"}):
             raise ConsumerRefused()
         body = bytearray()
         for chunk in response.iter_bytes(chunk_size=4096):
-            if len(body) + len(chunk) > 65_536:
+            if len(body) + len(chunk) > max_bytes:
                 raise ConsumerRefused()
             body.extend(chunk)
-        return _unique_json(bytes(body))
+        return _unique_json(bytes(body), allow_list=allow_list)
+
+
+class NativeSourceApprovalObserver(GitHubSourceApprovalObserver):
+    """Unchanged canonical approval predicates, bounded no-proxy native ingress.
+
+    A single page is bounded to2MiB; incomplete/duplicate evidence refuses.
+    No public unauthenticated/PAT fallback, retry, credential environment or
+    substitute approval. Canonical exact reviewed/candidate trees and latest CI
+    are still enforced by the inherited observer, not by this transport.
+    """
+    def __init__(self, **kwargs: Any) -> None:
+        import httpx
+
+        super().__init__(**kwargs)  # Retain canonical config validation.
+        self._client.close()
+        self._client = httpx.Client(
+            base_url="https://api.github.com", transport=kwargs.get("transport"), timeout=20,
+            follow_redirects=False, trust_env=False, headers={
+                "Authorization": f"Bearer {kwargs['token']}", "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+
+    def _get(self, path: str) -> Any:
+        return _bounded_json(self._client, f"/repos/{REPOSITORY}/{path}",
+                             max_bytes=2 * 1024 * 1024, allow_list=True)
 
 
 def _runner_jwt(client: Any, inputs: NativeInputs, *, audience: str) -> str:
@@ -333,28 +362,46 @@ class _ObservedWeb:
             return gate.HttpResponse(status=0, error="native consumer bounded request refused")
 
 
-def _current_admission(*, sha: str, digest: str) -> None:
+def _current_admission(*, sha: str, digest: str, inputs: NativeInputs,
+                       environment: dict[str, str], deadline: float) -> None:
     # Deliberately NOT DeployedDevReleaseObserver: its foreground-only guard is
     # unchanged. Here the authenticated own run is proven a different, NO-DEPLOY
     # workflow. Excluding its id from deployment history cannot hide a deploy.
     from delivery_toolchain.release import automatic_dev
-    from delivery_toolchain.release.release_manifest import (
-        manifest_release_profile,
-        validate_manifest,
-        validate_release_admission,
-    )
-    found = automatic_dev.previous_deployment()
+    from delivery_toolchain.release.recover_dev_smoke import _bounded_observer_child
+
+    # Sole native GH_TOKEN exception: only the existing GitHub metadata helper
+    # receives it. Canonical manifest predicates spawn Git internally, so run
+    # those separately with manifest-only stdin and the existing sanitized,
+    # absolute-deadline process-group adapter. Exec/fork is NOT memory isolation.
+    environment["GH_TOKEN"] = inputs.github_token
+    try:
+        found = automatic_dev.previous_deployment()
+    finally:
+        environment.pop("GH_TOKEN", None)
     if found is None:
         raise ConsumerRefused()
     manifest, run = found
-    if (validate_manifest(manifest, expected_candidate_sha=sha, expected_digest=digest)
-            or validate_release_admission(manifest, environment="dev")
-            or manifest_release_profile(manifest) != "dev-admin"
-            or manifest.get("external_sources_expected_enabled") != []
-            or run.get("path") != automatic_dev.WORKFLOW or run.get("event") != "workflow_dispatch"
+    if (run.get("path") != automatic_dev.WORKFLOW or run.get("event") != "workflow_dispatch"
             or run.get("repository", {}).get("full_name") != REPOSITORY
             or run.get("head_repository", {}).get("full_name") != REPOSITORY):
         raise ConsumerRefused()
+    code = (
+        "import json, subprocess, sys\n"
+        "from delivery_toolchain.release.release_manifest import "
+        "validate_manifest, validate_release_admission, manifest_release_profile\n"
+        "m=json.loads(sys.stdin.buffer.read(2000001))\n"
+        "sha,digest=sys.argv[1:]\n"
+        "subprocess.run(['/usr/bin/git','cat-file','-e',sha+'^{commit}'],check=True,"
+        "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+        "errors=validate_manifest(m,expected_candidate_sha=sha,expected_digest=digest)\n"
+        "errors+=validate_release_admission(m,environment='dev')\n"
+        "sys.exit(1 if errors or manifest_release_profile(m)!='dev-admin' or "
+        "m.get('external_sources_expected_enabled')!=[] else 0)\n"
+    )
+    _bounded_observer_child((sys.executable, "-c", code, sha, digest),
+        cwd=Path(__file__).resolve().parents[2], deadline=deadline,
+        input_bytes=json.dumps(manifest, separators=(",", ":"), allow_nan=False).encode())
 
 
 def safe_consumption_report(report: Any, *, ack_times: list[datetime], job_created: datetime,
@@ -387,9 +434,8 @@ def consume(*, inputs: NativeInputs, environment: dict[str, str], sha: str, dige
     import httpx
 
     started = time.monotonic()
-    # Native GH_TOKEN is restored only for canonical gh read helpers; bundle,
-    # invoker and all fallback credentials are absent from inherited env.
-    environment["GH_TOKEN"] = inputs.github_token
+    # Direct HTTP observers need no credential environment. GH_TOKEN is scoped
+    # only inside the existing canonical metadata helper below.
     try:
         with _absolute_deadline(started + 180), httpx.Client(
             base_url="https://api.github.com", timeout=20, follow_redirects=False, trust_env=False,
@@ -398,12 +444,10 @@ def consume(*, inputs: NativeInputs, environment: dict[str, str], sha: str, dige
             run_id = environment.get("GITHUB_RUN_ID", "")
             if not run_id.isdecimal() or int(run_id) <= 0:
                 raise ConsumerRefused()
-            response = github.get(f"/repos/{REPOSITORY}/actions/runs/{run_id}")
-            if response.status_code != 200:
-                raise ConsumerRefused()
-            created = validate_run(response.json(), environment, expected_sha=sha, now=datetime.now(UTC))
+            record = _bounded_json(github, f"/repos/{REPOSITORY}/actions/runs/{run_id}")
+            created = validate_run(record, environment, expected_sha=sha, now=datetime.now(UTC))
             _native_oidc(inputs, environment)
-            observer = GitHubSourceApprovalObserver(
+            observer = NativeSourceApprovalObserver(
                 token=inputs.github_token, pull_number=pull_number, reviewed_head=reviewed_head,
                 review_writer_login=REVIEW_WRITER, review_writer_id=REVIEW_WRITER_ID,
                 workflow_id=CI_WORKFLOW_ID, checks_app_id=CHECKS_APP_ID, required_checks=REQUIRED_CHECKS,
@@ -412,7 +456,8 @@ def consume(*, inputs: NativeInputs, environment: dict[str, str], sha: str, dige
                 observer.observe(release_sha=sha, now=datetime.now(UTC))
             finally:
                 observer.close()
-            _current_admission(sha=sha, digest=digest)
+            _current_admission(sha=sha, digest=digest, inputs=inputs,
+                               environment=environment, deadline=started + 180)
             inputs.invoker_token = _native_transport_identity(inputs, environment)
         correlation = f"corr-native-consumer-{run_id}"
         config = gate.GateConfig(
