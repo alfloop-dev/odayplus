@@ -248,6 +248,38 @@ def test_operator_routes_select_verified_read_persona_and_refuse_business_writes
     assert any(event.outcome == "deny" for event in log.list_events())
 
 
+@pytest.mark.parametrize(
+    ("roles", "decide", "export"),
+    [
+        # The deployed dev account: server-verified, but no business decision grant.
+        ("auditor,platform_admin", False, False),
+        ("platform_admin,operator_viewer", False, False),
+        ("operations_manager", True, True),
+    ],
+)
+def test_governance_snapshot_reports_the_write_guards_verdict_not_the_persona(roles, decide, export) -> None:
+    client = TestClient(create_app(audit_log=InMemoryAuditLog(), external_provider_validation=lambda: None))
+    # Every principal views through the 營運主管 persona; it must not matter.
+    headers = {"X-Subject-Id": "authority-probe", "X-Roles": roles, "X-Tenant-Id": "tenant-a", "X-Operator-Role": "ops-lead"}
+    snapshot = client.get("/api/v1/operator/governance/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    authority = snapshot.json()["actionAuthority"]
+    assert authority == {
+        "verified": True,
+        "systemRoles": sorted(roles.split(",")),
+        "decide": decide,
+        "exportEvidence": export,
+    }
+    # The flag mirrors the unchanged guard: a principal it calls read-only is
+    # refused by POST /decisions, and a deciding principal gets past RBAC.
+    decision = client.post(
+        "/api/v1/operator/governance/decisions",
+        headers=headers,
+        json={"approvalId": "APR-AUTHORITY-PROBE", "action": "approve"},
+    )
+    assert (decision.status_code == 403) is not decide, decision.text
+
+
 def test_scoped_read_resource_admits_only_view_on_opted_in_guards() -> None:
     app = FastAPI()
     guards = {

@@ -1900,13 +1900,19 @@ def test_platform_observability_endpoints_fail_closed_without_full_sha(
 
     from apps.api.oday_api.main import create_app
     from shared.infrastructure.persistence.assisted_listing_intake import DurableAssistedIntakeStore
+    from shared.infrastructure.persistence.audit_log import DurableAuditLog
     from shared.infrastructure.persistence.factory import _memory_bundle
 
     class ProbeEngine:
         is_production = True
         dialect = "postgresql"
 
-        def query(self, *a, **kw):
+        def query(self, sql, *a, **kw):
+            if sql == "PRAGMA table_info(durable_audit_events)":
+                return [{"name": name} for name in (
+                    "sequence", "previous_hash", "event_hash", "signature_key_id",
+                    "signature_version", "signature_alg", "worm_sink_id",
+                )]
             return []
 
         def query_one(self, *a, **kw):
@@ -1917,6 +1923,7 @@ def test_platform_observability_endpoints_fail_closed_without_full_sha(
         _memory_bundle(),
         mode="postgresql",
         engine=engine,
+        audit_log=DurableAuditLog(engine),
         assisted_intake_store=DurableAssistedIntakeStore(SimpleNamespace(engine=engine)),
     )
 

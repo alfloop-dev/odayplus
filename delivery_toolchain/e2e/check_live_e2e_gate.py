@@ -50,6 +50,19 @@ from typing import Any, Protocol
 from uuid import UUID
 
 ROOT = Path(__file__).resolve().parents[2]
+# Keep the canonical gate usable as a direct script as well as a library.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from shared.identity.invitation_provenance import (
+    canonical_uuid as _canonical_uuid,
+)
+from shared.identity.invitation_provenance import (
+    identity_snapshot as _identity_snapshot,
+)
+from shared.identity.invitation_provenance import (
+    invitation_provenance as _invitation_provenance,
+)
+
 DEFAULT_OUTPUT = ROOT / ".odp_data" / "live-e2e-gate" / "live-e2e-gate-report.json"
 LIVE_DATA_GATE = ROOT / "delivery_toolchain" / "e2e" / "check_live_production_data.py"
 # ODP-BUSINESS-LIVE-E2E-COVERAGE-001: the six real business journeys whose
@@ -369,8 +382,13 @@ class GateConfig:
     # dev-admin only: the bootstrap-created pure platform_admin account the gate
     # signs in as through the Web password form. Never written to the report.
     dev_admin_username: str = ""
-    dev_admin_password: str = ""
-    dev_admin_initial_password: str = ""
+    dev_admin_password: str = field(default="", repr=False)
+    dev_admin_initial_password: str = field(default="", repr=False)
+    # Non-secret expectations from a strictly parsed matched bundle. The gate
+    # binds these to authoritative reads; they confer no permissions/provenance.
+    dev_admin_bundle_account_id: str = ""
+    dev_admin_bundle_tenant_id: str = ""
+    dev_admin_bundle_execution_id: str = ""
     dev_admin_denied_role: str = ""
     bootstrap_admin_username: str = ""
     bootstrap_admin_password: str = ""
@@ -1672,51 +1690,11 @@ def _cookie_header(cookies: Mapping[str, str]) -> str:
     return "; ".join(f"{name}={value}" for name, value in sorted(cookies.items()) if value)
 
 
-def _canonical_uuid(value: Any) -> str | None:
-    try:
-        return str(UUID(str(value)))
-    except (TypeError, ValueError):
-        return None
-
-
 def _foreign_tenant_for(own_tenant: str) -> str:
     """A valid tenant UUID guaranteed to differ from the admin's own tenant."""
     if own_tenant != FOREIGN_TENANT_PROBE_ID:
         return FOREIGN_TENANT_PROBE_ID
     return str(UUID(int=UUID(own_tenant).int ^ 1))
-
-
-def _identity_snapshot(record: Mapping[str, Any]) -> dict[str, Any] | None:
-    """The identity facts a refused tenant move must leave untouched.
-
-    Returns ``None`` when any of them is absent, so a readback that drops a
-    field is treated as changed rather than silently compared as missing.
-    """
-    subject_id = record.get("subject_id")
-    username = record.get("username")
-    roles = record.get("roles")
-    status = record.get("status")
-    scope = record.get("scope")
-    if not (
-        isinstance(subject_id, str)
-        and subject_id
-        and isinstance(username, str)
-        and username
-        and isinstance(roles, list)
-        and roles
-        and isinstance(status, str)
-        and status
-        and isinstance(scope, dict)
-        and _canonical_uuid(scope.get("tenant_id")) is not None
-    ):
-        return None
-    return {
-        "subject_id": subject_id,
-        "username": username,
-        "roles": sorted(str(r) for r in roles),
-        "status": status,
-        "scope": json.loads(json.dumps(scope, sort_keys=True)),
-    }
 
 
 def _read_admin_roles(roles: Any) -> bool:
@@ -2092,6 +2070,13 @@ def _check_dev_admin_session(
     report["dev_admin"]["account_mode"] = "read-enabled-admin" if read_admin else "pure-admin"
     if users.failed or users.status != 200 or not (pure_admin or read_admin):
         return
+    if config.dev_admin_bundle_account_id:
+        matched = (pure_admin and own_record.get("subject_id") == config.dev_admin_bundle_account_id
+                   and _as_dict(own_record.get("scope")).get("tenant_id") == config.dev_admin_bundle_tenant_id)
+        _check(checks, matched, "admin:credential_bundle_account_bound",
+               f"authoritativeMatchedPairAccount={matched}", "auth")
+        if not matched:
+            return
     if read_admin:
         principal = web.request(
             "GET", "/api/v1/auth/principal", authenticated=False, headers=session_headers(cookies)
@@ -2118,7 +2103,7 @@ def _check_dev_admin_session(
             "canonical_finite_grants_verified": True,
         }
 
-    # 6. User audit trail carries identity.account.bootstrap event.
+    # 6. Genuine bootstrap OR a strict invitation issue/accept lifecycle.
     trail = web.request(
         "GET",
         "/api/v1/operator/users/audit-trail",
@@ -2127,6 +2112,19 @@ def _check_dev_admin_session(
     )
     events = trail.payload.get("events") if not trail.failed else None
     events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
+    if config.dev_admin_bundle_account_id:
+        from delivery_toolchain.release.provision_dev_smoke import (
+            DevCredentialBundle,
+            credential_bundle_acknowledged,
+        )
+        acknowledged = credential_bundle_acknowledged(DevCredentialBundle(
+            username, "", config.dev_admin_bundle_account_id, config.dev_admin_bundle_tenant_id,
+            config.dev_admin_bundle_execution_id,
+        ), events)
+        _check(checks, acknowledged, "admin:credential_bundle_durable_acknowledgement",
+               f"reservedIntentAcknowledgementWithoutQuarantine={acknowledged}", "audit")
+        if not acknowledged:
+            return
     bootstrap_events = [
         e
         for e in events
@@ -2134,18 +2132,54 @@ def _check_dev_admin_session(
         and own_record
         and _as_dict(e.get("metadata")).get("account_id") == own_record.get("subject_id")
     ]
-    _check(
-        checks,
-        (not trail.failed) and trail.status == 200 and bool(bootstrap_events),
-        "admin:bootstrap_audited",
-        (
-            _failure_detail(trail, expected="200")
-            if trail.failed or trail.status != 200
-            else f"status=200 identityEvents={len(events)} bootstrapEvents={len(bootstrap_events)}"
-        ),
-        "audit",
+    invited = any(
+        e.get("event_type") == "identity.account.accept"
+        and (e.get("actor") == own_record.get("subject_id")
+             or _as_dict(e.get("metadata")).get("account_id") == own_record.get("subject_id"))
+        for e in events
     )
-    operations.append("bootstrap_audit_readback")
+    if config.dev_admin_bundle_account_id and not invited:
+        _check(checks, False, "admin:credential_bundle_invitation_required",
+               "matched bundle requires genuine invitation provenance", "audit")
+        return
+    if invited:
+        provenance = _invitation_provenance(own_record, events)
+        audited = not trail.failed and trail.status == 200 and provenance is not None
+        _check(checks, audited, "admin:invitation_audited",
+               f"status={trail.status} uniqueTenantBoundIssueAccept={audited}", "audit")
+        operations.append("invitation_audit_readback")
+        if not audited:
+            return
+        # Even a pure invited administrator must bind the cookie's subject to
+        # the API's server-verified account, tenant and exact finite role set.
+        principal = web.request(
+            "GET", "/api/v1/auth/principal", authenticated=False, headers=session_headers(cookies)
+        )
+        bound = (
+            not principal.failed and principal.status == 200
+            and principal.payload.get("account_id") == own_record["subject_id"]
+            and principal.payload.get("tenant_id") == own_record["scope"]["tenant_id"]
+            and principal.payload.get("roles") == ["platform_admin"]
+            and not current.failed and current.status == 200 and current.payload.get("subject") == username
+        )
+        _check(checks, bound, "admin:invitation_principal_bound",
+               f"status={principal.status} accountTenantRolesBound={bound}", "auth")
+        if not bound:
+            return
+        report["dev_admin"]["identity_provenance"] = {"mode": "invitation", **provenance}
+    else:
+        _check(
+            checks,
+            (not trail.failed) and trail.status == 200 and bool(bootstrap_events),
+            "admin:bootstrap_audited",
+            (
+                _failure_detail(trail, expected="200")
+                if trail.failed or trail.status != 200
+                else f"status=200 identityEvents={len(events)} bootstrapEvents={len(bootstrap_events)}"
+            ),
+            "audit",
+        )
+        operations.append("bootstrap_audit_readback")
     if read_admin:
         grant_events = [
             e for e in events
@@ -3312,6 +3346,21 @@ def _required_providers(args: argparse.Namespace) -> tuple[str, ...]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
+
+    try:
+        bundle = read_dev_credential_bundle(
+            os.environ.get("ODP_DEV_ADMIN_CREDENTIAL_BUNDLE", ""),
+            environment=args.expected_deployment.strip().lower(),
+            release_profile=str(args.release_profile or "").strip().lower(),
+        )
+    except ProvisioningRefused:
+        # No raw JSON/password, diagnostics, fallback or network on parse failure.
+        print("Live E2E gate refused: PROVISIONING_CREDENTIAL_BUNDLE_INVALID", file=sys.stderr)
+        return 2
     config = GateConfig(
         api_url=args.api_url.strip(),
         expected_sha=args.expected_sha.strip().lower(),
@@ -3333,13 +3382,16 @@ def main(argv: list[str] | None = None) -> int:
         # The six-journey receipt is bound to this admitted manifest digest;
         # without it full acceptance can never be claimed (fail closed).
         expected_manifest_digest=str(args.expected_manifest_digest or "").strip().lower(),
-        dev_admin_username=os.environ.get(DEV_ADMIN_USERNAME_ENV, "").strip() or os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
-        # Not stripped: a password is exactly what the operator set.
-        dev_admin_password=os.environ.get(DEV_ADMIN_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
-        dev_admin_initial_password=os.environ.get(DEV_ADMIN_INITIAL_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_SECRET_ENV, ""),
+        dev_admin_username=bundle.username if bundle else (os.environ.get(DEV_ADMIN_USERNAME_ENV, "").strip() or os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip()),
+        # No stripping and NO per-field fallback when a matched bundle is present.
+        dev_admin_password=bundle.password if bundle else (os.environ.get(DEV_ADMIN_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, "")),
+        dev_admin_initial_password="" if bundle else (os.environ.get(DEV_ADMIN_INITIAL_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_SECRET_ENV, "")),
+        dev_admin_bundle_account_id=bundle.account_id if bundle else "",
+        dev_admin_bundle_tenant_id=bundle.tenant_id if bundle else "",
+        dev_admin_bundle_execution_id=bundle.execution_id if bundle else "",
         dev_admin_denied_role=os.environ.get(DEV_ADMIN_DENIED_ROLE_ENV, "").strip() or "cs-lead",
-        bootstrap_admin_username=os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
-        bootstrap_admin_password=os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
+        bootstrap_admin_username="" if bundle else os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
+        bootstrap_admin_password="" if bundle else os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
     )
     correlation_id = f"corr-live-e2e-{config.expected_sha[:12] or 'unbound'}-{int(time.time())}"
 

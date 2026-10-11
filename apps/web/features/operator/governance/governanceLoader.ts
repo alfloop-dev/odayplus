@@ -119,6 +119,35 @@ export type GovernanceEvidencePackage = {
   by: string;
 };
 
+/**
+ * What the authenticated principal may do in Govern, as verified by the API
+ * from its durable platform roles. The selected workspace persona is a view,
+ * not authority; only this record may enable or label business decisions.
+ */
+export type GovernanceActionAuthority = {
+  verified: boolean;
+  systemRoles: string[];
+  decide: boolean;
+  exportEvidence: boolean;
+};
+
+/** Parse `actionAuthority` defensively; anything malformed confirms nothing. */
+export function normalizeGovernanceActionAuthority(value: unknown): GovernanceActionAuthority | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (record.verified !== true) {
+    return { verified: false, systemRoles: [], decide: false, exportEvidence: false };
+  }
+  return {
+    verified: true,
+    systemRoles: Array.isArray(record.systemRoles)
+      ? record.systemRoles.filter((role): role is string => typeof role === "string" && role.length > 0)
+      : [],
+    decide: record.decide === true,
+    exportEvidence: record.exportEvidence === true,
+  };
+}
+
 /** The full Govern workspace snapshot returned by the API. */
 export type GovernanceSnapshot = {
   approvals: GovernanceApproval[];
@@ -126,6 +155,7 @@ export type GovernanceSnapshot = {
   auditRows: GovernanceAuditRow[];
   statusBoard: GovernanceStatusBoard | GovernanceRecordCount[];
   evidencePackages: GovernanceEvidencePackage[];
+  actionAuthority?: GovernanceActionAuthority | null;
   correlationId?: string;
   source?: string;
 };
@@ -177,6 +207,7 @@ export async function fetchGovernanceSnapshot(
     auditRows: GovernanceAuditRow[];
     statusBoard: GovernanceStatusBoard | GovernanceRecordCount[];
     evidencePackages: GovernanceEvidencePackage[];
+    actionAuthority?: unknown;
     correlation_id?: string;
     source?: string;
   }>("/snapshot", { method: "GET", headers, roleId });
@@ -188,6 +219,7 @@ export async function fetchGovernanceSnapshot(
     auditRows: data.auditRows,
     statusBoard: data.statusBoard,
     evidencePackages: data.evidencePackages,
+    actionAuthority: normalizeGovernanceActionAuthority(data.actionAuthority),
     correlationId: data.correlation_id,
     source: data.source,
   };

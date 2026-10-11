@@ -1546,3 +1546,295 @@ def test_bootstrap_admin_inputs_use_the_documented_environment_names() -> None:
     assert gate.BOOTSTRAP_ADMIN_PASSWORD_ENV == "ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD"
     assert gate.DEV_ADMIN_INITIAL_PASSWORD_ENV == "ODP_DEV_ADMIN_INITIAL_PASSWORD"
     assert gate.BOOTSTRAP_SECRET_ENV == "ODP_IDENTITY_BOOTSTRAP_SECRET"
+
+
+INVITATION_ID = "51c78ac4-c1b0-45da-b8c3-501c02c305d9"
+INVITER_ID = "17e9cb99-db46-4a07-8e61-6bf9b22cf5d2"
+
+
+def invited_admin_inputs() -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    user = admin_users()["users"][0]
+    user["updated_by"] = INVITER_ID
+    events = [
+        {"event_id": "1199ca11-e976-4b5a-a537-f43b28b0c635",
+         "event_type": "identity.account.invite", "actor": INVITER_ID,
+         "timestamp": "2026-10-10T05:00:00+00:00", "outcome": "success",
+         "resource": f"identity.invitation:{INVITATION_ID}",
+         "correlation_id": f"identity-invitation-{INVITATION_ID}",
+         "metadata": {"invitation_id": INVITATION_ID, "tenant_id": ADMIN_TENANT_ID,
+                      "preset_roles": ["platform_admin"], "preset_scope": admin_scope(),
+                      "expires_at": "2026-10-10T06:00:00+00:00"}},
+        {"event_id": "43a1c2d9-e3f5-4889-9118-6e6c65c2cd8b",
+         "event_type": "identity.account.accept", "actor": ADMIN_ACCOUNT_ID,
+         "timestamp": "2026-10-10T05:01:00+00:00", "outcome": "success",
+         "resource": f"identity.invitation:{INVITATION_ID}",
+         "correlation_id": f"identity-invitation-{INVITATION_ID}",
+         "metadata": {"invitation_id": INVITATION_ID, "tenant_id": ADMIN_TENANT_ID,
+                      "account_id": ADMIN_ACCOUNT_ID, "subject_id": ADMIN_ACCOUNT_ID,
+                      "roles": ["platform_admin"], "scope": admin_scope(),
+                      "status": "active", "must_change": False}},
+    ]
+    principal = {"account_id": ADMIN_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID,
+                 "roles": ["platform_admin"]}
+    return user, events, principal
+
+
+def run_invited_admin(user: Any, events: Any, principal: Any) -> tuple[Any, Any, Any]:
+    return run_dev_admin(web=AdminWeb(web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, {"users": [user], "count": 1}),
+        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, {"events": events}),
+        "GET /api/v1/auth/principal [session]": base.response(200, principal),
+    })))
+
+
+def test_invited_pure_admin_passes_without_manufacturing_bootstrap() -> None:
+    user, events, principal = invited_admin_inputs()
+    checks, report, web = run_invited_admin(user, events, principal)
+    assert report["ok"] is True, report["blockers"]
+    assert report["dev_admin"]["account_mode"] == "pure-admin"
+    assert report["dev_admin"]["identity_provenance"] == {
+        "mode": "invitation", "invitation_id": INVITATION_ID,
+        "issue_event_id": events[0]["event_id"], "accept_event_id": events[1]["event_id"],
+        "issuer_account_id": INVITER_ID,
+    }
+    names = {c.name for c in checks}
+    assert {"admin:invitation_audited", "admin:invitation_principal_bound",
+            "admin:business_shell_denied", "admin:logout_revokes_admin_api"} <= names
+    assert "admin:bootstrap_audited" not in names
+    assert "invitation_audit_readback" in report["dev_admin"]["operations"]
+    assert not any(method.startswith("POST") and "/invitations" in method
+                   for method, _ in web.headers_seen)
+
+
+@pytest.mark.parametrize("event_index,path,value", [
+    (0, ("actor",), ADMIN_ACCOUNT_ID),
+    (0, ("actor",), "not-a-verified-account"),
+    (0, ("event_id",), None),
+    (1, ("event_id",), "1199ca11-e976-4b5a-a537-f43b28b0c635"),
+    (1, ("outcome",), "failure"),
+    (1, ("actor",), INVITER_ID),
+    (1, ("resource",), "identity.account:forged"),
+    (1, ("correlation_id",), "foreign-invitation"),
+    (1, ("metadata", "tenant_id"), gate.FOREIGN_TENANT_PROBE_ID),
+    (1, ("metadata", "invitation_id"), "malformed"),
+    (1, ("metadata", "subject_id"), INVITER_ID),
+    (1, ("metadata", "must_change"), True),
+    (1, ("metadata", "roles"), ["platform_admin", "operations_manager"]),
+    (0, ("metadata", "preset_roles"), ["platform_admin", "auditor"]),
+    (0, ("metadata", "preset_scope", "store_ids"), ["foreign-store"]),
+    (1, ("metadata", "scope", "clearance"), "PUBLIC"),
+    (1, ("timestamp",), "2026-10-10T06:00:00+00:00"),
+    (1, ("timestamp",), "2026-10-10T04:59:59+00:00"),
+    (0, ("timestamp",), "2026-10-10T05:00:00"),
+    (0, ("metadata", "expires_at"), "2026-10-13T05:00:01+00:00"),
+    (0, ("metadata", "expires_at"), "bad-date"),
+])
+def test_invitation_provenance_rejects_mismatched_or_incomplete_events(
+    event_index: int, path: tuple[str, ...], value: Any,
+) -> None:
+    user, events, principal = invited_admin_inputs()
+    target = events[event_index]
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    _, report, _ = run_invited_admin(user, events, principal)
+    assert report["ok"] is False
+    assert blockers(report)["admin:invitation_audited"] == "audit"
+
+
+@pytest.mark.parametrize("kind", ["missing_issue", "duplicate_issue", "duplicate_accept",
+                                  "other_account_accept", "revoked", "fake_bootstrap", "creator_changed"])
+def test_invitation_provenance_rejects_ambiguous_lifecycles(kind: str) -> None:
+    user, events, principal = invited_admin_inputs()
+    if kind == "missing_issue":
+        events.pop(0)
+    elif kind == "duplicate_issue":
+        events.append(deepcopy(events[0]))
+    elif kind in {"duplicate_accept", "other_account_accept"}:
+        events.append(deepcopy(events[1]))
+        if kind == "other_account_accept":
+            events[-1]["actor"] = INVITER_ID
+            events[-1]["metadata"]["account_id"] = INVITER_ID
+    elif kind == "revoked":
+        events.append({"event_type": "identity.account.invitation_revoked",
+                       "metadata": {"invitation_id": INVITATION_ID}})
+    elif kind == "fake_bootstrap":
+        events.extend(admin_audit_trail()["events"])
+    else:
+        user["updated_by"] = ADMIN_ACCOUNT_ID
+    _, report, _ = run_invited_admin(user, events, principal)
+    assert report["ok"] is False
+    assert blockers(report)["admin:invitation_audited"] == "audit"
+
+
+@pytest.mark.parametrize("field,value", [("account_id", INVITER_ID),
+                                         ("tenant_id", gate.FOREIGN_TENANT_PROBE_ID),
+                                         ("roles", ["platform_admin", "operations_manager"])])
+def test_invited_pure_admin_requires_cookie_to_verified_principal_binding(field: str, value: Any) -> None:
+    user, events, principal = invited_admin_inputs()
+    principal[field] = value
+    _, report, _ = run_invited_admin(user, events, principal)
+    assert report["ok"] is False
+    assert blockers(report)["admin:invitation_principal_bound"] == "auth"
+
+
+def credential_bundle_input() -> dict[str, Any]:
+    from delivery_toolchain.release.provision_dev_smoke import AUTHORIZATION_ID, TENANT_ID
+    return {"schema_version": 1, "authorization_id": AUTHORIZATION_ID,
+            "execution_id": "747efb4e-230d-4864-9bb9-194bec13045b",
+            "repository": "alfloop-dev/odayplus", "environment": "dev", "tenant_id": TENANT_ID,
+            "account_id": ADMIN_ACCOUNT_ID, "username": USERNAME, "password": PASSWORD}
+
+
+@pytest.mark.parametrize("key,value", [
+    ("schema_version", True), ("schema_version", 2), ("authorization_id", "other"),
+    ("repository", "foreign/repo"), ("environment", "staging"),
+    ("tenant_id", ADMIN_TENANT_ID), ("account_id", INVITER_ID),
+    ("account_id", "not-a-uuid"), ("execution_id", "00000000-0000-0000-0000-000000000000"),
+    ("username", "ajoe734"), ("username", " new.admin"), ("password", ""),
+    ("password", None), ("initial_password", "private-bootstrap-never-use"),
+])
+def test_matched_bundle_rejects_wrong_scope_shape_or_partial_pair(key: str, value: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
+    raw = credential_bundle_input()
+    raw[key] = value
+    with pytest.raises(ProvisioningRefused, match="^PROVISIONING_CREDENTIAL_BUNDLE_INVALID$") as error:
+        read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+    assert error.value.__cause__ is None and PASSWORD not in str(error.value)
+
+
+@pytest.mark.parametrize("raw", [" ", "null", "[]", "{private-password", "x" * 16385,
+    '{"password":"private-duplicate","password":"another-private"}'])
+def test_matched_bundle_bad_json_never_becomes_legacy(raw: str) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
+    with pytest.raises(ProvisioningRefused, match="^PROVISIONING_CREDENTIAL_BUNDLE_INVALID$"):
+        read_dev_credential_bundle(raw, environment="dev", release_profile="dev-admin")
+
+
+def test_matched_bundle_parser_keeps_exact_password_memory_only() -> None:
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle
+    raw = credential_bundle_input()
+    raw["password"] = "  private exact password  "
+    bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+    assert bundle.password == raw["password"] and bundle.account_id == ADMIN_ACCOUNT_ID
+    assert raw["password"] not in repr(bundle)
+    assert read_dev_credential_bundle("", environment="production", release_profile="full") is None
+
+
+@pytest.mark.parametrize("environment,profile", [("staging", "dev-admin"), ("dev", "full"),
+                                                  ("production", "full")])
+def test_matched_bundle_never_admitted_outside_dev_admin(environment: str, profile: str) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
+    with pytest.raises(ProvisioningRefused):
+        read_dev_credential_bundle(json.dumps(credential_bundle_input()), environment=environment,
+                                   release_profile=profile)
+
+
+def test_gate_cli_bundle_suppresses_every_old_password_and_username(monkeypatch: Any, tmp_path: Path) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import TENANT_ID
+    monkeypatch.setenv("ODP_DEV_ADMIN_CREDENTIAL_BUNDLE", json.dumps(credential_bundle_input()))
+    for name in (gate.DEV_ADMIN_USERNAME_ENV, gate.DEV_ADMIN_PASSWORD_ENV, gate.DEV_ADMIN_INITIAL_PASSWORD_ENV,
+                 gate.BOOTSTRAP_SECRET_ENV, gate.BOOTSTRAP_ADMIN_USERNAME_ENV, gate.BOOTSTRAP_ADMIN_PASSWORD_ENV):
+        monkeypatch.setenv(name, "private-stale-binding-never-use")
+
+    class Captured(Exception):
+        pass
+
+    def capture(config: Any, **kwargs: Any) -> Any:
+        assert config.dev_admin_username == USERNAME and config.dev_admin_password == PASSWORD
+        assert config.dev_admin_initial_password == config.bootstrap_admin_password == config.bootstrap_admin_username == ""
+        assert config.dev_admin_bundle_account_id == ADMIN_ACCOUNT_ID
+        assert config.dev_admin_bundle_tenant_id == TENANT_ID
+        assert PASSWORD not in repr(config)
+        raise Captured
+
+    monkeypatch.setattr(gate, "evaluate_gate", capture)
+    monkeypatch.setattr(gate, "_web_client", lambda *a: None)
+    with pytest.raises(Captured):
+        gate.main(["--release-profile", "dev-admin", "--expected-deployment", "dev",
+                   "--output", str(tmp_path / "no-report.json")])
+    assert not list(tmp_path.iterdir())
+
+
+def test_gate_cli_malformed_bundle_refuses_before_network_or_output(monkeypatch: Any, tmp_path: Path, capsys: Any) -> None:
+    monkeypatch.setenv("ODP_DEV_ADMIN_CREDENTIAL_BUNDLE", "{private-password-malformed")
+    monkeypatch.setattr(gate, "UrllibHttpClient", lambda *a, **k: pytest.fail("invalid bundle made a client"))
+    assert gate.main(["--release-profile", "dev-admin", "--expected-deployment", "dev",
+                      "--output", str(tmp_path / "no-report.json")]) == 2
+    assert "private-password" not in capsys.readouterr().err
+    assert not list(tmp_path.iterdir())
+
+
+def bundle_journal_events() -> list[dict[str, Any]]:
+    from delivery_toolchain.release.provision_dev_smoke import (
+        AUTHORIZATION_ID,
+        DevCredentialBundleExecutor,
+        ProvisioningJournal,
+    )
+    common = {"authorization_id": AUTHORIZATION_ID, "execution_id": credential_bundle_input()["execution_id"],
+              "plan_digest": "sha256:" + "0" * 64, "release_sha": "b" * 40, "manifest_digest": "sha256:" + "a" * 64,
+              "tenant_id": ADMIN_TENANT_ID, "execution_authorized": False, "secret_values_redacted": True}
+    events = []
+    for i, (cls, stage) in enumerate(((ProvisioningJournal, "reserved"),
+                                     (DevCredentialBundleExecutor, "binding-intent"),
+                                     (DevCredentialBundleExecutor, "binding-acknowledged"))):
+        metadata = {**common, "stage": stage}
+        if cls is DevCredentialBundleExecutor:
+            metadata.update(account_id=ADMIN_ACCOUNT_ID, secret_name="ODP_DEV_ADMIN_CREDENTIAL_BUNDLE",
+                            credential_binding_verified=False)
+        events.append({"event_id": f"1199ca11-e976-4b5a-a537-f43b28b0c63{i}", "event_type": cls._TYPE,
+                       "actor": cls._ACTOR, "resource": cls._CORRELATION, "correlation_id": cls._CORRELATION,
+                       "action": "DEV_SMOKE_RESERVATION" if i == 0 else "DEV_SMOKE_BINDING",
+                       "outcome": "success", "timestamp": f"2026-10-10T05:02:0{i}+00:00", "metadata": metadata})
+    return events
+
+
+@pytest.mark.parametrize("mismatch", ["none", "account", "tenant", "bootstrap", "missing_ack", "quarantine",
+                                     "wrong_execution", "wrong_plan", "duplicate_ack", "claimed_verified"])
+def test_gate_matches_bundle_account_and_requires_real_invitation(mismatch: str) -> None:
+    user, events, principal = invited_admin_inputs()
+    cfg = dev_admin_config(dev_admin_bundle_account_id=ADMIN_ACCOUNT_ID,
+                           dev_admin_bundle_tenant_id=ADMIN_TENANT_ID,
+                           dev_admin_bundle_execution_id=credential_bundle_input()["execution_id"])
+    if mismatch in {"account", "tenant"}:
+        from dataclasses import replace
+        cfg = replace(cfg, **{"dev_admin_bundle_" + ("account_id" if mismatch == "account" else "tenant_id"):
+                              gate.FOREIGN_TENANT_PROBE_ID})
+    if mismatch == "bootstrap":
+        events = admin_audit_trail()["events"]
+    journals = bundle_journal_events()
+    if mismatch == "missing_ack":
+        journals.pop()
+    elif mismatch == "quarantine":
+        journals[-1]["metadata"]["stage"] = "recovery-required"
+    elif mismatch == "wrong_execution":
+        journals[-1]["metadata"]["execution_id"] = INVITATION_ID
+    elif mismatch == "wrong_plan":
+        journals[-1]["metadata"]["plan_digest"] = "sha256:" + "f" * 64
+    elif mismatch == "duplicate_ack":
+        journals.append(deepcopy(journals[-1]))
+    elif mismatch == "claimed_verified":
+        journals[-1]["metadata"]["credential_binding_verified"] = True
+    events.extend(journals)
+    _, report, _ = run_dev_admin(cfg=cfg, web=AdminWeb(web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, {"users": [user], "count": 1}),
+        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, {"events": events}),
+        "GET /api/v1/auth/principal [session]": base.response(200, principal),
+    })))
+    assert report["ok"] is (mismatch == "none"), report["blockers"]
+    if mismatch in {"account", "tenant"}:
+        assert blockers(report)["admin:credential_bundle_account_bound"] == "auth"
+    elif mismatch == "bootstrap":
+        assert blockers(report)["admin:credential_bundle_invitation_required"] == "audit"
+    elif mismatch != "none":
+        assert blockers(report)["admin:credential_bundle_durable_acknowledgement"] == "audit"
+    assert PASSWORD not in json.dumps(report)
