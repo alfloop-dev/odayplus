@@ -364,12 +364,16 @@ def preflight(owned_sessions: Any, monkeypatch: Any):
                 calls.append(("source", deadline))
                 if failure == "source" or (failure == "source_recheck" and counts["source"] == 2):
                     raise RuntimeError("OFFLINE-PRIVATE-MARKER")
+                if failure == "deadline" and counts["source"] == 2:
+                    clock.value += 601  # simulated phase expiry, NOT production timing proof
                 return source_observe(release_sha=release_sha, deadline=deadline)
             def admission_observed(**kwargs):
                 counts["admission"] += 1
                 calls.append(("admission", kwargs["deadline"]))
                 if failure == "admission_recheck" and counts["admission"] == 2:
-                    admission.docs["actions/runs/90/attempts/1/jobs?per_page=100"]["jobs"][0]["steps"][-1]["conclusion"] = "failure"
+                    job = admission.docs["actions/runs/90/attempts/1/jobs?per_page=100"]["jobs"][0]
+                    job["conclusion"] = "failure"
+                    job["steps"][0]["conclusion"] = "failure"
                 result = admission_observe(**kwargs)
                 if failure == "admission_replaced" and counts["admission"] == 2:
                     result["run_id"] = 91
@@ -425,7 +429,7 @@ def test_actual_preflight_fresh_observers_hold_before_every_recovery_effect(pref
 
 
 @pytest.mark.parametrize("failure", ["checkout", "source", "body_lost", "login_lost", "account",
-    "metadata", "source_recheck", "admission_recheck", "admission_replaced", "logout"])
+    "metadata", "source_recheck", "admission_recheck", "admission_replaced", "deadline", "logout"])
 def test_preflight_uncertainty_never_reserves_or_replays(preflight: Any, failure: str) -> None:
     from delivery_toolchain.release import recover_dev_smoke as r
     with preflight(failure) as (coordinator, owner, budget, p, calls, session_calls, metadata, original, target, counts):
