@@ -507,7 +507,29 @@ jobs:
       # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while
       # dev -> main promotion separately requires an authentic GO decision.
       - name: Run product E2E dev merge gate
+        id: product_e2e
         run: make product-e2e-gate
+
+      - name: Collect current-source product E2E evidence
+        if: always()
+        env:
+          E2E_RUNNER_OUTCOME: ${{ steps.product_e2e.outcome }}
+        run: |
+          args=()
+          if [[ "$E2E_RUNNER_OUTCOME" == "success" ]]; then
+            args+=(--expect-complete)
+          fi
+          python3 delivery_toolchain/e2e/collect_ci_product_e2e_evidence.py \
+            --output .odp_data/product-e2e-evidence "${args[@]}"
+
+      - name: Preserve product E2E execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .odp_data/product-e2e-evidence/
+          if-no-files-found: error
+          retention-days: 90
 
   automatic-dev-release:
     name: Request automatic dev release after checks
