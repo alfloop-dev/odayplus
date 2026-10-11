@@ -258,7 +258,10 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
     # Entirely MOCKED authority/runtime; no network/live receipt. Proves wiring.
     import httpx
     env = native_environment()
-    inputs = c.take_native_inputs(raw_inputs(), masker=lambda _: None)
+    raw, events, user = recovery_consumer_inputs()
+    ingress = raw_inputs()
+    ingress[c.SECRET_INPUTS[0]] = json.dumps(raw)
+    inputs = c.take_native_inputs(ingress, masker=lambda _: None)
     run = run_record()
     run["created_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
     calls = []
@@ -316,7 +319,6 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
         # REAL canonical evaluator, synthetic HTTP and authority only. This
         # catches config:operator_credential without a passing-report mock.
         from tests.e2e import test_live_e2e_gate_dev_admin as f
-        raw, events, user = recovery_consumer_inputs()
         for module, name, value in ((f, "USERNAME", inputs.bundle.username),
                 (f, "PASSWORD", inputs.bundle.password), (f, "ADMIN_ACCOUNT_ID", inputs.bundle.account_id),
                 (f, "ADMIN_TENANT_ID", inputs.bundle.tenant_id), (f.base, "WEB_URL", c.WEB_ORIGIN),
