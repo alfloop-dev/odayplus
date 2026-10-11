@@ -1768,14 +1768,19 @@ class _ExchangeDeadline:
                 break
             if isinstance(timeout, (int, float)):
                 remaining = min(remaining, timeout)
-            sock = socket.socket(family, socktype, proto)
+            # Construction stays inside the per-address handler, as in
+            # ``socket.create_connection``: an unsupported family (for example
+            # EAFNOSUPPORT) moves on to the next address in the same budget.
+            sock: socket.socket | None = None
             try:
+                sock = socket.socket(family, socktype, proto)
                 sock.settimeout(remaining)
                 if source_address:
                     sock.bind(source_address)
                 sock.connect(sockaddr)
             except OSError as exc:
-                sock.close()
+                if sock is not None:
+                    sock.close()
                 last_error = exc
                 continue
             self.register(sock)

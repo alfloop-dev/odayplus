@@ -60,6 +60,11 @@ Task-scoped 12:12 canonical note 回報 RuntimeRelease `38044574206`／SHA `3178
   - HTTPS 經 `https_proxy=http://127.0.0.1:<port>`：proxy 回 `HTTP/1.1 200 Connection established` 後每 0.04s 一行 header、永不結束（2s）。`attempts=1`、timeout/deadline 0.2s：1s 內結束，`attempts_exhausted`、`status=null`、`no_response`；並確認 proxy 收到 `CONNECT candidate.invalid:443`。舊 head 實測 2.02s（等到 proxy 自行關閉）→ fail。
   - 同一 listener 的 backlog 塞滿（SYN 被丟棄）、`getaddrinfo` 回四個位址、`_request(timeout=0.3)`：`TimeoutError("no response within 0.3s")` 且 < 0.6s。舊 head 實測 1.20s（四個位址各 0.3s）→ fail。
   - TLS handshake record header 宣告 16 KiB 後逐 byte 慢送：1s 內 `no_response`。此項在舊 head 亦通過——CPython 把整個 handshake 當一個操作以 socket timeout 計時——保留為 handshake 也在共用絕對預算內的守護測試，不宣稱它重現了舊缺陷。
+- 第三輪審查（Codex2 於 `a0ca3414c` 指出 `socket.socket(family, ...)` 建構在 per-address `OSError` handler 之外，與 `socket.create_connection` 不同）修正：`sock` 先設為 `None`，建構移入同一個 try；只關閉已建構的 socket，續試下一個位址，仍共用同一剩餘預算。CONNECT/TLS watchdog 與 dup descriptor 清理不變。
+  - 回歸：`getaddrinfo` 回 `[不支援的 family 9999, AF_INET 127.0.0.1]`，第一個位址由真實 constructor 拋 `EAFNOSUPPORT`（測試內先斷言），第二個為真實健康 JSON server。`attempts=3`、timeout 0.5s、deadline 2s：`answered`、一次 attempt、`status=200`、`json_object`。以 scratch 載入舊 `35af3e511`（`a0ca` + dev merge）validator 同情境實測：`attempts_exhausted`、三次 attempt、`status=null`、`no_response` → fail。
+  - 此缺陷為條件式 transport regression，不宣稱目前 CI runner 或 Cloud Run 環境停用 IPv6。
+
+**Base advance（2026-10-11）**：以 normal merge 併入 `origin/dev` `e995aa260`（merge commit `35af3e511`），無衝突、未 reset／rebase 任務歷史。dev 對 validator 只新增 offline preflight 的 `DurableAuditLog` 組合與 `PRAGMA table_info(durable_audit_events)` probe engine 回應、對測試只更新 deploy script inline python 區塊數與 import inventory；均不碰本 task 的 `_request`／`_ExchangeDeadline`／retry 區段。
 
 ## 5. 驗證
 

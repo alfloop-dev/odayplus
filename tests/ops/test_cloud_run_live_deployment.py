@@ -7225,6 +7225,57 @@ def test_request_connect_attempts_share_one_deadline_across_addresses(
     assert elapsed < 0.6
 
 
+def test_request_skips_an_unsupported_address_family_to_a_healthy_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in _PROXY_ENV:
+        monkeypatch.delenv(name, raising=False)
+
+    class Healthy(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            body = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Healthy)
+    Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+    # An address family this kernel cannot construct a socket for: the real
+    # constructor fails with EAFNOSUPPORT, as AF_INET6 does on IPv6-less hosts.
+    unsupported_family = 9999
+    with pytest.raises(OSError):
+        socket.socket(unsupported_family, socket.SOCK_STREAM, 0).close()
+    resolved = [
+        (unsupported_family, socket.SOCK_STREAM, 0, "", ("::1", port, 0, 0)),
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", port)),
+    ]
+    monkeypatch.setattr(validator.socket, "getaddrinfo", lambda *_args, **_kw: resolved)
+    try:
+        result = validator.probe_with_bounded_retry(
+            f"http://candidate.invalid:{port}/platform/version",
+            headers={},
+            policy=_smoke_policy(
+                attempts=3, timeout_seconds=0.5, deadline_seconds=2.0, backoff_seconds=0.0
+            ),
+            sleep=_RecordingSleep(),
+        )
+    finally:
+        server.shutdown()
+
+    # Constructor failure on one address moves on within the same attempt,
+    # exactly as socket.create_connection does; it is never a retried no-response.
+    assert result.outcome == "answered"
+    assert len(result.attempts) == 1
+    assert result.final.status == 200
+    assert result.final.provenance == validator.PROBE_JSON_OBJECT
+
+
 def test_probe_retry_cannot_outrun_its_deadline_on_a_slow_body() -> None:
     server, url = _start_misbehaving_server(200, "trickle")
     try:
