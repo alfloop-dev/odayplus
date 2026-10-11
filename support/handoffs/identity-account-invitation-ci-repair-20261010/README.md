@@ -1,6 +1,41 @@
 # ODP-IDENTITY-ACCOUNT-INVITATION-001 — CI repair
 
-Owner: Pi · Current reviewer: Codex · PR: [#1447](https://github.com/alfloop-dev/odayplus/pull/1447)
+Owner: Antigravity4 (canonical successor; failed owner Pi, interim Claude) · Current reviewer: Codex · PR: [#1447](https://github.com/alfloop-dev/odayplus/pull/1447)
+
+## Owner continuation after churn rotation — exact-head verification (2026-10-11)
+
+Ownership rotated from Pi (review churn count 2, `review_churn_epoch_failed_owners`
+= Pi) to Claude, whose run terminated without producing work, and then to
+Antigravity4. Pi is not re-granted ownership; review history, both
+`review_finding` reopens and the high-risk classification are preserved
+unchanged. No source file was changed in this continuation.
+
+Antigravity4 independently re-read the Codex c0 P2 finding and the
+`8f8d07f14` repair: the post-issuance `fetchUsers()` is removed, so
+`apiLoadState` stays `ready` and the one-time credential modal stays reachable;
+the list refresh runs only on deliberate dismissal, after which the production
+`OperatorDataUnavailableGate` applies again. The three production-mode
+regressions (pending / 503 / rejected follow-up list read) cover this path.
+
+Receipts on source head `8f8d07f144115a061fd7ba03dddfa66674ca2a4e`, clean
+worktree, `origin/dev` = `e995aa260325` (branch 0 behind). Each command ran
+once with its own captured exit code (no pipes, `|| true` or retries):
+
+| Command | Exit | Duration | Selection / result |
+| --- | --- | --- | --- |
+| `git diff --check` | 0 | <1s | working tree |
+| `uv run --frozen --python 3.12 pytest tests/identity/test_identity_user_role_management.py tests/security/test_user_role_management.py tests/security/test_dev_smoke_invitation.py tests/integration/test_dev_smoke_provisioning.py tests/e2e/test_live_e2e_gate_dev_admin.py tests/contract/test_openapi_artifact_and_client.py -q` | 0 | 581s | 6 files; 688 passed (progress markers, no F/E/s; project config emits no summary line) |
+| `npm exec --workspace=@oday-plus/web -- vitest run src/app/auth/invitations/__tests__/route.test.ts features/operator/__tests__/UserRoleManagementController.test.tsx src/lib/auth/__tests__/password.test.ts` | 0 | 7s | 3 files; 71 passed, 1 skipped (disposable Pg fixture) |
+| `npm run typecheck --workspace=@oday-plus/web` (`tsc --noEmit`) | 0 | 11s | apps/web |
+| `uv run --frozen --python 3.12 python delivery_toolchain/governance/check_code_boundaries.py` | 0 | 20s | repo boundaries |
+
+`pnpm` is not installed on this worker host; the declared `pnpm --dir apps/web
+exec vitest run …` / `pnpm --dir apps/web typecheck` were executed through the
+equivalent npm workspace entry points with the identical file selection.
+GitHub CI on `8f8d07f14` already reports all product jobs SUCCESS; only
+`task-review-gate` is pending reviewer approval. This evidence-only commit is
+the new review target and needs fresh CI plus independent Codex approval. The
+dev-admin live E2E gate is unchanged relative to `origin/dev`.
 
 ## Independent c0 review: preserve the sole capability handoff (2026-10-11)
 
