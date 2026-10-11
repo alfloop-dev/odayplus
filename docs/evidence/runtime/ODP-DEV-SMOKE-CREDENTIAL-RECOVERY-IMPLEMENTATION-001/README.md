@@ -1,4 +1,4 @@
-# Recovery implementation evidence — incremental root only
+# Recovery implementation evidence — internal root/capability increments
 
 Owner Pi · independent reviewer Codex2 · task in progress.
 
@@ -8,12 +8,14 @@ No frozen plan/invitation delivery was edited or cherry-picked.
 
 ## Scope
 
-- New internal shared recovery plan/root and PostgreSQL tests, not a mounted API.
+- New internal shared recovery plan/root/capability and PostgreSQL tests, not a
+  mounted API or completed recovery protocol.
 - Tests cover strict scope/expiry/redaction, durable original-session checks on
   every operation, original/target identity and old NULL-binding preservation,
   target/lineage drift, one-way quarantine, audit rollback and reservation races
-  across independent PostgreSQL pools. They do NOT claim capability consumption,
-  Argon2 rotation/session-revocation atomicity, transport/consumer or live proof.
+  across independent PostgreSQL pools. The first root anchor did NOT cover
+  capability/rotation; the newer increment's explicit coverage is recorded below.
+  Neither anchor claims transport/consumer or live proof.
 - New protocol document enumerates unimplemented increments and concrete writer
   exclusion/native CI secret-custody gaps. No operational permission claimed.
 
@@ -48,6 +50,50 @@ command was remeasured using the existing shared verification receipt policy
 This later evidence-only commit does not transfer prior-head receipts onto its
 own SHA. Web verification remains explicitly unproven, not waived because this
 increment has no Web diff. The whole task is NOT ready for formal review/finalization.
+
+## Capability increment at clean c4122b485f67
+
+`c4122b485f674dd48586585638968566f531acd3` adds Alembic0023/expand-only000029,
+independent hash-only256-bit <=600s single issuance, issuer-session/root/plan/
+source/baseline and credential-update-time fencing, a fixed independently
+committed five-submission budget, NFKC + Argon2id and same-engine atomic target
+credential update/committed pre-cutoff session revocation/consume/audit. It never
+changes original credentials/other sessions or old creation history. A nested
+caller transaction is refused, rather than permitting budget rollback.
+
+The declared unchanged six-file selection was run once at this clean anchor via
+`task_verification.py run --task-id <task> --timeout 1000`, original receiptstore
+and terminal exit status (not log-summary wait). Preserved original JSON:
+
+| Command | Receipt/result | Duration |
+| --- | --- | --- |
+| `git diff --check` | `4fb5908d70149b47`: exit0 | 0.019s |
+| Declared six-file pytest selection | `2fbd5f98cd119c46`: exit0 | 575.823s |
+| Declared boundary check | `8edf341b441a3398`: exit0 | 11.502s |
+| `pnpm --dir apps/web typecheck` | `fe16e377cab00751`: exit127, unavailable | 0.001s |
+
+New real PG cases include separate-pool issuance/consume races (at most one
+success), audit failure rollback, actual deferred-trigger COMMIT failure rollback
+of credential/session/capability/audit with the independent budget retained,
+expired/quarantined/replayed capability, fresh or revoked issuer session, source/
+credential/role drift, post-Argon session expiry, NFKC PHC verification, token
+repr/audit redaction, lifetime and nested-transaction refusal. Old regression
+selection remains unchanged. No tests were rerun solely to count cases.
+
+Source/API/consumer acceptance is incomplete: mounted auth/CSRF/no-store and safe
+audit projection, strict versioned bundle/gate integration, bounded foreground
+custody and transport-failure handling still need implementation. Read-only
+origin/dev inspection also identifies an old-PHC login / later session-insertion
+race: current domain revocation covers committed target sessions at its cutoff,
+not credential verification in-flight across Web `/login` session creation. A
+reviewed credential-revision session fence and real interleaving regression are
+required before mounting/execution; serialized Web identity/session file scope
+must be obtained for that integration. Writer exclusion/no-env native consumer
+remain concrete execution blockers; no decorative proof or waiver was added.
+
+The later evidence/protocol checkpoint changes no tested runtime source but has a
+different SHA. These are **c4122b** receipts, not final-head verification or formal
+review readiness. Failed Web receipts remain retained and unproven.
 
 ## Live effect status
 

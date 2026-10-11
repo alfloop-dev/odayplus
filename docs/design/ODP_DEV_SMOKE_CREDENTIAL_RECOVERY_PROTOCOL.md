@@ -71,6 +71,16 @@ fixtures with incident IDs as inputs, not fabricated live recovery receipts.
 1. Independent review of the new migration/capability/atomic-domain increment;
    no rollout/effects may use this unreviewed source. Complete transport failure
    tests, including lost reply after committed rotation (never automatic resume).
+   **Before mounting:** fence in-flight password-login/session creation against
+   credential rotation. At origin/dev `e995aa260`, Web `/login` authenticates at
+   L522 and separately inserts a session at L600; no verified credential revision
+   accompanies that insertion. Current internal rotation revokes committed target
+   sessions whose created_at is <= rotation cutoff, but cannot alone stop a login
+   that verified the OLD PHC and inserts AFTER the transaction. Do not claim that
+   internal revocation proves this login race is closed. A reviewed revision check
+   at session creation (same lock/transaction as credential read), with real PG
+   interleaving tests and serialized ownership of affected Web identity/session
+   paths, is required. No session-wide deny or blanket revocation workaround.
 2. Official bounded authenticated API/BFF mounting with CSRF/service transport,
    permission-before-malformed-DTO denial, generated OpenAPI/client/inventory and
    audit projection. Root inspection alone is not a supported recovery API.
