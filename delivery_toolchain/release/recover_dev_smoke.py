@@ -547,14 +547,18 @@ class RecoveryHTTPSAttempt:
             parsed = urlsplit(origin)
             if (type(origin) is not str or parsed.scheme != "https" or not parsed.hostname
                     or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment
-                    or any(c in origin for c in "\r\n") or not parsed.hostname.isascii()
+                    or any(ord(c) <= 32 or ord(c) >= 127 for c in origin) or not parsed.hostname.isascii()
                     or type(address) is not str or "%" in address):
                 raise ValueError
             ip = ipaddress.ip_address(address)  # NEVER resolve DNS inside a phase
             self._address, self._ipv6 = str(ip), ip.version == 6
             self._origin = origin
             self._host, self._port = parsed.hostname, parsed.port or 443
-            self._context = ssl.create_default_context(cadata=ca_pem)
+            if ca_pem is not None and type(ca_pem) is not str:
+                raise ValueError
+            self._context = ssl.create_default_context()
+            if ca_pem is not None:
+                self._context.load_verify_locations(cadata=ca_pem)
             self._context.minimum_version = ssl.TLSVersion.TLSv1_2
         except Exception:
             raise RecoveryRefused("RECOVERY_HTTPS_CONFIG_INVALID") from None
@@ -572,7 +576,7 @@ class RecoveryHTTPSAttempt:
         submitted = False
         try:
             if (method not in {"GET", "POST"} or type(cookie) is not str or not 0 < len(cookie) <= 8192
-                    or any(c in cookie for c in ";\r\n") or not cookie.isascii()
+                    or any(ord(c) <= 32 or ord(c) >= 127 or c in ';"\\,' for c in cookie)
                     or type(deadline) not in (int, float) or not math.isfinite(deadline)
                     or not 0 < deadline - time.monotonic() <= 2400
                     or (method == "GET" and body is not None)
@@ -606,6 +610,8 @@ class RecoveryHTTPSAttempt:
                     or (lengths and (not lengths[0].isascii() or not lengths[0].isdigit()
                                      or int(lengths[0]) > 16384))
                     or (transfers and transfers[0].lower() != "chunked")
+                    or response.headers.defects
+                    or len(response.headers.get_all("Content-Type", [])) != 1
                     or response.headers.get_content_type() != "application/json"
                     or response.headers.get_all("Cache-Control", []) != ["no-store"]
                     or status not in {200, 201}):

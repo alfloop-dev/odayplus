@@ -888,7 +888,7 @@ def test_real_https_unknown_post_never_reconstructs_commit_or_retries(tls_recove
         "truncated": recovery_http_reply()[:-2],
         "truncated_chunk": recovery_http_reply(chunked=True)[:-5],
         "cache": recovery_http_reply().replace(b"no-store", b"public"),
-        "header_cap": recovery_http_reply(extra=b"X-Large: " + b"x" * 65000 + b"\r\n"),
+        "header_cap": recovery_http_reply(extra=(b"X-Large: " + b"x" * 33000 + b"\r\n") * 2),
     }
     with tls_recovery_server(replies[failure]) as (origin, ca, observed):
         attempt = RecoveryHTTPSAttempt(origin=origin, address="127.0.0.1", ca_pem=ca)
