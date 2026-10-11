@@ -95,6 +95,75 @@ The later evidence/protocol checkpoint changes no tested runtime source but has 
 different SHA. These are **c4122b** receipts, not final-head verification or formal
 review readiness. Failed Web receipts remain retained and unproven.
 
+## Credential/session fence increment (2026-10-11, not final submission)
+
+Anchors `8d81047663d2` / `797677962dbe` add expand-only000030/Alembic0024
+credential revision and session-insert row-lock fence, root/capability revision
+binding and client-clock-independent target-only active-session revocation.
+Anchors `aa8bdd3b39b0` / `8d17153ae514` integrate the actual production Web
+credential read, CAS rehash, verified-revision propagation and mounted `/login`
+insertion. No submitted DTO/header revision can replace the verified one. No
+stale rehash can overwrite rotation; no stale verifier can obtain a cookie after
+the session trigger refuses it. Other accounts' existing sessions are unchanged.
+
+Canonical task scope was expanded before Web edits. The Manager's current
+registered task worktree/branch/base and active-worker readback matched this run;
+canonical active task scopes showed no overlapping owner on the four Web paths.
+All four paths matched origin/dev before editing. Frozen invitation files were
+not edited/rebased/cherry-picked. This is isolated source work, not a live lease
+or authorization to run a recovery.
+
+Real PostgreSQL tests cover target insertion before/after rotation, a bounded
+lock timeout during uncommitted rotation, the ORIGINAL blocked INSERT resuming
+and refusing after commit (including legacy NULL revision), successful insertion
+only after a rotation/audit rollback, future-skewed client created_at revocation,
+and same-transaction timestamp collisions with monotonic non-rewindable revision.
+The Python PG fixture also invokes the **actual production TypeScript stores**
+against its isolated database through Vitest: old verified revision2 rehash and
+insertion refused after rotation3, actual new-password Argon verification,
+current-revision insertion, test-owned-session cleanup, and committed CAS rehash4.
+The parent asserts the original child exit0 AND final revision4, so this run did
+not skip/mock that proof. A Python-only environment without Node tooling skips
+this explicitly and cannot claim Web-store PG verification. A standalone Vitest
+run intentionally skips its isolated-DB-only case; the Python invocation above
+supplies that coverage. No real human password/capability/token is supplied.
+
+Focused diagnostics are allowed incremental selections, **not the final declared
+six-file regression suite**. Original receiptstore JSON is retained in receipts/:
+
+| Clean head | Command/selection | Receipt/result | Duration |
+| --- | --- | --- | --- |
+| 8d810476 | two recovery security/integration pytest files | 10c1b17eb703395d exit1: new fixture lacked production access_token column | 75.330s |
+| 797677962 | same two-file pytest; fixture now loads existing000012 | 487f4ae72eaebc70 exit0 | 71.511s |
+| 797677962 | declared boundary checker | b42a5e23f8798bb0 exit0 | 10.631s |
+| aa8bdd3b | same two-file pytest including actual Web-store PG child | 0ce7ff2dcec7f4bd exit0 | 76.529s |
+| aa8bdd3b | pnpm --dir apps/web typecheck | 4f7a8440b2cc4243 exit0 | 36.958s |
+| aa8bdd3b | six-file Vitest auth/login selection, exact command in receipt | 23b09bb4bde39b1e exit1: new NextRequest fixture origin caused CSRF403 | 7.151s |
+| 8d17153a | identical six-file Vitest selection after fixture correction, no production CSRF weakening | 9860ae66a3263109 exit0 | 5.113s |
+| 8d17153a | git diff --check | ab8b85b27da8ca39 exit0 | 0.026s |
+| 8d17153a | declared boundary checker | 5320f55bf811e4f7 exit0 | 12.607s |
+| 8d17153a | pnpm --dir apps/web lint | 3ca2263ab20e9969 exit0 | 10.124s |
+
+Node tooling used only existing invitation-worktree node_modules, via temporary
+local symlinks and declared PATH. Its package-lock SHA256 exactly matched this
+checkout (`bb287c16ade4a4a83abe9792499adab7ad8c38607fb6750dbd45f41e89edf9e2`).
+No install, lockfile rewrite or host-wide search occurred; symlinks were removed
+before closeout. All original statuses/exits were preserved; no summary-based
+wait or test-count rerun. New heads/fixture fixes justify these measurements;
+failed receipts remain failures. Prior pnpm127 receipts are retained unchanged.
+
+This evidence-only checkpoint has a DIFFERENT head from those measurements;
+none is transferred to its SHA. No build/bundle-budget proof is claimed (this
+increment changes server-only auth, not client entries); final whole-composition
+verification, including the existing300kB budget, remains required before review.
+The task remains in_progress and **not review-ready**, without a PR claim. Next:
+mounted original-admin authenticated bounded recovery API/BFF/CSRF/no-store and
+safe tenant-audit projection; strict versioned recovery bundle/full-gate lineage;
+finite trusted foreground parent custody/phase receipts/deadline and single-attempt
+transport. Genuine external writer exclusion and native no-env fresh consumer
+remain concrete execution blockers, not waived by these source tests. No live
+rotation, binding intent/PUT/ACK or new-bundle gate/consumer was performed.
+
 ## Live effect status
 
 No account/credential/session effect, database/cloud access, secret intent/PUT/ACK,
