@@ -623,8 +623,9 @@ class RecoveryBindingJournal(RecoveryCapabilityService):
     ACK is an authenticated original-admin declaration of an actual 201. The
     server cannot authenticate a GitHub response from an integer in a request;
     only a reviewed trusted foreground transport may submit that declaration.
-    These internal methods are intentionally NOT mounted yet. They supply no
-    custodian/source/admission/external-writer-exclusion or live-binding proof.
+    The bounded original-admin API exposes these declarations, not remote
+    response authentication. They supply no custodian/source/admission/
+    external-writer-exclusion or live-binding proof.
     Root quarantine is the only failure transition, including after ACK.
     """
 

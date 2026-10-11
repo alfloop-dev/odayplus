@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -203,8 +204,9 @@ def test_mounted_role_session_denial_precedes_malformed_dto_and_domain(recovery_
         s.engine.execute("UPDATE identity.password_credentials SET must_change = true WHERE account_id = ?", (PRESERVED_ACCOUNT_ID,))
     before = snapshot(s)
     calls = []
-    for name in ("reserve", "issue", "consume", "quarantine", "inspect"):
-        monkeypatch.setattr(RecoveryCapabilityService, name, lambda *a, **kw: calls.append((a, kw)))
+    for name in ("reserve", "issue", "consume", "quarantine", "inspect",
+                 "binding_inspect", "binding_intent", "binding_acknowledge"):
+        monkeypatch.setattr(RecoveryBindingJournal, name, lambda *a, **kw: calls.append((a, kw)))
     response = s.client.post(RECOVERY_PATH, headers={**headers, "content-type": "application/json"}, content=b'{"password":"private-input"')
     assert response.status_code in {401, 403}
     assert response.headers["cache-control"] == "no-store"
@@ -802,6 +804,128 @@ def binding_proven(s: Any, root: Any, cap: Any, intent: dict[str, Any]) -> bool:
     target = s.client.get(f"/api/v1/operator/users/{TARGET_ACCOUNT_ID}", headers=s.headers).json()
     return recovery_bundle_acknowledged(execution_id=root.execution_id, lineage=lineage,
                                         events=events, target_account=target)
+
+
+def test_mounted_binding_roundtrip_declares_ack_not_remote_proof(recovery_runtime: Any) -> None:
+    s = recovery_runtime
+    old = old_events(s)
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json={"action": "reserve", "plan": s.plan})
+    assert response.status_code == 200
+    root_receipt = response.json()["reservation"]
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json={"action": "issue", "reservation": root_receipt})
+    assert response.status_code == 200
+    cap_receipt = response.json()
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json={
+        "action": "consume", "reservation": root_receipt, "capability_id": cap_receipt["capability_id"],
+        "token": cap_receipt["token"], "password": PASSWORD,
+    })
+    assert response.status_code == 200
+    # Real isolated PG verified-revision insertion, NOT a deployed Web login.
+    insert_fenced_session(s.engine, "2")
+    before = snapshot(s)
+    root = s.recovery.inspect(s.principal)
+    assert s.client.get(RECOVERY_PATH, headers=s.headers).json()["binding"] is None
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json={
+        "action": "binding-intent", "reservation": root_receipt,
+    })
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    intent = response.json()["binding"]
+    assert intent["stage"] == "binding-intent" and intent["put_status"] == 0
+    # Deliberately synthetic original-admin declaration. No GitHub request was
+    # made; this test cannot establish remote response authenticity or exclusion.
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json={
+        "action": "binding-acknowledged", "reservation": root_receipt,
+        "intent_event_id": intent["audit_event_id"], "put_status": 201,
+    })
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    ack = response.json()["binding"]
+    assert set(ack) == RECOVERY_BINDING_KEYS | {"audit_event_id"}
+    assert ack["stage"] == "binding-acknowledged" and ack["credential_binding_verified"] is False
+    inspected = s.client.get(RECOVERY_PATH, headers=s.headers)
+    assert inspected.json()["binding"] == ack and inspected.headers["cache-control"] == "no-store"
+    cap = SimpleNamespace(capability_id=cap_receipt["capability_id"], audit_event_id=cap_receipt["audit_event_id"])
+    assert binding_proven(s, root, cap, intent)
+    assert cap_receipt["token"] not in inspected.text and PASSWORD not in inspected.text
+    assert "token_hash" not in inspected.text and "phc_hash" not in inspected.text
+    for action in ({"action": "binding-intent", "reservation": root_receipt},
+                   {"action": "binding-acknowledged", "reservation": root_receipt,
+                    "intent_event_id": intent["audit_event_id"], "put_status": 201}):
+        assert s.client.post(RECOVERY_PATH, headers=s.headers, json=action).status_code == 409
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json={"action": "quarantine", "reservation": root_receipt})
+    assert response.status_code == 200 and not binding_proven(s, root, cap, intent)
+    # Readback keeps real intent/ACK history after quarantine, never grants retry.
+    assert s.client.get(RECOVERY_PATH, headers=s.headers).json()["binding"] == ack
+    assert snapshot(s) == before and old_events(s) == old
+    assert s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("status", [204, 200, 500, None, True, "201"])
+def test_mounted_binding_rejects_non201_and_caller_authority_fields(recovery_runtime: Any, status: Any) -> None:
+    s = recovery_runtime
+    root, _cap = binding_ready(s)
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json={
+        "action": "binding-intent", "reservation": root.to_receipt(),
+    })
+    assert response.status_code == 200
+    intent = response.json()["binding"]
+    before = snapshot(s)
+    body = {"action": "binding-acknowledged", "reservation": root.to_receipt(),
+            "intent_event_id": intent["audit_event_id"], "put_status": status}
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json=body)
+    assert response.status_code == 422 and response.headers["cache-control"] == "no-store"
+    for key in ("actor_account_id", "tenant_id", "target_account_id", "password", "token"):
+        response = s.client.post(RECOVERY_PATH, headers=s.headers, json={**body, "put_status": 201, key: "private-injected"})
+        assert response.status_code == 422 and "private-injected" not in response.text
+    assert s.binding.binding_inspect(s.principal) == intent and snapshot(s) == before
+
+
+@pytest.mark.parametrize("operation", ["intent", "ack"])
+@pytest.mark.parametrize("drift", ["issuer_session", "target_session", "source", "quarantine"])
+def test_mounted_binding_rechecks_persisted_fences(recovery_runtime: Any, monkeypatch: Any, operation: str, drift: str) -> None:
+    s = recovery_runtime
+    root, _cap = binding_ready(s)
+    intent = s.binding.binding_intent(s.principal, root) if operation == "ack" else None
+    headers = s.headers
+    if drift == "issuer_session":
+        # Same original identity, different durable session is NOT continuation.
+        headers = _sign_in(s, PRESERVED_ACCOUNT_ID, TENANT_ID)
+    elif drift == "target_session":
+        s.engine.execute("UPDATE identity.sessions SET revoked_at = now() WHERE account_id = ?", (TARGET_ACCOUNT_ID,))
+    elif drift == "source":
+        monkeypatch.setenv("ODAY_RELEASE_SHA", "b" * 40)
+    else:
+        s.recovery.quarantine(s.principal, root)
+    before = snapshot(s)
+    body = {"action": "binding-intent" if operation == "intent" else "binding-acknowledged", "reservation": root.to_receipt()}
+    if intent:
+        body.update(intent_event_id=intent["audit_event_id"], put_status=201)
+    response = s.client.post(RECOVERY_PATH, headers=headers, json=body)
+    assert response.status_code == 409 and response.headers["cache-control"] == "no-store"
+    assert s.binding.binding_inspect(s.principal) == intent and snapshot(s) == before
+
+
+@pytest.mark.parametrize("operation", ["intent", "ack"])
+def test_mounted_binding_lost_committed_receipt_requires_quarantine(recovery_runtime: Any, monkeypatch: Any, operation: str) -> None:
+    s = recovery_runtime
+    root, _cap = binding_ready(s)
+    intent = s.binding.binding_intent(s.principal, root) if operation == "ack" else None
+    body = {"action": "binding-intent" if operation == "intent" else "binding-acknowledged", "reservation": root.to_receipt()}
+    if intent:
+        body.update(intent_event_id=intent["audit_event_id"], put_status=201)
+    with monkeypatch.context() as patch:
+        def lose_reply(_event: Any) -> Any:
+            raise RuntimeError("private-response-must-not-escape")
+        patch.setattr(RecoveryBindingJournal, "_binding_receipt", staticmethod(lose_reply))
+        response = s.client.post(RECOVERY_PATH, headers=s.headers, json=body)
+        assert response.status_code == 409 and "private-response" not in response.text
+        assert response.headers["cache-control"] == "no-store"
+    # Later GET resolves commit truth only; it does NOT authorize repeating PUT.
+    receipt = s.client.get(RECOVERY_PATH, headers=s.headers).json()["binding"]
+    assert receipt["stage"] == ("binding-intent" if operation == "intent" else "binding-acknowledged")
+    assert s.client.post(RECOVERY_PATH, headers=s.headers, json=body).status_code == 409
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json={"action": "quarantine", "reservation": root.to_receipt()})
+    assert response.status_code == 200 and response.json()["reservation"]["stage"] == "recovery-required"
+    assert s.client.post(RECOVERY_PATH, headers=s.headers, json=body).status_code == 409
 
 
 def test_binding_pg_producer_roundtrip_strict_gate_predicate_and_preservation(recovery: Any) -> None:

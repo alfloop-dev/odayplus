@@ -43396,6 +43396,172 @@
                     ],
                     "title": "RecoveryQuarantinePayload",
                     "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "binding-intent",
+                        "title": "Action",
+                        "type": "string"
+                      },
+                      "reservation": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "authorization_id": {
+                            "const": "HUMAN-ODP-DEV-SMOKE-RECOVERY-20261011-001",
+                            "title": "Authorization Id",
+                            "type": "string"
+                          },
+                          "credential_binding_verified": {
+                            "const": false,
+                            "title": "Credential Binding Verified",
+                            "type": "boolean"
+                          },
+                          "event_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Event Id",
+                            "type": "string"
+                          },
+                          "execution_authorized": {
+                            "const": false,
+                            "title": "Execution Authorized",
+                            "type": "boolean"
+                          },
+                          "execution_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Execution Id",
+                            "type": "string"
+                          },
+                          "plan_digest": {
+                            "pattern": "^sha256:[0-9a-f]{64}$",
+                            "title": "Plan Digest",
+                            "type": "string"
+                          },
+                          "secret_values_redacted": {
+                            "const": true,
+                            "title": "Secret Values Redacted",
+                            "type": "boolean"
+                          },
+                          "stage": {
+                            "const": "reserved",
+                            "title": "Stage",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "execution_id",
+                          "plan_digest",
+                          "event_id",
+                          "stage",
+                          "authorization_id",
+                          "execution_authorized",
+                          "credential_binding_verified",
+                          "secret_values_redacted"
+                        ],
+                        "title": "RecoveryReservationPayload",
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "reservation"
+                    ],
+                    "title": "RecoveryBindingIntentPayload",
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "description": "Original-admin declaration, NOT server authentication of a GitHub reply.",
+                    "properties": {
+                      "action": {
+                        "const": "binding-acknowledged",
+                        "title": "Action",
+                        "type": "string"
+                      },
+                      "intent_event_id": {
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "title": "Intent Event Id",
+                        "type": "string"
+                      },
+                      "put_status": {
+                        "description": "Trusted foreground must observe actual201; no reconstruction.",
+                        "maximum": 201.0,
+                        "minimum": 201.0,
+                        "title": "Put Status",
+                        "type": "integer"
+                      },
+                      "reservation": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "authorization_id": {
+                            "const": "HUMAN-ODP-DEV-SMOKE-RECOVERY-20261011-001",
+                            "title": "Authorization Id",
+                            "type": "string"
+                          },
+                          "credential_binding_verified": {
+                            "const": false,
+                            "title": "Credential Binding Verified",
+                            "type": "boolean"
+                          },
+                          "event_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Event Id",
+                            "type": "string"
+                          },
+                          "execution_authorized": {
+                            "const": false,
+                            "title": "Execution Authorized",
+                            "type": "boolean"
+                          },
+                          "execution_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Execution Id",
+                            "type": "string"
+                          },
+                          "plan_digest": {
+                            "pattern": "^sha256:[0-9a-f]{64}$",
+                            "title": "Plan Digest",
+                            "type": "string"
+                          },
+                          "secret_values_redacted": {
+                            "const": true,
+                            "title": "Secret Values Redacted",
+                            "type": "boolean"
+                          },
+                          "stage": {
+                            "const": "reserved",
+                            "title": "Stage",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "execution_id",
+                          "plan_digest",
+                          "event_id",
+                          "stage",
+                          "authorization_id",
+                          "execution_authorized",
+                          "credential_binding_verified",
+                          "secret_values_redacted"
+                        ],
+                        "title": "RecoveryReservationPayload",
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "reservation",
+                      "intent_event_id",
+                      "put_status"
+                    ],
+                    "title": "RecoveryBindingAckPayload",
+                    "type": "object"
                   }
                 ]
               }

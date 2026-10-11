@@ -120,7 +120,8 @@ migration before any recovery. No blanket session denial is the final design.
 ## Mounted transport increment (unapproved source, no effects)
 
 The existing composed users router now mounts authenticated GET inspection and
-one bounded POST action union: reserve, issue, consume, quarantine. There is no
+one bounded POST action union: reserve, issue, consume, quarantine,
+binding-intent and binding-acknowledged. There is no
 caller target/tenant/actor substitution, anonymous path, reset or resume. The
 existing user-update permission dependency executes BEFORE request parsing;
 fixed original claims, durable identity provider and every domain call's persisted
@@ -183,7 +184,7 @@ negative-role probes, all existing transport/runtime checks and own-session
 cleanup remain required. Offline mocked full-gate tests do not establish a live
 fresh consumer or F11 acceptance.
 
-## Internal binding ledger increment (unapproved; NOT mounted or executable)
+## Binding ledger and mounted declaration increment (unapproved; NOT executable)
 
 `RecoveryBindingJournal` now produces the exact safe intent/ACK schema in the
 same-engine PG audit transaction. It revalidates the original execution-owned
@@ -206,16 +207,28 @@ no success. Root quarantine remains the one-way uncertainty transition, includin
 after ACK; it invalidates the consumer predicate without editing binding history.
 Inspection provides no retry/continuation permission.
 
-**Important trust boundary:** the ledger is internal and not mounted on HTTP yet.
+**Important trust boundary:** the bounded API now mounts intent/ACK declarations
+under the SAME persisted original-admin/session/tenant and runtime boundary.
+GET adds safe binding history (including after quarantine); it never retrieves a
+capability or grants continuation. POST accepts only the exact reservation,
+intent event ID and strict integer201 for ACK, with no caller account/actor/tenant,
+password or token field. Both actions reuse the8192-byte/duplicate-key/CSRF/no-store
+boundary and same-engine domain transactions, with no enclosing transaction.
 A201 integer is an authenticated original-admin declaration, NOT an independently
 authenticated GitHub response receipt. The server cannot distinguish a fabricated
 201 from a real201 using that field. A reviewed trusted foreground single-attempt
 transport must own actual response classification and submit ACK only after real
 201, with no readback-based reconstruction after uncertainty. This increment
-intentionally does NOT claim that unimplemented boundary, any PUT/exclusion,
-deployment, live binding or fresh-consumer proof. Isolated tests feed a synthetic
-201 declaration through the real PG producer and actual mounted safe audit/user
-projection into the strict consumer predicate; they are not live response proof.
+intentionally does NOT claim that unimplemented foreground boundary, any PUT/
+exclusion, deployment, live binding or fresh-consumer proof. Isolated tests drive
+reserve/issue/consume/intent/ACK through the real mounted API and PG producer,
+then use actual mounted safe audit/user projection in the strict predicate.
+The target-session insertion and201 declaration are isolated test inputs, NOT
+actual Web login or remote response proof. Tests also cover malformed/non201
+ACK, caller authority fields, different issuer session, revoked target session,
+source drift, quarantine, replay and committed-receipt loss followed by hold/
+new-root quarantine. A later successful GET is commit truth, not permission to
+reconstruct ACK after an unknown PUT or resume an execution.
 
 ## Required subsequent increments (not implemented)
 
@@ -227,9 +240,9 @@ projection into the strict consumer predicate; they are not live response proof.
 2. Independently review and verify the complete mounted API/BFF and safe audit
    composition with production identity/session/IAM configuration and generated
    OpenAPI/client/inventory. This transport increment is not deployed or approved.
-3. Complete the internal binding ledger with reviewed authenticated mounting and
-   trusted foreground actual201 response classification, including no resume after
-   lost reply/failed ACK. Real PG-produced full-lineage tests now exist; synthetic
+3. Review the mounted binding ledger composition and implement trusted foreground
+   actual201 response classification, including no resume after lost reply/failed
+   ACK. Real PG-produced full-lineage tests now exist; synthetic
    status declarations are NOT proof of remote response authenticity. Keep schema1
    behavior/quarantine rejection unchanged. No missing-ID bypass or fallback.
 4. Trusted foreground parent memory custody and new finite entrypoint: absolute

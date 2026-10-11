@@ -32,7 +32,7 @@ from shared.identity.invitation_service import InvitationRefused, InvitationServ
 from shared.identity.dev_smoke_recovery import (
     PRESERVED_ACCOUNT_ID as RECOVERY_ACTOR_ID,
     TENANT_ID as RECOVERY_TENANT_ID,
-    RecoveryCapabilityService,
+    RecoveryBindingJournal,
     RecoveryRefused,
     RecoveryReservation,
 )
@@ -168,6 +168,22 @@ class RecoveryQuarantinePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     action: Literal["quarantine"]
     reservation: RecoveryReservationPayload
+
+
+class RecoveryBindingIntentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    action: Literal["binding-intent"]
+    reservation: RecoveryReservationPayload
+
+
+class RecoveryBindingAckPayload(BaseModel):
+    """Original-admin declaration, NOT server authentication of a GitHub reply."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    action: Literal["binding-acknowledged"]
+    reservation: RecoveryReservationPayload
+    intent_event_id: str = Field(min_length=36, max_length=36)
+    put_status: int = Field(ge=201, le=201, description="Trusted foreground must observe actual201; no reconstruction.")
 
 
 def _recovery_schema(model: type[BaseModel]) -> dict[str, Any]:
@@ -522,7 +538,7 @@ def create_user_role_sub_router(
             return JSONResponse({"error": {"code": "PROVISIONING_JOURNAL_UNAVAILABLE"}}, status_code=503,
                                 headers={"cache-control": "no-store"})
 
-    def recovery_context(request: Request) -> tuple[RecoveryCapabilityService, Principal]:
+    def recovery_context(request: Request) -> tuple[RecoveryBindingJournal, Principal]:
         # Permission dependency runs before DTO parsing. Claims alone never
         # suffice: the domain revalidates the persisted original session on each
         # operation. No factory without a guard or durable identity can recover.
@@ -532,7 +548,7 @@ def create_user_role_sub_router(
                 or principal.tenant_id != RECOVERY_TENANT_ID):
             raise RecoveryRefused("RECOVERY_ORIGINAL_ADMIN_REQUIRED")
         invitations, _ = invitation_context(request)
-        return RecoveryCapabilityService(
+        return RecoveryBindingJournal(
             engine=invitations._engine, audit_log=invitations._audit,
             environment=os.environ.get("ODP_DEPLOY_ENV", ""),
             release_profile=os.environ.get("ODP_RELEASE_PROFILE", ""),
@@ -554,7 +570,9 @@ def create_user_role_sub_router(
             if request.query_params:
                 return recovery_error("RECOVERY_INPUT_INVALID", 422)
             root = recovery.inspect(principal)
+            binding = recovery.binding_inspect(principal)
             return JSONResponse({"reservation": root.to_receipt() if root else None,
+                                 "binding": binding,
                                  "execution_authorized": False, "secret_values_redacted": True},
                                 headers={"cache-control": "no-store"})
         except (InvitationRefused, HTTPException):
@@ -571,6 +589,7 @@ def create_user_role_sub_router(
                          _recovery_schema(model) for model in (
                              RecoveryReservePayload, RecoveryIssuePayload,
                              RecoveryConsumePayload, RecoveryQuarantinePayload,
+                             RecoveryBindingIntentPayload, RecoveryBindingAckPayload,
                          )
                      ]}}
                  }}})
@@ -579,7 +598,9 @@ def create_user_role_sub_router(
             recovery, principal = recovery_context(request)
             parsed = await _recovery_body(request)
             models = {"reserve": RecoveryReservePayload, "issue": RecoveryIssuePayload,
-                      "consume": RecoveryConsumePayload, "quarantine": RecoveryQuarantinePayload}
+                      "consume": RecoveryConsumePayload, "quarantine": RecoveryQuarantinePayload,
+                      "binding-intent": RecoveryBindingIntentPayload,
+                      "binding-acknowledged": RecoveryBindingAckPayload}
             try:
                 model = models.get(parsed.get("action"))
                 if model is None:
@@ -599,6 +620,16 @@ def create_user_role_sub_router(
             elif isinstance(payload, RecoveryConsumePayload):
                 result = await run_in_threadpool(recovery.consume, principal, payload.reservation.reservation(),
                     capability_id=payload.capability_id, token=payload.token, password=payload.password)
+            elif isinstance(payload, RecoveryBindingIntentPayload):
+                result = {"binding": await run_in_threadpool(
+                    recovery.binding_intent, principal, payload.reservation.reservation())}
+            elif isinstance(payload, RecoveryBindingAckPayload):
+                # Integer201 is the original admin's declaration only. The
+                # trusted foreground owns actual single-attempt response
+                # classification; this server cannot authenticate GitHub from it.
+                result = {"binding": await run_in_threadpool(
+                    recovery.binding_acknowledge, principal, payload.reservation.reservation(),
+                    intent_event_id=payload.intent_event_id, put_status=payload.put_status)}
             else:
                 root = await run_in_threadpool(recovery.quarantine, principal, payload.reservation.reservation())
                 result = {"reservation": root.to_receipt()}
