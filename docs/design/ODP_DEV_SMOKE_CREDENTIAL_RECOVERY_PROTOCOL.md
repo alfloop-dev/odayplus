@@ -652,6 +652,37 @@ native-ingress security approval remain BEFORE-effect blockers.
    sessions. Independently normally admitted fresh-job actual bundle consumer
    proof is separate from staging ACK, same-process gate and full/F11 acceptance.
 
+## Bounded current ordinary-admission observer
+
+`TrustedGitHubAdmissionObserver` replaces the credential-bearing gh history
+transport for the foreground recovery composition. Every invocation rereads the
+complete bounded Runtime Release history and each rerun's jobs, dev environment
+proof, restoration evidence when applicable, and retained deployed manifest.
+Canonical `live_step_outcome`, `validate_manifest`, `validate_release_admission`
+and profile predicates are reused; selection mirrors canonical newest-changing-
+attempt semantics. A failed-after-live commit, unknown live step, unproven
+restoration, newer different release or missing/expired/ambiguous manifest refuses,
+never chooses an older convenient success. Environment URLs additionally require
+exact repository/run paths (no run-ID prefix or other-host matching).
+
+One parent-memory main-thread absolute timer bounds all GETs and parsing; no gh,
+credential child, lease replay, dispatch, proxy/env credential loading, retry or
+cached admitted flag. JSON is duplicate-key/NaN/encoding/page-completeness checked,
+with 64KiB per response, 4MiB aggregate, 256 request and canonical page limits.
+Retained ZIPs are bounded to 2MiB, one exact file, no filesystem extraction.
+GitHub artifact downloads genuinely require a signed redirect: only that ZIP GET
+may follow **one** freshly returned HTTPS URL to an independently pinned exact
+GitHub-storage hostname, with no API Authorization/cookies. No second redirect,
+arbitrary authenticated redirect, signed-URL receipt or token transfer is allowed.
+The exact trusted storage host must be established in the reviewed preflight;
+changing storage topology is a blocker, not permission for a wildcard fallback.
+
+Observer evidence does not grant execution authority, source approval, serving
+identity, writer exclusion or native custody approval. OS-stuck-call hard-real-time
+termination and measured production bounds are not claimed. This incremental
+implementation still requires the complete gate/fresh-consumer/uncertainty
+coordinator, final exact-head verification and independent review before effects.
+
 ## Concrete execution blockers: custody and writer exclusion
 
 GitHub secret PUT has no conditional create-only operation. Fresh absence,

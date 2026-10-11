@@ -2219,3 +2219,218 @@ def test_bounded_remote_source_input_fence_precedes_network(bounded_remote_sourc
         e.observer.observe(release_sha="f" * 40 if fault == "sha" else SHA,
                            deadline=float("nan") if fault == "deadline" else time.monotonic() + 2)
     assert not e.calls
+
+
+@pytest.fixture
+def bounded_remote_admission(monkeypatch: Any):
+    """Offline real-format GitHub history/ZIPs; never deployment authority."""
+    import json
+    from types import SimpleNamespace
+
+    import httpx
+
+    from delivery_toolchain.release import automatic_dev as auto
+    from delivery_toolchain.release import recover_dev_smoke as r
+    from tests.release.test_automatic_dev_deployment import archive, deploy_run, live_steps
+    from tests.release.test_release_manifest import sources_off_manifest
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    manifest = sources_off_manifest(components={
+        name: {"image": f"registry.example.invalid/{name}@sha256:" + str(i) * 64}
+        for i, name in enumerate(auto.COMPONENTS, 1)
+    }, release_profile={"name": "dev-admin", "target_environment": "dev", "model_readiness": "not_claimed"})
+    run = deploy_run()
+    docs = {
+        "actions/workflows/deploy-dev.yml/runs?event=workflow_dispatch&per_page=100&page=1": {
+            "total_count": 1, "workflow_runs": [run]},
+        "actions/runs/90/attempts/1/jobs?per_page=100": {"total_count": 1, "jobs": [{
+            "name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T14:57:00Z",
+            "steps": live_steps("success")}]},
+        f"deployments?environment=dev&sha={run['head_sha']}&per_page=100&page=1": [{"id": 7}],
+        "deployments/7/statuses?per_page=100&page=1": [{"state": "success",
+            "log_url": "https://github.com/alfloop-dev/odayplus/actions/runs/90/job/1"}],
+        "actions/runs/90/artifacts?per_page=100": {"total_count": 1, "artifacts": [{
+            "id": 990, "name": auto.DEPLOYED_ARTIFACT, "expired": False}]},
+    }
+    e = SimpleNamespace(docs=docs, manifest=manifest, archive=archive(manifest), archives={}, calls=[], downloads=[],
+        status=200, headers={}, raw=None, slow=False,
+        redirect="https://offline.blob.core.windows.net/artifact.zip?sig=OFFLINE-PRIVATE-SIGNED-URL",
+        download_status=200)
+    observer = r.TrustedGitHubAdmissionObserver(token="OFFLINE-PRIVATE-TOKEN",
+                                               artifact_host="offline.blob.core.windows.net")
+    observer._client.close()
+    observer._download.close()
+    e.observer = observer
+
+    def request(req):
+        assert req.method == "GET" and req.headers["authorization"] == "Bearer OFFLINE-PRIVATE-TOKEN"
+        path = str(req.url).removeprefix("https://api.github.com/repos/alfloop-dev/odayplus/")
+        e.calls.append(path)
+        if path.endswith("/zip"):
+            location = e.redirect.replace("artifact.zip", path.split("/")[-2] + ".zip")
+            return httpx.Response(302, headers={"Location": location})
+        clear = e.raw if e.raw is not None else json.dumps(e.docs[path]).encode()
+        if e.slow:
+            import time
+            class Slow(httpx.SyncByteStream):
+                def __iter__(self):
+                    for byte in clear:
+                        time.sleep(0.02)
+                        yield bytes([byte])
+            stream = Slow()
+        else:
+            stream = httpx.ByteStream(clear)
+        return httpx.Response(e.status, stream=stream,
+                              headers={"Content-Type": "application/json", **e.headers})
+
+    def download(req):
+        assert req.method == "GET" and "authorization" not in req.headers and "cookie" not in req.headers
+        e.downloads.append(str(req.url))
+        return httpx.Response(e.download_status, stream=httpx.ByteStream(e.archives.get(req.url.path, e.archive)))
+
+    observer._client = httpx.Client(base_url="https://api.github.com", transport=httpx.MockTransport(request),
+        headers={"Authorization": "Bearer OFFLINE-PRIVATE-TOKEN"}, trust_env=False, follow_redirects=False)
+    observer._download = httpx.Client(transport=httpx.MockTransport(download), trust_env=False, follow_redirects=False)
+    try:
+        yield e
+    finally:
+        observer.close()
+
+
+def admission_observe(e):
+    import time
+    return e.observer.observe(release_sha=e.manifest["candidate_sha"],
+        manifest_digest=e.manifest["manifest_digest"], deadline=time.monotonic() + 2)
+
+
+def test_bounded_admission_fresh_manifest_no_gh_or_secret_redirect(bounded_remote_admission: Any, monkeypatch: Any) -> None:
+    import pickle
+    import subprocess
+    e = bounded_remote_admission
+    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_kw: pytest.fail("credential child forbidden"))
+    receipt = admission_observe(e)
+    assert receipt["stage"] == "current-dev-admission-observed" and receipt["run_id"] == 90
+    assert receipt["execution_authorized"] is False and receipt["credential_binding_verified"] is False
+    assert "OFFLINE-PRIVATE" not in repr(receipt) + repr(e.observer)
+    assert len(e.calls) == 6 and len(e.downloads) == 1
+    with pytest.raises(RecoveryRefused, match="SERIALIZATION_REFUSED"):
+        pickle.dumps(e.observer)
+    assert admission_observe(e) == receipt  # re-read, not cached flags
+    assert len(e.calls) == 12 and len(e.downloads) == 2
+
+
+@pytest.mark.parametrize("fault", ["job_failed_after_commit", "job_unknown", "build_only", "expired", "incomplete_jobs",
+    "incomplete_artifacts", "incomplete_runs", "ambiguous_jobs", "environment_prefix", "environment_host",
+    "newer_failed_rerun", "manifest_sha", "manifest_digest", "zip_path", "zip_oversize", "zip_duplicate_json",
+    "redirect_host", "redirect_credentials", "redirect_port", "redirect_http", "second_redirect",
+    "status", "pagination", "oversize", "duplicate_json", "encoding"])
+def test_bounded_admission_uncertainty_no_older_success_or_retry(bounded_remote_admission: Any, fault: str) -> None:
+    from copy import deepcopy
+
+    from delivery_toolchain.release import automatic_dev as auto
+    from tests.release.test_automatic_dev_deployment import archive
+    e = bounded_remote_admission
+    jobs = e.docs["actions/runs/90/attempts/1/jobs?per_page=100"]
+    runs = e.docs["actions/workflows/deploy-dev.yml/runs?event=workflow_dispatch&per_page=100&page=1"]
+    artifacts = e.docs["actions/runs/90/artifacts?per_page=100"]
+    if fault == "job_failed_after_commit":
+        jobs["jobs"][0]["conclusion"] = "failure"
+    elif fault == "job_unknown":
+        jobs["jobs"][0]["conclusion"] = "failure"
+        jobs["jobs"][0]["steps"][0]["conclusion"] = "cancelled"
+    elif fault == "build_only":
+        jobs.update(total_count=0, jobs=[])
+    elif fault == "expired":
+        artifacts["artifacts"][0]["expired"] = True
+    elif fault.startswith("incomplete_"):
+        {"incomplete_jobs": jobs, "incomplete_runs": runs, "incomplete_artifacts": artifacts}[fault]["total_count"] += 1
+    elif fault == "ambiguous_jobs":
+        jobs["jobs"].append(deepcopy(jobs["jobs"][0]))
+        jobs["total_count"] += 1
+    elif fault in {"environment_prefix", "environment_host"}:
+        e.docs["deployments/7/statuses?per_page=100&page=1"][0]["log_url"] = (
+            "https://github.com/alfloop-dev/odayplus/actions/runs/900/job/1" if fault == "environment_prefix"
+            else "https://evil.invalid/alfloop-dev/odayplus/actions/runs/90/job/1")
+    elif fault == "newer_failed_rerun":
+        runs["workflow_runs"][0]["run_attempt"] = 2
+        later = deepcopy(jobs)
+        later["jobs"][0].update(conclusion="failure", steps=[{"name": auto.LIVE_STEP,
+            "conclusion": "cancelled", "completed_at": "2026-07-28T14:57:00Z"}])
+        e.docs["actions/runs/90/attempts/2/jobs?per_page=100"] = later
+    elif fault.startswith("manifest_"):
+        changed = deepcopy(e.manifest)
+        changed["candidate_sha" if fault == "manifest_sha" else "manifest_digest"] = "a" * 40
+        e.archive = archive(changed)
+    elif fault == "zip_path":
+        e.archive = archive(e.manifest, "../../RELEASE_MANIFEST.json")
+    elif fault == "zip_oversize":
+        e.archive = b"x" * 2_097_153
+    elif fault == "zip_duplicate_json":
+        import io
+        import zipfile
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, "w") as zipped:
+            zipped.writestr("RELEASE_MANIFEST.json", '{"OFFLINE-PRIVATE":1,"OFFLINE-PRIVATE":2}')
+        e.archive = data.getvalue()
+    elif fault.startswith("redirect_"):
+        e.redirect = {"redirect_host": "https://evil.invalid/a?sig=x",
+            "redirect_credentials": "https://user:pw@offline.blob.core.windows.net/a?sig=x",
+            "redirect_port": "https://offline.blob.core.windows.net:443/a?sig=x",
+            "redirect_http": "http://offline.blob.core.windows.net/a?sig=x"}[fault]
+    elif fault == "second_redirect":
+        e.download_status = 302
+    elif fault == "status":
+        e.status = 403
+    elif fault == "pagination":
+        e.headers["Link"] = '<https://api.github.com/anything>; rel=next'
+    elif fault == "oversize":
+        e.raw = b"x" * 65537
+    elif fault == "duplicate_json":
+        e.raw = b'{"OFFLINE-PRIVATE":1,"OFFLINE-PRIVATE":2}'
+    else:
+        e.headers["Content-Encoding"] = "gzip"
+    with pytest.raises(RecoveryRefused, match="^RECOVERY_DEV_ADMISSION_UNVERIFIED$"):
+        admission_observe(e)
+    calls = len(e.calls)
+    with pytest.raises(RecoveryRefused):
+        admission_observe(e)
+    assert len(e.calls) == calls and e.observer._stopped
+
+
+def test_bounded_admission_restoration_selects_only_proven_predecessor(bounded_remote_admission: Any) -> None:
+    from copy import deepcopy
+
+    from delivery_toolchain.release import automatic_dev as auto
+    from tests.release.test_automatic_dev_deployment import archive
+    e = bounded_remote_admission
+    runs = e.docs["actions/workflows/deploy-dev.yml/runs?event=workflow_dispatch&per_page=100&page=1"]
+    later = deepcopy(runs["workflow_runs"][0])
+    later.update(id=91, display_title="Runtime Release dev auto " + "a" * 40)
+    runs["workflow_runs"].append(later)
+    runs["total_count"] = 2
+    e.docs["actions/runs/91/attempts/1/jobs?per_page=100"] = {"total_count": 1, "jobs": [{
+        "name": auto.DEPLOY_JOB, "conclusion": "failure", "steps": [
+            {"name": auto.LIVE_STEP, "conclusion": "failure", "completed_at": "2026-07-28T14:57:00Z"},
+            {"name": auto.RESTORE_STEP, "conclusion": "success"}]}]}
+    e.docs["actions/runs/91/artifacts?per_page=100"] = {"total_count": 1, "artifacts": [{
+        "id": 991, "name": auto.RESTORE_ARTIFACT + "-1", "expired": False}]}
+    restored = archive({"kind": auto.RESTORE_KIND, "environment": "dev", "run_id": "91", "run_attempt": "1",
+        "failed_candidate_sha": "a" * 40, "scheduler_baseline_sha256": "b" * 64,
+        "live_release": e.manifest["candidate_sha"][:16]}, auto.RESTORE_FILE)
+    e.archives["/991.zip"] = restored
+    assert admission_observe(e)["run_id"] == 90
+    assert len(e.downloads) == 2
+
+
+def test_bounded_admission_absolute_timer_no_child_or_continuation(bounded_remote_admission: Any) -> None:
+    import signal
+    import time
+    e = bounded_remote_admission
+    e.slow = True
+    original = signal.getsignal(signal.SIGALRM)
+    started = time.monotonic()
+    with pytest.raises(RecoveryRefused):
+        e.observer.observe(release_sha=e.manifest["candidate_sha"], manifest_digest=e.manifest["manifest_digest"],
+                           deadline=started + 0.12)
+    assert time.monotonic() - started < 0.5 and len(e.calls) == 1
+    assert signal.getsignal(signal.SIGALRM) == original and signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+    assert e.observer._stopped

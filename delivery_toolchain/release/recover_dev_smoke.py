@@ -593,6 +593,324 @@ class TrustedGitHubSourceObserver(GitHubSourceApprovalObserver):
         super().close()
 
 
+class TrustedGitHubAdmissionObserver:
+    """Bounded parent-memory read of CURRENT ordinary dev deployment history.
+
+    Reuses canonical live-step and manifest admission predicates and preserves
+    newest-changing-attempt/restoration selection, including failed-after-live
+    refusal. No gh, lease replay, dispatch, cached pass or injected proof reader.
+    Every call rereads history, jobs, environment proof and retained artifacts.
+    The foreground independently pins the artifact download host (exact trusted
+    GitHub storage hostname); ONE signed redirect is allowed only for ZIP GET,
+    without Authorization. It is never a generic authenticated redirect policy.
+
+    History beyond the finite byte/request/page budget is a pre-effect blocker.
+    This is admission evidence only, NOT actual serving identity, source approval,
+    writer exclusion, custody or permission. Main-thread deadline/runtime custody
+    prerequisites match the source observer; production bounds remain unmeasured.
+    """
+
+    def __init__(self, *, token: str, artifact_host: str) -> None:
+        import re
+
+        import httpx
+        self._pid, self._stopped, self._deadline = os.getpid(), True, None
+        try:
+            if (type(token) is not str or not 0 < len(token) <= 8192
+                    or any(ord(c) <= 32 or ord(c) >= 127 for c in token)
+                    or type(artifact_host) is not str or not re.fullmatch(
+                        r"[a-z0-9-]+\.(?:blob\.core\.windows\.net|actions\.githubusercontent\.com)", artifact_host)):
+                raise ValueError
+            self._host = artifact_host
+            self._client = httpx.Client(base_url="https://api.github.com", trust_env=False,
+                follow_redirects=False, timeout=20, headers={
+                    "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+                    "Accept-Encoding": "identity", "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "odayplus-dev-smoke-recovery",
+                })
+            self._download = httpx.Client(trust_env=False, follow_redirects=False,
+                timeout=20, headers={"Accept-Encoding": "identity"})
+            self._stopped = False
+        except Exception:
+            raise RecoveryRefused("RECOVERY_ADMISSION_CONFIG_INVALID") from None
+
+    def __repr__(self) -> str:
+        return "TrustedGitHubAdmissionObserver(<redacted>)"
+
+    def __reduce_ex__(self, protocol: int):
+        raise RecoveryRefused("RECOVERY_ADMISSION_SERIALIZATION_REFUSED")
+
+    @staticmethod
+    def _json(clear: bytes):
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError
+                result[key] = value
+            return result
+        return json.loads(clear, object_pairs_hook=unique,
+                          parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+
+    def _body(self, response, *, limit: int) -> bytes:
+        if response.headers.get("content-encoding", "identity") != "identity":
+            raise ValueError
+        clear = bytearray()
+        for chunk in response.iter_raw():
+            _http_remaining(self._deadline)
+            self._bytes += len(chunk)
+            if len(clear) + len(chunk) > limit or self._bytes > 4_194_304:
+                raise ValueError
+            clear.extend(chunk)
+        _http_remaining(self._deadline)
+        return bytes(clear)
+
+    def _get(self, path: str, *, raw: bool = False):
+        import re
+        from urllib.parse import urlsplit
+
+        from shared.identity.dev_smoke_journal import REPOSITORY
+        routes = (
+            r"actions/workflows/deploy-dev\.yml/runs\?event=workflow_dispatch&per_page=100&page=[1-9][0-9]?",
+            r"actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*/jobs\?per_page=100",
+            r"actions/runs/[1-9][0-9]*/artifacts\?per_page=100",
+            r"deployments\?environment=dev&sha=[0-9a-f]{40}&per_page=100&page=[1-9][0-9]?",
+            r"deployments/[1-9][0-9]*/statuses\?per_page=100&page=[1-9][0-9]?",
+        )
+        zip_route = bool(re.fullmatch(r"actions/artifacts/[1-9][0-9]*/zip", path))
+        if (self._stopped or self._deadline is None or os.getpid() != self._pid
+                or raw != zip_route or (not raw and not any(re.fullmatch(r, path) for r in routes))):
+            raise ValueError
+        self._requests += 1
+        if self._requests > 256:
+            raise ValueError
+        with self._client.stream("GET", f"/repos/{REPOSITORY}/{path}",
+                timeout=min(20, _http_remaining(self._deadline))) as response:
+            if raw:
+                if response.status_code != 302:
+                    raise ValueError
+                url = response.headers.get("location", "")
+                parsed = urlsplit(url)
+                if (len(url) > 8192 or any(ord(c) <= 32 or ord(c) >= 127 for c in url)
+                        or parsed.scheme != "https" or parsed.hostname != self._host
+                        or parsed.netloc != self._host or parsed.username or parsed.password
+                        or parsed.fragment or not parsed.path.startswith("/") or not parsed.query):
+                    raise ValueError
+                # Signed URL is memory-only. No API token, proxy, cookies, second
+                # redirect, retry, disk ZIP, extraction or secret-value endpoint.
+                self._download.cookies.clear()
+                with self._download.stream("GET", url,
+                        timeout=min(20, _http_remaining(self._deadline))) as artifact:
+                    if artifact.status_code != 200 or artifact.headers.get("set-cookie"):
+                        raise ValueError
+                    return self._body(artifact, limit=2_097_152)
+            if (response.status_code != 200 or response.headers.get("set-cookie")
+                    or response.headers.get("content-type", "").split(";", 1)[0] != "application/json"):
+                raise ValueError
+            value = self._json(self._body(response, limit=65_536))
+            if "/jobs?" in path or "/artifacts?" in path:
+                key = "jobs" if "/jobs?" in path else "artifacts"
+                if (type(value) is not dict or type(value.get(key)) is not list
+                        or type(value.get("total_count")) is not int
+                        or value["total_count"] != len(value[key]) or len(value[key]) > 100
+                        or "next" in response.links):
+                    raise ValueError
+            else:
+                records = value.get("workflow_runs") if type(value) is dict else value
+                if (type(records) is not list or len(records) > 100
+                        or (len(records) < 100 and "next" in response.links)):
+                    raise ValueError
+            return value
+
+    def _paged(self, path: str) -> list:
+        records = []
+        separator = "&" if "?" in path else "?"
+        for page in range(1, 21):
+            batch = self._get(f"{path}{separator}per_page=100&page={page}")
+            if type(batch) is not list or any(type(r) is not dict for r in batch):
+                raise ValueError
+            records.extend(batch)
+            if len(batch) < 100:
+                return records
+        raise ValueError
+
+    def _environment(self, run: dict) -> bool:
+        import re
+        from urllib.parse import urlsplit
+
+        from shared.identity.dev_smoke_journal import REPOSITORY
+        for deployment in self._paged(f"deployments?environment=dev&sha={run['head_sha']}"):
+            if type(deployment.get("id")) is not int or deployment["id"] <= 0:
+                raise ValueError
+            for status in self._paged(f"deployments/{deployment['id']}/statuses"):
+                if status.get("state") != "success":
+                    continue
+                for field in ("log_url", "target_url"):
+                    url = urlsplit(status.get(field) or "")
+                    if (url.scheme == "https" and url.netloc == "github.com" and not url.fragment
+                            and re.fullmatch(f"/{REPOSITORY}/actions/runs/{run['id']}(?:/job/[1-9][0-9]*)?",
+                                             url.path)):
+                        return True
+        return False
+
+    def _archive(self, run: dict, *, name: str, filename: str, limit: int) -> list:
+        import zipfile
+        artifacts = self._get(f"actions/runs/{run['id']}/artifacts?per_page=100")["artifacts"]
+        matches = [a for a in artifacts if a.get("name") == name]
+        if not matches or any(a.get("expired") is not False for a in matches):
+            raise ValueError
+        values = []
+        for match in matches:
+            if type(match.get("id")) is not int or match["id"] <= 0:
+                raise ValueError
+            archive = self._get(f"actions/artifacts/{match['id']}/zip", raw=True)
+            with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+                entries = zipped.infolist()
+                if (len(entries) != 1 or entries[0].filename != filename
+                        or entries[0].file_size > limit or entries[0].flag_bits & 1):
+                    raise ValueError
+                values.append(self._json(zipped.read(entries[0])))
+            _http_remaining(self._deadline)
+        return values
+
+    def _restored(self, run: dict, attempt: int):
+        import re
+
+        from delivery_toolchain.release import automatic_dev as auto
+        values = self._archive(run, name=f"{auto.RESTORE_ARTIFACT}-{attempt}",
+                               filename=auto.RESTORE_FILE, limit=100_000)
+        if len(values) != 1:
+            raise ValueError
+        receipt = values[0]
+        title = run["display_title"].split()
+        live = receipt.get("live_release")
+        if (receipt.get("kind") != auto.RESTORE_KIND or receipt.get("environment") != "dev"
+                or type(receipt.get("scheduler_baseline_sha256")) is not str
+                or not re.fullmatch(r"[0-9a-f]{64}", receipt["scheduler_baseline_sha256"])
+                or len(title) != 5 or receipt.get("failed_candidate_sha") != title[4]
+                or str(receipt.get("run_id")) != str(run["id"])
+                or str(receipt.get("run_attempt")) != str(attempt)
+                or not (live is None or (type(live) is str and re.fullmatch(r"[0-9a-f]{16}", live)
+                                        and live != title[4][:16]))):
+            raise ValueError
+        return live
+
+    def _previous(self):
+        from delivery_toolchain.release import automatic_dev as auto
+        from shared.identity.dev_smoke_journal import REPOSITORY, _SHA
+        events, seen, total = [], set(), None
+        for page in range(1, 11):
+            result = self._get("actions/workflows/deploy-dev.yml/runs?event=workflow_dispatch"
+                               f"&per_page=100&page={page}")
+            runs = result["workflow_runs"]
+            count = result.get("total_count")
+            if (type(count) is not int or count < 0 or (total is not None and count != total)):
+                raise ValueError
+            total = count
+            for run in runs:
+                if type(run) is not dict or type(run.get("id")) is not int or run["id"] in seen:
+                    raise ValueError
+                seen.add(run["id"])
+                if (run.get("path") != auto.WORKFLOW or run.get("event") != "workflow_dispatch"
+                        or run.get("repository", {}).get("full_name") != REPOSITORY
+                        or run.get("head_repository", {}).get("full_name") != REPOSITORY):
+                    continue
+                title = str(run.get("display_title", "")).split()
+                if title[:3] != ["Runtime", "Release", "dev"]:
+                    continue
+                if (type(run.get("id")) is not int or run["id"] <= 0
+                        or type(run.get("run_attempt")) is not int or not 1 <= run["run_attempt"] <= 100
+                        or type(run.get("head_sha")) is not str or not _SHA.fullmatch(run["head_sha"])):
+                    raise ValueError
+                attempts = []
+                for attempt in range(run["run_attempt"], 0, -1):
+                    jobs = self._get(f"actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")["jobs"]
+                    selected = [j for j in jobs if j.get("name") == auto.DEPLOY_JOB]
+                    if len(selected) > 1:
+                        raise ValueError
+                    if not selected or selected[0].get("conclusion") == "skipped":
+                        continue
+                    job = selected[0]
+                    if job.get("conclusion") == "success":
+                        kind, at = "complete", (job.get("completed_at") or job.get("started_at")
+                                                or run.get("updated_at") or run.get("created_at"))
+                    else:
+                        kind, at = auto.live_step_outcome(job)
+                        if kind == "not_started":
+                            continue
+                    restored = self._restored(run, attempt) if kind == "readback" else None
+                    kind = "restored" if kind == "readback" else kind
+                    when = GitHubSourceApprovalObserver._past(at, datetime.now(UTC))
+                    attempts.append((when, run["id"], attempt, kind, restored, run, title))
+                if attempts and attempts[0][3] == "complete" and not self._environment(run):
+                    raise ValueError
+                events.extend(attempts)
+            if len(runs) < 100:
+                break
+        else:
+            raise ValueError
+        if len(seen) != total or not events:
+            raise ValueError  # incomplete history/no current release, NOT first-release authority
+        events.sort(key=lambda item: item[:3], reverse=True)
+        if len({item[:3] for item in events}) != len(events):
+            raise ValueError
+        newest = events[0]
+        if newest[3] == "restored":
+            if newest[4] is None:
+                raise ValueError
+            newest = next(item for item in events[1:] if item[3] == "complete"
+                          and len(item[6]) == 5 and item[6][4][:16] == newest[4])
+            if not self._environment(newest[5]):
+                raise ValueError
+        elif newest[3] != "complete":
+            raise ValueError  # failed-after-commit/uncertain NEVER selects older success
+        return newest[5], newest[6], newest[2]
+
+    def observe(self, *, release_sha: str, manifest_digest: str, deadline: float) -> dict:
+        from delivery_toolchain.release import automatic_dev as auto
+        from delivery_toolchain.release.release_manifest import (
+            manifest_release_profile,
+            validate_manifest,
+            validate_release_admission,
+        )
+        from shared.identity.dev_smoke_journal import _DIGEST, _SHA
+        try:
+            if (self._stopped or self._deadline is not None or os.getpid() != self._pid
+                    or os.environ.get("GITHUB_RUN_ID") or type(release_sha) is not str
+                    or not _SHA.fullmatch(release_sha) or type(manifest_digest) is not str
+                    or not _DIGEST.fullmatch(manifest_digest) or type(deadline) not in (int, float)
+                    or not math.isfinite(deadline) or not 0 < deadline - time.monotonic() <= 2400):
+                raise ValueError
+            self._deadline, self._bytes, self._requests = deadline, 0, 0
+            with _absolute_observer_deadline(deadline):
+                run, title, attempt = self._previous()
+                manifests = self._archive(run, name=auto.DEPLOYED_ARTIFACT,
+                                          filename="RELEASE_MANIFEST.json", limit=2_000_000)
+                manifest = manifests[0]
+                if (any(other != manifest for other in manifests[1:]) or len(title) != 5
+                        or title[3] not in {"deploy", "auto"} or title[4] != manifest.get("candidate_sha")
+                        or validate_manifest(manifest, expected_candidate_sha=release_sha,
+                                             expected_digest=manifest_digest)
+                        or validate_release_admission(manifest, environment="dev")
+                        or manifest_release_profile(manifest) != "dev-admin"
+                        or manifest.get("external_sources_expected_enabled") != []):
+                    raise ValueError
+            return {"stage": "current-dev-admission-observed", "release_sha": release_sha,
+                    "manifest_digest": manifest_digest, "run_id": run["id"], "run_attempt": attempt,
+                    "execution_authorized": False, "credential_binding_verified": False,
+                    "secret_values_redacted": True}
+        except Exception:
+            self._stopped = True
+            raise RecoveryRefused("RECOVERY_DEV_ADMISSION_UNVERIFIED") from None
+        finally:
+            self._deadline = None
+
+    def close(self) -> None:
+        self._stopped = True
+        self._client.close()
+        self._download.close()
+
+
 class RecoveryHTTPRefused(RecoveryRefused):
     """Only original HTTP status, if received, and fail-stop classification.
 

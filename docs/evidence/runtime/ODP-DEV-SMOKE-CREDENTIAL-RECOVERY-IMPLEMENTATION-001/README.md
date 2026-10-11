@@ -877,6 +877,34 @@ UNAPPROVED native-ingress amendment, independent security review, ordinary deplo
 and reviewed final execution plan remain BEFORE-effect blockers. This is durable
 implementation progress, not ready/awaiting-review or operational approval.
 
+## Current ordinary-admission increment (isolated source only)
+
+Added `TrustedGitHubAdmissionObserver`: parent-memory bounded fixed GitHub GETs,
+newest-changing-attempt/rerun selection, actual dev environment proof, genuine
+retained ZIP restoration/manifest verification and canonical live-step/manifest
+predicates. ZIP downloads use one signed redirect to an independently pinned exact
+trusted storage host, with no Authorization/cookie forwarding or second redirect.
+No gh/credential child, proxy inheritance, dispatch, lease replay, cached admission
+flag or observer-result execution authority. All calls share one absolute timer;
+incomplete/oversized/duplicate-key/expired/ambiguous evidence stops permanently.
+Environment URL proof additionally refuses other-host and run-ID-prefix confusion.
+
+Offline tests added for fresh rereads, failed-after-commit/unknown/newer-rerun
+refusal, restoration-only predecessor selection, manifest and ZIP integrity,
+redirect credential isolation, pagination/completeness, redaction and real timer
+expiry. At the source anchor these are **unmeasured**; receipts will identify the
+actual clean tested SHA, not transfer earlier77db/af4 proofs. Fresh origin/dev
+readback remains e995aa26032542160a177d421ad13157dd6db058; canonical admission
+source was read at that ref. No ordinary release/CI/cloud/account calls occurred.
+
+NEXT remains full samepair canonical gate and normally authorized fresh-job
+consumer coordination, quarantine BEFORE own cleanup, exact-head declared/Web
+verification then actual task_finalize PR to Codex2. This is not final review
+ready. External writer exclusion, production measured reserves, explicit native
+custody amendment review, normal deployment and final reviewed plan still block
+all effects. Old quarantine/NULL binding and original incident-session UNKNOWN
+are unchanged.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
