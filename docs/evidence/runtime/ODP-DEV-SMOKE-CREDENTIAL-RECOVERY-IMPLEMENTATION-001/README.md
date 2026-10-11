@@ -974,6 +974,85 @@ exclusion, measured production bounds, independently reviewed native custody
 amendment, exact final plan and normal deployment remain before-effects blockers.
 No live effect or external credential material was used.
 
+## Gate increment: original terminal receipts (2026-10-11)
+
+Source anchors culminate at `d4f440de92065a30abe785ed226fe4cd9a3f7377`.
+The independent foreground native commits `e06dd1fbe`/`e46abad3e` are already
+ancestors of the gate anchor; no cherry-pick, branch reset or frozen-source edit.
+Fresh fetched origin/dev still reads `e995aa26032542160a177d421ad13157dd6db058`.
+All22 original receipt JSONs below are retained in receipts/ without changing
+measured SHA/command/status/duration. No grep waiting/count-only rerun occurred.
+
+Initial positive synthetic packet failed strict expiry and capability-reference
+checks: the historical packet clock and the same-named capability issue_event_id
+were corrected, not the production predicates. Original three pytest failures
+and Ruff failure remain failures. Additive canonical cleanup barrier preserves
+all default callers and can only stop, never waive checks. Final gate27 tests
+include the actual complete canonical evaluator, real isolated numeric TLS,
+duplicate/truncated bodies, dribble timeout, redirect nonforwarding, insecure
+cookie retention for cleanup only, receipt loss, actual parent timer and separate
+finite cleanup I/O reserves after gate quota exhaustion.
+
+| Exact clean measured head | Selection (exact command in JSON) | Receipt | Exit | Seconds |
+| --- | --- | --- | --- | --- |
+|63f58ef3a951|new gate tests, initial historical packet failure|f867aebb4041c7a2|1|11.882|
+|9d65dae9c020|new gate tests, capability lifecycle-reference failure|30066a7f0b3d9374|1|9.101|
+|c830c26e25f4|same gate tests, safe predicate diagnostic|efe086e8c4cc0db9|1|9.243|
+|3584e01f9239|new gate17 tests with corrected packet|d4b1434d66f78d8a|0|8.653|
+|3584e01f9239|three-file Ruff, import/fixture findings retained|707828171d53af7c|1|0.126|
+|3584e01f9239|existing recovery security + canonical dev-admin regressions|8e98ed5162fa8b6f|0|45.180|
+|f3db5fd03ae4|expanded gate26 tests, actual TLS/timer/receipt coverage|0a3449ff57edee32|0|14.450|
+|f3db5fd03ae4|three-file Ruff|14b2f20ab3a57695|0|0.486|
+|f3db5fd03ae4|diff check|c3f74d76f22a099e|0|0.037|
+|f3db5fd03ae4|declared boundary check|1812858c2c595be5|0|12.033|
+|f3db5fd03ae4|existing recovery/canonical gate regressions|6b557e43a53a4141|0|48.990|
+|d4f440de9206|gate27 tests including exhausted gate/separate cleanup quota|ccea4ee50be0f7a9|0|9.805|
+|d4f440de9206|three-file Ruff|00ad98449bcd880a|0|0.355|
+|d4f440de9206|diff check|e52b1191cddea837|0|0.082|
+|d4f440de9206|declared boundary check|001a84c2877e6e35|0|11.656|
+|d4f440de9206|declared six-file PG/API/BFF/invitation/journal/decoder/fullgate/workflow regression|b3297adfc7f2a120|0|623.054|
+|d4f440de9206|declared Web typecheck, initial incomplete tool PATH|6a3f6e0a82440ccf|1|0.694|
+|d4f440de9206|same declared Web typecheck, restored frozen graph + PATH|7f56cc543e593f4f|0|32.482|
+|d4f440de9206|actual production Web-store PG fence case, NOskip|562d4dcc96afd52a|0|20.747|
+|d4f440de9206|declared native consumer security/workflow102 offline regressions|17ae9f45c23cfa93|0|13.496|
+|d4f440de9206|seven actual Web auth/login/BFF Vitest files|e009bde03b09e844|0|4.567|
+|d4f440de9206|actual Web lint|5677e57287ec2272|0|5.423|
+
+The six-file selection's one missing-Node skip is NOT credited. Afterwards the
+actual declared Web typecheck, production TypeScript/PG-store child case and
+seven-file mounted Web/auth/CSRF tests ran against the BYTE-COPIED existing frozen
+Node graph, not a new install or an assumed skip. Donor path is the existing
+`/tmp/pantheon-worker-worktrees/pantheon/odp-identity-account-invitation-001`;
+root, Web and available package node_modules were copied privately so relative
+workspace links resolve THIS candidate's packages, not donor source. Root lock
+SHA256 matches donor AND origin/dev exactly:
+`bb287c16ade4a4a83abe9792499adab7ad8c38607fb6750dbd45f41e89edf9e2`.
+Node22.23.2 and cached real Corepack pnpm9.15.9 ran with network disabled and
+explicit local .bin PATH. No install/lock rewrite/module upgrade. Temporary graph
+copies are disposable and removed before incremental closeout. Web Vitest's
+isolated-DB-only skipped case is covered by the separate actual PG-store receipt,
+not reclassified. Actual lint has an explicit policy retry reason because pnpm
+lint/typecheck share the policy's apps/web selection fingerprint; it is a distinct
+command, not a count-only repeated typecheck.
+
+The current native consume source at foreground head e46 still constructs an
+EMPTY application bearer. Its102 mocked/offline tests do NOT establish an actual
+full canonical native gate: unchanged `config:operator_credential` requires the
+separate normally authorized application credential. This precise gap was sent
+through canonical task notes; the worker did not edit the four foreground-owned
+native files or weaken the guard. Native custody/credential ingress remains a
+reviewed before-effects blocker, not a license to manufacture an app token.
+
+This evidence commit is NOT the measured source head and does not inherit its
+exact-head receipts. NEXT: compose actual fresh source/admission rechecks,
+preflight-to-gate/fresh-job coordinator with genuine effect fences, resolve native
+application-credential/custody viability in the assigned foreground lane; declare
+the new gate test file as part of final verification; then final exact-head
+full/Web/300kB verification and task_finalize actualPR to Codex2. No final review
+readiness is claimed. External writer exclusion, measured production reserves,
+final reviewed plan, independent review and normal deployment still block effects.
+Old89 quarantine/NULL binding and interrupted original17 cleanup UNKNOWN remain.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
