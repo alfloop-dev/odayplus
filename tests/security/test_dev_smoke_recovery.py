@@ -1866,6 +1866,7 @@ def account_observer_payloads(p: dict, actions=None) -> dict:
             event["metadata"].update(root_event_id=actions._root["event_id"], capability_id=actions._capability_id,
                 capability_expires_at=(now + timedelta(seconds=540)).isoformat())
         events[5]["event_id"], events[6]["event_id"] = actions._issue_event_id, actions._rotation_event_id
+        events[5]["metadata"]["issue_event_id"] = ""
         events[6]["metadata"]["issue_event_id"] = actions._issue_event_id
     events = events[:4 if actions is None else 7]
     return {
