@@ -337,6 +337,14 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
             return api
         monkeypatch.setattr(c.gate, "UrllibHttpClient", api_client)
         monkeypatch.setattr(c.gate, "_web_client", lambda *args: web)
+        canonical_evaluate = c.gate.evaluate_gate
+        def inspected_evaluate(*args, **kwargs):
+            checks, report = canonical_evaluate(*args, **kwargs)
+            failed = [check.name for check in checks if check.ok is not True]
+            if failed:
+                pytest.fail(f"OFFLINE canonical evaluator failed checks: {failed}")
+            return checks, report
+        monkeypatch.setattr(c.gate, "evaluate_gate", inspected_evaluate)
     else:
         monkeypatch.setattr(c.gate, "evaluate_gate", mocked_gate)
     if failure and failure != "canonical":
