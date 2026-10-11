@@ -755,6 +755,68 @@ custody amendment, independent security review, normal deployment and exact
 foreground operational plan remain effects blockers. This is incremental source
 progress, not a ready/awaiting-review or completed-recovery claim.
 
+## Account/release/provenance observation increment (2026-10-11; not final submission)
+
+Anchors `eb4bc6952849` / `66d8909151a6` / `933a283fd386` / `79304aec8cd1`
+compose five fixed bounded Web/BFF GETs with the owned original session: actual
+Web+API matching nonempty SHA/profile/digest, complete user and tenant-audit
+inventories, old journal and new recovery inspection. Before-state stays only in
+parent memory. Reconciliation requires the same owner/plan/actions/custody/budget,
+successful same-pair target login, unchanged public selected fields of ALL accounts,
+exact old quarantine/NULL binding and invitation provenance, and matching new
+root/issuance/rotation. Pending/unknown/quarantined/malformed/duplicate/drifted
+lineage stops; GET cannot restore unknown rotation authority. Durable observation
+sub-operation starts/terminals contain no raw inventories, email, audit metadata,
+cookie or credential. The server's domain/binding separately fences non-public
+credential revisions/times; public snapshots alone cannot prove original password
+or all pre-existing session preservation. Historical original-session cleanup
+remains UNKNOWN.
+
+GETs share each phase's absolute deadline and existing16KiB JSON/64KiB total HTTP
+bound, without filtering/pagination/retry. Over-limit complete history is a
+concrete pre-effect blocker requiring reviewed bounded inventory support, never
+permission to truncate away provenance. Isolated negative tests cover wrong Web
+SHA/digest, tenant/roles/status, counts/duplicate IDs, old quarantine/binding,
+invitation/bootstrap, pending roots, altered original/target/other-account fields,
+wrong rotation/session and unknown execution; loopback TLS tests cover all five
+fixed read routes and one-use requests. These are not deployed runtime evidence.
+
+Fresh canonical fetch retained `origin/dev` at `e995aa26032542160a177d421ad13157dd6db058`.
+Canonical journal/user/audit response contracts were read from that ref; no branch
+sync/cherry-pick or frozen-source edits. Each exact clean-head command ran through
+the shared verification policy; original receipts, including failures, are retained:
+
+| Clean measured head | Selection (exact command in JSON) | Receipt | Exit | Seconds |
+| --- | --- | --- | --- | --- |
+|eb4bc6952849|security recovery pytest; fixture time arithmetic/TLS tuple assertions failed|86ff6869cc55b99d|1|20.144|
+|66d8909151a6|security recovery pytest; synthetic capability issue edge overwritten by original issue ID|adf2235542f388cb|1|18.343|
+|933a283fd386|security recovery pytest; corrected fixture edge|be313b57abee870b|0|18.909|
+|933a283fd386|two-file Ruff; import layout/explicit adjacent zip failed|692812745e2b8825|1|0.191|
+|79304aec8cd1|two-file frozen Ruff|7b6cd8364a4df267|0|0.106|
+|79304aec8cd1|`git diff --check`|9271922f460f0384|0|0.018|
+|79304aec8cd1|declared frozen code-boundary check|ea047e2832c5bc8f|0|10.130|
+|79304aec8cd1|declared six-file recovery/PG/API/BFF/invitation/journal/decoder/full-gate/workflow regression|47a7df44a3f7236f|0|605.325|
+|79304aec8cd1|declared consumer security/workflow regression|e35c35e4bf845bcc|0|8.399|
+
+Fixture and lint fixes are meaningful new heads, not repeated settled selections.
+Two single-shot pure-offline predicate diagnostics identified the fixture edge;
+no live reads or test-count-only reruns. Completion is original terminal exit,
+not summary grep/process-name polling. The suites used permitted `NODE_ENV=test`
+and documented user-bin PATH. One absent frozen-Node Web-store PG skip is NOT
+credited. No earlier Web receipts are reassigned, and this evidence commit's
+new SHA is not proven by the source-anchor receipts. No final-head Web
+lint/typecheck/300kB or final review readiness is claimed.
+
+NEXT: implement bounded independently pinned remote whole-tree review/latest CI
+and current ordinary admission observers; compose full same-pair gate,
+quarantine-before-own-cleanup and normally authorized fresh-job consumer orchestration
+with this account observer/session owner. Complete declared exact-head regression
+and actual Web checks, then `task_finalize.sh` actual PR submission to Codex2.
+External writer exclusion, measured production bounds, unapproved native custody
+amendment, independent review, normal deployment and final operational plan remain
+BEFORE-effect blockers. This dispatch delivers source progress only, not an
+operational approval or docs-only ready/awaiting-review handoff.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
