@@ -1142,6 +1142,62 @@ gates. After complete source composition, final exact-head declared/full/Web
 budget receipts and task_finalize real PR are mandatory. This is meaningful
 pushed source progress, NOT a ready/awaiting-review or completed-recovery claim.
 
+## Native application identity source checkpoint (2026-10-11)
+
+Anchors `925c2174ac59`, `1f4625cd64f6`, `7f111d5079cf` resolve the
+previous empty native application bearer WITHOUT relaxing canonical config.
+Verified current `origin/dev` e995aa26 `deploy_cloud_run_waji.sh` uses the existing
+`ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT` and first `ODP_AUTH_AUDIENCES` audience for
+application ID-token minting, separately from Cloud Run transport. The native
+workflow now projects these SAME non-secret protected-dev variables. Existing
+memory-only WIF/STS/IAM code generates application and transport tokens separately,
+supplies the actual API client/config, and validates ALL canonical config checks
+before evaluator/login. No account, principal map, permission or IAM grant changes.
+
+A same-project non-deployer smoke SA and fixed API first audience are mandatory;
+missing/drifted config refuses before federation. Negative mocked transport covers
+denied/empty/header-injected/oversized application responses and no retry/fallback.
+Exact current values, existing impersonation and least-privilege application RBAC
+MUST still be reconciled under the final independently reviewed operational plan;
+source syntax and mock tokens do not prove those grants. Worker read NO live
+runtime variables/grants and minted NO credential. Native launch custody remains
+an explicitly unapproved boundary amendment.
+
+The new offline composition case invokes the REAL full canonical evaluator with
+synthetic HTTP/lineage and mocked authority/identity observers. Original first
+failure used separately generated synthetic bundle and audit UUIDs; canonical
+`admin:credential_bundle_durable_acknowledgement` correctly refused. Added failed
+check-name diagnostics, then reused ONE packet's matching UUIDs; the canonical
+ACK predicate is unchanged. Both original failures remain immutable receipts.
+This passes the former empty-bearer source gap, not actual fresh-job consumption.
+
+All six original shared-policy receipts are retained byte-for-byte in receipts/:
+
+| Clean measured head | Command/selection (exact JSON retained) | Receipt | Exit | Seconds |
+| --- | --- | --- | --- | --- |
+|925c2174ac59|declared two-file native selection, mismatched synthetic packet|6889879e3e285e21|1|18.706|
+|1f4625cd64f6|same selection, failed-check diagnostics|a3b5dda227392bdb|1|17.751|
+|7f111d5079cf|declared native security/workflow selection, REAL offline evaluator|9ad22ac6d01ffc19|0|17.779|
+|7f111d5079cf|three-file frozen Ruff|aac6c0c94c1f4240|0|0.167|
+|7f111d5079cf|declared boundary check|8b08cbc3e4073ca0|0|10.407|
+|7f111d5079cf|declared diff check|5c51d6453f6c5b79|0|0.021|
+
+Commands used user-bin PATH and permitted offline NODE_ENV=test, frozen Python3.12.
+The scratch receipt printer raised KeyError AFTER saving the diff command's real
+exit0 receipt because empty output omits output_tail; the wrapper terminal was
+exit1, not misrepresented as a passing wrapper. Read the existing original receipt
+for command completion; no count-only or cosmetic rerun was made. No stdout grep
+wait or head reassignment. This evidence commit does not inherit source receipts.
+
+NEXT: final composition remains due: canonical addition of gate/preflight test
+selection, exact FINAL head entire declared PG/API/BFF/invitation/journal/decoder/
+fullgate/workflow and actual Web typecheck/lint/300kB receipts, then mandatory
+`task_finalize.sh` remote PR to Codex2. The diagnostic still unconditionally HOLDs;
+no effect/fresh-job dispatch coordinator was added. Genuine external writer
+exclusion, independent native-custody review, final exact operational plan and
+measured production reserves remain BEFORE-effects blockers. No final review
+readiness, actual consumption or completed recovery is claimed by this increment.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
