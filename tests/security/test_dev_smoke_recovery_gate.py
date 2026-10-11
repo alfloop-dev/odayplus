@@ -62,6 +62,23 @@ def foreground_gate(owned_sessions: Any, monkeypatch: Any):
                 event["metadata"].update(p, plan_digest=digest)
             raw.update(execution_id=p["execution_id"], password=target.password)
             raw["recovery_lineage"]["plan_digest"] = digest
+            if failure == "":
+                import json
+                import sys
+                from delivery_toolchain.release.provision_dev_smoke import credential_bundle_acknowledged, read_dev_credential_bundle
+                trace_lines = []
+                def trace(frame, event, arg):
+                    if event == "return" and arg is False and frame.f_code.co_name == "recovery_bundle_acknowledged":
+                        trace_lines.append(frame.f_lineno)
+                    return trace
+                previous = sys.gettrace()
+                sys.settrace(trace)
+                try:
+                    parsed = read_dev_credential_bundle(json.dumps(actions._bundle()), environment="dev", release_profile="dev-admin")
+                    acknowledged = credential_bundle_acknowledged(parsed, events, target_account=user)
+                finally:
+                    sys.settrace(previous)
+                assert acknowledged, f"synthetic lineage invalid at predicate lines {trace_lines}"
             config = gate.GateConfig(api_url=f.base.API_URL, web_url=owner._origin, expected_sha=SHA,
                 expected_manifest_digest=MANIFEST, expected_deployment="dev", release_profile="dev-admin",
                 bearer_token="OFFLINE-APP-BEARER", api_transport_token="OFFLINE-API-TRANSPORT",
@@ -86,6 +103,12 @@ def foreground_gate(owned_sessions: Any, monkeypatch: Any):
                 driver._failed_checks = [c.name for c in checks if c.ok is not True]
                 barrier(checks)
             monkeypatch.setattr(driver, "_before_cleanup", inspected_barrier)
+            evaluate = gate.evaluate_gate
+            def inspected_evaluate(*args, **kwargs):
+                checks, report = evaluate(*args, **kwargs)
+                driver._failed_checks = [c.name for c in checks if c.ok is not True]
+                return checks, report
+            monkeypatch.setattr(gate, "evaluate_gate", inspected_evaluate)
             def roundtrip(client, method, path, *, authenticated, body, headers):
                 calls.append(("api" if client._api else "web", method, path, budget._active[0]))
                 if failure == "transport" and path == "/api/v1/operator/users/audit-trail":
