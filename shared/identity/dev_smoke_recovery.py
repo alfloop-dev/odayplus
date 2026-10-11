@@ -21,22 +21,22 @@ from shared.auth import Principal
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.postgresql import PostgresEngine
 
+from .credential_service import CredentialService
 from .dev_smoke_journal import (
-    PRESERVED_ACCOUNT_ID,
-    REPOSITORY,
-    TENANT_ID,
-    CREDENTIAL_BUNDLE_SECRET_NAME,
-    DevSmokeBindingJournal,
-    ProvisioningJournal,
     _CUSTODIAN,
     _DIGEST,
     _SHA,
+    CREDENTIAL_BUNDLE_SECRET_NAME,
+    PRESERVED_ACCOUNT_ID,
+    REPOSITORY,
+    TENANT_ID,
+    DevSmokeBindingJournal,
+    ProvisioningJournal,
     _aware,
 )
-from .credential_service import CredentialService
-from .password_policy import PasswordPolicy
 from .invitation_provenance import invitation_provenance
 from .invitation_service import InvitationService, _scope
+from .password_policy import PasswordPolicy
 
 AUTHORIZATION_ID = "HUMAN-ODP-DEV-SMOKE-RECOVERY-20261011-001"
 TARGET_ACCOUNT_ID = "13faae19-21c6-4663-8e89-b93ea7f1107d"
@@ -944,7 +944,7 @@ def recovery_bundle_acknowledged(
                 or any(sum(e.get("event_id") == item["event_id"] for e in events) != 1 for item in ordered)):
             return False
         times = [datetime.fromisoformat(e["timestamp"]) for e in ordered]
-        return (all(_aware(t) for t in times) and all(a <= b for a, b in zip(times, times[1:]))
+        return (all(_aware(t) for t in times) and all(a <= b for a, b in zip(times, times[1:], strict=False))
                 and times[-1] < datetime.fromisoformat(plan["expires_at"]))
     except Exception:
         return False

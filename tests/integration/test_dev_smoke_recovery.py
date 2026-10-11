@@ -21,6 +21,8 @@ from modules.opsboard.auth import Credentials
 from shared.audit import AuditEvent
 from shared.identity.dev_smoke_journal import (
     AUTHORIZATION_ID as CREATION_AUTHORIZATION_ID,
+)
+from shared.identity.dev_smoke_journal import (
     PRESERVED_ACCOUNT_ID,
     TENANT_ID,
     DevSmokeBindingJournal,
@@ -33,15 +35,15 @@ from shared.identity.dev_smoke_recovery import (
     OLD_EXECUTION_ID,
     OLD_PLAN_DIGEST,
     OLD_QUARANTINE_EVENT_ID,
-    TARGET_ACCOUNT_ID,
-    RecoveryJournal,
-    RecoveryCapabilityService,
-    RecoveryBindingJournal,
     RECOVERY_BINDING_CORRELATION,
     RECOVERY_BINDING_KEYS,
-    recovery_bundle_lineage,
-    recovery_bundle_acknowledged,
+    TARGET_ACCOUNT_ID,
+    RecoveryBindingJournal,
+    RecoveryCapabilityService,
+    RecoveryJournal,
     RecoveryRefused,
+    recovery_bundle_acknowledged,
+    recovery_bundle_lineage,
 )
 from shared.identity.invitation_service import _scope
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
@@ -52,8 +54,8 @@ from tests.security.test_dev_smoke_recovery import MANIFEST, SHA, plan
 
 
 @pytest.fixture
-def recovery(identity_stack: Any) -> Any:
-    s = identity_stack
+def recovery(request: pytest.FixtureRequest) -> Any:
+    s = request.getfixturevalue("identity_stack")
     with s.db.connect(autocommit=True) as conn:
         # Identity administration fixture loads only 000011; add the actual
         # production Web bearer/session expansion before insertion regressions.
@@ -1160,6 +1162,7 @@ def test_binding_two_pg_pools_cannot_duplicate_intent_or_ack(recovery: Any, oper
 def test_actual_web_postgres_stores_refuse_old_verified_revision_after_rotation(recovery: Any) -> None:
     import os
     import subprocess
+
     from shared.identity.credential_service import CredentialService
     s = recovery
     root_path = Path.cwd()

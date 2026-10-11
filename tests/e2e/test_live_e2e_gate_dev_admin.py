@@ -1890,8 +1890,8 @@ def test_full_gate_recovery_bundle_keeps_invitation_and_all_auth_checks(monkeypa
     {"dev_admin_bundle_schema_version": 3}, {"dev_admin_bundle_recovery_lineage": None},
 ])
 def test_recovery_gate_config_cannot_drop_ids_to_skip_ack(change: Any) -> None:
-    from tests.security.test_dev_smoke_recovery import recovery_consumer_inputs
     from shared.identity.dev_smoke_recovery import recovery_bundle_lineage
+    from tests.security.test_dev_smoke_recovery import recovery_consumer_inputs
     raw, _, _ = recovery_consumer_inputs()
     config = {"dev_admin_bundle_account_id": raw["account_id"], "dev_admin_bundle_tenant_id": raw["tenant_id"],
               "dev_admin_bundle_execution_id": raw["execution_id"], "dev_admin_bundle_schema_version": 2,

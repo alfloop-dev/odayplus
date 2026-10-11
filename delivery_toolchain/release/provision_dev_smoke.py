@@ -82,15 +82,17 @@ from shared.identity.dev_smoke_journal import (
 from shared.identity.dev_smoke_journal import (
     validate_foreground_plan as validate_foreground_plan,
 )
-from shared.identity.invitation_provenance import invitation_provenance
 from shared.identity.dev_smoke_recovery import (
     AUTHORIZATION_ID as RECOVERY_AUTHORIZATION_ID,
-    TARGET_ACCOUNT_ID,
-    OLD_EXECUTION_ID,
-    RecoveryBundleLineage,
-    recovery_bundle_lineage,
-    recovery_bundle_acknowledged,
 )
+from shared.identity.dev_smoke_recovery import (
+    OLD_EXECUTION_ID,
+    TARGET_ACCOUNT_ID,
+    RecoveryBundleLineage,
+    recovery_bundle_acknowledged,
+    recovery_bundle_lineage,
+)
+from shared.identity.invitation_provenance import invitation_provenance
 
 
 def verify_consumed_dev_admission(

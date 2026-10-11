@@ -28,14 +28,18 @@ from modules.opsboard.application.user_role_management import (
     UserRolePolicyError,
 )
 from shared.auth import Principal
-from shared.identity.invitation_service import InvitationRefused, InvitationService
 from shared.identity.dev_smoke_recovery import (
     PRESERVED_ACCOUNT_ID as RECOVERY_ACTOR_ID,
+)
+from shared.identity.dev_smoke_recovery import (
     TENANT_ID as RECOVERY_TENANT_ID,
+)
+from shared.identity.dev_smoke_recovery import (
     RecoveryBindingJournal,
     RecoveryRefused,
     RecoveryReservation,
 )
+from shared.identity.invitation_service import InvitationRefused, InvitationService
 
 # ---------------------------------------------------------------------------
 # Request DTOs

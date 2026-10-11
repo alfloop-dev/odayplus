@@ -1243,6 +1243,45 @@ exclusion, independent native-custody review, final exact operational plan and
 measured production reserves remain BEFORE-effects blockers. No final review
 readiness, actual consumption or completed recovery is claimed by this increment.
 
+## Whole-composition verification checkpoint at 27f689f777b6
+
+The first submission measurement at clean `27f689f777b6` passed all five
+canonical commands and the declared supplemental gate/admission, seven-file
+Web, lint and OpenAPI checks. The actual PG/Web-store child ran (full pytest
+output has no displayed skip); the separate standalone Web selection's one
+isolated-DB skip is not credited independently. No final build/budget was run
+at this head. Original receipt JSONs are retained unchanged in `receipts/`:
+
+| Command/selection | Receipt | Exit | Seconds |
+| --- | --- | --- | --- |
+| canonical diff | 63564288122d1c71 | 0 | 0.018 |
+| canonical six-file PG/API/invitation/journal/fullgate/workflow | 57fa63ebb9135279 | 0 | 679.450 |
+| canonical boundary | a9969f9eee561a97 | 0 | 15.233 |
+| canonical Web typecheck | e79bf2c1b8ea1cc4 | 0 | 10.600 |
+| canonical native consumer/workflow | 36ef53639c9050a8 | 0 | 20.678 |
+| supplemental gate/preflight + automatic-admission | e77b2b5473437cd8 | 0 | 40.330 |
+| actual seven-file Web/auth/BFF | 00854f763148a32f | 0 | 8.199 |
+| actual Web lint | 12e06af9b4e5dc8c | 0 | 5.984 |
+| OpenAPI/client additive-only drift | 009a03da54fd8a87 | 0 | 22.434 |
+| all changed-Python Ruff (FAILED9 findings) | 36f2a5740854017b | 1 | 0.241 |
+| SAME Ruff selection concise diagnostic | 0cd4e7b1f3f1c559 | 1 | 0.125 |
+
+The original Ruff output tail truncated earlier actionable findings; the
+explicitly declared/reasoned concise diagnostic obtained their locations, not
+a pass or count-only remeasurement. A separate Ruff `--diff` diagnostic proposed
+seven import-order corrections without modifying files (exit1). Targeted edits
+apply those corrections, explicitly mark adjacent timestamp zip `strict=False`,
+and use pytest's `request.getfixturevalue` for the imported identity fixture
+instead of shadowing its binding. No config suppressions, permission/gate
+relaxation, dependency upgrades or runtime-effect changes were made.
+
+The corrected source is a NEW head. These receipts are not transferred to it;
+all canonical and supplemental final checks must run at that clean anchor,
+including production build/unchanged300kB budget. Final-head receipts remain in
+the shared ignored receiptstore and the canonical task note to avoid a post-test
+commit invalidating exact-head proof. Review submission is only through the
+actual `task_finalize.sh` PR/atomic-status flow, not a fabricated handoff.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret

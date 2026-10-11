@@ -211,7 +211,10 @@ class IdentityUserRoleManagementService:
                 # omitted, NEVER projected with arbitrary credential fields. A
                 # missing event must make downstream lineage verification fail.
                 from shared.identity.dev_smoke_recovery import (
-                    RecoveryJournal, RecoveryCapabilityService, RECOVERY_BINDING_KEYS, RECOVERY_BINDING_TYPE,
+                    RECOVERY_BINDING_KEYS,
+                    RECOVERY_BINDING_TYPE,
+                    RecoveryCapabilityService,
+                    RecoveryJournal,
                 )
                 allowed = {RecoveryJournal._TYPE: RecoveryJournal._KEYS,
                            RecoveryCapabilityService._CAP_TYPE: RecoveryCapabilityService._CAP_KEYS,
