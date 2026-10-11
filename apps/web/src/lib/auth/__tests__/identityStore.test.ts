@@ -41,6 +41,21 @@ describe("production credential/session SQL adapter", () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
+  it("password change returns its committed revision and rejects missing/stale verification", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1, rows: [{ credential_revision: "8" }] });
+    const store = new PostgresIdentityStore();
+    Object.assign(store, { _pool: { query } });
+    await expect(store.changePassword(accountId, "offline-new-phc")).rejects.toThrow("CREDENTIAL_REVISION_REQUIRED");
+    expect(query).not.toHaveBeenCalled();
+    await expect(store.changePassword(accountId, "offline-new-phc", "7")).resolves.toBe("8");
+    expect(query).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("RETURNING credential_revision::text"),
+      [accountId, "offline-new-phc", "7"]);
+    expect(query.mock.calls[0][0]).toContain("credential_revision = $3::bigint");
+    query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    await expect(store.changePassword(accountId, "offline-new-phc", "7")).rejects.toThrow("CREDENTIAL_REVISION_CHANGED");
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
   it("requires verified local-password revision and forwards it to the atomic INSERT fence", async () => {
     const query = vi.fn().mockResolvedValue({ rowCount: 1 });
     const store = new PostgresSessionStore();

@@ -9,8 +9,8 @@ import {
   type WebSession,
 } from "../session";
 import { validatePasswordPolicy } from "../localAuth";
-import { MockIdentityStore, setIdentityStoreForTests } from "../identityStore";
-import { MockSessionStore, setSessionStoreForTests } from "../sessionStore";
+import { MockIdentityStore, PostgresIdentityStore, setIdentityStoreForTests } from "../identityStore";
+import { MockSessionStore, PostgresSessionStore, setSessionStoreForTests } from "../sessionStore";
 
 const SECRET = "test-session-secret-with-at-least-32-bytes";
 
@@ -309,6 +309,83 @@ describe("password policy & change route", () => {
       ),
     ).resolves.toMatchObject({ valid: true });
     expect(sessionStore.sessions.size).toBe(3);
+  });
+
+  it("mounted production password change carries its committed revision and revokes only own old sessions", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    vi.stubEnv("ODP_IDENTITY_TOKEN_SIGNING_KEY", SECRET);
+    vi.stubEnv("ODP_AUTH_LOCAL_AUDIENCES", "urn:odp:api:local");
+    vi.stubEnv("ODP_PRODUCT_MODE", "production");
+    vi.stubEnv("ODP_WEB_BASE_URL", "https://ops.oday.plus");
+    const now = new Date();
+    const records = new Map(["old-session", "other-session", "unrelated-session"].map((sid) => [sid, {
+      session_id: sid, account_id: sid === "unrelated-session" ? "unrelated-account" : "account-1",
+      provider: "local_password", access_token: "offline-token", session_subject: "operator",
+      tenant_id: "tenant-1", created_at: now, last_seen_at: now, idle_expires_at: new Date(+now + 3600000),
+      absolute_expires_at: new Date(+now + 3600000), revoked_at: null as Date | null,
+      revoked_reason: null as string | null, rotated_from: null as string | null,
+    }]));
+    const identityQuery = vi.fn(async (sql: string, params: string[]) => {
+      if (sql.startsWith("SELECT account_id, tenant_id")) return { rows: [{ account_id: "account-1",
+        tenant_id: "tenant-1", username: "operator", email: "operator@example.invalid", status: "active" }] };
+      if (sql.startsWith("SELECT account_id, phc_hash")) return { rows: [{ account_id: "account-1",
+        phc_hash: "offline-old-phc", must_change: true, credential_revision: "7" }] };
+      expect(sql).toContain("credential_revision = $3::bigint");
+      expect(sql).toContain("RETURNING credential_revision::text");
+      expect(params).toEqual(["account-1", "offline-new-phc", "7"]);
+      return { rowCount: 1, rows: [{ credential_revision: "8" }] };
+    });
+    const sessionQuery = vi.fn(async (sql: string, params: any[]) => {
+      if (sql.startsWith("SELECT")) {
+        const row = records.get(params[0]);
+        return { rows: row && !row.revoked_at ? [row] : [] };
+      }
+      if (sql.startsWith("INSERT")) {
+        // Exercise the real PostgresSessionStore revision guard and SQL adapter.
+        expect(params[10]).toBe("8");
+        records.set(params[0], { session_id: params[0], account_id: params[1], provider: params[2],
+          access_token: params[3], session_subject: params[4], tenant_id: params[5], created_at: params[6],
+          last_seen_at: params[6], idle_expires_at: params[7], absolute_expires_at: params[8],
+          rotated_from: params[9], revoked_at: null, revoked_reason: null });
+      } else if (sql.includes("revoked_at = now()")) {
+        for (const row of records.values()) {
+          if (row.account_id === params[0] && row.session_id !== params[2]) {
+            row.revoked_at = now;
+            row.revoked_reason = params[1];
+          }
+        }
+      }
+      return { rowCount: 1, rows: [] };
+    });
+    const identity = new PostgresIdentityStore();
+    const sessions = new PostgresSessionStore();
+    Object.assign(identity, { _pool: { query: identityQuery } });
+    Object.assign(sessions, { _pool: { query: sessionQuery } });
+    vi.spyOn(identity, "verifyPassword").mockResolvedValue({ valid: true, newHash: null });
+    vi.spyOn(identity, "hashPassword").mockResolvedValue("offline-new-phc");
+    setIdentityStoreForTests(identity);
+    setSessionStoreForTests(sessions);
+    const seconds = Math.floor(+now / 1000);
+    const cookie = await sealWebSessionReference({ kind: "web-session", sid: "old-session",
+      provider: "local_password", issuedAt: seconds, expiresAt: seconds + 3600 }, SECRET);
+    const request = new NextRequest("https://ops.oday.plus/auth/password", { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({
+        currentPassword: "OldPassword123!", newPassword: "NewStrongPassword2026!",
+        verifiedCredentialRevision: "999", // Caller cannot choose the authoritative revision.
+      }) });
+    request.headers.set("origin", "https://ops.oday.plus");
+    request.cookies.set(webSessionCookieName, cookie);
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    expect(records.get("old-session")?.revoked_reason).toBe("password_change");
+    expect(records.get("other-session")?.revoked_reason).toBe("password_change");
+    expect(records.get("unrelated-session")?.revoked_at).toBeNull();
+    const freshCookie = response.headers.get("set-cookie")?.match(/__Host-oday_web_session=([^;]+)/)?.[1];
+    const replacement = await readWebSession(freshCookie, { secret: SECRET });
+    expect(replacement?.sid).not.toBe("old-session");
+    expect(replacement?.accountId).toBe("account-1");
+    expect(records.get(replacement!.sid!)?.revoked_at).toBeNull();
+    expect(identityQuery.mock.calls.filter(([sql]) => sql.startsWith("SELECT account_id, phc_hash"))).toHaveLength(1);
   });
 
   it.each(["exact", "nfkc-equivalent"])(

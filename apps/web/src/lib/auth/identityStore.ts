@@ -42,8 +42,8 @@ export interface IdentityStore {
   updatePasswordHash(accountId: string, newHash: string, expectedRevision?: string): Promise<string | void>;
   /** Hash a new password for storage. */
   hashPassword(password: string): Promise<string>;
-  /** Update password credential with new hash. */
-  changePassword(accountId: string, newHash: string): Promise<void>;
+  /** CAS password change; return the revision committed with this hash. */
+  changePassword(accountId: string, newHash: string, expectedRevision?: string): Promise<string>;
   /** Perform dummy verification to prevent timing-based account enumeration. */
   dummyVerify(): Promise<void>;
 }
@@ -223,14 +223,20 @@ export class PostgresIdentityStore implements IdentityStore {
     });
   }
 
-  async changePassword(accountId: string, newHash: string): Promise<void> {
+  async changePassword(accountId: string, newHash: string, expectedRevision?: string): Promise<string> {
+    if (!expectedRevision || !/^[1-9][0-9]{0,18}$/.test(expectedRevision)) {
+      throw new Error("CREDENTIAL_REVISION_REQUIRED");
+    }
     const pool = await this.pool();
-    await pool.query(
+    const result = await pool.query(
       `UPDATE identity.password_credentials
        SET phc_hash = $2, must_change = false, last_rotated_at = now(), updated_at = now()
-       WHERE account_id = $1`,
-      [accountId, newHash],
+       WHERE account_id = $1 AND credential_revision = $3::bigint
+       RETURNING credential_revision::text`,
+      [accountId, newHash, expectedRevision],
     );
+    if (result.rowCount !== 1) throw new Error("CREDENTIAL_REVISION_CHANGED");
+    return result.rows[0].credential_revision;
   }
 
   async dummyVerify(): Promise<void> {
@@ -356,13 +362,16 @@ export class MockIdentityStore implements IdentityStore {
     return password.normalize("NFKC"); // Mock: store plaintext
   }
 
-  async changePassword(accountId: string, newHash: string): Promise<void> {
+  async changePassword(accountId: string, newHash: string, expectedRevision?: string): Promise<string> {
     for (const [key, entry] of this.accounts.entries()) {
       if (entry.accountId === accountId) {
+        if (expectedRevision !== undefined && entry.credentialRevision !== expectedRevision) {
+          throw new Error("CREDENTIAL_REVISION_CHANGED");
+        }
         const credentialRevision = entry.phcHash !== newHash || entry.mustChange
           ? String(BigInt(entry.credentialRevision) + 1n) : entry.credentialRevision;
         this.accounts.set(key, { ...entry, phcHash: newHash, mustChange: false, credentialRevision });
-        return;
+        return credentialRevision;
       }
     }
     throw new Error("Account not found");

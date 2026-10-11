@@ -129,6 +129,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const identityStore = getDefaultIdentityStore();
   let account: IdentityAccount | null = null;
+  let committedCredentialRevision: string | undefined;
   if (identityStore) {
     try {
       account = await accountForSession(session, identityStore);
@@ -174,7 +175,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Hash exactly the normalized value that policy checked. IdentityStore
       // implementations use Argon2id and persist only its PHC representation.
       const newHash = await identityStore.hashPassword(normalizedNewPassword);
-      await identityStore.changePassword(account.accountId, newHash);
+      committedCredentialRevision = await identityStore.changePassword(
+        account.accountId, newHash, credential.credentialRevision,
+      );
     } catch {
       return errorResponse(
         503,
@@ -248,6 +251,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       idleTimeoutMs: DEFAULT_SESSION_IDLE_TIMEOUT_MS,
       absoluteLifetimeMs: Math.max(1, (session.expiresAt - now) * 1000),
       rotatedFrom: session.sid,
+      verifiedCredentialRevision: committedCredentialRevision,
     });
     // Password rotation invalidates this session and every other session for
     // the account. Excluding the new row keeps the response usable.
