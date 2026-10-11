@@ -871,6 +871,61 @@ def test_binding_revalidates_postrotation_preservation_session_plan_source(recov
     assert len(s.audit.list_events(correlation_id=RECOVERY_BINDING_CORRELATION)) == (1 if intent else 0)
 
 
+@pytest.mark.parametrize("operation", ["intent", "ack"])
+def test_binding_postcommit_receipt_loss_quarantines_without_replay(recovery: Any, monkeypatch: Any, operation: str) -> None:
+    s = recovery
+    root, cap = binding_ready(s)
+    intent = s.binding.binding_intent(s.principal, root) if operation == "ack" else None
+    before, old = snapshot(s), old_events(s)
+    # The original service transaction commits, then receipt conversion fails.
+    # A later GET may resolve truth but cannot resume the foreground attempt.
+    with monkeypatch.context() as patch:
+        patch.setattr(s.binding, "_binding_receipt", lambda _e: (_ for _ in ()).throw(RuntimeError("private-lost-reply")))
+        with pytest.raises(RecoveryRefused, match="^RECOVERY_BINDING_UNAVAILABLE$"):
+            if operation == "intent":
+                s.binding.binding_intent(s.principal, root)
+            else:
+                s.binding.binding_acknowledge(s.principal, root, intent_event_id=intent["audit_event_id"], put_status=201)
+    observed = s.binding.binding_inspect(s.principal)
+    assert observed["stage"] == ("binding-intent" if operation == "intent" else "binding-acknowledged")
+    s.recovery.quarantine(s.principal, root)
+    assert not binding_proven(s, root, cap, intent or observed)
+    with pytest.raises(RecoveryRefused):
+        s.binding.binding_intent(s.principal, root)
+    with pytest.raises(RecoveryRefused):
+        s.binding.binding_acknowledge(s.principal, root,
+            intent_event_id=intent["audit_event_id"] if intent else observed["audit_event_id"], put_status=201)
+    assert snapshot(s) == before and old_events(s) == old
+    assert s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("drift", ["old_binding", "duplicate_rotation", "consumed_time", "rotation_reference"])
+def test_binding_rechecks_persisted_old_and_new_lineage(recovery: Any, drift: str) -> None:
+    s = recovery
+    root, _cap = binding_ready(s)
+    if drift == "old_binding":
+        old = s.audit.list_events(correlation_id=ProvisioningJournal._CORRELATION)[0]
+        s.audit.record(AuditEvent(event_type=DevSmokeBindingJournal._TYPE, actor=DevSmokeBindingJournal._ACTOR,
+            action="DEV_SMOKE_BINDING", resource=DevSmokeBindingJournal._CORRELATION,
+            correlation_id=DevSmokeBindingJournal._CORRELATION, outcome="success", metadata={
+                **old.metadata, "account_id": TARGET_ACCOUNT_ID, "stage": "binding-intent",
+                "secret_name": "ODP_DEV_ADMIN_CREDENTIAL_BUNDLE", "credential_binding_verified": False,
+            }))
+    elif drift == "duplicate_rotation":
+        rotation = s.capabilities._cap_events()[-1]
+        s.audit.record(AuditEvent(event_type=rotation.event_type, actor=rotation.actor, action=rotation.action,
+            resource=rotation.resource, correlation_id=rotation.correlation_id, outcome="success", metadata=rotation.metadata))
+    elif drift == "consumed_time":
+        s.engine.execute("UPDATE identity.dev_smoke_recovery_capabilities SET consumed_at = consumed_at + interval '1 second'")
+    else:
+        s.engine.execute("UPDATE identity.dev_smoke_recovery_capabilities SET rotation_event_id = ?", (str(uuid4()),))
+    before = snapshot(s)
+    with pytest.raises(RecoveryRefused):
+        s.binding.binding_intent(s.principal, root)
+    assert snapshot(s) == before
+    assert s.binding.binding_inspect(s.principal) is None
+
+
 @pytest.mark.parametrize("status", [204, 200, 500, True, "201", None])
 def test_binding_non201_uncertain_reply_cannot_ack_or_restart(recovery: Any, status: Any) -> None:
     s = recovery
@@ -914,12 +969,24 @@ def test_binding_audit_or_real_pg_commit_failure_never_returns_success(recovery:
     intent = s.binding.binding_intent(s.principal, root) if operation == "ack" else None
     before, old = snapshot(s), old_events(s)
     if failure == "audit":
-        monkeypatch.setattr(s.audit, "record", lambda _e: (_ for _ in ()).throw(RuntimeError("private-value")))
+        real_record = s.audit.record
+
+        def refuse_binding(event: AuditEvent) -> AuditEvent:
+            if event.correlation_id == RECOVERY_BINDING_CORRELATION:
+                raise RuntimeError("private-value")
+            return real_record(event)
+
+        monkeypatch.setattr(s.audit, "record", refuse_binding)
     else:
         with s.db.connect(autocommit=True) as conn:
             conn.execute("""
                 CREATE FUNCTION odp_runtime.refuse_binding_commit() RETURNS trigger AS $$
-                BEGIN RAISE EXCEPTION 'private-commit-value'; END;
+                BEGIN
+                    IF NEW.correlation_id LIKE 'dev-smoke-recovery-binding:%' THEN
+                        RAISE EXCEPTION 'private-commit-value';
+                    END IF;
+                    RETURN NEW;
+                END;
                 $$ LANGUAGE plpgsql;
                 CREATE CONSTRAINT TRIGGER binding_commit_failure
                 AFTER INSERT ON odp_runtime.durable_audit_events

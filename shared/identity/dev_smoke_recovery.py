@@ -25,6 +25,7 @@ from .dev_smoke_journal import (
     PRESERVED_ACCOUNT_ID,
     REPOSITORY,
     TENANT_ID,
+    CREDENTIAL_BUNDLE_SECRET_NAME,
     DevSmokeBindingJournal,
     ProvisioningJournal,
     _CUSTODIAN,
@@ -641,14 +642,21 @@ class RecoveryBindingJournal(RecoveryCapabilityService):
                     or type(m["put_status"]) is not int or m["put_status"] != (0 if index == 0 else 201)
                     or m["execution_authorized"] is not False or m["credential_binding_verified"] is not False
                     or m["secret_values_redacted"] is not True
+                    or m["secret_name"] != CREDENTIAL_BUNDLE_SECRET_NAME
                     or (index and {k: v for k, v in m.items() if k not in {"stage", "put_status"}} != {
                         k: v for k, v in events[0].metadata.items() if k not in {"stage", "put_status"}})):
+                raise RecoveryRefused("RECOVERY_BINDING_INVALID")
+            plan = {k: m[k] for k in _PLAN_KEYS}
+            if (validate_recovery_plan(plan, release_sha=m["release_sha"], manifest_digest=m["manifest_digest"],
+                                       now=events[0].occurred_at) != m["plan_digest"]
+                    or event.occurred_at < events[0].occurred_at
+                    or event.occurred_at >= datetime.fromisoformat(m["expires_at"])
+                    or any(type(m[k]) is not str or str(UUID(m[k])) != m[k] or not UUID(m[k]).int for k in (
+                        "root_event_id", "issuer_session_id", "capability_id", "capability_issue_event_id", "rotation_event_id"))):
                 raise RecoveryRefused("RECOVERY_BINDING_INVALID")
         return events
 
     def _post_rotation(self, principal: Principal, reservation: RecoveryReservation) -> dict[str, Any]:
-        from .dev_smoke_journal import CREDENTIAL_BUNDLE_SECRET_NAME
-
         root = self._root(principal, reservation)
         m = root.metadata
         # No bearer/hash/PHC is read for binding. Hold account/credential/session
@@ -691,6 +699,7 @@ class RecoveryBindingJournal(RecoveryCapabilityService):
         expires = datetime.fromisoformat(row["expires_at"])
         count = rotation.metadata.get("revoked_target_sessions")
         if (type(count) is not int or count < 0
+                or type(issued.metadata.get("revoked_target_sessions")) is not int
                 or not root.occurred_at <= issued.occurred_at <= rotation.occurred_at < expires
                 or expires > min(issued.occurred_at + timedelta(seconds=600), datetime.fromisoformat(m["expires_at"]))):
             raise RecoveryRefused("RECOVERY_ROTATION_UNVERIFIED")

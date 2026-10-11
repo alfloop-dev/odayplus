@@ -293,6 +293,37 @@ effect blockers. Final exact-head declared suite/Web budget, independent Codex2
 security review and normal deployment remain mandatory. Old history/binding NULL
 and interrupted-original-session uncertainty stay unchanged; no live effects.
 
+## Internal binding producer checkpoint (not mounted, no effects)
+
+Anchor6530bb93b54b adds `RecoveryBindingJournal`: same-engine append-only
+post-rotation intent/ACK with exact root/session/source/expiry, original identity/
+credential preservation, exact target identity and reserved revision+1, consumed
+capability/signed issue/rotation and old quarantine/NULL-binding/invitation fences.
+A live fresh local-password target session at the rotated verified revision is
+required; account/credential/session SHARE locks fence the append. No PHC/bearer/
+capability hash is queried for binding. Inspection is no continuation authority.
+Root quarantine invalidates the consumer without rewriting either ledger.
+
+The isolated PG producer roundtrip feeds actual mounted allowlisted tenant audit
+and user readbacks into the strict schema2 predicate. This is a synthetic201
+declaration, NOT a real external response, PUT or consumer. The internal ledger
+is intentionally not mounted: the reviewed trusted foreground response boundary,
+finite memory-custody executor, writer exclusion and native fresh-consumer input
+remain outstanding. No claim of end-to-end supported executable recovery.
+
+Retained initial failures at clean6530:
+- `29480650bb7f87a9`: focused binding pytest command exit127,0.001s because wake
+  PATH omitted standard user bin containing the installed uv. No tests ran.
+- `a1adc3a51ec70bdb`: explicit same-selection retry with user-bin PATH restored,
+  exit1,70.103s. Two rollback test failures: generic injected audit/commit failure
+  also broke subsequent mounted readback authentication audit, not just binding.
+  Narrowed injection to binding correlation only; no failure erased/relabelled.
+
+The follow-up source also validates ledger plan/ID/timestamps before safe
+inspection, rejects boolean issue counts, and adds committed-receipt-loss/new
+quarantine and old/new-lineage drift cases. New-head measurement is pending.
+These failure receipts are not final verification at the follow-up SHA.
+
 ## Live effect status
 
 No account/credential/session effect, database/cloud access, secret intent/PUT/ACK,
