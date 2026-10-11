@@ -238,7 +238,10 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
       if (url.includes("/network-listings")) return respond({
         source: "api", heatZones: [], listingSources: [], candidates: [],
         listings: [{ id: "L-LIVE-1", heatZoneId: "HZ-LIVE-1", status: "new", hardRuleFailures: [] }],
-        siteReviews: [{ id: "REV-LIVE-1", status: "pending" }, { id: "REV-LIVE-2", status: "pending" }],
+        siteReviews: ["REV-LIVE-1", "REV-LIVE-2"].map((id) => ({
+          id, candidateId: "CS-LIVE-1", status: "pending", requestedByRoleId: "expansionManager",
+          reviewerRoleIds: ["opsLead"], requestedAt: "2026-10-11T12:00:00Z", reasonRequired: true,
+        })),
         expansionSteps: [], assistedIntakes: [],
       });
       if (url.endsWith("/network-scoring")) return respond({ source: "api", candidates: [] });

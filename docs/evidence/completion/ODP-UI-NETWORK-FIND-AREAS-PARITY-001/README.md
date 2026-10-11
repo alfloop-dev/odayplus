@@ -95,6 +95,12 @@ versus authorized projected count, matching gate and badge). Existing initial
 403 projected-count regressions remain unchanged. Exact-head declared receipts
 must pass before atomic resubmission; no historical visual/CI evidence is
 transferred to this head. No live credentials, grants, or business writes.
+The first anchor's real failed receipts are retained: missing pnpm/uv PATH,
+missing root workspace-bin PATH, oversized Git fixture copies, incomplete
+shallow evidence ancestry/dependency wiring, and two malformed new reload
+fixtures missing reviewerRoleIds. Correct the fixture shape, not assertions;
+use installed tools and a genuine same-source Git clone with required evidence
+ancestry/dependencies for the unchanged full acceptance selection.
 
 ## Historical original source evidence (unchanged)
 
