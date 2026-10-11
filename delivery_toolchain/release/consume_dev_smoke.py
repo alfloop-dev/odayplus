@@ -380,13 +380,32 @@ def _absolute_deadline(deadline: float):
         signal.signal(signal.SIGALRM, previous)
 
 
+class _UncertaintyLatch:
+    """One-way per-consumer latch shared by the API and Web observers.
+
+    Set on the FIRST uncertain session effect (lost/malformed login reply,
+    unacknowledged/lost logout, duplicate logout, owned-inventory overflow).
+    Never cleared: a later 401/200 cannot prove the earlier effect's outcome.
+    """
+    def __init__(self) -> None:
+        self.latched = False
+
+
+_REVOCATION_READS = frozenset({"/auth/session", "/api/v1/auth/principal"})
+
+
 class _ObservedWeb:
     """Memory-only owned cookies plus safe ACK times; no account-wide cleanup.
 
     A login may commit even when its reply is lost or malformed. Such custody
     loss is UNKNOWN, never successful cleanup, and cannot authorize another login.
+    Once latched, ONLY bounded cleanup for an already-owned cookie reaches
+    transport: its single unattempted logout and session/principal revocation
+    reads. Every other request (including canonical evaluator continuation to
+    negative/form logins) is refused locally before the client is called.
     """
-    def __init__(self, client: Any, *, execution_id: str, deadline: float, cleanup_deadline: float) -> None:
+    def __init__(self, client: Any, *, execution_id: str, deadline: float, cleanup_deadline: float,
+                 latch: _UncertaintyLatch | None = None) -> None:
         self.client = client
         self.execution_id = execution_id
         self.deadline = deadline
@@ -395,6 +414,15 @@ class _ObservedWeb:
         self._owned: dict[str, dict[str, bool]] = {}
         self._cleanup_unknown = False
         self._cleaning = False
+        self._latch = latch if latch is not None else _UncertaintyLatch()
+
+    @property
+    def uncertainty_latched(self) -> bool:
+        return self._latch.latched
+
+    def _unknown(self) -> None:
+        self._cleanup_unknown = True
+        self._latch.latched = True
 
     def cleanup_owned_sessions(self) -> bool:
         """One logout per owned cookie, even after evaluator early return/exception.
@@ -417,8 +445,8 @@ class _ObservedWeb:
                                          headers=headers, follow_redirects=False)
                 if (not state["logout_acknowledged"] or session.failed or session.status != 401
                         or principal.failed or principal.status not in {401, 403}):
-                    self._cleanup_unknown = True
-            return not self._cleanup_unknown
+                    self._unknown()
+            return not self._cleanup_unknown and not self._latch.latched
         finally:
             self._owned.clear()  # Best effort reference release, not zeroization.
             self._cleaning = False
@@ -427,9 +455,13 @@ class _ObservedWeb:
         header = (kwargs.get("headers") or {}).get("cookie", "")
         cookie = header.removeprefix("__Host-oday_web_session=")
         state = self._owned.get(cookie)
+        if self._latch.latched and not (state is not None and (
+                (method == "GET" and path in _REVOCATION_READS)
+                or (method == "POST" and path == "/auth/logout" and not state["logout_attempted"]))):
+            return gate.HttpResponse(status=0, error="native consumer uncertainty latched; cleanup only")
         if method == "POST" and path == "/auth/logout" and state is not None:
             if state["logout_attempted"]:
-                self._cleanup_unknown = True
+                self._unknown()
                 return gate.HttpResponse(status=0, error="native consumer duplicate logout refused")
             state["logout_attempted"] = True  # Intent before the single request.
         cleanup = path in {"/auth/logout", "/auth/session", "/api/v1/auth/principal"} and (self._cleaning or time.monotonic() >= self.deadline)
@@ -441,17 +473,26 @@ class _ObservedWeb:
                 issued = response.cookies.get("__Host-oday_web_session", "")
                 if isinstance(issued, str) and issued and len(issued) <= 8192 and not any(ch in issued for ch in ";\r\n"):
                     if len(self._owned) >= 4 or issued in self._owned:
-                        self._cleanup_unknown = True
+                        self._unknown()
                     else:
                         self._owned[issued] = {"logout_attempted": False, "logout_acknowledged": False}
+                    # A cookie with anything but an unambiguous success reply is
+                    # a malformed login: owned for cleanup, but latched.
+                    if response.failed or not (
+                            (response.status == 200 and response.payload.get("ok") is True)
+                            or (response.status == 303 and response.location
+                                and "error=" not in response.location)):
+                        self._unknown()
                 elif response.failed or response.status not in {401, 303} or any(response.cookies.values()):
-                    self._cleanup_unknown = True
+                    self._unknown()
                 elif response.status == 303 and "error=AUTH_INVALID_CREDENTIALS" not in response.location:
-                    self._cleanup_unknown = True
+                    self._unknown()
             if method == "POST" and path == "/auth/logout" and state is not None:
                 state["logout_acknowledged"] = (not response.failed and response.status == 200
                     and response.payload.get("ok") is True
                     and response.cookies.get("__Host-oday_web_session") == "")
+                if not state["logout_acknowledged"]:
+                    self._unknown()
             if method == "GET" and path == "/api/v1/operator/users/audit-trail" and response.status == 200:
                 events = response.payload.get("events", [])
                 for event in events:
@@ -462,8 +503,8 @@ class _ObservedWeb:
                         self.ack_times.append(_aware(event["timestamp"]))
             return response
         except Exception:
-            if method == "POST" and path == "/login":
-                self._cleanup_unknown = True
+            if method == "POST" and (path == "/login" or (path == "/auth/logout" and state is not None)):
+                self._unknown()
             return gate.HttpResponse(status=0, error="native consumer bounded request refused")
 
 
@@ -579,12 +620,13 @@ def consume(*, inputs: NativeInputs, environment: dict[str, str], sha: str, dige
         )
         if not all(check.ok is True for check in gate.validate_config(config)):
             raise ConsumerRefused()
+        latch = _UncertaintyLatch()
         api = _ObservedWeb(gate.UrllibHttpClient(API_ORIGIN, timeout=15, bearer_token=inputs.application_token, operator_role="platform_admin",
             operator_subject="live-e2e-gate", operator_tenant="", correlation_id=correlation,
             transport_token=inputs.invoker_token), execution_id=inputs.bundle.execution_id,
-            deadline=started + 480, cleanup_deadline=started + 540)
+            deadline=started + 480, cleanup_deadline=started + 540, latch=latch)
         web = _ObservedWeb(gate._web_client(config, correlation), execution_id=inputs.bundle.execution_id,
-                           deadline=started + 480, cleanup_deadline=started + 540)
+                           deadline=started + 480, cleanup_deadline=started + 540, latch=latch)
         # Canonical checks are unchanged; this wrapper also owns unconditional
         # cleanup on every evaluator exit, including early provenance refusal.
         # Never spawn the CLI or populate credential env/per-field fallback.

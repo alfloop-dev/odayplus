@@ -104,6 +104,43 @@ exact-head verification follows the committed repair; original failures remain
 failures. No live credentials, account/session/secret/cloud/recovery effects or
 custody/deployment approval. All preflight HOLDs and old uncertainty remain.
 
+## Second-review repair after rejected db9ee896c (2026-10-11, owner Antigravity2)
+
+Ownership was reassigned from Pi to Antigravity2 after two reviewer reopens.
+Rejected PR1459 head db9ee896c64a and its CI/receipts are preserved, not reset or
+amended; repairs are new commits on the same allocated task branch. Base remains
+origin/dev359e480a46df (fetched; branch already contains it, zero behind).
+
+- [P2] natural ORIGINAL issuer-session expiry during a lock wait.
+  `RecoveryJournal._final_bounds` re-reads one `clock_timestamp()` instant as the
+  LAST statement of reserve/issue/consume/binding intent+ACK transactions,
+  checking the persisted original session (unrevoked, idle/absolute expiry), the
+  execution window and (issue/consume) capability expiry. A lapse raises inside
+  the transaction, so target credential rotation, target-session revocation,
+  capability consumption and audit roll back together. Quarantine stays exempt
+  (one-way restrictive). New real-PG regressions hold the target credential row
+  or target session rows on a separate connection, let the original session
+  expire by DB time, release the unchanged holder, and require refusal with no
+  rotation/revocation/consumption/audit (budget stays committed); an issue-path
+  variant requires no capability row/event. All three new cases were run
+  against the pre-repair module and failed `DID NOT RAISE` (diagnostic only),
+  then passed with the repair.
+- [P2] native consumer continued to log in after an uncertain effect.
+  `_ObservedWeb` now latches a one-way `_UncertaintyLatch`, shared by the API and
+  Web observers, on the FIRST lost/malformed login (any cookie with a non-success
+  reply included), unacknowledged/lost/duplicate logout or inventory overflow.
+  Afterwards only owned-cookie cleanup (single unattempted logout, session/
+  principal revocation reads) reaches transport; canonical evaluator
+  continuation (negative and successful HTML-form logins, other reads, API)
+  is refused locally. Unit regression covers seven uncertain forms; the composed
+  real-evaluator pipeline now asserts nothing but owned-cookie cleanup follows the
+  latching event and `cleanup_state == "unknown"`.
+
+No live credential/account/session/secret/cloud effect, deployment, custody
+approval or F11 claim. Exploratory focused runs are not final receipts; declared
+exact-head receipts are produced by `task_verification.py` on the clean repair
+head before `task_finalize.sh`.
+
 ## Scope
 
 - New internal shared recovery plan/root/capability and PostgreSQL tests, not a

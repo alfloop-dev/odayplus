@@ -191,6 +191,69 @@ def test_cleanup_uses_reserved_absolute_deadline_not_refreshed_work_budget() -> 
     assert web.request("POST", "/login").status == 0
 
 
+_COOKIE = "__Host-oday_web_session"
+
+
+@pytest.mark.parametrize("uncertain", ["lost-login", "malformed-login-ok-false", "malformed-login-500-cookie",
+                                       "login-bad-cookie", "lost-logout", "logout-500", "logout-uncleared"])
+def test_uncertain_session_effect_latches_before_any_later_login_transport(uncertain: str) -> None:
+    sent: list[tuple[str, str, str]] = []
+
+    class Client:
+        def request(self, method, path, **kwargs):
+            cookie = (kwargs.get("headers") or {}).get("cookie", "")
+            sent.append((method, path, cookie))
+            if path == "/login":
+                if uncertain == "lost-login":
+                    raise TimeoutError("offline lost reply after possible commit")
+                if uncertain == "malformed-login-ok-false":
+                    return c.gate.HttpResponse(200, {"ok": False}, cookies={_COOKIE: "owned-a"})
+                if uncertain == "malformed-login-500-cookie":
+                    return c.gate.HttpResponse(500, {}, cookies={_COOKIE: "owned-a"})
+                if uncertain == "login-bad-cookie":
+                    return c.gate.HttpResponse(200, {"ok": True}, cookies={_COOKIE: "bad;cookie"})
+                return c.gate.HttpResponse(200, {"ok": True}, cookies={_COOKIE: "owned-a"})
+            if path == "/auth/logout":
+                if uncertain == "lost-logout":
+                    raise TimeoutError("offline lost logout reply")
+                if uncertain == "logout-500":
+                    return c.gate.HttpResponse(500, {})
+                if uncertain == "logout-uncleared":
+                    return c.gate.HttpResponse(200, {"ok": True})
+                return c.gate.HttpResponse(200, {"ok": True}, cookies={_COOKIE: ""})
+            return c.gate.HttpResponse(401, {})
+
+    class Api:
+        def request(self, method, path, **kwargs):
+            sent.append(("API " + method, path, ""))
+            return c.gate.HttpResponse(200, {})
+
+    now = time.monotonic()
+    latch = c._UncertaintyLatch()
+    web = c._ObservedWeb(Client(), execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6, latch=latch)
+    api = c._ObservedWeb(Api(), execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6, latch=latch)
+    owned = {"cookie": f"{_COOKIE}=owned-a"}
+    web.request("POST", "/login", headers={})
+    if uncertain in {"lost-logout", "logout-500", "logout-uncleared"}:
+        assert not web.uncertainty_latched
+        assert api.request("GET", "/api/v1/operator/users").status == 200  # unlatched work continues
+        web.request("POST", "/auth/logout", headers=owned)
+    assert web.uncertainty_latched and api.uncertainty_latched
+    before = list(sent)
+    # Canonical evaluator continuation: negative + successful form logins, other reads/API.
+    for method, path, headers in (("POST", "/login", {}), ("POST", "/login", {"content-type": "form"}),
+                                  ("GET", "/api/v1/operator/users", owned), ("POST", "/auth/password", owned)):
+        assert web.request(method, path, headers=headers).status == 0
+    assert api.request("POST", "/api/v1/jobs").status == 0
+    assert sent == before, "latched request reached transport"
+    assert web.cleanup_owned_sessions() is False  # UNKNOWN is preserved, never cleared
+    cleanup = sent[len(before):]
+    assert all(path in {"/auth/logout", "/auth/session", "/api/v1/auth/principal"} for _, path, _ in cleanup)
+    assert all(cookie == owned["cookie"] for _, _, cookie in cleanup)
+    assert len([p for m, p, _ in sent if (m, p) == ("POST", "/auth/logout")]) <= 1  # never retried
+    assert all(path != "/login" for _, path, _ in cleanup)
+
+
 @pytest.fixture(scope="module")
 def offline_signing_key():
     # Ephemeral isolated fixture, never an operational JWT key or persisted key.
@@ -393,6 +456,19 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                                for path, headers in web.headers_seen)
                     assert any(path == "GET /api/v1/auth/principal" and headers.get("cookie") == cookie
                                for path, headers in web.headers_seen)
+            uncertain = {"canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown"}
+            if failure in uncertain:
+                # Latch at the FIRST uncertain effect: afterwards only bounded
+                # owned-cookie cleanup reads/unattempted logout reach transport.
+                seen = [path for path, _ in web.headers_seen]
+                latch_at = (seen.index("POST /auth/logout") if failure == "canonical-logout-unknown"
+                            else [i for i, p in enumerate(seen) if p == "POST /login"][1])
+                after = web.headers_seen[latch_at + 1:]
+                assert all(path in {"GET /auth/session", "GET /api/v1/auth/principal", "POST /auth/logout"}
+                           for path, _ in after), [path for path, _ in after]
+                assert all(headers.get("cookie") == f"{f.SESSION_COOKIE}={f.SESSION_VALUE}" for _, headers in after)
+                assert "POST /login" not in [path for path, _ in after]
+                assert refused.value.cleanup_state == "unknown"
         else:
             assert calls[-1] == failure
     else:

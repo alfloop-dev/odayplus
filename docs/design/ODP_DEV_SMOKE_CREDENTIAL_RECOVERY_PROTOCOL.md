@@ -86,9 +86,20 @@ endpoint or an executable foreground protocol. The domain provides:
   apply, with no caller PHC. Credential update, only target pre-recovery session
   revocation, capability consumption and safe rotation audit share one PG commit.
   Original credential, identity/roles/scope and all other sessions stay untouched.
+- Re-reads authoritative DB-time bounds as the LAST statement of every effectful
+  transaction (reserve, issue, consume, binding intent/ACK), after all blocking
+  work: one `clock_timestamp()` instant against the persisted ORIGINAL issuer
+  session (unrevoked, idle and absolute expiry), the execution window and, for
+  issue/consume, the capability expiry. The earlier session `FOR SHARE` lock
+  stops explicit revocation but NOT natural expiry while waiting on the target
+  credential row, target sessions, capability row or audit; any lapse raises
+  inside the transaction and rolls back credential/session/capability/audit
+  writes together. One-way quarantine is deliberately exempt (restrictive only).
 - Has isolated real PostgreSQL tests for issue/consume races across independent
-  pools, rollback at audit failure, post-hash session expiry, lifetime/replay/
-  credential drift and preserved old history. These are not deployed/live proof.
+  pools, rollback at audit failure, post-hash session expiry, natural original-
+  session expiry while blocked on a held target credential/session row lock,
+  lifetime/replay/credential drift and preserved old history. These are not
+  deployed/live proof.
 
 The runtime constructor's dev/profile/tuple arguments must eventually come
 from server configuration, never a request plan. There is still no foreground
@@ -500,6 +511,17 @@ cleanup remain UNKNOWN even if a later read is401; no blanket revocation, retry,
 recovery authority or consumption receipt is introduced. Cookie reference release
 is best effort, not proof of zeroization. The original interrupted admin session
 is outside this new consumer's owned inventory and remains unproven.
+
+Uncertainty is latched IMMEDIATELY, not only at the final cleanup verdict. The
+first lost/malformed login reply (including a cookie with any non-success reply),
+unacknowledged/lost/duplicate logout or owned-inventory overflow sets a one-way
+latch shared by the API and Web observers. The canonical evaluator intentionally
+continues after a failed logout (negative and successful HTML-form logins), so the
+wrapper refuses every later request locally before transport except bounded
+cleanup for an ALREADY-OWNED cookie: its single unattempted logout and the
+original-cookie session/principal revocation reads. No later login can create a
+new privileged session after an unknown prior effect; the final result stays
+UNKNOWN, with no retry or account-wide revocation.
 
 Native credential-step bounds reserve preflight180 + gate300 + cleanup60 seconds
 in one monotonic540 envelope (NOT measured production ceilings). Signal-bound
