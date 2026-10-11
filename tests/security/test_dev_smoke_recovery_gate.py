@@ -60,25 +60,17 @@ def foreground_gate(owned_sessions: Any, monkeypatch: Any):
             actions._put_status, actions._acknowledged = 201, True
             for event in events[4:]:
                 event["metadata"].update(p, plan_digest=digest)
+            # Capability's issue_event_id is its own lifecycle reference, NOT
+            # the same-named original invitation plan field.
+            events[5]["metadata"]["issue_event_id"] = ""
+            events[6]["metadata"]["issue_event_id"] = events[5]["event_id"]
             raw.update(execution_id=p["execution_id"], password=target.password)
             raw["recovery_lineage"]["plan_digest"] = digest
             if failure == "":
                 import json
-                import sys
                 from delivery_toolchain.release.provision_dev_smoke import credential_bundle_acknowledged, read_dev_credential_bundle
-                trace_lines = []
-                def trace(frame, event, arg):
-                    if event == "return" and arg is False and frame.f_code.co_name == "recovery_bundle_acknowledged":
-                        trace_lines.append(frame.f_lineno)
-                    return trace
-                previous = sys.gettrace()
-                sys.settrace(trace)
-                try:
-                    parsed = read_dev_credential_bundle(json.dumps(actions._bundle()), environment="dev", release_profile="dev-admin")
-                    acknowledged = credential_bundle_acknowledged(parsed, events, target_account=user)
-                finally:
-                    sys.settrace(previous)
-                assert acknowledged, f"synthetic lineage invalid at predicate lines {trace_lines}"
+                parsed = read_dev_credential_bundle(json.dumps(actions._bundle()), environment="dev", release_profile="dev-admin")
+                assert credential_bundle_acknowledged(parsed, events, target_account=user)
             config = gate.GateConfig(api_url=f.base.API_URL, web_url=owner._origin, expected_sha=SHA,
                 expected_manifest_digest=MANIFEST, expected_deployment="dev", release_profile="dev-admin",
                 bearer_token="OFFLINE-APP-BEARER", api_transport_token="OFFLINE-API-TRANSPORT",
