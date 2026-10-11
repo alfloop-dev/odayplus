@@ -354,10 +354,53 @@ measured production source/CI/admission/gate/cleanup bounds or live custody proo
 OS-stuck calls, scheduling and parsing cannot promise hard-real-time termination;
 a missed absolute deadline refuses rather than authorizing late continuation.
 
-Full same-session action adapters, fresh source/CI/current-admission/Web+API and
-account/provenance coordinator, measured downstream gate/consumer/cleanup reserves,
-actual GitHub201 transport, genuine writer exclusion and native fresh-job consumer
-remain missing. All effect blockers continue to apply BEFORE any rotation.
+The next increment supplies limited same-session action adapters below. Fresh
+source/CI/current-admission/Web+API and account/provenance coordinator, measured
+downstream gate/consumer/cleanup reserves, actual GitHub201 transport, genuine
+writer exclusion and native fresh-job consumer remain missing. All effect blockers
+continue to apply BEFORE any rotation.
+
+## Same-session action increment (unapproved; NOT execution-ready)
+
+`SameSessionRecoveryActions` composes the fixed HTTPS primitive, exact non-secret
+plan, parent memory custody and durable phase budget for reserve/issue/rotation
+and one-way quarantine only. The trusted foreground must supply its SAME
+execution-owned original-admin cookie in memory, independently pinned origin/IP/CA
+and an already completed real preflight. This adapter neither authenticates/owns
+that session nor establishes approval, source/CI/admission, writer exclusion or
+fresh consumer availability. There is no CLI, GET/resume, arbitrary action/route,
+login, binding intent/PUT/ACK, gate or cleanup implementation in this increment.
+Do not construct it with live credentials in a background worker.
+
+Each action persists its budget phase-start before network access and validates
+actual official HTTP200 plus EXACT action-specific payload shape and lineage
+before recording completion: root execution/plan/stage/strict false authority,
+capability/issue UUIDs and <=600s/window expiry, exact fixed target/tenant and
+issue/rotation chain, strict integer target-session count and safe flags. Extra
+fields, duplicate/reused event IDs, cross-lineage responses and malformed success
+replies stop UNKNOWN: a response body cannot prove rollback of an attempted POST.
+Issuance attaches the bearer directly to parent memory BEFORE durable terminal
+completion; neither returned safe result nor phase file contains it. Consume
+sends only that same retained bearer and random password. Repr/pickle do not
+export cookie, password or capability; access in a different PID refuses.
+
+Normal actions cannot repeat or continue after transport, custody, phase-order,
+validation or receipt failure, even if a new transport could be constructed or
+later GET reveals commit truth. A confirmed root permits only a finite once-only
+quarantine call under the retained original session, including after custody
+loss. A lost reserve reply has NO locally proven root and cannot fabricate a
+quarantine-completion receipt or retry reservation; separately authorized bounded
+reconciliation must establish truth. Cookie clearing on close is NOT logout or
+zeroization proof. Original interrupted-session cleanup remains UNKNOWN.
+
+Isolated synthetic-response tests exercise the complete action sequence, matching
+memory pair, strict lineage/expiry/flags, event replay, phase receipt failure,
+PID/custody loss and quarantine. Real isolated loopback TLS covers validated
+reservation followed by lost issuance reply with one POST and no continuation.
+These tests are NOT actual authenticated Web-session ownership, production timing,
+recovery execution, GitHub201, full gate/consumer or deployment evidence. The full
+reviewed foreground coordinator and all previously documented execution blockers
+remain mandatory BEFORE effects.
 
 ## Required subsequent increments (not implemented)
 

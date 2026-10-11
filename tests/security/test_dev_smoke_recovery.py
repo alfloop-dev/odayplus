@@ -1023,3 +1023,199 @@ def test_https_bad_input_poisons_attempt_without_socket_or_echo(monkeypatch: Any
     with pytest.raises(RecoveryHTTPRefused):
         attempt.execute(method="GET", cookie="offline-cookie", deadline=time.monotonic() + 2)
     assert not calls
+
+
+@pytest.fixture
+def same_session_actions(tmp_path: Path, monkeypatch: Any):
+    """Synthetic cookie/responses ONLY; not authority/session/login/PUT proof."""
+    from contextlib import contextmanager
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+
+    @contextmanager
+    def setup(*, reply_filter=None, real_https=False):
+        budget, clock, receipts, p = foreground_budget(tmp_path, monkeypatch)
+        budget.begin("preflight")
+        budget.finish(outcome="completed")  # simulated, not real preflight approval
+        custody = r.ParentMemoryCustody()
+        actions = r.SameSessionRecoveryActions(p, budget=budget, custody=custody,
+                    origin="https://offline.invalid", address="127.0.0.1", cookie="synthetic-admin-cookie")
+        ids = {key: str(uuid4()) for key in ("root", "cap", "issue", "rotate", "quarantine")}
+        calls = []
+        def execute(attempt, *, method, cookie, deadline, body):
+            calls.append((method, cookie, deadline, body))
+            assert method == "POST" and cookie == "synthetic-admin-cookie"
+            assert budget._active is not None
+            phase = budget._active[0]
+            record = tmp_path / p["execution_id"] / f"{receipts._sequence - 1:03d}-{phase}-start.json"
+            assert record.is_file()  # real durable start precedes synthetic transport
+            root = RecoveryReservation(p["execution_id"], actions._digest, ids["root"], "reserved").to_receipt()
+            replies = {
+                "reserve": {"reservation": root},
+                "issue": {"capability_id": ids["cap"], "execution_id": p["execution_id"],
+                          "expires_at": (datetime.now(UTC) + timedelta(seconds=590)).isoformat(),
+                          "audit_event_id": ids["issue"], "token": "s" * 43},
+                "consume": {"status": "rotated", "account_id": _FIXED_PLAN["target_account_id"],
+                            "tenant_id": _FIXED_PLAN["tenant_id"], "execution_id": p["execution_id"],
+                            "capability_id": ids["cap"], "issue_event_id": ids["issue"],
+                            "rotation_event_id": ids["rotate"], "revoked_target_sessions": 2,
+                            "credential_binding_verified": False, "execution_authorized": False,
+                            "secret_values_redacted": True},
+                "quarantine": {"reservation": {**root, "event_id": ids["quarantine"], "stage": "recovery-required"}},
+            }
+            payload = replies[body["action"]]
+            if reply_filter is not None:
+                payload = reply_filter(body["action"], payload)
+            return r.RecoveryHTTPResult(200, payload)
+        if not real_https:
+            monkeypatch.setattr(r.RecoveryHTTPSAttempt, "execute", execute)
+        try:
+            yield actions, budget, clock, custody, receipts, p, ids, calls
+        finally:
+            actions.close()
+            custody.close()
+            receipts.close()
+    return setup
+
+
+def test_same_session_actions_safe_lineage_custody_and_durable_sequence(same_session_actions: Any,
+                                                                      tmp_path: Path) -> None:
+    import json
+    import pickle
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+
+    with same_session_actions() as (actions, budget, clock, custody, receipts, p, ids, calls):
+        root = actions.reserve()
+        clock.value += 1
+        issued = actions.issue()
+        clock.value += 1
+        rotated = actions.rotate()
+        assert root["event_id"] == ids["root"] and issued["audit_event_id"] == ids["issue"]
+        assert "token" not in issued and custody.capability == "s" * 43
+        assert rotated["rotation_event_id"] == ids["rotate"]
+        assert rotated["credential_binding_verified"] is False
+        assert [call[3]["action"] for call in calls] == ["reserve", "issue", "consume"]
+        assert calls[2][3]["password"] == custody.password and calls[2][3]["token"] == custody.capability
+        assert all(call[1] == "synthetic-admin-cookie" for call in calls)
+        assert calls[0][2] == 130 and calls[1][2] == 131 and calls[2][2] == 222
+        for marker in (custody.password, custody.capability, "synthetic-admin-cookie"):
+            assert marker not in repr(actions)
+        with pytest.raises(RecoveryRefused, match="SERIALIZATION_REFUSED"):
+            pickle.dumps(actions)
+        with pytest.raises(r.RecoveryActionRefused):
+            actions.rotate()
+        assert len(calls) == 3  # even a fresh HTTPS instance cannot replay
+        quarantined = actions.quarantine()
+        assert quarantined["stage"] == "recovery-required"
+        with pytest.raises(r.RecoveryActionRefused):
+            actions.quarantine()
+        assert len(calls) == 4
+        records = [json.loads(path.read_text()) for path in sorted((tmp_path / p["execution_id"]).glob("*.json"))]
+        text = json.dumps(records)
+        assert all(marker not in text for marker in (custody.password, custody.capability, "synthetic-admin-cookie"))
+        assert [v["event_id"] for v in records if v["stage"] == "terminal"][1:] == [
+            ids["root"], ids["issue"], ids["rotate"], ids["quarantine"]]
+
+
+@pytest.mark.parametrize("action,field,value", [
+    ("reserve", "plan_digest", MANIFEST), ("reserve", "execution_id", OLD_EXECUTION_ID),
+    ("reserve", "execution_authorized", 0), ("reserve", "secret_values_redacted", 1),
+    ("issue", "execution_id", OLD_EXECUTION_ID), ("issue", "token", "PRIVATE-MARKER"),
+    ("issue", "expires_at", "2030-01-01T00:00:00Z"),
+    ("issue", "capability_id", "00000000-0000-0000-0000-000000000000"),
+    ("consume", "account_id", _FIXED_PLAN["actor_account_id"]),
+    ("consume", "tenant_id", str(uuid4())), ("consume", "revoked_target_sessions", True),
+    ("consume", "issue_event_id", str(uuid4())), ("consume", "credential_binding_verified", 0),
+    ("consume", "rotation_event_id", "invalid"), ("consume", "password", "PRIVATE-MARKER"),
+])
+def test_same_session_malformed_committed_reply_stops_unknown(same_session_actions: Any, tmp_path: Path,
+                                                            action: str, field: str, value: Any) -> None:
+    import json
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+
+    def corrupt(name, payload):
+        if name == action:
+            if name == "reserve":
+                payload["reservation"][field] = value
+            else:
+                payload[field] = value
+        return payload
+    with same_session_actions(reply_filter=corrupt) as (actions, budget, clock, custody, receipts, p, ids, calls):
+        if action != "reserve":
+            actions.reserve()
+        if action == "consume":
+            actions.issue()
+        operation = {"reserve": actions.reserve, "issue": actions.issue, "consume": actions.rotate}[action]
+        with pytest.raises(r.RecoveryActionRefused) as caught:
+            operation()
+        assert caught.value.outcome == "unknown" and caught.value.http_status == 200
+        assert "PRIVATE-MARKER" not in repr(caught.value)
+        before = len(calls)
+        with pytest.raises(r.RecoveryActionRefused):
+            operation()
+        assert len(calls) == before
+        if action == "reserve":
+            with pytest.raises(r.RecoveryActionRefused) as caught:
+                actions.quarantine()
+            assert caught.value.outcome == "unknown" and len(calls) == before
+        else:
+            actions.quarantine()  # only proven root, SAME original session
+        records = [json.loads(path.read_text()) for path in (tmp_path / p["execution_id"]).glob("*.json")]
+        assert any(v["outcome"] == "unknown" for v in records)
+
+
+@pytest.mark.parametrize("failure", ["start_storage", "issue_terminal_storage", "custody", "fork"])
+def test_same_session_storage_custody_pid_failure_never_continues(same_session_actions: Any,
+                                                                monkeypatch: Any, failure: str) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+
+    with same_session_actions() as (actions, budget, clock, custody, receipts, p, ids, calls):
+        if failure != "start_storage":
+            actions.reserve()
+        append = receipts.append
+        def broken(**kwargs):
+            if failure == "start_storage" or (kwargs["phase"] == "issue" and kwargs["stage"] == "terminal"):
+                raise OSError("PRIVATE-STORAGE-MARKER")
+            append(**kwargs)
+        if "storage" in failure:
+            monkeypatch.setattr(receipts, "append", broken)
+        elif failure == "custody":
+            custody.close()
+        else:
+            actions._pid -= 1
+        operation = actions.reserve if failure == "start_storage" else actions.issue
+        with pytest.raises(r.RecoveryActionRefused) as caught:
+            operation()
+        assert "PRIVATE-STORAGE-MARKER" not in repr(caught.value)
+        assert len(calls) == (0 if failure == "start_storage" else 2 if failure == "issue_terminal_storage" else 1)
+        before = len(calls)
+        with pytest.raises(r.RecoveryActionRefused):
+            actions.rotate()
+        assert len(calls) == before
+        if failure == "issue_terminal_storage":
+            assert custody.capability == "s" * 43  # retained memory is NOT resume authority
+
+
+def test_same_session_real_tls_validated_reserve_and_unknown_reply(same_session_actions: Any,
+                                                                  tls_recovery_server: Any) -> None:
+    import json
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+
+    with same_session_actions(real_https=True) as (actions, budget, clock, custody, receipts, p, ids, calls):
+        root = RecoveryReservation(p["execution_id"], actions._digest, ids["root"], "reserved").to_receipt()
+        with tls_recovery_server(recovery_http_reply(json.dumps({"reservation": root}).encode())) as (origin, ca, observed):
+            actions._origin, actions._ca = origin, ca  # isolated independently trusted fixture pins
+            actions.reserve()
+        assert len(observed) == 1
+        assert json.loads(observed[0][1]) == {"action": "reserve", "plan": p}
+        with tls_recovery_server(b"") as (origin, ca, observed):
+            actions._origin, actions._ca = origin, ca
+            with pytest.raises(r.RecoveryActionRefused) as caught:
+                actions.issue()
+            assert caught.value.outcome == "unknown" and caught.value.http_status is None
+            with pytest.raises(r.RecoveryActionRefused):
+                actions.issue()
+        assert len(observed) == 1  # server saw POST; absent reply may have committed

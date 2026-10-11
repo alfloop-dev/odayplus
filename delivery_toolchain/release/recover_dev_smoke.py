@@ -23,6 +23,9 @@ from uuid import UUID
 from shared.identity.dev_smoke_recovery import (
     AUTHORIZATION_ID,
     RecoveryRefused,
+    RecoveryReservation,
+    TARGET_ACCOUNT_ID,
+    TENANT_ID,
     validate_recovery_plan,
 )
 
@@ -648,3 +651,197 @@ class RecoveryHTTPSAttempt:
                         resource.close()
                     except Exception:
                         pass  # no cleanup exception/body may escape redaction
+
+
+class RecoveryActionRefused(RecoveryRefused):
+    """Safe action classification only; no response/input/exception serialization."""
+
+    def __init__(self, *, outcome: str, http_status: int | None) -> None:
+        super().__init__("RECOVERY_ACTION_STOPPED")
+        self.outcome, self.http_status = outcome, http_status
+
+
+class SameSessionRecoveryActions:
+    """Once-only reserve/issue/rotate/quarantine over the SAME memory cookie.
+
+    NOT a session owner or execution coordinator. Trusted foreground must first
+    complete real preflight, independently reviewed authority/exclusion/consumer
+    gates, and persist its preflight terminal through the supplied budget. No
+    login, GET/readback/resume, binding/PUT/ACK or credential-bearing child exists.
+    A lost reserve reply leaves no locally proven root: quarantine completion is
+    UNKNOWN until separately authorized reconciliation, never a reserve retry.
+    """
+
+    def __init__(self, plan: dict[str, str], *, budget: ForegroundRecoveryBudget,
+                 custody: ParentMemoryCustody, origin: str, address: str,
+                 cookie: str, ca_pem: str | None = None) -> None:
+        try:
+            digest = validate_recovery_plan(plan, release_sha=plan.get("release_sha"),
+                    manifest_digest=plan.get("manifest_digest"), now=datetime.now(UTC))
+            if (type(budget) is not ForegroundRecoveryBudget or budget._stopped
+                    or budget._receipts._execution != plan["execution_id"]
+                    or budget._receipts._digest != digest
+                    or type(custody) is not ParentMemoryCustody or custody._attached
+                    or type(cookie) is not str or not 0 < len(cookie) <= 8192
+                    or any(ord(c) <= 32 or ord(c) >= 127 or c in ';"\\,' for c in cookie)):
+                raise ValueError
+            custody._check()
+            # Validate independently pinned transport config without any call.
+            RecoveryHTTPSAttempt(origin=origin, address=address, ca_pem=ca_pem)
+        except Exception:
+            raise RecoveryRefused("RECOVERY_ACTION_CONFIG_INVALID") from None
+        self._pid = os.getpid()
+        self._plan, self._digest = dict(plan), digest
+        self._budget, self._custody = budget, custody
+        self._origin, self._address, self._ca, self._cookie = origin, address, ca_pem, cookie
+        self._root = None
+        self._capability_id = self._issue_event_id = ""
+        self._stopped = self._quarantined = False
+        self._attempted: set[str] = set()
+        self._events: set[str] = set()
+
+    def __repr__(self) -> str:
+        return "SameSessionRecoveryActions(<redacted>)"
+
+    def __reduce_ex__(self, protocol: int):
+        raise RecoveryRefused("RECOVERY_ACTION_SERIALIZATION_REFUSED")
+
+    def _call(self, phase: str, body: dict, validate) -> dict:
+        status, outcome, event_id = None, "refused", ""
+        started = False
+        try:
+            if (os.getpid() != self._pid or phase in self._attempted
+                    or self._quarantined or (self._stopped and phase != "quarantine")):
+                raise ValueError
+            self._attempted.add(phase)
+            self._budget.begin(phase)  # durable start BEFORE any network access
+            started = True
+            if phase != "quarantine":
+                self._custody._check()
+            attempt = RecoveryHTTPSAttempt(origin=self._origin, address=self._address, ca_pem=self._ca)
+            result = attempt.execute(method="POST", cookie=self._cookie,
+                                     deadline=self._budget.call_deadline, body=body)
+            status, outcome = result.http_status, "unknown"
+            # Mounted official actions return200, NOT arbitrary200/201 success.
+            if status != 200:
+                raise ValueError
+            safe, event_id = validate(result.payload)
+            if not _uuid(event_id) or event_id in self._events:
+                raise ValueError
+            # Parsing/validation may not outlive the same absolute phase limit.
+            _http_remaining(self._budget.call_deadline)
+            outcome = self._budget.finish(outcome="completed", event_id=event_id, http_status=status)
+            started = False
+            if outcome != "completed":
+                raise ValueError
+            self._events.add(event_id)
+            return safe
+        except Exception as exc:
+            self._stopped = True
+            if isinstance(exc, RecoveryHTTPRefused):
+                outcome, status = exc.outcome, exc.http_status
+            if started:
+                try:
+                    outcome = self._budget.finish(outcome=outcome, http_status=status)
+                except Exception:
+                    outcome = "unknown"  # missing durable terminal is NOT completion
+            # No credential/body/remote exception chain escapes the adapter.
+            raise RecoveryActionRefused(outcome=outcome, http_status=status) from None
+
+    def _reservation_reply(self, payload: dict, *, stage: str) -> tuple[dict, str]:
+        if set(payload) != {"reservation"} or type(payload["reservation"]) is not dict:
+            raise ValueError
+        receipt = payload["reservation"]
+        event_id = receipt.get("event_id")
+        expected = RecoveryReservation(self._plan["execution_id"], self._digest, event_id, stage).to_receipt()
+        if (set(receipt) != set(expected) or receipt != expected
+                or receipt["execution_authorized"] is not False
+                or receipt["credential_binding_verified"] is not False
+                or receipt["secret_values_redacted"] is not True or not _uuid(event_id)):
+            raise ValueError
+        return dict(receipt), event_id
+
+    def reserve(self) -> dict:
+        safe = self._call("reserve", {"action": "reserve", "plan": dict(self._plan)},
+                          lambda payload: self._reservation_reply(payload, stage="reserved"))
+        self._root = dict(safe)  # only after validated response AND durable completion
+        return safe
+
+    def issue(self) -> dict:
+        def validate(payload):
+            import re
+            if (set(payload) != {"capability_id", "execution_id", "expires_at", "audit_event_id", "token"}
+                    or payload["execution_id"] != self._plan["execution_id"]
+                    or not _uuid(payload["capability_id"]) or not _uuid(payload["audit_event_id"])
+                    or payload["capability_id"] in self._events
+                    or payload["capability_id"] in {payload["audit_event_id"], self._plan["execution_id"]}
+                    or type(payload["token"]) is not str
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{43}", payload["token"])
+                    or type(payload["expires_at"]) is not str):
+                raise ValueError
+            expires = datetime.fromisoformat(payload["expires_at"])
+            now = datetime.now(UTC)
+            if (expires.tzinfo is None or expires.utcoffset() is None
+                    or not 0 < (expires - now).total_seconds() <= 600
+                    or expires > datetime.fromisoformat(self._plan["expires_at"])):
+                raise ValueError
+            return {k: v for k, v in payload.items() if k != "token"}, payload["audit_event_id"]
+
+        if self._root is None:
+            self._stopped = True
+            raise RecoveryActionRefused(outcome="refused", http_status=None)
+        # Retain bearer BEFORE durable completion. If terminal persistence fails,
+        # memory survives but the stopped adapter can only quarantine, not rotate.
+        def retain(payload):
+            safe, event_id = validate(payload)
+            self._custody.attach_capability(payload["token"])
+            return safe, event_id
+        safe = self._call("issue", {"action": "issue", "reservation": dict(self._root),
+                                   "lifetime_seconds": 600}, retain)
+        self._capability_id, self._issue_event_id = safe["capability_id"], safe["audit_event_id"]
+        return safe
+
+    def rotate(self) -> dict:
+        def validate(payload):
+            expected = {
+                "status": "rotated", "account_id": TARGET_ACCOUNT_ID, "tenant_id": TENANT_ID,
+                "execution_id": self._plan["execution_id"], "capability_id": self._capability_id,
+                "issue_event_id": self._issue_event_id, "rotation_event_id": payload.get("rotation_event_id"),
+                "revoked_target_sessions": payload.get("revoked_target_sessions"),
+                "credential_binding_verified": False, "execution_authorized": False,
+                "secret_values_redacted": True,
+            }
+            count = payload.get("revoked_target_sessions")
+            if (set(payload) != set(expected) or payload != expected
+                    or payload["execution_authorized"] is not False
+                    or payload["credential_binding_verified"] is not False
+                    or payload["secret_values_redacted"] is not True
+                    or type(count) is not int or not 0 <= count < 2**63):
+                raise ValueError
+            return dict(payload), payload["rotation_event_id"]
+
+        try:
+            if self._root is None or not self._capability_id:
+                raise ValueError
+            body = {"action": "consume", "reservation": dict(self._root),
+                    "capability_id": self._capability_id, "token": self._custody.capability,
+                    "password": self._custody.password}
+        except Exception:
+            self._stopped = True
+            raise RecoveryActionRefused(outcome="refused", http_status=None) from None
+        return self._call("rotate", body, validate)
+
+    def quarantine(self) -> dict:
+        # May record uncertainty after custody loss; uses ONLY retained own cookie
+        # and confirmed root. No new session/GET/blanket revocation is introduced.
+        self._stopped = True
+        if self._root is None:
+            raise RecoveryActionRefused(outcome="unknown", http_status=None)
+        safe = self._call("quarantine", {"action": "quarantine", "reservation": dict(self._root)},
+                          lambda payload: self._reservation_reply(payload, stage="recovery-required"))
+        self._quarantined = True
+        return safe
+
+    def close(self) -> None:
+        self._stopped = True
+        self._cookie = ""  # NOT logout proof or provable memory zeroization
