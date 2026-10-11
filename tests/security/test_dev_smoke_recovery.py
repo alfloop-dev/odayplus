@@ -1219,3 +1219,38 @@ def test_same_session_real_tls_validated_reserve_and_unknown_reply(same_session_
             with pytest.raises(r.RecoveryActionRefused):
                 actions.issue()
         assert len(observed) == 1  # server saw POST; absent reply may have committed
+
+
+@pytest.mark.parametrize("action", ["issue", "consume"])
+@pytest.mark.parametrize("failure", ["lost", "reused_event", "late_parse"])
+def test_same_session_unknown_issue_or_rotation_only_quarantines(same_session_actions: Any,
+                                                               action: str, failure: str) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+
+    state = {}
+    def uncertain(name, payload):
+        if name == action:
+            if failure == "lost":
+                raise r.RecoveryHTTPRefused(outcome="unknown", http_status=None)
+            if failure == "late_parse":
+                state["clock"].value += 120  # same deadline cannot refresh after parsing
+            else:
+                key = "audit_event_id" if name == "issue" else "rotation_event_id"
+                payload[key] = state["root_id"]
+        return payload
+    with same_session_actions(reply_filter=uncertain) as (actions, budget, clock, custody, receipts, p, ids, calls):
+        state.update(clock=clock, root_id=ids["root"])
+        actions.reserve()
+        if action == "consume":
+            actions.issue()
+        operation = actions.issue if action == "issue" else actions.rotate
+        with pytest.raises(r.RecoveryActionRefused) as caught:
+            operation()
+        assert caught.value.outcome == "unknown"
+        before = len(calls)
+        for normal in (actions.reserve, actions.issue, actions.rotate):
+            with pytest.raises(r.RecoveryActionRefused):
+                normal()
+        assert len(calls) == before
+        actions.quarantine()
+        assert calls[-1][3]["action"] == "quarantine" and len(calls) == before + 1

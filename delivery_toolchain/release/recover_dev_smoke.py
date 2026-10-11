@@ -22,10 +22,10 @@ from uuid import UUID
 
 from shared.identity.dev_smoke_recovery import (
     AUTHORIZATION_ID,
-    RecoveryRefused,
-    RecoveryReservation,
     TARGET_ACCOUNT_ID,
     TENANT_ID,
+    RecoveryRefused,
+    RecoveryReservation,
     validate_recovery_plan,
 )
 
