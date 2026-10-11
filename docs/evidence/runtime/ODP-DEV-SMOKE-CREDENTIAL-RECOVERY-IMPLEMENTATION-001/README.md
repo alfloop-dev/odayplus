@@ -632,6 +632,68 @@ receipts must follow the source commit. Complete task-wide final verification,
 review, deployment, foreground coordinator/actual201 transport, external writer
 exclusion, measured budget and operational execution remain incomplete.
 
+## Bounded encrypted staging increment (2026-10-11; source-only continuation)
+
+This dispatch verified the allocated task branch and clean starting HEAD4c0e1395,
+then fetched `origin/dev` (still e995aa26032542160a177d421ad13157dd6db058).
+No stale supervisor checkout was treated as source configuration. Only existing
+owned recovery source/security/protocol/evidence paths were changed. No branch
+sync/cherry-pick, credential access or operational effect was performed.
+
+Anchor `8c7b3bda7119` adds same-session intent/ACK and a pinned bounded GitHub
+HTTPS sealed-box staging primitive. Only the retained same pair and exact
+root/issue/rotation/intent enter schema2. Preparation and immediately-before-PUT
+reads check exact human token owner, repository numeric ID, dev public key and
+absence. Durable phase start precedes the ONE encrypted PUT; only an ORIGINAL
+fully framed201 plus successful terminal fsync allows ACK. There is no public
+status argument, GET-based reconstruction, plaintext bundle child/file/env, retry,
+replacement/delete or writer-exclusion boolean. These are primitives, NOT the
+full session/preflight/gate coordinator or exclusion authority.
+
+Anchor `158d97d33354a81db59e4393b03c43e76b8c18aa` additionally poisons repeated
+preparation (including after a passing first observation), and tests fresh key/
+custodian/repository/absence/deadline drift, original201/lost/204/redirect/
+truncated TLS responses, sealed same-pair composition, storage failure at intent/
+PUT/ACK, ACK-session drift and lost reply, no caller201/intent-only ACK, once-only
+quarantine and absolute TLS dribble/handshake deadlines. TLS is ephemeral isolated
+loopback; mocked GitHub metadata and fixture sealed-box decryption are explicitly
+NOT live custodian/exclusion/consumer evidence. No fake approval was introduced.
+
+Original receipt-policy JSON is preserved in [`receipts/`](receipts/). Commands
+ran once per listed head/selection through the existing verification policy;
+completion derives from its original subprocess terminal/exit, not output polling.
+PATH included the documented `/home/lupin/.local/bin`; the six-file offline
+selection used `NODE_ENV=test` as allowed, not a production-guard relaxation.
+
+| Clean measured head | Command/selection | Receipt ID | Exit | Seconds |
+| --- | --- | --- | --- | --- |
+|8c7b3bda7119|`uv run --frozen --python 3.12 pytest tests/security/test_dev_smoke_recovery.py -q`|9117bfcf83d0bd02|0|14.272|
+|8c7b3bda7119|`uv run --frozen --python 3.12 ruff check delivery_toolchain/release/recover_dev_smoke.py tests/security/test_dev_smoke_recovery.py`|82cef6d1ed518ae6|0|0.078|
+|8c7b3bda7119|`git diff --check`|a303e8798219d535|0|0.017|
+|158d97d33354|declared six-file recovery/invitation/provisioning/full-gate/workflow pytest selection (exact command in JSON)|490612a755a90d4c|0|611.338|
+|158d97d33354|same two-file frozen Ruff command|710b27c48844fa70|0|0.094|
+|158d97d33354|declared frozen code-boundary check,1230 files|849024af770a42c7|0|10.861|
+|158d97d33354|`git diff --check`|849bf533c6bc06ca|0|0.025|
+
+The six-file output has one explicit skip: production Web-store PG proof needs
+its frozen Node test environment, absent in this worktree. It is NOT credited as
+Web-store proof. The task brief's earlier genuine4c0 foreground Web/PG/typecheck/
+native-consumer receipts remain separate and are not reassigned to this new SHA.
+No count-only rerun or cosmetic remeasurement of those prior settled selections.
+This dispatch does NOT claim final-head Web lint/typecheck/300kB verification or
+fresh native consumption. All earlier failed receipts/history remain intact.
+
+This later evidence-only commit changes the Git SHA, not tested runtime source;
+the table remains evidence for the two exact anchors, NOT final-head review
+readiness. Complete trusted foreground session/source/admission/actual Web+API/
+account/provenance reconciliation, measured production reserves, full gate,
+bounded cleanup/quarantine and normally authorized fresh-job orchestration remain
+NEXT source work under this SAME task. Genuine external writer exclusion is still
+unavailable; no local receipt/absence/concurrency lock can substitute for it.
+Native env-to-memory ingress is still an UNAPPROVED custody amendment. The worker
+must not execute recovery; final composition, independent Codex2 review, ordinary
+deployment and the exact foreground operational plan are still mandatory.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
