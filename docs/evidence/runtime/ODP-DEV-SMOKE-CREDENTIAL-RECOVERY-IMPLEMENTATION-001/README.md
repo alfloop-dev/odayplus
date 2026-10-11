@@ -231,6 +231,68 @@ blockers. Independent review, normal deployment and fresh measured foreground
 preflight remain mandatory. No live rotation, session revocation or PUT/ACK/gate
 consumer was performed; original interrupted-session uncertainty is unchanged.
 
+## Strict recovery consumer/gate increment (2026-10-11, not final submission)
+
+Anchors `0d9e8f256bfc` and `017e522a2495` add strict schema2/new-authorization
+matched-bundle parsing and exact non-secret nested lineage. The hardened reader
+rejects replay of the old execution UUID before network/gate work. Schema1 legacy
+behavior remains unchanged; its quarantined root cannot become acknowledged by
+adding a new recovery ACK. Malformed/nonempty/duplicate-key/version/partial input
+never falls back to original/bootstrap fields.
+
+The canonical full gate carries schema/lineage and refuses partial IDs that
+could bypass ACK. Strict consumer validation connects the still-quarantined old
+root, absent old binding and actual original invitation provenance to one new
+root, same-session capability issue/rotation, distinct intent and201-ACK. Plan
+hashes and execution/capability timestamp bounds are checked. Extra/duplicate/
+missing events, cross-lineage references, new quarantine,204, reordered phases,
+wrong target/tenant/roles/scope or expiry refuse. Safe explicit binding audit
+projection is added, but its schema is a **consumer contract only**: no binding
+producer/server action, real PUT or foreground executor exists yet. Therefore
+this source layer cannot establish a live recovery binding.
+
+Synthetic security fixtures and mocked full-evaluator tests exercise that
+contract, not actual creation of a secret or live consumer proof. Full-gate
+positive retains genuine invitation/principal, tenant/negative-role, runtime/
+transport and own-session cleanup checks, without full/F11 claims. No new test
+fixture is represented as a real signed201 runtime receipt. Source SHA verification
+against origin/dev confirmed decoder/gate were unchanged from canonical base
+before this increment; origin/dev remains e995aa26.
+
+Original shared-policy receipts are retained here. Each measurement ran once at
+its clean anchor; the new-head hardening justifies the later focused selection.
+No tests were rerun for counting or completion inference.
+
+| Clean head | Measurement | Receipt/result | Duration |
+| --- | --- | --- | --- |
+| 0d9e8f256bfc | recovery security + canonical dev-admin gate pytest files | ab1cb3c0efd97b79 exit0 | 42.485s |
+| 0d9e8f256bfc | exact declared six-file pytest selection | d24971301e98a199 exit0, one displayed skip | 571.020s |
+| 017e522a2495 | same focused two-file selection, new old-execution decoder negative | 8005462d59b9e754 exit0 | 31.265s |
+| 017e522a2495 | declared boundary checker | 66f4883c3bf0c294 exit0 | 12.428s |
+| 017e522a2495 | git diff --check | c253a6c97c52eb2c original command exit0 | 0.018s |
+
+The scratch receipt adapter crashed AFTER saving the diff-check receipt because
+empty output has no output_tail key. The adapter terminal exit1 is retained as a
+failure of report printing, not mislabeled as its own success; the original
+completed git child exit0/duration is explicitly recorded in c253a6c97c52eb2c.
+Read that existing receipt, fixed the optional-output access in scratch, did NOT
+rerun git merely to manufacture a new receipt. All pytest completions come from
+the original foreground tool receipt/exit, never a grep-based wait.
+
+No Web typecheck/lint/build was measured by this consumer-only dispatch; prior
+Web/300kB/dependency/pnpm boundaries remain as documented. The declared six-file
+run's displayed skip is not passing Web-store proof. New evidence checkpoint
+has a DIFFERENT SHA from measured anchors; the six-file pass is NOT a final
+whole-composition receipt at the hardening/evidence head. Task remains in_progress,
+NOT review-ready/no PR. NEXT: implement same-engine append-only binding producer
+with post-rotation original/target/session/source preservation fences and strict
+safe projection, actual PG-produced lineage/rollback/uncertainty tests; then finite
+trusted foreground memory custody/phase receipts/deadline/single-attempt transport.
+Genuine external writer exclusion/native no-env fresh consumer remain precise
+effect blockers. Final exact-head declared suite/Web budget, independent Codex2
+security review and normal deployment remain mandatory. Old history/binding NULL
+and interrupted-original-session uncertainty stay unchanged; no live effects.
+
 ## Live effect status
 
 No account/credential/session effect, database/cloud access, secret intent/PUT/ACK,
