@@ -948,6 +948,32 @@ reviewed native custody amendment, ordinary deployment and exact final execution
 plan remain before-effects blockers. No operational permission or final review
 readiness is claimed by this incremental checkpoint.
 
+## Canonical same-pair gate/failure coordinator source increment (unmeasured)
+
+Added `ForegroundSamePairGate` and numeric TLS canonical HTTP adapter. The actual
+canonical evaluator (not supplied booleans/reports) receives the same memory pair
+and strict schema2 lineage only after real201/durable ACK in the same actions
+object. Its optional additive cleanup barrier stops on prior failed checks before
+normal/HTML own logout. Failures quarantine with the retained original cookie
+BEFORE remaining known-own cleanup under the single reserved cleanup budget.
+Lost login/logout/quarantine stays UNKNOWN; no retry/other-session revocation.
+Success leaves fresh_consumer pending, decrypted binding/full acceptance false.
+
+New offline tests exercise the actual canonical evaluator over synthetic HTTP and
+ACK/session fixtures; those fixtures are not serving/account/consumer authority.
+At source anchor these checks are unmeasured. Failed or successful later receipts
+will retain their original SHA/selection/exit; earlier45d proofs are not inherited.
+Bootstrap/initial credentials and missing application bearer fail prevalidation.
+A concrete native consumer finding was sent through the live canonical task note:
+its empty application bearer cannot satisfy unchanged canonical validation. That
+four-file foreground-owned lane is not edited here.
+
+Increment remains NOT final review ready: full source/admission-to-fresh-job
+coordination and final exact-head declared/Web checks are still due. Writer
+exclusion, measured production bounds, independently reviewed native custody
+amendment, exact final plan and normal deployment remain before-effects blockers.
+No live effect or external credential material was used.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret

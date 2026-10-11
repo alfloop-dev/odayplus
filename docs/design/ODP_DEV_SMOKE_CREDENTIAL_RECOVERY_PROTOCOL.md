@@ -468,6 +468,40 @@ consumption or F11 evidence. External writer exclusion, full foreground coordina
 actual budget measurements, independent review/deployment and final execution
 plan remain unresolved. This source increment does not authorize effects.
 
+## Canonical same-pair gate / failure coordinator increment (unapproved)
+
+`ForegroundSamePairGate` prevalidates the real canonical GateConfig before
+reservation and runs the complete canonical evaluator in the custody parent only
+after the same action object's original201 plus durable ACK. It binds ALL schema2
+identifiers/lineage through the strict decoder; no bootstrap/initial-password
+fallback, supplied passing report, gcloud worker trigger or credential child.
+Pinned numeric TLS enforces hostname/CA verification, absolute phase deadlines,
+bounded response/request totals, no DNS/proxy/retry/redirect credential forwarding.
+Application bearer and API transport identity are separate mandatory foreground
+memory inputs. Empty application bearer remains a canonical refusal (the native
+consumer lane must address this separately; no config-guard relaxation).
+
+The canonical evaluator has an optional in-process cleanup barrier, default absent
+for existing callers. It can only STOP on already failed checks before normal or
+HTML own logout; it cannot waive, alter or replace any check. The recovery adapter
+retains each newly issued diagnostic cookie BEFORE response-body validation,
+records login/logout start/terminal identifiers without credential values, and
+on gate failure quarantines the new root using the retained original session
+BEFORE remaining own cleanup. Unknown/attempted logout is never retried. Other
+known execution-owned cookies are still cleaned once within the single reserved
+cleanup phase. Missing login response/quarantine/logout remains UNKNOWN, never
+blanket revocation or recovery resume. The old interrupted original-admin session
+remains UNKNOWN. Successful same-pair gate does NOT prove decrypted GitHub binding
+or full/F11 acceptance and still leaves `fresh_consumer` pending.
+
+This incremental adapter is NOT the full preflight-to-fresh-job coordinator.
+The next increment must compose fresh source/admission rechecks and a separately
+normally authorized actual fresh-job boundary, then exact-head declared/Web
+verification and task_finalize PR. Genuine external writer exclusion, production
+measured reserves, native custody amendment approval, final reviewed plan and
+ordinary deployment still block all effects. Offline synthetic gate/ACK/session
+fixtures do not establish any of these authorities.
+
 ## One-shot encrypted staging increment (unapproved; NOT a full coordinator)
 
 `SameSessionRecoveryActions` adds once-only binding-intent and ACK using the

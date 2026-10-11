@@ -137,7 +137,9 @@ class ExclusivePhaseReceipts:
                http_status: int | None = None, operation: str = "") -> None:
         try:
             if (operation not in {"", "original-login", "target-login", "original-logout", "target-logout",
-                                 "original-observe", "target-observe"}
+                                 "original-observe", "target-observe",
+                                 "gate-json-login", "gate-form-login", "gate-invalid-json-login",
+                                 "gate-invalid-form-login", "gate-session-logout"}
                     or self._poisoned or self._fd is None or phase not in _CEILINGS
                     or stage not in {"start", "terminal"}
                     or outcome not in ({"pending"} if stage == "start" else _OUTCOMES)
@@ -989,8 +991,9 @@ class _DeadlineReader(io.RawIOBase):
     refreshing read timeouts. Buffered parsing cannot bypass the aggregate cap.
     """
 
-    def __init__(self, sock, deadline: float) -> None:
+    def __init__(self, sock, deadline: float, max_bytes: int = 65536) -> None:
         self._sock, self._deadline, self._size = sock, deadline, 0
+        self._max_bytes = max_bytes
         self._stream = sock.makefile("rb", buffering=0)
 
     def close(self) -> None:
@@ -1004,14 +1007,15 @@ class _DeadlineReader(io.RawIOBase):
         self._sock.settimeout(_http_remaining(self._deadline))
         size = self._stream.readinto(buffer)
         self._size += size
-        if self._size > 65536:
+        if self._size > self._max_bytes:
             raise ValueError
         return size
 
 
 class _DeadlineSocket:
-    def __init__(self, sock, deadline: float) -> None:
+    def __init__(self, sock, deadline: float, max_bytes: int = 65536) -> None:
         self._sock, self._deadline = sock, deadline
+        self._max_bytes = max_bytes
 
     def sendall(self, data) -> None:
         # socket.sendall's timeout bounds the entire send, not each fragment.
@@ -1021,7 +1025,7 @@ class _DeadlineSocket:
     def makefile(self, mode: str):
         if mode != "rb":
             raise ValueError
-        return io.BufferedReader(_DeadlineReader(self._sock, self._deadline))
+        return io.BufferedReader(_DeadlineReader(self._sock, self._deadline, self._max_bytes))
 
     def close(self) -> None:
         self._sock.close()
@@ -1633,15 +1637,20 @@ class ForegroundOwnedWebSessions:
         return SameSessionRecoveryActions(plan, budget=self._budget, custody=self._target,
                 origin=self._origin, address=self._address, ca_pem=self._ca, cookie=self._cookies["original"])
 
-    def cleanup(self) -> dict:
+    def cleanup(self, *, gate_sessions=None) -> dict:
         # One aggregate reserved cleanup phase; each owned logout still gets its
         # own durable start. A missing cookie cannot establish cleanup of an
         # unknown login. Keep trying only OTHER known own cookies, never retry.
         if self._closed or os.getpid() != self._pid:
             raise RecoveryRefused("RECOVERY_OWNED_SESSION_UNAVAILABLE")
+        if gate_sessions is not None and (type(gate_sessions) is not ForegroundSamePairGate
+                or gate_sessions._sessions is not self or gate_sessions._budget is not self._budget):
+            raise RecoveryRefused("RECOVERY_GATE_OWNER_MISMATCH")
         self._budget.begin("cleanup")
         failed = self._unknown_login
         try:
+            if gate_sessions is not None:
+                failed = not gate_sessions._cleanup_known_sessions() or failed
             for role in ("target", "original"):
                 cookie = self._cookies[role]
                 if not cookie:
@@ -1717,7 +1726,7 @@ class SameSessionRecoveryActions:
         self._capability_id = self._issue_event_id = self._rotation_event_id = ""
         self._intent = None
         self._put_status = None
-        self._stopped = self._quarantined = False
+        self._stopped = self._quarantined = self._acknowledged = False
         self._attempted: set[str] = set()
         self._events: set[str] = set()
 
@@ -1895,9 +1904,11 @@ class SameSessionRecoveryActions:
         if self._intent is None or self._put_status != 201:
             self._stopped = True
             raise RecoveryActionRefused(outcome="refused", http_status=None)
-        return self._call("ack", {"action": "binding-acknowledged", "reservation": dict(self._root),
+        safe = self._call("ack", {"action": "binding-acknowledged", "reservation": dict(self._root),
                                  "intent_event_id": self._intent["audit_event_id"], "put_status": 201},
                           lambda payload: self._binding_reply(payload, stage="binding-acknowledged"))
+        self._acknowledged = True
+        return safe
 
     def _bundle(self) -> dict:
         from shared.identity.dev_smoke_journal import REPOSITORY
@@ -2159,3 +2170,397 @@ class RecoveryGitHubSecretAttempt:
     def close(self) -> None:
         self._token = ""
         self._put_used = self._prepare_used = True
+
+
+class _ForegroundGateHTTPSClient:
+    """Canonical gate protocol over pinned numeric TLS; no proxy/DNS/redirect.
+
+    Only canonical dev-admin paths/methods are permitted. Application and private
+    API transport credentials stay in this process; Web gets neither. Every read
+    shares the owner's absolute phase deadline, bounded wire/body/request totals.
+    This is NOT a standalone CLI, worker trigger or consumer of GitHub plaintext.
+    """
+
+    def __init__(self, owner, *, api: bool, origin: str, address: str,
+                 ca_pem: str | None = None) -> None:
+        self._owner, self._api = owner, api
+        self._transport = RecoveryHTTPSAttempt(origin=origin, address=address, ca_pem=ca_pem)
+
+    def request(self, method, path, *, authenticated=True, body=None, headers=None,
+                follow_redirects=True):
+        # No following at all, including same-origin redirects. The gate's form
+        # journey verifies actual303+Location without forwarding a credential.
+        return self._owner._request(self, method, path, authenticated=authenticated,
+                                    body=body, headers=headers)
+
+    def _roundtrip(self, method, path, *, authenticated, body, headers):
+        import http.client
+        import socket
+        from urllib.parse import urlencode
+
+        from delivery_toolchain.e2e import check_live_e2e_gate as gate
+
+        response = connection = raw = tls = None
+        owner, config, transport = self._owner, self._owner._config, self._transport
+        try:
+            path = gate._safe_request_path(path)
+            if (method not in {"GET", "POST"} or (method == "GET" and body is not None)
+                    or (method == "POST" and path not in {
+                        "/api/v1/jobs", "/api/v1/operator/users", "/login", "/auth/logout"})
+                    or (self._api and path in {"/login", "/auth/logout", "/api/v1/operator/users"})
+                    or (not self._api and method == "POST" and path == "/api/v1/jobs")):
+                raise ValueError
+            request_headers = {"accept": "application/json", "x-correlation-id": owner._correlation,
+                               "connection": "close"}
+            supplied = {} if headers is None else dict(headers)
+            if (any(type(k) is not str or k != k.lower() for k in supplied)
+                    or set(supplied) - {"accept", "x-correlation-id", "origin", "cookie", "content-type",
+                                       "idempotency-key", "x-operator-role"}
+                    or any(type(v) is not str or len(v) > 9000 or any(ord(c) < 32 or ord(c) >= 127 for c in v)
+                           for v in supplied.values())
+                    or ("origin" in supplied and supplied["origin"] != config.web_url)
+                    or ("cookie" in supplied and self._api)):
+                raise ValueError
+            request_headers.update(supplied)
+            if self._api:
+                request_headers["x-serverless-authorization"] = f"Bearer {config.api_transport_token}"
+                if authenticated:
+                    request_headers.update(authorization=f"Bearer {config.bearer_token}")
+                    request_headers["x-operator-role"] = config.operator_role
+                    request_headers["x-subject-id"] = config.operator_subject
+                    if config.operator_tenant:
+                        request_headers["x-tenant-id"] = config.operator_tenant
+            encoded = None
+            if body is not None:
+                if type(body) is not dict:
+                    raise ValueError
+                if request_headers.get("content-type") == "application/x-www-form-urlencoded":
+                    encoded = urlencode(body).encode()
+                else:
+                    encoded = json.dumps(body, separators=(",", ":"), allow_nan=False).encode()
+                    request_headers["content-type"] = "application/json"
+                if len(encoded) > 16384:
+                    raise ValueError
+            deadline = owner._budget.call_deadline
+            raw = socket.socket(socket.AF_INET6 if transport._ipv6 else socket.AF_INET, socket.SOCK_STREAM)
+            raw.settimeout(_http_remaining(deadline))
+            raw.connect((transport._address, transport._port))
+            raw.settimeout(_http_remaining(deadline))
+            tls = transport._context.wrap_socket(raw, server_hostname=transport._host)
+            connection = http.client.HTTPConnection(transport._host, transport._port)
+            connection.auto_open = 0
+            connection.sock = _DeadlineSocket(tls, deadline, 524288)
+            connection.request(method, path, body=encoded, headers=request_headers)
+            response = connection.getresponse()
+            # Retain a bounded newly issued own cookie BEFORE body decoding.
+            # An ambiguous/malformed login remains UNKNOWN, never a login retry.
+            cookies = gate._set_cookies(response.headers)
+            if not self._api and path == "/login":
+                owner._retain_cookies(cookies)
+                if cookies:
+                    from http.cookies import SimpleCookie
+                    values = response.headers.get_all("Set-Cookie", [])
+                    if len(values) != 1:
+                        raise ValueError
+                    parsed = SimpleCookie()
+                    parsed.load(values[0])
+                    item = parsed.get("__Host-oday_web_session")
+                    if (set(parsed) != {"__Host-oday_web_session"} or item is None or not item["secure"]
+                            or not item["httponly"] or item["path"] != "/" or item["domain"]
+                            or item["samesite"].lower() != "lax"):
+                        raise ValueError
+            lengths = response.headers.get_all("Content-Length", [])
+            transfers = response.headers.get_all("Transfer-Encoding", [])
+            limit = 491520 if supplied.get("accept") == "text/html" else 49152
+            if (response.headers.defects or len(lengths) > 1 or len(transfers) > 1 or (lengths and transfers)
+                    or (lengths and (not lengths[0].isascii() or not lengths[0].isdigit()
+                                     or int(lengths[0]) > limit))
+                    or (transfers and transfers[0].lower() != "chunked")
+                    or len(response.headers.get_all("Location", [])) > 1
+                    or len(response.headers.get_all("Set-Cookie", [])) > 1):
+                raise ValueError
+            clear = response.read(limit + 1)
+            owner._bytes += len(clear)
+            if (len(clear) > limit or owner._bytes > 4194304
+                    or (lengths and len(clear) != int(lengths[0])) or response.read(1)):
+                raise ValueError
+            payload = {}
+            if clear and response.headers.get_content_type() == "application/json":
+                def unique(pairs):
+                    result = {}
+                    for key, value in pairs:
+                        if key in result:
+                            raise ValueError
+                        result[key] = value
+                    return result
+                payload = json.loads(clear, object_pairs_hook=unique,
+                                     parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+                if type(payload) is not dict:
+                    raise ValueError
+            elif clear and supplied.get("accept") != "text/html":
+                raise ValueError
+            _http_remaining(deadline)
+            return gate.HttpResponse(response.status, payload, location=response.headers.get("Location", ""),
+                                     cookies=cookies)
+        except Exception:
+            # Includes transport/header/body/timer failures. Do not return an
+            # error response that would permit later probes after uncertainty.
+            raise RecoveryRefused("RECOVERY_GATE_TRANSPORT_STOPPED") from None
+        finally:
+            for resource in (response, connection, tls, raw):
+                if resource is not None:
+                    try:
+                        resource.close()
+                    except Exception:
+                        pass
+
+
+class ForegroundSamePairGate:
+    """Full canonical in-parent gate and failure cleanup coordinator increment.
+
+    This does NOT supply effect authority, writer exclusion, measured production
+    bounds or normally authorized fresh-job dispatch. Construct/validate BEFORE
+    reservation, then execute only after this process's real201/durable ACK. No
+    supplied gate callback/report or passed boolean is accepted. Success proves
+    same-pair gate only; decrypted binding/full-product acceptance stay false.
+
+    Any failed/uncertain gate stops, attempts quarantine using the retained SAME
+    original cookie BEFORE remaining own logouts, then cleans only known sessions
+    once under the aggregate reserved cleanup phase. Unknown login/quarantine or
+    logout cannot be relabelled successful. Old interrupted original cleanup stays
+    unknown. The canonical default (non-recovery) gate remains unchanged.
+    """
+
+    def __init__(self, plan: dict, *, sessions: ForegroundOwnedWebSessions,
+                 gate_config, api_address: str, api_ca_pem: str | None = None) -> None:
+        from dataclasses import replace
+
+        from delivery_toolchain.e2e import check_live_e2e_gate as gate
+        try:
+            if (type(sessions) is not ForegroundOwnedWebSessions or sessions._closed or sessions._stopped
+                    or type(gate_config) is not gate.GateConfig or type(plan) is not dict
+                    or gate_config.web_url != sessions._origin
+                    or gate_config.expected_sha != plan["release_sha"]
+                    or gate_config.expected_manifest_digest != plan["manifest_digest"]
+                    or gate_config.expected_deployment != "dev" or gate_config.release_profile != "dev-admin"
+                    or gate_config.allow_http is not False or gate_config.external_provider_mode != "disabled"
+                    or gate_config.required_provider_ids != () or gate_config.operator_role != "platform_admin"
+                    or any(getattr(gate_config, k) for k in (
+                        "dev_admin_username", "dev_admin_password", "dev_admin_initial_password",
+                        "bootstrap_admin_username", "bootstrap_admin_password", "dev_admin_bundle_account_id",
+                        "dev_admin_bundle_tenant_id", "dev_admin_bundle_execution_id", "dev_admin_bundle_recovery_lineage"))
+                    or gate_config.dev_admin_bundle_schema_version != 1):
+                raise ValueError
+            digest = validate_recovery_plan(plan, release_sha=plan["release_sha"],
+                    manifest_digest=plan["manifest_digest"], now=datetime.now(UTC))
+            if digest != sessions._budget._receipts._digest:
+                raise ValueError
+            checked = replace(gate_config, dev_admin_username="odp-dev-smoke",
+                              dev_admin_password=sessions._target.password)
+            if not all(c.ok is True for c in gate.validate_config(checked)):
+                raise ValueError
+            self._budget, self._sessions, self._plan = sessions._budget, sessions, dict(plan)
+            self._config = gate_config
+            self._api = _ForegroundGateHTTPSClient(self, api=True, origin=gate_config.api_url,
+                                                   address=api_address, ca_pem=api_ca_pem)
+            self._web = _ForegroundGateHTTPSClient(self, api=False, origin=sessions._origin,
+                                                   address=sessions._address, ca_pem=sessions._ca)
+        except Exception:
+            raise RecoveryRefused("RECOVERY_GATE_CONFIG_INVALID") from None
+        self._pid, self._used, self._stopped = os.getpid(), False, False
+        self._correlation = f"corr-recovery-gate-{plan['execution_id']}"
+        self._logins: set[str] = set()
+        self._cookies: dict[str, dict] = {}
+        self._unknown_login = False
+        self._bytes = self._requests = 0
+        self._cleanup_outcome = self._quarantine_outcome = "not-attempted"
+
+    def __repr__(self) -> str:
+        return "ForegroundSamePairGate(<redacted>)"
+
+    def __reduce_ex__(self, protocol: int):
+        raise RecoveryRefused("RECOVERY_CUSTODY_SERIALIZATION_REFUSED")
+
+    def _retain_cookies(self, cookies) -> None:
+        for name, value in cookies.items():
+            if (name != "__Host-oday_web_session" or type(value) is not str or not 0 < len(value) <= 8192
+                    or any(ord(c) <= 32 or ord(c) >= 127 or c in ';"\\,' for c in value)
+                    or value in self._cookies or len(self._cookies) >= 4):
+                self._unknown_login = True
+                raise ValueError
+            self._cookies[value] = {"attempted": False, "acknowledged": False, "verified": False}
+
+    def _request(self, client, method, path, *, authenticated, body, headers):
+        supplied = {} if headers is None else dict(headers)
+        cookie = supplied.get("cookie", "").removeprefix("__Host-oday_web_session=")
+        login = not client._api and method == "POST" and path == "/login"
+        logout = not client._api and method == "POST" and path == "/auth/logout"
+        operation, started, status = "", False, None
+        try:
+            if os.getpid() != self._pid or self._requests >= 256 or (self._stopped and not (
+                    self._budget._active is not None and self._budget._active[0] == "cleanup")):
+                raise ValueError
+            self._requests += 1
+            if login:
+                form = supplied.get("content-type") == "application/x-www-form-urlencoded"
+                valid = type(body) is dict and body.get("username") == "odp-dev-smoke" and body.get("password") == self._sessions._target.password
+                operation = "gate-" + ("" if valid else "invalid-") + ("form" if form else "json") + "-login"
+                if operation in self._logins or self._budget._active[0] != "gate":
+                    raise ValueError
+                self._logins.add(operation)
+            elif logout:
+                if cookie not in self._cookies or self._cookies[cookie]["attempted"]:
+                    raise ValueError
+                self._cookies[cookie]["attempted"] = True  # no repeat even if receipt/transport fails
+                operation = "gate-session-logout"
+            if operation:
+                elapsed, remaining = self._budget._time()
+                self._budget._receipts.append(phase=self._budget._active[0], operation=operation,
+                    stage="start", outcome="pending", elapsed=elapsed, remaining=remaining)
+                started = True
+            result = client._roundtrip(method, path, authenticated=authenticated, body=body, headers=supplied)
+            status = result.status
+            if login and any(result.cookies.values()) and operation.startswith("gate-invalid-"):
+                raise ValueError  # unexpected diagnostic login owns a session, never authorizes more probes
+            if logout and status == 200 and not result.failed and result.payload.get("ok") is True:
+                self._cookies[cookie]["acknowledged"] = result.cookies.get("__Host-oday_web_session", "missing") == ""
+            if not client._api and method == "GET" and path == "/auth/session" and cookie in self._cookies:
+                if self._cookies[cookie]["acknowledged"] and status == 401 and not result.failed:
+                    self._cookies[cookie]["verified"] = True
+            if operation:
+                elapsed, remaining = self._budget._time()
+                self._budget._receipts.append(phase=self._budget._active[0], operation=operation,
+                    stage="terminal", outcome="completed", elapsed=elapsed, remaining=remaining, http_status=status)
+            return result
+        except Exception:
+            if login and started:
+                self._unknown_login = True
+            if operation and started:
+                try:
+                    elapsed, remaining = self._budget._time()
+                    self._budget._receipts.append(phase=self._budget._active[0], operation=operation,
+                        stage="terminal", outcome="unknown", elapsed=elapsed, remaining=remaining, http_status=status)
+                except Exception:
+                    pass
+            self._stopped = True
+            raise RecoveryRefused("RECOVERY_GATE_REQUEST_STOPPED") from None
+
+    @staticmethod
+    def _before_cleanup(checks) -> None:
+        if not checks or any(check.ok is not True for check in checks):
+            raise RecoveryRefused("RECOVERY_GATE_FAILED_BEFORE_CLEANUP")
+
+    def execute(self, actions: SameSessionRecoveryActions) -> dict:
+        from dataclasses import replace
+
+        from delivery_toolchain.e2e import check_live_e2e_gate as gate
+        from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle
+        started = False
+        try:
+            if (self._used or self._stopped or os.getpid() != self._pid
+                    or type(actions) is not SameSessionRecoveryActions or actions._stopped
+                    or actions._budget is not self._budget or actions._custody is not self._sessions._target
+                    or actions._cookie != self._sessions._cookies["original"] or actions._plan != self._plan
+                    or not actions._acknowledged or actions._put_status != 201
+                    or self._sessions._baseline is None or self._sessions._observation_plan != self._plan
+                    or self._sessions._verified != {"original", "target"}):
+                raise ValueError
+            self._used = True
+            bundle = read_dev_credential_bundle(json.dumps(actions._bundle()), environment="dev", release_profile="dev-admin")
+            self._config = replace(self._config, dev_admin_username=bundle.username, dev_admin_password=bundle.password,
+                dev_admin_bundle_account_id=bundle.account_id, dev_admin_bundle_tenant_id=bundle.tenant_id,
+                dev_admin_bundle_execution_id=bundle.execution_id, dev_admin_bundle_schema_version=bundle.schema_version,
+                dev_admin_bundle_recovery_lineage=bundle.recovery_lineage)
+            self._budget.begin("gate")
+            started = True
+            # All work including canonical scheduled-worker polling inherits ONE
+            # clock. No gcloud/CLI/credential-bearing subprocess or timer reset.
+            with _absolute_observer_deadline(self._budget.call_deadline):
+                checks, report = gate.evaluate_gate(self._config, http=self._api, web_http=self._web,
+                    worker_driver=gate.ScheduledWorkerDriver(), correlation_id=self._correlation,
+                    now=datetime.now(UTC).isoformat(), session_cleanup_barrier=self._before_cleanup)
+            required = {"admin:credential_bundle_account_bound", "admin:credential_bundle_durable_acknowledgement",
+                        "session:logout", "session:revoked_session_refused", "admin:logout_revokes_admin_api",
+                        "session:html_form_logout", "session:html_form_revoked_session_refused"}
+            if (not checks or any(c.ok is not True for c in checks) or report.get("ok") is not True
+                    or not required <= {c.name for c in checks if c.ok is True}
+                    or report.get("expected_release_sha") != self._plan["release_sha"]
+                    or report.get("expected_deployment") != "dev" or self._unknown_login
+                    or len(self._cookies) != 2 or not all(v["verified"] for v in self._cookies.values())):
+                raise ValueError
+            if self._budget.finish(outcome="completed") != "completed":
+                raise ValueError
+            started = False
+            return {"stage": "same-pair-canonical-gate-completed", "release_sha": self._plan["release_sha"],
+                    "manifest_digest": self._plan["manifest_digest"], "execution_id": self._plan["execution_id"],
+                    "gate_passed": True, "checks_count": len(checks), "gate_own_session_cleanup": "completed",
+                    "credential_binding_verified": False, "execution_authorized": False,
+                    "full_product_acceptance": False, "original_incident_session_cleanup": "unknown",
+                    "secret_values_redacted": True}
+        except Exception:
+            self._used = self._stopped = True
+            if started and self._budget._active is not None:
+                try:
+                    self._budget.finish(outcome="unknown")
+                except Exception:
+                    pass
+            self._budget._stopped = True
+            self.stop_and_cleanup(actions)
+            raise RecoveryActionRefused(outcome="unknown", http_status=None) from None
+
+    def stop_and_cleanup(self, actions: SameSessionRecoveryActions) -> dict:
+        """No new login/readback/retry: exact known root quarantine BEFORE logout.
+
+        May be called by the future fresh-consumer coordinator on its failure.
+        If quarantine is unavailable, record UNKNOWN and still try other known
+        own sessions once. Never infer a committed root from GET or fake an ACK.
+        """
+        self._stopped = self._budget._stopped = True
+        if self._quarantine_outcome != "not-attempted" or self._cleanup_outcome != "not-attempted":
+            return self._failure_receipt()
+        if (type(actions) is not SameSessionRecoveryActions or actions._budget is not self._budget
+                or actions._custody is not self._sessions._target
+                or actions._plan != self._plan or actions._cookie != self._sessions._cookies["original"]):
+            self._quarantine_outcome = self._cleanup_outcome = "unknown"
+            return self._failure_receipt()
+        self._quarantine_outcome = "unknown"
+        try:
+            actions.quarantine()
+            self._quarantine_outcome = "completed"
+        except Exception:
+            pass
+        self._cleanup_outcome = "unknown"
+        try:
+            self._sessions.cleanup(gate_sessions=self)
+            self._cleanup_outcome = "completed"
+        except Exception:
+            pass
+        finally:
+            actions.close()
+        return self._failure_receipt()
+
+    def _failure_receipt(self) -> dict:
+        return {"stage": "recovery-required", "quarantine": self._quarantine_outcome,
+                "own_session_cleanup": self._cleanup_outcome, "original_incident_session_cleanup": "unknown",
+                "execution_authorized": False, "credential_binding_verified": False, "secret_values_redacted": True}
+
+    def _cleanup_known_sessions(self) -> bool:
+        if self._budget._active is None or self._budget._active[0] != "cleanup":
+            return False
+        failed = self._unknown_login
+        for cookie, state in self._cookies.items():
+            if state["attempted"]:
+                failed = not state["verified"] or failed
+                continue  # unknown/failed logout is never retried
+            try:
+                result = self._web.request("POST", "/auth/logout", authenticated=False, body={},
+                    headers={"cookie": f"__Host-oday_web_session={cookie}", "origin": self._sessions._origin})
+                if result.failed or result.status != 200 or result.payload.get("ok") is not True:
+                    raise ValueError
+                revoked = self._web.request("GET", "/auth/session", authenticated=False,
+                    headers={"cookie": f"__Host-oday_web_session={cookie}"})
+                if revoked.failed or revoked.status != 401 or not state["verified"]:
+                    raise ValueError
+            except Exception:
+                failed = True
+        return not failed

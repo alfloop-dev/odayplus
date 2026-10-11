@@ -1758,6 +1758,7 @@ def _check_dev_admin_session(
     correlation_id: str,
     checks: list[CheckResult],
     report: dict[str, Any],
+    session_cleanup_barrier: Callable[[Sequence[CheckResult]], None] | None = None,
 ) -> None:
     """Drive the real password sign-in and administration journey through the deployed Web.
 
@@ -2390,6 +2391,10 @@ def _check_dev_admin_session(
     )
     operations.append("admin_page")
 
+    # Trusted recovery may STOP on existing failures before releasing its own
+    # sessions. This adds a fail-stop boundary; it cannot waive/replace checks.
+    if session_cleanup_barrier is not None:
+        session_cleanup_barrier(tuple(checks))
     # 11. Logout and revocation.
     logout = web.request(
         "POST",
@@ -2502,6 +2507,8 @@ def _check_dev_admin_session(
             _failure_detail(form_page, expected="200 (not a /login redirect)"), "session",
         )
     finally:
+        if session_cleanup_barrier is not None:
+            session_cleanup_barrier(tuple(checks))
         form_logout = web.request(
             "POST", "/auth/logout", authenticated=False,
             headers=session_headers(form_cookies, origin=origin), follow_redirects=False,
@@ -3017,6 +3024,7 @@ def evaluate_gate(
     sleep: Callable[[float], None] = time.sleep,
     business_journey_receipt: Mapping[str, Any] | None = None,
     business_journey_receipt_note: str = "",
+    session_cleanup_barrier: Callable[[Sequence[CheckResult]], None] | None = None,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     redact = _redactor(
         config.bearer_token,
@@ -3122,6 +3130,7 @@ def evaluate_gate(
                 correlation_id=f"{correlation_id}-session",
                 checks=checks,
                 report=report,
+                session_cleanup_barrier=session_cleanup_barrier,
             )
 
     blockers = [
