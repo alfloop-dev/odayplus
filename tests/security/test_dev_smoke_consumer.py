@@ -323,6 +323,104 @@ def test_real_evaluator_failed_post_logout_revocation_latches_before_form_logins
     assert "POST /login" not in every[client.failure_index + 1:]
 
 
+@pytest.mark.parametrize("lost_logout", [False, True])
+def test_real_evaluator_extra_cookie_latches_and_never_logs_in_again(monkeypatch, lost_logout: bool) -> None:
+    """Reviewer round-4 P2: canonical evaluator joins ALL response cookies.
+
+    A valid session cookie plus an additional (non-secret routing) cookie must
+    latch UNKNOWN at that login reply, refuse every later joined-header request
+    locally, and leave the owned cookie's single logout to bounded cleanup.
+    Synthetic HTTP only; sockets/DNS are forbidden.
+    """
+    import socket
+
+    from tests.e2e import test_live_e2e_gate_dev_admin as f
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("NETWORK_FORBIDDEN")
+    for name in ("create_connection", "getaddrinfo"):
+        monkeypatch.setattr(socket, name, forbidden)
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(f.base, "WEB_URL", c.WEB_ORIGIN)
+
+    class Web(f.AdminWeb):
+        logout_index: int | None = None
+
+        def request(self, method, path, **kwargs):
+            response = super().request(method, path, **kwargs)
+            if method == "POST" and path == "/login" and response.status == 200:
+                response.cookies["routing"] = "synthetic-nonsecret"
+            if method == "POST" and path == "/auth/logout" and self.logout_index is None:
+                self.logout_index = len(self.headers_seen) - 1
+                if lost_logout:
+                    raise TimeoutError("synthetic lost logout reply after possible commit")
+            return response
+
+    client = Web(f.web_routes())
+
+    def form_login(body, headers):
+        if body.get("username") == f.USERNAME and body.get("password") == f.PASSWORD:
+            client.logged_out = False
+            return c.gate.HttpResponse(303, location=c.WEB_ORIGIN + "/operator?view=admin",
+                                       cookies={f.SESSION_COOKIE: f.FRESH_SESSION_VALUE})
+        return c.gate.HttpResponse(303, location=c.WEB_ORIGIN
+                                   + "/login?error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin")
+    client.routes["form POST /login"] = form_login
+    now = time.monotonic()
+    observed = c._ObservedWeb(client, execution_id="offline", deadline=now + 30, cleanup_deadline=now + 35)
+    clock = f.base.FakeClock()
+    checks, report = c.gate.evaluate_gate(f.dev_admin_config(), http=f.base.FakeHttp(f.api_routes()),
+        worker_driver=c.gate.ScheduledWorkerDriver(), correlation_id=f.base.CORRELATION_ID,
+        now=f.base.NOW, web_http=observed, monotonic=clock.monotonic, sleep=clock.sleep)
+    sent = [path for path, _ in client.headers_seen]
+    first_positive = max(i for i, path in enumerate(sent) if path == "POST /login")
+    assert observed.uncertainty_latched  # latched AT the extra-cookie login reply
+    assert sent[first_positive + 1:] == [], "no transport after ambiguous cookie login"
+    assert report["ok"] is False
+    assert observed.cleanup_owned_sessions() is False  # UNKNOWN preserved
+    every = client.headers_seen
+    logouts = [headers.get("cookie", "") for path, headers in every if path == "POST /auth/logout"]
+    assert logouts == [f"{f.SESSION_COOKIE}={f.SESSION_VALUE}"]  # once, single-pair, cleanup only
+    assert all(path in {"GET /auth/session", "GET /api/v1/auth/principal", "POST /auth/logout"}
+               for path, _ in every[first_positive + 1:])
+    assert all(";" not in headers.get("cookie", "") for _, headers in every)
+    assert [path for path, _ in every].count("POST /login") == sent.count("POST /login")
+
+
+@pytest.mark.parametrize("header", [
+    f"{_COOKIE}=owned-a; routing=x", f"routing=x; {_COOKIE}=owned-a", f"{_COOKIE}=owned-a; {_COOKIE}=owned-b",
+    f"{_COOKIE}=owned-a;", f"{_COOKIE}=owned-a ", f"{_COOKIE}=", "routing=x", f" {_COOKIE}=owned-a",
+    f"{_COOKIE}=owned-a,{_COOKIE}=owned-b"])
+def test_ambiguous_cookie_header_latches_locally_and_keeps_single_cleanup(header: str) -> None:
+    sent: list[tuple[str, str, str]] = []
+
+    class Client:
+        def request(self, method, path, **kwargs):
+            sent.append((method, path, (kwargs.get("headers") or {}).get("cookie", "")))
+            if path == "/login":
+                return c.gate.HttpResponse(200, {"ok": True}, cookies={_COOKIE: "owned-a"})
+            if path == "/auth/logout":
+                return c.gate.HttpResponse(200, {"ok": True}, cookies={_COOKIE: ""})
+            return c.gate.HttpResponse(401, {})
+
+    assert c._session_cookie(header)[1] is True
+    assert c._session_cookie(f"{_COOKIE}=owned-a") == ("owned-a", False)
+    assert c._session_cookie("") == ("", False)
+    now = time.monotonic()
+    web = c._ObservedWeb(Client(), execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6)
+    web.request("POST", "/login", headers={})
+    assert not web.uncertainty_latched
+    before = list(sent)
+    for method, path in (("POST", "/auth/logout"), ("GET", "/auth/session"), ("GET", "/api/v1/operator/users")):
+        assert web.request(method, path, headers={"cookie": header}).status == 0
+    assert sent == before and web.uncertainty_latched
+    assert web.request("POST", "/login", headers={}).status == 0 and sent == before
+    assert web.cleanup_owned_sessions() is False
+    assert [(m, p) for m, p, _ in sent[len(before):]] == [
+        ("POST", "/auth/logout"), ("GET", "/auth/session"), ("GET", "/api/v1/auth/principal")]
+    assert all(cookie == f"{_COOKIE}=owned-a" for _, _, cookie in sent[len(before):])
+
+
 @pytest.fixture(scope="module")
 def offline_signing_key():
     # Ephemeral isolated fixture, never an operational JWT key or persisted key.

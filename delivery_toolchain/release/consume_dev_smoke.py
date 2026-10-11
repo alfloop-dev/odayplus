@@ -393,6 +393,24 @@ class _UncertaintyLatch:
 
 
 _REVOCATION_READS = frozenset({"/auth/session", "/api/v1/auth/principal"})
+_SESSION_COOKIE_PREFIX = "__Host-oday_web_session="
+
+
+def _session_cookie(header: Any) -> tuple[str, bool]:
+    """Return (value, ambiguous) for a Cookie header.
+
+    Only an absent header or EXACTLY one ``__Host-oday_web_session=<value>``
+    pair is unambiguous. Extra/duplicate/other cookies, separators or
+    whitespace are ambiguous: never guessed, never matched by prefix.
+    """
+    if header == "":
+        return "", False
+    if type(header) is not str:
+        return "", True
+    value = header.removeprefix(_SESSION_COOKIE_PREFIX)
+    if value == header or not value or any(ch in value for ch in ";,\r\n\t "):
+        return "", True
+    return value, False
 
 
 class _ObservedWeb:
@@ -453,9 +471,15 @@ class _ObservedWeb:
             self._cleaning = False
 
     def request(self, method: str, path: str, **kwargs: Any) -> Any:
-        header = (kwargs.get("headers") or {}).get("cookie", "")
-        cookie = header.removeprefix("__Host-oday_web_session=")
-        state = self._owned.get(cookie)
+        cookie, ambiguous = _session_cookie((kwargs.get("headers") or {}).get("cookie", ""))
+        if ambiguous:
+            # The canonical evaluator joins EVERY response cookie into one header.
+            # An extra/duplicate/malformed pair would hide the owned session from
+            # per-cookie logout/revocation fencing: latch NOW and refuse locally.
+            # Any owned cookie keeps its single unattempted logout for cleanup.
+            self._unknown()
+            return gate.HttpResponse(status=0, error="native consumer ambiguous cookie refused")
+        state = self._owned.get(cookie) if cookie else None
         if self._latch.latched and not (state is not None and (
                 (method == "GET" and path in _REVOCATION_READS)
                 or (method == "POST" and path == "/auth/logout" and not state["logout_attempted"]))):
@@ -472,14 +496,17 @@ class _ObservedWeb:
                 response = self.client.request(method, path, **kwargs)
             if method == "POST" and path == "/login":
                 issued = response.cookies.get("__Host-oday_web_session", "")
-                if isinstance(issued, str) and issued and len(issued) <= 8192 and not any(ch in issued for ch in ";\r\n"):
+                extra = any(value for name, value in response.cookies.items()
+                            if name != "__Host-oday_web_session")
+                if isinstance(issued, str) and issued and len(issued) <= 8192 and not any(ch in issued for ch in ";,\r\n\t "):
                     if len(self._owned) >= 4 or issued in self._owned:
                         self._unknown()
                     else:
                         self._owned[issued] = {"logout_attempted": False, "logout_acknowledged": False}
-                    # A cookie with anything but an unambiguous success reply is
-                    # a malformed login: owned for cleanup, but latched.
-                    if response.failed or not (
+                    # A cookie with anything but an unambiguous success reply (or
+                    # alongside ANY other cookie) is a malformed login: owned for
+                    # cleanup, but latched before the evaluator continues.
+                    if extra or response.failed or not (
                             (response.status == 200 and response.payload.get("ok") is True)
                             or (response.status == 303 and response.location
                                 and "error=" not in response.location)):

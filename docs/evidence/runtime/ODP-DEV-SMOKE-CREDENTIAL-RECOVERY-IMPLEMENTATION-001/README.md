@@ -185,6 +185,54 @@ credential/account/session/secret/cloud effect, deployment, custody approval or
 F11 claim. Prior quarantine/bindingNULL, failed/rejected history and operational
 HOLD are preserved. Declared exact-head receipts follow on the clean repair head.
 
+## Fourth-review repair after rejected 8343f4473 (2026-10-11, owner Antigravity2)
+
+Rejected PR1459 head 8343f44730b2 and its CI38168007507/receipts are preserved,
+not reset or amended; the repair is a new commit on the same task branch. Base
+remains origin/dev359e480a46df (fetched; zero behind). Ownership returned to
+Antigravity2 after a Claude worker terminal with a clean worktree (no work lost).
+
+- [P2] native consumer prefix-matched the whole joined `Cookie` header.
+  `_session_cookie` now accepts only an absent header or EXACTLY one
+  `__Host-oday_web_session=<value>` pair; any extra/duplicate/other cookie,
+  separator or whitespace is ambiguous, latches UNKNOWN and is refused locally
+  before transport. A login reply with ANY other non-empty cookie beside the
+  session cookie is malformed: the session cookie is owned for cleanup and the
+  latch is set at that reply, so the evaluator's joined-header continuation
+  (protected reads, logout, negative/form logins) never reaches transport. The
+  owned cookie keeps its single unattempted logout for bounded cleanup with a
+  single-pair header; UNKNOWN is preserved. New real-evaluator regression
+  (`test_real_evaluator_extra_cookie_latches_and_never_logs_in_again`, with and
+  without a lost cleanup logout; sockets/DNS forbidden) asserts zero transport
+  after the extra-cookie login, exactly one single-pair original-cookie logout and
+  `cleanup_owned_sessions() is False`; a direct regression covers nine ambiguous
+  header shapes.
+- [P2] foreground same-pair gate did not validate positive/diagnostic login
+  replies. `ForegroundSamePairGate._login_reply_valid` applies the canonical
+  evaluator's per-operation success predicate inside `_request` (positive JSON
+  200/ok/subject/retained cookie; positive form 303 same-origin
+  `/operator?view=admin`/retained cookie; diagnostic JSON 401
+  AUTH_INVALID_CREDENTIALS without cookie; diagnostic form 303 same-origin
+  `/login?error=AUTH_INVALID_CREDENTIALS` without cookie). Anything else raises
+  before a completed receipt or further transport: `_unknown_login`, terminal
+  UNKNOWN receipt, stop, once-only quarantine then known-session cleanup, own
+  cleanup UNKNOWN. Request `Cookie` headers must be absent or exactly one session
+  pair. New real-evaluator regression
+  (`test_every_ambiguous_gate_login_reply_latches_unknown_before_further_transport`)
+  covers all five reviewer cases plus seven further positive/diagnostic JSON/form
+  compositions; `test_gate_refuses_ambiguous_cookie_header_before_transport`
+  covers ambiguous request headers.
+
+Reviewer probes were read (not rerun) as the defect specification. Diagnostic
+only: the 28 new cases run against the pre-repair 8343f4473 source files exited1
+with 27 failing; `invalid_json_401_with_cookie` already stopped pre-repair (the
+old diagnostic-cookie guard), and the nine consumer header cases fail there in
+part because `_session_cookie` did not exist. With the repair the full
+consumer+gate files exited0 (exploratory, not a final receipt). No live
+credential/account/session/secret/cloud effect, deployment, custody approval or
+F11 claim. Prior quarantine/bindingNULL, failed/rejected history and operational
+HOLD are preserved. Declared exact-head receipts follow on the clean repair head.
+
 ## Scope
 
 - New internal shared recovery plan/root/capability and PostgreSQL tests, not a

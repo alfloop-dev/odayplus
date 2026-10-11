@@ -530,6 +530,16 @@ principal or protected admin API replay a clean401/403. A lost/timed-out read,
 200, 5xx or any other status latches UNKNOWN at that read, BEFORE the evaluator's
 negative/form logins, and a later401 during final cleanup cannot clear it.
 
+Owned-cookie fencing depends on extracting EXACTLY one session cookie. The
+canonical evaluator joins every response cookie into one `Cookie` header, so the
+wrapper accepts only an absent header or a single `__Host-oday_web_session=<v>`
+pair. Any extra/duplicate/other cookie, separator or whitespace is ambiguous: it
+latches UNKNOWN and is refused locally before transport, never prefix-matched or
+guessed. A login reply carrying ANY other non-empty cookie beside the session
+cookie is likewise malformed: the session cookie is owned for cleanup but the
+latch is set at that reply. The owned cookie's single logout then happens only
+in bounded cleanup, with a single-pair header; no later login reaches transport.
+
 Native credential-step bounds reserve preflight180 + gate300 + cleanup60 seconds
 in one monotonic540 envelope (NOT measured production ceilings). Signal-bound
 HTTP refuses late work; cleanup gets a separate reserved absolute window, not a
@@ -578,6 +588,18 @@ terminal receipt is then UNKNOWN, not completed; `execute()` quarantines the new
 root once and runs once-only known-session cleanup. The evaluator's subsequent
 negative/form logins never reach transport, so no new session follows an
 unproven cleanup.
+
+Every gate login reply, positive AND diagnostic, is validated inside the request
+against the canonical evaluator's own predicate for that operation: positive
+JSON 200 + `ok:true` + subject + the ONE cookie retained from that reply;
+positive form 303 to same-origin `/operator?view=admin` + that cookie; diagnostic
+JSON 401 `AUTH_INVALID_CREDENTIALS` with no cookie; diagnostic form 303 to
+same-origin `/login?error=AUTH_INVALID_CREDENTIALS` with no cookie. Anything else
+(e.g. complete 200/500 without a retained cookie, 500 with a cookie, diagnostic
+reply carrying a cookie or 500) raises BEFORE a completed receipt or any further
+transport: login UNKNOWN, terminal receipt UNKNOWN, quarantine then once-only
+cleanup of any acquired cookie, and own-session cleanup can never be reported
+completed. Request `Cookie` headers must be absent or exactly one session pair.
 
 This incremental adapter is NOT the full preflight-to-fresh-job coordinator.
 The next increment must compose fresh source/admission rechecks and a separately

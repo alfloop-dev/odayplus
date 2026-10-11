@@ -2393,13 +2393,56 @@ class ForegroundSamePairGate:
                 raise ValueError
             self._cookies[value] = {"attempted": False, "acknowledged": False, "verified": False}
 
+    def _login_reply_valid(self, operation: str, result) -> bool:
+        """Exact canonical reply per gate login operation, else UNKNOWN.
+
+        Positive replies must carry the ONE cookie retained from this reply;
+        diagnostic replies must carry none. Status/body/location must match
+        the canonical evaluator's own success predicate for that operation.
+        """
+        from urllib.parse import parse_qs, urlsplit
+
+        from delivery_toolchain.e2e import check_live_e2e_gate as gate
+        try:
+            if result.failed:
+                return False
+            cookies = {name: value for name, value in result.cookies.items() if value}
+            issued = cookies.get("__Host-oday_web_session", "")
+            single = set(cookies) == {"__Host-oday_web_session"} and issued in self._cookies
+            origin = gate._origin(self._sessions._origin)
+            if operation == "gate-json-login":
+                return (result.status == 200 and single and result.payload.get("ok") is True
+                        and result.payload.get("subject") == "odp-dev-smoke")
+            if operation == "gate-form-login":
+                destination = urlsplit(result.location)
+                return (result.status == 303 and single and gate._origin(result.location) == origin
+                        and destination.path == "/operator" and destination.query == "view=admin"
+                        and not destination.fragment)
+            if operation == "gate-invalid-json-login":
+                return (result.status == 401 and not cookies
+                        and gate._payload_mentions(result, "AUTH_INVALID_CREDENTIALS"))
+            if operation == "gate-invalid-form-login":
+                failure = urlsplit(result.location)
+                return (result.status == 303 and not cookies and gate._origin(result.location) == origin
+                        and failure.path == "/login"
+                        and parse_qs(failure.query).get("error") == ["AUTH_INVALID_CREDENTIALS"])
+        except Exception:
+            return False
+        return False
+
     def _request(self, client, method, path, *, authenticated, body, headers):
         supplied = {} if headers is None else dict(headers)
-        cookie = supplied.get("cookie", "").removeprefix("__Host-oday_web_session=")
+        raw_cookie = supplied.get("cookie", "")
+        cookie = raw_cookie.removeprefix("__Host-oday_web_session=") if type(raw_cookie) is str else ""
         login = not client._api and method == "POST" and path == "/login"
         logout = not client._api and method == "POST" and path == "/auth/logout"
         operation, started, status = "", False, None
         try:
+            # Exactly ONE session cookie pair or none: an extra/duplicate/ambiguous
+            # Cookie header could bypass per-cookie logout/revocation fencing.
+            if raw_cookie and (type(raw_cookie) is not str or cookie == raw_cookie or not cookie
+                               or any(c in cookie for c in ";, \t")):
+                raise ValueError
             cleanup = self._budget._active is not None and self._budget._active[0] == "cleanup"
             if os.getpid() != self._pid or self._requests >= (16 if cleanup else 256) or (self._stopped and not cleanup):
                 raise ValueError
@@ -2423,8 +2466,13 @@ class ForegroundSamePairGate:
                 started = True
             result = client._roundtrip(method, path, authenticated=authenticated, body=body, headers=supplied)
             status = result.status
-            if login and any(result.cookies.values()) and operation.startswith("gate-invalid-"):
-                raise ValueError  # unexpected diagnostic login owns a session, never authorizes more probes
+            if login and not self._login_reply_valid(operation, result):
+                # Positive AND diagnostic logins: anything but the exact canonical
+                # reply (including a complete 200/500 without retained cookie,
+                # or a diagnostic reply carrying one) is UNKNOWN. Raise BEFORE a
+                # completed receipt or any further transport; an acquired cookie
+                # stays retained only for once-only bounded cleanup.
+                raise ValueError
             if logout:
                 acknowledged = (status == 200 and not result.failed and result.payload.get("ok") is True
                                 and result.cookies.get("__Host-oday_web_session", "missing") == "")

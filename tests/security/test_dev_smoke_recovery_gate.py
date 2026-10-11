@@ -266,6 +266,100 @@ def test_invalid_logout_ack_or_failed_revocation_stops_before_any_further_login(
         assert calls == before
 
 
+@pytest.mark.parametrize("case", [
+    "invalid_json_500", "invalid_json_401_with_cookie", "invalid_json_401_wrong_code",
+    "invalid_form_500", "invalid_form_303_wrong_location",
+    "positive_json_200_missing_cookie", "positive_json_500_missing_cookie", "positive_json_500_with_cookie",
+    "positive_json_200_ok_false_with_cookie", "positive_form_500_with_cookie", "positive_form_303_missing_cookie",
+    "positive_form_303_error_location_with_cookie"])
+def test_every_ambiguous_gate_login_reply_latches_unknown_before_further_transport(
+        foreground_gate: Any, monkeypatch: Any, tmp_path: Any, case: str) -> None:
+    """Reviewer round-4 P2: actual canonical evaluator, synthetic HTTP only.
+
+    Every positive and diagnostic login reply is validated inside _request; any
+    ambiguity raises BEFORE a completed receipt or any further gate transport,
+    and own-session cleanup can never be reported completed afterwards.
+    """
+    import json
+    import socket
+
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.release import recover_dev_smoke as r
+
+    def no_socket(*args, **kwargs):
+        raise AssertionError("socket transport forbidden in synthetic regression")
+    monkeypatch.setattr(socket, "socket", no_socket)
+    with foreground_gate() as (driver, actions, owner, budget, p, calls, sessions, original, target, events):
+        roundtrip = r._ForegroundGateHTTPSClient._roundtrip
+        fault_at: list[int] = []
+
+        def faulty(client, method, path, *, authenticated, body, headers):
+            reply = roundtrip(client, method, path, authenticated=authenticated, body=body, headers=headers)
+            if fault_at or client._api or (method, path) != ("POST", "/login"):
+                return reply
+            form = headers.get("content-type") == "application/x-www-form-urlencoded"
+            positive = body.get("password") == target.password
+            kind, channel = case.split("_")[:2]
+            if (kind == "positive") != positive or (channel == "form") != form:
+                return reply
+            fault_at.append(len(calls) - 1)
+            cookies = dict(reply.cookies)
+            if "missing_cookie" in case:
+                for value in cookies.values():
+                    driver._cookies.pop(value, None)  # complete reply WITHOUT Set-Cookie
+                cookies = {}
+            if case == "invalid_json_401_with_cookie":
+                cookies = {"__Host-oday_web_session": "offline-diagnostic-cookie"}
+                driver._retain_cookies(cookies)
+                return gate.HttpResponse(401, {"error": {"code": "AUTH_INVALID_CREDENTIALS"}}, cookies=cookies)
+            if case == "invalid_json_401_wrong_code":
+                return gate.HttpResponse(401, {"error": {"code": "SOMETHING_ELSE"}})
+            if case == "invalid_form_303_wrong_location":
+                return gate.HttpResponse(303, location=owner._origin + "/operator?view=admin")
+            if case == "positive_json_200_missing_cookie":
+                return gate.HttpResponse(200, {"ok": True, "subject": "odp-dev-smoke"})
+            if case == "positive_json_200_ok_false_with_cookie":
+                return gate.HttpResponse(200, {"ok": False, "subject": "odp-dev-smoke"}, cookies=cookies)
+            if case == "positive_form_303_missing_cookie":
+                return gate.HttpResponse(303, location=owner._origin + "/operator?view=admin")
+            if case == "positive_form_303_error_location_with_cookie":
+                return gate.HttpResponse(303, location=owner._origin + "/login?error=AUTH_INVALID_CREDENTIALS",
+                                         cookies=cookies)
+            return gate.HttpResponse(500, {"ok": True, "subject": "odp-dev-smoke"} if positive else {},
+                                     cookies=cookies if case.endswith("with_cookie") else {})
+        monkeypatch.setattr(r._ForegroundGateHTTPSClient, "_roundtrip", faulty)
+        with pytest.raises(r.RecoveryActionRefused):
+            driver.execute(actions)
+        assert len(fault_at) == 1
+        quarantine = next(i for i, call in enumerate(calls) if call[2] == "quarantine")
+        assert calls[fault_at[0] + 1:quarantine] == []  # STOP: no further gate transport
+        assert not any(call[1:3] == ("POST", "/login") for call in calls[fault_at[0] + 1:])
+        assert driver._unknown_login is True
+        receipt = driver._failure_receipt()
+        assert receipt["quarantine"] == "completed" and receipt["own_session_cleanup"] == "unknown"
+        assert receipt["original_incident_session_cleanup"] == "unknown"
+        records = [json.loads(path.read_text()) for path in sorted((tmp_path / p["execution_id"]).glob("*.json"))]
+        name = ("gate-invalid-" if case.startswith("invalid") else "gate-") + case.split("_")[1] + "-login"
+        terminal = [rec for rec in records if rec["operation"] == name and rec["stage"] == "terminal"]
+        assert [rec["outcome"] for rec in terminal] == ["unknown"]  # never "completed"
+        before = deepcopy(calls)
+        driver.stop_and_cleanup(actions)
+        assert calls == before
+
+
+@pytest.mark.parametrize("header", ["__Host-oday_web_session=a; routing=x", "routing=x",
+                                    "__Host-oday_web_session=a; __Host-oday_web_session=b",
+                                    "__Host-oday_web_session=a,b", "__Host-oday_web_session="])
+def test_gate_refuses_ambiguous_cookie_header_before_transport(foreground_gate: Any, header: str) -> None:
+    from shared.identity.dev_smoke_recovery import RecoveryRefused
+    with foreground_gate() as (driver, actions, owner, budget, p, calls, sessions, original, target, events):
+        budget.begin("gate")
+        with pytest.raises(RecoveryRefused):
+            driver._web.request("GET", "/auth/session", authenticated=False, headers={"cookie": header})
+        assert driver._stopped and not [c for c in calls if c[0] == "web"]
+        budget.finish(outcome="unknown")
+
+
 @pytest.mark.parametrize("field,value", [("bearer_token", ""), ("api_transport_token", ""),
     ("release_profile", "full"), ("expected_deployment", "staging"), ("expected_sha", "c" * 40),
     ("expected_manifest_digest", ""), ("external_provider_mode", "live"), ("allow_http", True),
