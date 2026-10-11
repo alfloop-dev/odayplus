@@ -42813,6 +42813,170 @@
         ]
       }
     },
+    "/api/v1/operator/users/create": {
+      "post": {
+        "operationId": "createOperatorAccountInvitation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "Pending invitation only; never accepts a password or caller identity.",
+                "properties": {
+                  "email": {
+                    "maxLength": 320,
+                    "minLength": 3,
+                    "title": "Email",
+                    "type": "string"
+                  },
+                  "lifetime_seconds": {
+                    "default": 3600,
+                    "maximum": 259200.0,
+                    "minimum": 1.0,
+                    "title": "Lifetime Seconds",
+                    "type": "integer"
+                  },
+                  "name": {
+                    "default": "",
+                    "maxLength": 255,
+                    "title": "Name",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "default": "",
+                    "maxLength": 512,
+                    "title": "Reason",
+                    "type": "string"
+                  },
+                  "roles": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "title": "Roles",
+                    "type": "array"
+                  },
+                  "scope": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Scope"
+                  },
+                  "username": {
+                    "maxLength": 64,
+                    "minLength": 3,
+                    "title": "Username",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "username",
+                  "email",
+                  "roles"
+                ],
+                "title": "UserInvitePayload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationIssuedPayload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Invite User",
+        "tags": [
+          "operator",
+          "operator-users-roles"
+        ]
+      }
+    },
     "/api/v1/operator/users/dev-smoke-journal": {
       "get": {
         "operationId": "inspectDevSmokeJournal",
@@ -43256,6 +43420,170 @@
           }
         },
         "summary": "Revoke Invitation",
+        "tags": [
+          "operator",
+          "operator-users-roles"
+        ]
+      }
+    },
+    "/api/v1/operator/users/invite": {
+      "post": {
+        "operationId": "inviteOperatorAccount",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "Pending invitation only; never accepts a password or caller identity.",
+                "properties": {
+                  "email": {
+                    "maxLength": 320,
+                    "minLength": 3,
+                    "title": "Email",
+                    "type": "string"
+                  },
+                  "lifetime_seconds": {
+                    "default": 3600,
+                    "maximum": 259200.0,
+                    "minimum": 1.0,
+                    "title": "Lifetime Seconds",
+                    "type": "integer"
+                  },
+                  "name": {
+                    "default": "",
+                    "maxLength": 255,
+                    "title": "Name",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "default": "",
+                    "maxLength": 512,
+                    "title": "Reason",
+                    "type": "string"
+                  },
+                  "roles": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "title": "Roles",
+                    "type": "array"
+                  },
+                  "scope": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Scope"
+                  },
+                  "username": {
+                    "maxLength": 64,
+                    "minLength": 3,
+                    "title": "Username",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "username",
+                  "email",
+                  "roles"
+                ],
+                "title": "UserInvitePayload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationIssuedPayload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Invite User",
         "tags": [
           "operator",
           "operator-users-roles"

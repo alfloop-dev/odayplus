@@ -76,6 +76,20 @@ class UserStatusPayload(BaseModel):
     actorName: str | None = None
 
 
+class UserInvitePayload(BaseModel):
+    """Pending invitation only; never accepts a password or caller identity."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    username: str = Field(min_length=3, max_length=64)
+    email: str = Field(min_length=3, max_length=320)
+    name: str = Field(default="", max_length=255)
+    roles: list[str] = Field(min_length=1, max_length=32)
+    scope: dict[str, Any] | None = None
+    lifetime_seconds: int = Field(default=3600, ge=1, le=259200)
+    reason: str = Field(default="", max_length=512)
+
+
 class InvitationIssuePayload(BaseModel):
     """No caller-supplied actor, tenant, roles, scope or account identifier."""
 
@@ -493,6 +507,46 @@ def create_user_role_sub_router(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             ) from exc
+
+    @router.post(
+        "/invite", dependencies=manage_deps, status_code=201,
+        response_model=InvitationIssuedPayload, operation_id="inviteOperatorAccount",
+        openapi_extra={"requestBody": {"required": True, "content": {
+            "application/json": {"schema": UserInvitePayload.model_json_schema()}
+        }}},
+    )
+    @router.post(
+        "/create", dependencies=manage_deps, status_code=201,
+        response_model=InvitationIssuedPayload, operation_id="createOperatorAccountInvitation",
+        openapi_extra={"requestBody": {"required": True, "content": {
+            "application/json": {"schema": UserInvitePayload.model_json_schema()}
+        }}},
+    )
+    async def invite_user(request: Request) -> JSONResponse:
+        try:
+            parsed = await _invitation_body(request, limit=8192)
+            try:
+                payload = UserInvitePayload.model_validate(parsed)
+            except ValidationError:
+                raise HTTPException(422, detail={"code": "INVITATION_INPUT_INVALID"}) from None
+            invitations, principal = invitation_context(request)
+            result = await run_in_threadpool(
+                invitations.issue_account, principal, username=payload.username,
+                email=payload.email, display_name=payload.name, roles=payload.roles,
+                scope=payload.scope,
+                lifetime_seconds=payload.lifetime_seconds, reason=payload.reason,
+            )
+            return JSONResponse({**result.to_receipt(), "token": result.token}, status_code=201,
+                                headers={"cache-control": "no-store"})
+        except InvitationRefused as exc:
+            return _invitation_error(exc)
+        except HTTPException as exc:
+            code = exc.detail.get("code", "INVITATION_INPUT_INVALID") if isinstance(exc.detail, dict) else "INVITATION_INPUT_INVALID"
+            return JSONResponse({"error": {"code": code}}, status_code=exc.status_code,
+                                headers={"cache-control": "no-store"})
+        except Exception:
+            return JSONResponse({"error": {"code": "IDENTITY_PERSISTENCE_UNAVAILABLE"}},
+                                status_code=503, headers={"cache-control": "no-store"})
 
     return router
 
