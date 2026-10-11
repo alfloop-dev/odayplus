@@ -670,6 +670,14 @@ credential child, lease replay, dispatch, proxy/env credential loading, retry or
 cached admitted flag. JSON is duplicate-key/NaN/encoding/page-completeness checked,
 with 64KiB per response, 4MiB aggregate, 256 request and canonical page limits.
 Retained ZIPs are bounded to 2MiB, one exact file, no filesystem extraction.
+Canonical manifest validation itself invokes Git internally. It therefore runs
+in one fixed NON-SECRET observer child, not in the credential-owning parent:
+only manifest/tuple input, sanitized environment, no inherited FDs/credentials,
+bounded stdin/stdout/stderr and whole-group cancellation/reaping under the SAME
+absolute deadline. Missing candidate objects refuse before canonical code could
+fetch. The coordinator must first verify the exact reviewed clean checkout;
+the validator child is not source approval. Direct in-parent canonical validation
+was caught by an offline regression and is not silently exempted from custody.
 GitHub artifact downloads genuinely require a signed redirect: only that ZIP GET
 may follow **one** freshly returned HTTPS URL to an independently pinned exact
 GitHub-storage hostname, with no API Authorization/cookies. No second redirect,

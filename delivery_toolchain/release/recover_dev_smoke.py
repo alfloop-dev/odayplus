@@ -309,10 +309,12 @@ class ObserverRefused(RecoveryRefused):
         self.outcome, self.exit_code = outcome, exit_code
 
 
-def _bounded_observer_child(args: tuple[str, ...], *, cwd: Path, deadline: float) -> bytes:
-    """Internal NON-SECRET exec adapter; no shell/inherited env/input/FDs.
+def _bounded_observer_child(args: tuple[str, ...], *, cwd: Path, deadline: float,
+                            input_bytes: bytes | None = None) -> bytes:
+    """Internal NON-SECRET exec adapter; no shell/inherited env/FDs.
 
-    Production caller below supplies ONLY fixed read-only git commands. Reserve
+    Callers supply fixed read-only git or canonical manifest-validation commands.
+    Optional stdin is ONLY the non-secret deployed manifest, never custody input. Reserve
     two seconds INSIDE the absolute deadline for group cancellation and reaping
     the original Popen handle. Output is bounded in memory and never logged.
     A start/kill/wait failure is unknown, not an invented completion receipt.
@@ -324,7 +326,8 @@ def _bounded_observer_child(args: tuple[str, ...], *, cwd: Path, deadline: float
     import subprocess
 
     if (type(deadline) not in (int, float) or not math.isfinite(deadline)
-            or not 2 < deadline - time.monotonic() <= 2400):
+            or not 2 < deadline - time.monotonic() <= 2400
+            or (input_bytes is not None and (type(input_bytes) is not bytes or len(input_bytes) > 2_000_000))):
         raise ObserverRefused(outcome="refused", exit_code=None)
     process = None
     selector = selectors.DefaultSelector()
@@ -337,9 +340,13 @@ def _bounded_observer_child(args: tuple[str, ...], *, cwd: Path, deadline: float
                 "PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C",
                 "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
                 "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0",
-            }, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            close_fds=True, start_new_session=True,
+            }, stdin=subprocess.DEVNULL if input_bytes is None else subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True, start_new_session=True,
         )
+        written = 0
+        if process.stdin is not None:
+            os.set_blocking(process.stdin.fileno(), False)
+            selector.register(process.stdin, selectors.EVENT_WRITE)
         for stream in (process.stdout, process.stderr):
             os.set_blocking(stream.fileno(), False)
             selector.register(stream, selectors.EVENT_READ)
@@ -350,6 +357,12 @@ def _bounded_observer_child(args: tuple[str, ...], *, cwd: Path, deadline: float
                 outcome = "interrupted"
                 raise ValueError
             for key, _ in selector.select(timeout=remaining):
+                if key.fileobj is process.stdin:
+                    written += os.write(key.fd, input_bytes[written:written + 8192])
+                    if written == len(input_bytes):
+                        selector.unregister(process.stdin)
+                        process.stdin.close()
+                    continue
                 chunk = os.read(key.fd, 8192)
                 if not chunk:
                     selector.unregister(key.fileobj)
@@ -394,7 +407,7 @@ def _bounded_observer_child(args: tuple[str, ...], *, cwd: Path, deadline: float
     finally:
         selector.close()
         if process is not None:
-            for stream in (process.stdout, process.stderr):
+            for stream in (process.stdin, process.stdout, process.stderr):
                 if stream is not None:
                     stream.close()
 
@@ -745,8 +758,8 @@ class TrustedGitHubAdmissionObserver:
             for status in self._paged(f"deployments/{deployment['id']}/statuses"):
                 if status.get("state") != "success":
                     continue
-                for field in ("log_url", "target_url"):
-                    url = urlsplit(status.get(field) or "")
+                for url_field in ("log_url", "target_url"):
+                    url = urlsplit(status.get(url_field) or "")
                     if (url.scheme == "https" and url.netloc == "github.com" and not url.fragment
                             and re.fullmatch(f"/{REPOSITORY}/actions/runs/{run['id']}(?:/job/[1-9][0-9]*)?",
                                              url.path)):
@@ -797,7 +810,7 @@ class TrustedGitHubAdmissionObserver:
 
     def _previous(self):
         from delivery_toolchain.release import automatic_dev as auto
-        from shared.identity.dev_smoke_journal import REPOSITORY, _SHA
+        from shared.identity.dev_smoke_journal import _SHA, REPOSITORY
         events, seen, total = [], set(), None
         for page in range(1, 11):
             result = self._get("actions/workflows/deploy-dev.yml/runs?event=workflow_dispatch"
@@ -866,13 +879,34 @@ class TrustedGitHubAdmissionObserver:
             raise ValueError  # failed-after-commit/uncertain NEVER selects older success
         return newest[5], newest[6], newest[2]
 
+    def _validate_manifest(self, manifest: dict, *, release_sha: str, manifest_digest: str) -> None:
+        """Canonical predicates invoke Git internally: isolate NON-SECRET work.
+
+        Fixed command/clean source belongs to the independently reviewed checkout.
+        No token/cookie/password, inherited env, gh, observer callback or arbitrary
+        validator script. Missing candidate object refuses BEFORE canonical code
+        could fetch; group deadline/cancel/reap applies to nested Git reads too.
+        """
+        import sys
+        code = (
+            "import json, subprocess, sys\n"
+            "from delivery_toolchain.release.release_manifest import "
+            "validate_manifest, validate_release_admission, manifest_release_profile\n"
+            "m=json.loads(sys.stdin.buffer.read(2000001))\n"
+            "sha,digest=sys.argv[1:]\n"
+            "subprocess.run(['/usr/bin/git','cat-file','-e',sha+'^{commit}'],check=True,"
+            "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+            "errors=validate_manifest(m,expected_candidate_sha=sha,expected_digest=digest)\n"
+            "errors+=validate_release_admission(m,environment='dev')\n"
+            "sys.exit(1 if errors or manifest_release_profile(m)!='dev-admin' or "
+            "m.get('external_sources_expected_enabled')!=[] else 0)\n"
+        )
+        _bounded_observer_child((sys.executable, "-c", code, release_sha, manifest_digest),
+            cwd=Path(__file__).resolve().parents[2], deadline=self._deadline,
+            input_bytes=json.dumps(manifest, separators=(",", ":"), allow_nan=False).encode())
+
     def observe(self, *, release_sha: str, manifest_digest: str, deadline: float) -> dict:
         from delivery_toolchain.release import automatic_dev as auto
-        from delivery_toolchain.release.release_manifest import (
-            manifest_release_profile,
-            validate_manifest,
-            validate_release_admission,
-        )
         from shared.identity.dev_smoke_journal import _DIGEST, _SHA
         try:
             if (self._stopped or self._deadline is not None or os.getpid() != self._pid
@@ -888,13 +922,9 @@ class TrustedGitHubAdmissionObserver:
                                           filename="RELEASE_MANIFEST.json", limit=2_000_000)
                 manifest = manifests[0]
                 if (any(other != manifest for other in manifests[1:]) or len(title) != 5
-                        or title[3] not in {"deploy", "auto"} or title[4] != manifest.get("candidate_sha")
-                        or validate_manifest(manifest, expected_candidate_sha=release_sha,
-                                             expected_digest=manifest_digest)
-                        or validate_release_admission(manifest, environment="dev")
-                        or manifest_release_profile(manifest) != "dev-admin"
-                        or manifest.get("external_sources_expected_enabled") != []):
+                        or title[3] not in {"deploy", "auto"} or title[4] != manifest.get("candidate_sha")):
                     raise ValueError
+                self._validate_manifest(manifest, release_sha=release_sha, manifest_digest=manifest_digest)
             return {"stage": "current-dev-admission-observed", "release_sha": release_sha,
                     "manifest_digest": manifest_digest, "run_id": run["id"], "run_attempt": attempt,
                     "execution_authorized": False, "credential_binding_verified": False,

@@ -2299,14 +2299,25 @@ def bounded_remote_admission(monkeypatch: Any):
 def admission_observe(e):
     import time
     return e.observer.observe(release_sha=e.manifest["candidate_sha"],
-        manifest_digest=e.manifest["manifest_digest"], deadline=time.monotonic() + 2)
+        manifest_digest=e.manifest["manifest_digest"], deadline=time.monotonic() + 15)
 
 
 def test_bounded_admission_fresh_manifest_no_gh_or_secret_redirect(bounded_remote_admission: Any, monkeypatch: Any) -> None:
     import pickle
     import subprocess
     e = bounded_remote_admission
-    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_kw: pytest.fail("credential child forbidden"))
+    original_popen = subprocess.Popen
+    children = []
+    def nonsecret_child(args, **kwargs):
+        children.append((args, kwargs))
+        assert args[1] == "-c" and "validate_release_admission" in args[2]
+        assert "OFFLINE-PRIVATE" not in repr(args) + repr(kwargs)
+        assert set(kwargs["env"]) == {"PATH", "LANG", "LC_ALL", "GIT_CONFIG_NOSYSTEM",
+                                      "GIT_CONFIG_GLOBAL", "GIT_OPTIONAL_LOCKS", "GIT_TERMINAL_PROMPT"}
+        assert kwargs["env"]["PATH"] == "/usr/bin:/bin" and kwargs["close_fds"] is True
+        assert kwargs["start_new_session"] is True
+        return original_popen(args, **kwargs)
+    monkeypatch.setattr(subprocess, "Popen", nonsecret_child)
     receipt = admission_observe(e)
     assert receipt["stage"] == "current-dev-admission-observed" and receipt["run_id"] == 90
     assert receipt["execution_authorized"] is False and receipt["credential_binding_verified"] is False
@@ -2315,7 +2326,7 @@ def test_bounded_admission_fresh_manifest_no_gh_or_secret_redirect(bounded_remot
     with pytest.raises(RecoveryRefused, match="SERIALIZATION_REFUSED"):
         pickle.dumps(e.observer)
     assert admission_observe(e) == receipt  # re-read, not cached flags
-    assert len(e.calls) == 12 and len(e.downloads) == 2
+    assert len(e.calls) == 12 and len(e.downloads) == 2 and len(children) == 2
 
 
 @pytest.mark.parametrize("fault", ["job_failed_after_commit", "job_unknown", "build_only", "expired", "incomplete_jobs",
