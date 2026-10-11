@@ -49,6 +49,9 @@ from tests.security.test_dev_smoke_recovery import MANIFEST, SHA, plan
 def recovery(identity_stack: Any) -> Any:
     s = identity_stack
     with s.db.connect(autocommit=True) as conn:
+        # Identity administration fixture loads only 000011; add the actual
+        # production Web bearer/session expansion before insertion regressions.
+        conn.execute(Path("infra/db/migrations/000012_identity_session_server_secrets.sql").read_text())
         conn.execute(Path("infra/db/migrations/000029_dev_smoke_recovery_capability.sql").read_text())
         conn.execute(Path("infra/db/migrations/000030_dev_smoke_session_fence.sql").read_text())
     # Isolated persisted identity fixture; no external DB or credentials.
@@ -549,6 +552,72 @@ def test_session_insert_waits_on_uncommitted_rotation_not_stale_snapshot(recover
         with pytest.raises(Exception, match="SESSION_CREDENTIAL_REVISION_REFUSED"):
             insert_fenced_session(engine, revision)
         assert len(s.capabilities._cap_events()) == 2
+        assert s.audit.verify_chain().ok
+    finally:
+        release.set()
+        engine.close()
+
+
+@pytest.mark.parametrize("commit", [True, False])
+@pytest.mark.parametrize("revision", [None, "1"])
+def test_inflight_insert_rechecks_committed_revision_or_survives_rotation_rollback(recovery: Any, monkeypatch: Any, commit: bool, revision: str | None) -> None:
+    from threading import Event
+    from time import monotonic, sleep
+    s = recovery
+    root, cap = issue(s)
+    ready, release, insert_started = Event(), Event(), Event()
+    real_record = s.capabilities._record_cap
+    engine = PostgresEngine(s.db.url(), bootstrap=False, validate_schema=False)
+    backend: list[int] = []
+
+    def record(*args: Any, **kwargs: Any) -> AuditEvent:
+        if kwargs["stage"] == "rotated":
+            ready.set()
+            if not release.wait(10):
+                raise RuntimeError("offline-test-release-timeout")
+            if not commit:
+                raise RuntimeError("offline-audit-rollback")
+        return real_record(*args, **kwargs)
+
+    def delayed_insert() -> str:
+        with engine.lock:
+            backend.append(engine.query_one("SELECT pg_backend_pid() AS pid")["pid"])
+            engine.execute("SET LOCAL lock_timeout = '8s'")
+            insert_started.set()
+            return insert_fenced_session(engine, revision)
+
+    monkeypatch.setattr(s.capabilities, "_record_cap", record)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            rotation = pool.submit(consume, s, root, cap)
+            try:
+                assert ready.wait(10)
+                insertion = pool.submit(delayed_insert)
+                assert insert_started.wait(5)
+                # Bounded diagnostic of this exact DB backend, not a process-name
+                # wait/grep loop. Prove the original INSERT is really waiting.
+                deadline = monotonic() + 5
+                with s.db.connect(autocommit=True) as conn:
+                    while monotonic() < deadline:
+                        state = conn.execute("SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s", (backend[0],)).fetchone()
+                        if state and state[0] == "Lock":
+                            break
+                        sleep(0.01)
+                    else:
+                        pytest.fail("expected session INSERT did not reach credential lock")
+            finally:
+                release.set()
+            if commit:
+                assert rotation.result(timeout=10)["status"] == "rotated"
+                with pytest.raises(Exception, match="SESSION_CREDENTIAL_REVISION_REFUSED"):
+                    insertion.result(timeout=10)
+            else:
+                with pytest.raises(RecoveryRefused, match="RECOVERY_CAPABILITY_UNAVAILABLE"):
+                    rotation.result(timeout=10)
+                sid = insertion.result(timeout=10)
+                assert engine.query_one("SELECT revoked_at FROM identity.sessions WHERE session_id = ?", (sid,)) == {"revoked_at": None}
+                assert s.capabilities._credential_revisions() == ("1", "1")
+                assert len(s.capabilities._cap_events()) == 1
         assert s.audit.verify_chain().ok
     finally:
         release.set()
