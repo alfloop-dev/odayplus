@@ -86,6 +86,7 @@ from shared.identity.invitation_provenance import invitation_provenance
 from shared.identity.dev_smoke_recovery import (
     AUTHORIZATION_ID as RECOVERY_AUTHORIZATION_ID,
     TARGET_ACCOUNT_ID,
+    OLD_EXECUTION_ID,
     RecoveryBundleLineage,
     recovery_bundle_lineage,
     recovery_bundle_acknowledged,
@@ -1148,7 +1149,8 @@ def read_dev_credential_bundle(
             value = UUID(bundle[key])
             if value.int == 0 or str(value) != bundle[key]:
                 raise ValueError
-        if bundle["account_id"] == PRESERVED_ACCOUNT_ID:
+        if (bundle["account_id"] == PRESERVED_ACCOUNT_ID
+                or (lineage is not None and bundle["execution_id"] == OLD_EXECUTION_ID)):
             raise ValueError
         return DevCredentialBundle(bundle["username"], bundle["password"], bundle["account_id"],
                                    bundle["tenant_id"], bundle["execution_id"], bundle["schema_version"], lineage)

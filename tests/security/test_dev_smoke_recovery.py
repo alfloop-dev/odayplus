@@ -261,6 +261,7 @@ def test_recovery_lineage_metadata_corruption_refuses(index: int, field: str, va
 
 @pytest.mark.parametrize("change", [
     {"schema_version": 1}, {"schema_version": True}, {"schema_version": 3},
+    {"execution_id": OLD_EXECUTION_ID},
     {"authorization_id": "HUMAN-ODP-DEV-SMOKE-20261010-001"}, {"username": "ajoe734"},
     {"account_id": "17e9cb99-db46-4a07-8e61-6bf9b22cf5d2"}, {"recovery_lineage": {}},
     {"password": ""}, {"extra": "private-marker"},
