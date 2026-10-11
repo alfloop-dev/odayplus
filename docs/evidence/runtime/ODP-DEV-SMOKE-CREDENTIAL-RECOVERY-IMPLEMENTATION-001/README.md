@@ -19,12 +19,31 @@ No frozen plan/invitation delivery was edited or cherry-picked.
 
 ## Verification boundary
 
-The task's four declared commands must be executed through
-`delivery_toolchain/git/task_verification.py run` at an immutable clean anchor;
-its append-only `.orchestrator/evidence` receipts bind actual HEAD, command,
-selection, exit code and duration. Failed/interrupted receipts remain failures.
-Results will be recorded in the next checkpoint, not inferred from logs or docs.
-No verification has been asserted at the initial anchor.
+At clean immutable anchor `4eb247bd2e5f6520085da2a97b7d2a74df4a024a`,
+`delivery_toolchain/git/task_verification.py run --task-id <task> --timeout 600`
+executed the four canonical declared commands. Original receipt JSON is retained
+in [`receipts/`](receipts/) including failed attempts, not rewritten as passes.
+
+| Command | Receipt/result | Duration |
+| --- | --- | --- |
+| `git diff --check` | `5819d2985c4a029c`: exit0 | 0.015s |
+| Declared six-file `uv run --frozen --python 3.12 pytest ... -q` selection | `73231b824b1b9b68`: exit0, all displayed cases pass | 525.095s |
+| `uv run --frozen --python 3.12 python delivery_toolchain/governance/check_code_boundaries.py` | `402102955c6f8886`: exit1, inventory stale | 10.982s |
+| `pnpm --dir apps/web typecheck` | `723428db5796cf8d`: exit127, pnpm unavailable | 0.001s |
+
+Initial uv/pnpm attempts exited127 because the worker PATH omitted uv's standard
+`/home/lupin/.local/bin` location. An explicit retry reason preserved those
+receipts before retrying identical declared selections with the corrected PATH.
+Pytest completed via the original terminal exit receipt; no test-count-only
+rerun or log-based wait was used. The PostgreSQL fixture uses the existing
+isolated bundled server; no live account/DB credential was supplied.
+
+The subsequent inventory/evidence checkpoint changes **no tested source** but
+has a different Git head: these are previous-anchor receipts, not exact final-head
+verification or review readiness. Inventory now includes the three added Python
+files; boundary verification must be remeasured at the clean new anchor. Web
+verification remains explicitly unproven, not waived because this increment
+has no Web diff. The whole task is NOT ready for formal review/finalization.
 
 ## Live effect status
 
