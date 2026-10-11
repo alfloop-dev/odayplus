@@ -632,6 +632,12 @@ class RecoveryHTTPSAttempt:
                 from http.cookies import SimpleCookie
                 if len(cookies) != 1 or len(cookies[0]) > 9000:
                     raise ValueError
+                parts = cookies[0].split(";")
+                keys = [part.strip().split("=", 1)[0].lower() for part in parts]
+                if (keys[0] != "__host-oday_web_session" or len(set(keys)) != len(keys)
+                        or not set(keys[1:]) <= {"path", "secure", "httponly", "samesite", "max-age", "expires"}
+                        or any(ord(c) < 32 or ord(c) >= 127 for c in cookies[0])):
+                    raise ValueError
                 parsed = SimpleCookie()
                 parsed.load(cookies[0])
                 if set(parsed) != {"__Host-oday_web_session"}:
@@ -831,6 +837,8 @@ class ForegroundOwnedWebSessions:
                 outcome = "unknown"
             if action == "login" and started:
                 self._unknown_login = True
+                if self._cookies[role]:
+                    outcome = "unknown"  # failed GET cannot relabel created session as no effect
             if started and not terminal:
                 try:
                     elapsed, remaining = self._budget._time()
@@ -882,6 +890,7 @@ class ForegroundOwnedWebSessions:
                 or "original" not in self._verified):
             raise RecoveryRefused("RECOVERY_OWNED_SESSION_UNAVAILABLE")
         self._actions_created = True
+        _ = self._original.password  # retained foreground custody must still be live
         return SameSessionRecoveryActions(plan, budget=self._budget, custody=self._target,
                 origin=self._origin, address=self._address, ca_pem=self._ca, cookie=self._cookies["original"])
 

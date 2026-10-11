@@ -1617,6 +1617,7 @@ def test_real_github_tls_absolute_deadline_with_dribble(tls_recovery_server: Any
 def owned_sessions(tmp_path: Path, monkeypatch: Any):
     from contextlib import contextmanager
     from shared.identity.dev_smoke_journal import PRESERVED_ACCOUNT_ID
+    from shared.identity.dev_smoke_recovery import TARGET_ACCOUNT_ID, TENANT_ID
     from delivery_toolchain.release import recover_dev_smoke as r
 
     @contextmanager
@@ -1666,8 +1667,8 @@ def owned_sessions(tmp_path: Path, monkeypatch: Any):
 
 def test_owned_session_pair_once_durable_same_cookie_cleanup_and_redaction(owned_sessions: Any,
                                                                         tmp_path: Path) -> None:
+    import json
     import pickle
-    from delivery_toolchain.release import recover_dev_smoke as r
     with owned_sessions() as (owner, budget, clock, receipts, p, calls, original, target):
         budget.begin("preflight")
         owner.login("original")
@@ -1754,6 +1755,7 @@ def test_owned_session_receipt_custody_deadline_fail_stop(owned_sessions: Any, m
 @pytest.mark.parametrize("bad_cookie", [False, True])
 def test_real_owned_login_https_csrf_cookie_validation_and_one_attempt(tls_recovery_server: Any,
                                                                        bad_cookie: bool) -> None:
+    import json
     import time
     from delivery_toolchain.release import recover_dev_smoke as r
     extra = (b"Set-Cookie: __Host-oday_web_session=offline-cookie; Path=/; HttpOnly; SameSite=Lax" +
