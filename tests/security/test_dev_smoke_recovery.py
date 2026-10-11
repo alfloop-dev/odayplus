@@ -2048,7 +2048,11 @@ def bounded_remote_source():
 
     from delivery_toolchain.release import recover_dev_smoke as r
     from tests.integration.test_dev_smoke_provisioning import _offline_source_approval
-    evidence = _offline_source_approval(plan())
+    source_plan = plan()
+    # Existing source fixture derives its past timestamp as expiry minus30min;
+    # the recovery plan's40min window would incorrectly produce future evidence.
+    source_plan["expires_at"] = (datetime.now(UTC) + timedelta(minutes=20)).isoformat()
+    evidence = _offline_source_approval(source_plan)
     evidence.observer.close()
     evidence.headers, evidence.raw, evidence.slow = {}, None, False
     observer = r.TrustedGitHubSourceObserver(token="OFFLINE-PRIVATE-TOKEN", pull_number=123,
