@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
 import type { ApiBinding } from "../../../../src/lib/api/binding";
 import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
 import type { Candidate, OperatorHeatZone } from "../../types";
@@ -29,8 +30,14 @@ vi.mock("../ListingRadarPanel", () => ({
 }));
 
 vi.mock("../ReviewPanel", () => ({
-  ReviewPanel: ({ canDecide }: { canDecide: boolean }) => (
-    <div data-testid="review-authority" data-can-decide={String(canDecide)} />
+  ReviewPanel: ({ canDecide, reviews, onDecide }: ComponentProps<typeof import("../ReviewPanel").ReviewPanel>) => (
+    <div data-testid="review-authority" data-can-decide={String(canDecide)}>
+      {canDecide && reviews[0] ? (
+        <button onClick={() => onDecide?.(reviews[0].id, "GO", {
+          reason: "Reviewed", conditions: "", requiredData: "", overrideAck: false,
+        })} type="button">Submit test review decision</button>
+      ) : null}
+    </div>
   ),
 }));
 
@@ -210,6 +217,57 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
       expect(init?.method ?? "GET").toBe("GET");
     }
     expect(fetchMock.mock.calls.every(([url]) => !/\/(users|roles)\b/.test(String(url)))).toBe(true);
+  });
+
+  it.each(["empty", "denied"])("uses the %s dedicated Review reload's source for count and gate", async (result) => {
+    navigation.search = "ws=network&tab=review";
+    let decided = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      const respond = (body: unknown) => new Response(JSON.stringify(body), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+      if (url.endsWith("/decide")) {
+        decided = true;
+        return respond({});
+      }
+      if (url.endsWith("/network-reviews")) {
+        if (decided && result === "denied") return forbiddenResponse("corr-reviews-reload-403", "sitescore");
+        return respond({ source: "api", reviews: decided ? [] : [{ id: "REV-LIVE-1", status: "pending" }] });
+      }
+      if (url.includes("/network-listings")) return respond({
+        source: "api", heatZones: [], listingSources: [], candidates: [],
+        listings: [{ id: "L-LIVE-1", heatZoneId: "HZ-LIVE-1", status: "new", hardRuleFailures: [] }],
+        siteReviews: [{ id: "REV-LIVE-1", status: "pending" }, { id: "REV-LIVE-2", status: "pending" }],
+        expansionSteps: [], assistedIntakes: [],
+      });
+      if (url.endsWith("/network-scoring")) return respond({ source: "api", candidates: [] });
+      if (url.endsWith("/network-rebalance")) return respond({ source: "api", stores: [] });
+      return new Response("{}", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager"
+      liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />);
+
+    const state = screen.getByLabelText("展店與店網摘要");
+    await waitFor(() => expect(state).toHaveTextContent("1 今日新物件"));
+    await waitFor(() => expect(state).toHaveTextContent("1 待審 Review"));
+    expect(screen.getByTestId("network-tab-count-5")).toHaveTextContent("1");
+    fireEvent.click(screen.getByRole("button", { name: "Submit test review decision" }));
+    await waitFor(() => expect(state).toHaveTextContent(`${result === "empty" ? 0 : 2} 待審 Review`));
+    const gate = screen.getByTestId("operator-data-unavailable");
+    if (result === "empty") {
+      expect(screen.queryByTestId("network-tab-count-5")).toBeNull();
+      expect(gate).toHaveAttribute("data-status", "empty");
+      expect(gate).not.toHaveAttribute("data-failure-kind");
+    } else {
+      expect(screen.getByTestId("network-tab-count-5")).toHaveTextContent("2");
+      expect(gate).toHaveAttribute("data-failure-kind", "forbidden");
+      expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-reviews-reload-403");
+    }
+    expect(within(state).getByText("待審 Review", { exact: false })).toHaveAttribute("data-count-state", "known");
+    expect(screen.queryByTestId("review-authority")).toBeNull();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   });
 
   it("cold-opens Radar even when every unrelated Network snapshot is unavailable", async () => {

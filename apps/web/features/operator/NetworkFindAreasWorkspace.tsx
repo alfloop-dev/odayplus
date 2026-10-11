@@ -950,27 +950,30 @@ export function NetworkFindAreasWorkspace({
     };
   }, [activeRoleId, fixturesAllowed]);
 
+  const applyReviewsSnapshot = useCallback((snapshot: NetworkReviewsSnapshot) => {
+    const inspection = inspectNetworkReviewsSnapshot(snapshot);
+    // An authorized empty dedicated read is authoritative too. Do not replace
+    // its zero queue with the independently projected network-listings rows.
+    setReviewsSnapshot(
+      inspection === "ready" || (inspection === "empty" && snapshot.source === "api") || fixturesAllowed
+        ? snapshot
+        : null,
+    );
+    setReviewsLoadFailure(null);
+    setReviewsLoadState(
+      inspection === "ready" ? "ready" : fixturesAllowed ? "fixture" : inspection,
+    );
+  }, [fixturesAllowed]);
+
   useEffect(() => {
     let cancelled = false;
     async function loadReviews() {
       const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
       const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && snapshot) {
-        const inspection = inspectNetworkReviewsSnapshot(snapshot);
-        setReviewsSnapshot(
-          inspection === "ready" || fixturesAllowed
-            ? snapshot
-            : null,
-        );
-        setReviewsLoadFailure(null);
-        setReviewsLoadState(
-          inspection === "ready"
-            ? "ready"
-            : fixturesAllowed
-              ? "fixture"
-              : inspection,
-        );
+        applyReviewsSnapshot(snapshot);
       } else if (!cancelled && !read.ok) {
+        setReviewsSnapshot(null);
         setReviewsLoadFailure(read.failure);
         setReviewsLoadState(fixturesAllowed ? "fixture" : "error");
       }
@@ -979,7 +982,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [fixturesAllowed, reviewIdentity]);
+  }, [applyReviewsSnapshot, fixturesAllowed, reviewIdentity]);
 
   // Decide a review as the active operator role's review identity. The decision
   // syncs Candidate + Review + Approval + Decision + Audit atomically
@@ -1022,7 +1025,11 @@ export function NetworkFindAreasWorkspace({
       }
       const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
       if (read.ok) {
-        setReviewsSnapshot(read.snapshot);
+        applyReviewsSnapshot(read.snapshot);
+      } else {
+        setReviewsSnapshot(null);
+        setReviewsLoadFailure(read.failure);
+        setReviewsLoadState(fixturesAllowed ? "fixture" : "error");
       }
       return true;
     } catch {
@@ -1243,7 +1250,7 @@ export function NetworkFindAreasWorkspace({
   const isSelectedTracked = selectedZone ? trackedSet.has(selectedZone.id) : false;
   // The Review tab renders the reviews snapshot when it has one, so its badge
   // and the header chip count the same queue.
-  const pendingReviewCount = reviewsSnapshot?.reviews.length
+  const pendingReviewCount = reviewsSnapshot !== null
     ? reviewsSnapshot.reviews.filter((review) => review.status === "pending").length
     : viewModel.totals.pendingReviews;
   const tabCounts = [

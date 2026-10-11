@@ -76,6 +76,26 @@ with exact source/tree/dependency verification and owned-temp cleanup. No
 assertion, count, dependency or verification-policy waiver. New exact-head
 source proofs, normal hosted CI and independent approval remain required.
 
+### Dedicated authorized-empty Review repair (Pi, 2026-10-11)
+
+Codex2's PR1439/3eb7 P2: a successful `network-reviews` API empty queue
+was discarded on initial load, and a length-based count fell back to independent
+`network-listings.siteReviews` pending rows. Retain authorized-empty dedicated
+snapshots; choose count and count-state by the same nullable source, not row
+length. Apply the same inspection/state update after a decision reload so an
+empty queue gates empty. A refused/unavailable dedicated read clears that
+snapshot and retains only the separately authorized projected count; its Review
+tab still shows the dedicated denial/unavailability, never projected detail.
+
+Production Console regressions cover projected pending + dedicated empty on
+Find Areas and Review (known zero, no badge, authorized-empty Review gate,
+GET-only). Production-mode workspace callback regressions cover a dedicated
+pending queue becoming empty or denied after one decision/reload (empty zero
+versus authorized projected count, matching gate and badge). Existing initial
+403 projected-count regressions remain unchanged. Exact-head declared receipts
+must pass before atomic resubmission; no historical visual/CI evidence is
+transferred to this head. No live credentials, grants, or business writes.
+
 ## Historical original source evidence (unchanged)
 
 Recorded 2026-10-09 by Claude2. Base `origin/dev` 963090d6f. Design reference:

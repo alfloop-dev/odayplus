@@ -164,7 +164,7 @@ function forbiddenResponse(correlationId: string, resource: string) {
 
 const DENIED = Symbol("denied");
 
-function stubProductionFetch(snapshot: unknown, denyScoring = false) {
+function stubProductionFetch(snapshot: unknown, denyScoring = false, reviews?: unknown) {
   const networkListingUrls: URL[] = [];
   const legacyDomainPaths: string[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -173,6 +173,9 @@ function stubProductionFetch(snapshot: unknown, denyScoring = false) {
     if (url.pathname === "/api/v1/operator/network-listings") {
       networkListingUrls.push(url);
       return snapshot === DENIED ? forbiddenResponse("corr-listings-403", "operator_network") : jsonResponse(snapshot);
+    }
+    if (url.pathname === "/api/v1/operator/network-reviews" && reviews !== undefined) {
+      return jsonResponse(reviews);
     }
     if ((snapshot === DENIED || denyScoring) && /\/operator\/network-(scoring|reviews)$/.test(url.pathname)) {
       return forbiddenResponse("corr-scoring-403", "sitescore");
@@ -306,6 +309,37 @@ describe("Network Find Areas in the production Operator Console composition", ()
       expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-scoring-403");
       // The independently refused scoring binding must not render fabricated score cards.
       expect(screen.queryByText("Scoped candidate")).toBeNull();
+      for (const [, init] of vi.mocked(fetch).mock.calls) {
+        expect((init as RequestInit | undefined)?.method ?? "GET").toBe("GET");
+      }
+    },
+  );
+
+  it.each(["overview", "review"])(
+    "uses an authorized empty dedicated Review queue instead of projected pending rows on %s",
+    async (tab) => {
+      stubProductionFetch({
+        ...zonesWithheldSnapshot,
+        siteReviews: [{
+          id: "REV-SCOPED-1", candidateId: "CS-SCOPED-1", status: "pending",
+          requestedByRoleId: "expansionManager", reviewerRoleIds: ["opsLead"],
+          requestedAt: "2026-10-10T12:17:00Z", reasonRequired: true,
+        }],
+      }, true, { source: "api", reviews: [] });
+      nav.search = `ws=network&tab=${tab}`;
+      render(<OperatorConsole searchParams={{ ws: "network", tab }} />);
+
+      const state = await screen.findByLabelText("展店與店網摘要");
+      await waitFor(() => expect(state).toHaveTextContent("1 今日新物件"), { timeout: 5000 });
+      await waitFor(() => expect(state).toHaveTextContent("0 待審 Review"));
+      expect(within(state).getByText("待審 Review", { exact: false })).toHaveAttribute("data-count-state", "known");
+      expect(state).not.toHaveTextContent("1 待審 Review");
+      expect(screen.queryByTestId("network-tab-count-5")).toBeNull();
+      if (tab === "review") {
+        expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty");
+        expect(screen.getByTestId("operator-data-unavailable")).not.toHaveAttribute("data-failure-kind");
+        expect(screen.queryByText("REV-SCOPED-1")).toBeNull();
+      }
       for (const [, init] of vi.mocked(fetch).mock.calls) {
         expect((init as RequestInit | undefined)?.method ?? "GET").toBe("GET");
       }
