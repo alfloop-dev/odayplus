@@ -1,18 +1,20 @@
 """Internal append-only root for the separately authorized dev-smoke recovery.
 
-Incremental domain layer ONLY: not mounted, not an executor, and not permission
-for credential/secret effects. Capability issuance/rotation and transport/gate
-integration must compose with this root in a subsequent reviewed increment.
+Incremental domain layer ONLY: not mounted, not a foreground executor, and not
+permission for credential/secret effects. Hash-only capability/atomic rotation
+are internal domain operations; transport/gate integration remains incomplete.
 No reset/resume/re-reservation exists. The old creation journal stays immutable.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+import re
+import secrets
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from shared.audit import AuditEvent
 from shared.auth import Principal
@@ -30,6 +32,8 @@ from .dev_smoke_journal import (
     _SHA,
     _aware,
 )
+from .credential_service import CredentialService
+from .password_policy import PasswordPolicy
 from .invitation_provenance import invitation_provenance
 from .invitation_service import InvitationService, _scope
 
@@ -124,7 +128,7 @@ class RecoveryJournal:
     _ACTION = "DEV_SMOKE_RECOVERY"
     _KEYS = _PLAN_KEYS | {
         "plan_digest", "issuer_session_id", "original_identity_digest", "target_identity_digest",
-        "stage", "execution_authorized", "credential_binding_verified", "secret_values_redacted",
+        "original_credential_updated_at", "target_credential_updated_at", "stage", "execution_authorized", "credential_binding_verified", "secret_values_redacted",
     }
 
     def __init__(
@@ -183,6 +187,13 @@ class RecoveryJournal:
             "roles": [r["role"] for r in roles], "scope": scope,
         }
 
+    def _credential_times(self) -> tuple[str, str]:
+        times = [self._engine.query_one(
+            "SELECT updated_at FROM identity.password_credentials WHERE account_id = ? FOR SHARE",
+            (account,),
+        )["updated_at"] for account in (PRESERVED_ACCOUNT_ID, TARGET_ACCOUNT_ID)]
+        return times[0], times[1]
+
     def _lock(self) -> None:
         # Always after the shared tenant administration lock acquired by _actor.
         self._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (self._CORRELATION,))
@@ -208,6 +219,8 @@ class RecoveryJournal:
                     or any(not _DIGEST.fullmatch(m[k]) for k in ("original_identity_digest", "target_identity_digest"))
                     or str(UUID(m["issuer_session_id"])) != m["issuer_session_id"]
                     or not UUID(m["issuer_session_id"]).int
+                    or any(not _aware(datetime.fromisoformat(m[k])) for k in (
+                        "original_credential_updated_at", "target_credential_updated_at"))
                     or (index and {k: v for k, v in m.items() if k != "stage"} != {
                         k: v for k, v in events[0].metadata.items() if k != "stage"})):
                 raise RecoveryRefused("RECOVERY_JOURNAL_INVALID")
@@ -263,13 +276,15 @@ class RecoveryJournal:
                 if target["username"] != "odp-dev-smoke" or target["roles"] != ["platform_admin"]:
                     raise RecoveryRefused("RECOVERY_IDENTITY_DRIFT")
                 self._old_lineage(target)
+                original_time, target_time = self._credential_times()
                 event = self._audit.record(AuditEvent(
                     event_type=self._TYPE, actor=PRESERVED_ACCOUNT_ID, action=self._ACTION,
                     resource=self._CORRELATION, correlation_id=self._CORRELATION,
                     outcome="success", occurred_at=now, metadata={
                         **plan, "plan_digest": digest, "issuer_session_id": sid,
                         "original_identity_digest": _digest(original), "target_identity_digest": _digest(target),
-                        "stage": "reserved", "execution_authorized": False,
+                        "original_credential_updated_at": original_time,
+                        "target_credential_updated_at": target_time, "stage": "reserved", "execution_authorized": False,
                         "credential_binding_verified": False, "secret_values_redacted": True,
                     },
                 ))
@@ -317,3 +332,238 @@ class RecoveryJournal:
             raise
         except Exception:
             raise RecoveryRefused("RECOVERY_JOURNAL_UNAVAILABLE") from None
+
+
+@dataclass(frozen=True)
+class RecoveryCapability:
+    capability_id: str
+    execution_id: str
+    expires_at: str
+    audit_event_id: str
+    token: str = field(repr=False)
+
+    def to_receipt(self) -> dict[str, str]:
+        return {k: getattr(self, k) for k in (
+            "capability_id", "execution_id", "expires_at", "audit_event_id",
+        )}
+
+
+class RecoveryCapabilityService(RecoveryJournal):
+    """Unmounted internal single-account rotation; never a generic reset API.
+
+    One issuance and at most five consume submissions for this authorization.
+    Persist only independent capability SHA-256 in dedicated credential storage.
+    The mounted adapter must return the token once with no-store, auth/CSRF and
+    bounded body, without logging it. Root/session/tuple/identities revalidated
+    before hashing and under the final transaction. No retry/resume method.
+    """
+
+    _CAP_CORRELATION = f"dev-smoke-recovery-capability:{AUTHORIZATION_ID}"
+    _CAP_TYPE = "identity.dev_smoke.recovery_capability"
+    _TOKEN = re.compile(r"[A-Za-z0-9_-]{43}\Z")
+    _TABLE = "identity.dev_smoke_recovery_capabilities"
+
+    def _top_level(self) -> None:
+        # PostgresEngine nests by joining the existing transaction. A caller
+        # transaction would roll back the abuse budget or expose an uncommitted
+        # successful receipt; prohibit it rather than pretend it is independent.
+        if getattr(self._engine._local, "connection", None) is not None:
+            raise RecoveryRefused("RECOVERY_OUTERMOST_TRANSACTION_REQUIRED")
+
+    def _active(self, principal: Principal, reservation: RecoveryReservation) -> AuditEvent:
+        sid = self._actor(principal)
+        self._lock()
+        events = self._events()
+        if (len(events) != 1 or not isinstance(reservation, RecoveryReservation)
+                or reservation != self._receipt(events[0])):
+            raise RecoveryRefused("RECOVERY_ROOT_UNAVAILABLE")
+        root = events[0]
+        m = root.metadata
+        if (sid != m["issuer_session_id"] or m["release_sha"] != self._release_sha
+                or m["manifest_digest"] != self._manifest_digest
+                or self._identity._now() >= datetime.fromisoformat(m["expires_at"])):
+            raise RecoveryRefused("RECOVERY_EXECUTION_DRIFT")
+        # Lock credential updates before the baseline read; self-password-change
+        # writers need not share the tenant advisory lock. No PHC enters audit.
+        self._engine.query_one(
+            "SELECT account_id FROM identity.password_credentials WHERE account_id = ? FOR UPDATE",
+            (TARGET_ACCOUNT_ID,),
+        )
+        original, target = self._account(PRESERVED_ACCOUNT_ID), self._account(TARGET_ACCOUNT_ID)
+        if (_digest(original) != m["original_identity_digest"]
+                or _digest(target) != m["target_identity_digest"]
+                or self._credential_times() != (m["original_credential_updated_at"], m["target_credential_updated_at"])):
+            raise RecoveryRefused("RECOVERY_IDENTITY_DRIFT")
+        self._old_lineage(target)
+        return root
+
+    def _cap_events(self) -> list[AuditEvent]:
+        return self._audit.list_events(correlation_id=self._CAP_CORRELATION)
+
+    def _record_cap(self, root: AuditEvent, *, capability_id: str, expires: datetime,
+                    stage: str, now: datetime, issue_event_id: str = "",
+                    revoked_count: int = 0) -> AuditEvent:
+        # Only fixed safe lineage and counts; no token/hash/PHC/password.
+        metadata = {k: root.metadata[k] for k in _PLAN_KEYS}
+        metadata.update({
+            "plan_digest": root.metadata["plan_digest"], "root_event_id": root.event_id,
+            "issuer_session_id": root.metadata["issuer_session_id"],
+            "capability_id": capability_id, "capability_expires_at": expires.isoformat(),
+            "stage": stage, "issue_event_id": issue_event_id,
+            "revoked_target_sessions": revoked_count, "execution_authorized": False,
+            "credential_binding_verified": False, "secret_values_redacted": True,
+        })
+        return self._audit.record(AuditEvent(
+            event_type=self._CAP_TYPE, actor=PRESERVED_ACCOUNT_ID,
+            action="DEV_SMOKE_RECOVERY_CAPABILITY", resource=self._CAP_CORRELATION,
+            correlation_id=self._CAP_CORRELATION, outcome="success", occurred_at=now,
+            metadata=metadata,
+        ))
+
+    def issue(self, principal: Principal, reservation: RecoveryReservation, *,
+              lifetime_seconds: int = 600) -> RecoveryCapability:
+        self._top_level()
+        try:
+            with self._engine.lock:
+                root = self._active(principal, reservation)
+                if type(lifetime_seconds) is not int or not 1 <= lifetime_seconds <= 600:
+                    raise RecoveryRefused("RECOVERY_CAPABILITY_LIFETIME_INVALID")
+                if self._cap_events() or self._engine.query_one(
+                        f"SELECT capability_id FROM {self._TABLE} WHERE authorization_id = ?",
+                        (AUTHORIZATION_ID,)) is not None:
+                    raise RecoveryRefused("RECOVERY_CAPABILITY_ALREADY_ISSUED")
+                now = self._identity._now()
+                expires = min(now + timedelta(seconds=lifetime_seconds),
+                              datetime.fromisoformat(root.metadata["expires_at"]))
+                if expires <= now:
+                    raise RecoveryRefused("RECOVERY_EXECUTION_DRIFT")
+                original_time, target_time = self._credential_times()
+                token, cap_id = secrets.token_urlsafe(32), str(uuid4())
+                event = self._record_cap(root, capability_id=cap_id, expires=expires,
+                                         stage="issued", now=now)
+                self._engine.execute(
+                    f"INSERT INTO {self._TABLE} (authorization_id, capability_id, execution_id, "
+                    "plan_digest, root_event_id, issue_event_id, tenant_id, target_account_id, "
+                    "issuer_account_id, issuer_session_id, token_hash, issued_at, expires_at, "
+                    "original_credential_updated_at, target_credential_updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (AUTHORIZATION_ID, cap_id, reservation.execution_id, reservation.plan_digest,
+                     root.event_id, event.event_id, TENANT_ID, TARGET_ACCOUNT_ID,
+                     PRESERVED_ACCOUNT_ID, root.metadata["issuer_session_id"],
+                     hashlib.sha256(token.encode("ascii")).hexdigest(), now, expires,
+                     original_time, target_time),
+                )
+            return RecoveryCapability(cap_id, reservation.execution_id, expires.isoformat(), event.event_id, token)
+        except RecoveryRefused:
+            raise
+        except Exception:
+            raise RecoveryRefused("RECOVERY_CAPABILITY_UNAVAILABLE") from None
+
+    def _budget(self, principal: Principal) -> None:
+        denied = False
+        with self._engine.lock:
+            self._actor(principal)
+            self._lock()
+            self._engine.execute(
+                "INSERT INTO identity.dev_smoke_recovery_budget (authorization_id, attempt_count) "
+                "VALUES (?, 0) ON CONFLICT (authorization_id) DO NOTHING", (AUTHORIZATION_ID,),
+            )
+            row = self._engine.query_one(
+                "SELECT attempt_count FROM identity.dev_smoke_recovery_budget "
+                "WHERE authorization_id = ? FOR UPDATE", (AUTHORIZATION_ID,),
+            )
+            count = int(row["attempt_count"])
+            denied = count >= 5
+            self._engine.execute(
+                "UPDATE identity.dev_smoke_recovery_budget SET attempt_count = ? "
+                "WHERE authorization_id = ?", (min(count + 1, 5), AUTHORIZATION_ID),
+            )
+        if denied:  # outside transaction: refusal must not undo the budget
+            raise RecoveryRefused("RECOVERY_RATE_LIMITED")
+
+    def _valid_cap(self, principal: Principal, reservation: RecoveryReservation,
+                   capability_id: str, token_hash: str) -> tuple[AuditEvent, dict[str, Any]]:
+        root = self._active(principal, reservation)
+        row = self._engine.query_one(
+            f"SELECT * FROM {self._TABLE} WHERE authorization_id = ? "
+            "AND capability_id = ? AND token_hash = ? FOR UPDATE",
+            (AUTHORIZATION_ID, capability_id, token_hash),
+        )
+        if (row is None or row["consumed_at"] is not None
+                or datetime.fromisoformat(row["expires_at"]) <= self._identity._now()
+                or row["execution_id"] != reservation.execution_id
+                or row["plan_digest"] != reservation.plan_digest or row["root_event_id"] != root.event_id
+                or row["issuer_session_id"] != root.metadata["issuer_session_id"]
+                or row["tenant_id"] != TENANT_ID or row["target_account_id"] != TARGET_ACCOUNT_ID
+                or row["issuer_account_id"] != PRESERVED_ACCOUNT_ID
+                or self._credential_times() != (row["original_credential_updated_at"], row["target_credential_updated_at"])):
+            raise RecoveryRefused("RECOVERY_CAPABILITY_UNAVAILABLE")
+        events = self._cap_events()
+        if len(events) != 1:
+            raise RecoveryRefused("RECOVERY_CAPABILITY_UNAVAILABLE")
+        event = events[0]
+        if (event.event_id != row["issue_event_id"] or event.event_type != self._CAP_TYPE
+                or event.actor != PRESERVED_ACCOUNT_ID or event.outcome != "success"
+                or event.action != "DEV_SMOKE_RECOVERY_CAPABILITY" or event.resource != self._CAP_CORRELATION
+                or event.metadata != {
+                    **{k: root.metadata[k] for k in _PLAN_KEYS},
+                    "plan_digest": reservation.plan_digest, "root_event_id": root.event_id,
+                    "issuer_session_id": root.metadata["issuer_session_id"],
+                    "capability_id": capability_id, "capability_expires_at": row["expires_at"],
+                    "stage": "issued", "issue_event_id": "", "revoked_target_sessions": 0,
+                    "execution_authorized": False, "credential_binding_verified": False,
+                    "secret_values_redacted": True,
+                }):
+            raise RecoveryRefused("RECOVERY_CAPABILITY_UNAVAILABLE")
+        return root, row
+
+    def consume(self, principal: Principal, reservation: RecoveryReservation, *,
+                capability_id: str, token: str, password: str) -> dict[str, Any]:
+        self._top_level()
+        try:
+            self._budget(principal)  # independently committed before any refusal/Argon2
+            if (type(capability_id) is not str or str(UUID(capability_id)) != capability_id
+                    or not UUID(capability_id).int or type(token) is not str or not self._TOKEN.fullmatch(token)):
+                raise RecoveryRefused("RECOVERY_CAPABILITY_UNAVAILABLE")
+            token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
+            with self._engine.lock:
+                self._valid_cap(principal, reservation, capability_id, token_hash)
+                target = self._account(TARGET_ACCOUNT_ID)
+            if type(password) is not str or not 12 <= len(password) <= 1024:
+                raise RecoveryRefused("RECOVERY_PASSWORD_REJECTED")
+            policy = PasswordPolicy()
+            normalized = policy.normalize(password)
+            if not policy.validate(normalized, username=target["username"], email=target["email"]).valid:
+                raise RecoveryRefused("RECOVERY_PASSWORD_REJECTED")
+            service = CredentialService()  # instantiated only after cheap authenticated validity
+            phc = service.hash_password(normalized)
+            params = json.dumps(service.extract_params_from_phc(phc))
+            with self._engine.lock:
+                root, row = self._valid_cap(principal, reservation, capability_id, token_hash)
+                now = self._identity._now()
+                self._engine.execute(
+                    "UPDATE identity.password_credentials SET phc_hash = ?, params = CAST(? AS jsonb), "
+                    "last_rotated_at = ?, must_change = false WHERE account_id = ?",
+                    (phc, params, now, TARGET_ACCOUNT_ID),
+                )
+                revoked = self._engine.execute(
+                    "UPDATE identity.sessions SET revoked_at = ?, revoked_reason = 'dev-smoke-recovery' "
+                    "WHERE account_id = ? AND revoked_at IS NULL AND created_at <= ?",
+                    (now, TARGET_ACCOUNT_ID, now),
+                ).rowcount
+                event = self._record_cap(root, capability_id=capability_id,
+                    expires=datetime.fromisoformat(row["expires_at"]), stage="rotated", now=now,
+                    issue_event_id=row["issue_event_id"], revoked_count=revoked)
+                self._engine.execute(
+                    f"UPDATE {self._TABLE} SET consumed_at = ?, rotation_event_id = ? "
+                    "WHERE authorization_id = ?", (now, event.event_id, AUTHORIZATION_ID),
+                )
+            return {"status": "rotated", "account_id": TARGET_ACCOUNT_ID, "tenant_id": TENANT_ID,
+                    "execution_id": reservation.execution_id, "capability_id": capability_id,
+                    "issue_event_id": row["issue_event_id"], "rotation_event_id": event.event_id,
+                    "revoked_target_sessions": revoked, "credential_binding_verified": False,
+                    "execution_authorized": False, "secret_values_redacted": True}
+        except RecoveryRefused:
+            raise
+        except Exception:
+            raise RecoveryRefused("RECOVERY_CAPABILITY_UNAVAILABLE") from None

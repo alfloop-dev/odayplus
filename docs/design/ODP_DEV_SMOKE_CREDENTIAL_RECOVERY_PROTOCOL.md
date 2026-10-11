@@ -12,7 +12,7 @@ unchanged. No live effects have been performed by this task.
 ## Implemented domain increment
 
 `shared/identity/dev_smoke_recovery.py` owns an **unmounted internal** recovery
-root, not password reset. It provides:
+root and `RecoveryCapabilityService`, not a mounted password-reset endpoint. It provides:
 
 - Strict non-secret exact-account/tenant/incident plan, canonical digest, distinct
   nonzero execution UUID, server-owned SHA/manifest binding and DB-time expiry
@@ -35,40 +35,61 @@ root, not password reset. It provides:
   to quarantine, but cannot obtain continuation authority. Target/source drift
   must not prevent recording uncertainty.
 
+`000029` / Alembic `0023` add dedicated capability and abuse-budget tables
+(expand-only; rollback preserves single-use history). The internal service now:
+
+- Issues one CSPRNG256-bit capability per authorization, stores only SHA-256,
+  binds root/plan/target/tenant/issuer session and credential update timestamps,
+  expires by DB time within600s AND the execution window, and returns the bearer
+  once only after the issuance audit/storage transaction commits. Safe receipts
+  and repr exclude the token. Event types/correlation remain distinct from root.
+- Commits an independent, fixed five-submission authorization budget before
+  cheap capability/password refusal and before constructing Argon2. It never
+  writes login/invitation budgets, resets counters or creates arbitrary-input rows.
+  Nested caller transactions are refused so they cannot undo budget or expose
+  uncommitted success. Possession also costs budget.
+- Validates exact persisted original-session/root/source/baselines and immutable
+  old lineage before hashing, then rechecks all under tenant, recovery and row
+  locks after hashing. Credential timestamp drift, expiry, quarantine, replay,
+  new issuer session, role/scope/status/source drift refuse; invalid requests do
+  not start Argon2. The existing NFKC policy and Argon2id64MiB/time3/parallel1
+  apply, with no caller PHC. Credential update, only target pre-recovery session
+  revocation, capability consumption and safe rotation audit share one PG commit.
+  Original credential, identity/roles/scope and all other sessions stay untouched.
+- Has isolated real PostgreSQL tests for issue/consume races across independent
+  pools, rollback at audit failure, post-hash session expiry, lifetime/replay/
+  credential drift and preserved old history. These are not deployed/live proof.
+
 The runtime constructor's dev/profile/tuple arguments must eventually come
-from server configuration, never a request plan. Tests use isolated PostgreSQL
+from server configuration, never a request plan. There is still no API/BFF,
+no foreground executor or bundle-provenance integration. No store/receipt alone
+supplies human/source/admission/exclusion authority. Tests use isolated PostgreSQL
 fixtures with incident IDs as inputs, not fabricated live recovery receipts.
 
 ## Required subsequent increments (not implemented)
 
-1. Reviewed dedicated recovery capability/abuse-budget migration. Issue ONE
-   independent random 256-bit capability (hash only, <=600s DB expiry, returned
-   once no-store); pin root, authenticated issuer session, target and plan.
-2. Atomic locked single consumption: cheap validity and independently committed
-   abuse budget before Argon2; revalidate baseline/session/source under production
-   PostgreSQL locks. NFKC policy, Argon2id >=64 MiB/time3/parallel1, target-only
-   credential metadata/session revocation/capability consumption/audit all commit
-   or all roll back. Preserve every original/other account and session. Same-engine
-   concurrency, replay, expiry, rollback and post-commit transport uncertainty tests.
-3. Official bounded authenticated API/BFF mounting with CSRF/service transport,
+1. Independent review of the new migration/capability/atomic-domain increment;
+   no rollout/effects may use this unreviewed source. Complete transport failure
+   tests, including lost reply after committed rotation (never automatic resume).
+2. Official bounded authenticated API/BFF mounting with CSRF/service transport,
    permission-before-malformed-DTO denial, generated OpenAPI/client/inventory and
    audit projection. Root inspection alone is not a supported recovery API.
-4. Strict NEW versioned recovery envelope and canonical full-gate lineage proof,
+3. Strict NEW versioned recovery envelope and canonical full-gate lineage proof,
    connecting immutable old invitation/quarantine/binding NULL to new root,
    capability issue/rotation/intent/real PUT ACK. Keep schema-1 AUTH001 behavior
    and quarantined-root rejection unchanged. No missing-ID bypass or fallback.
-5. Trusted foreground parent memory custody and new finite entrypoint: absolute
+4. Trusted foreground parent memory custody and new finite entrypoint: absolute
    <=2400s, <=1h plan window, bounded non-secret observers, measured ceilings and
    sufficient downstream full gate/cleanup/quarantine reserves before each effect.
    Persist allowlisted phase start/terminal receipts before proceeding. Timeout,
    lost reply, session/custody loss or receipt failure stops and quarantines NEW
    execution. Later readback never resumes authority. Never replay the old600s
    creation child or remove local uncertainty barriers.
-6. One encrypted dev-only same-pair PUT after durable intent, fresh absence AND
+5. One encrypted dev-only same-pair PUT after durable intent, fresh absence AND
    genuine external writer exclusion, independently pinned custodian/key/repo.
    Require actual201 before ACK;204, lost reply, ACK failure or gate uncertainty
    quarantines, with no overwrite/read/delete/retry/rollback compensation.
-7. Complete canonical same-pair gate, actual matching Web/API SHA/profile/digest,
+6. Complete canonical same-pair gate, actual matching Web/API SHA/profile/digest,
    original preservation, exact provenance and cleanup of only execution-owned
    sessions. Independently normally admitted fresh-job actual bundle consumer
    proof is separate from staging ACK, same-process gate and full/F11 acceptance.

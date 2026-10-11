@@ -1,7 +1,8 @@
-"""Offline recovery-root shape tests; no execution or credential authority."""
+"""Offline recovery shape/storage contracts; no live execution authority."""
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -11,6 +12,7 @@ from shared.identity.dev_smoke_recovery import (
     OLD_EXECUTION_ID,
     RecoveryRefused,
     RecoveryReservation,
+    RecoveryCapability,
     _FIXED_PLAN,
     validate_recovery_plan,
 )
@@ -75,3 +77,28 @@ def test_execution_expiry_is_db_time_bounded(seconds: int) -> None:
 def test_invalid_plan_types_never_echo(value: Any) -> None:
     with pytest.raises(RecoveryRefused, match="^RECOVERY_PLAN_INVALID$"):
         validate_recovery_plan(value, release_sha=SHA, manifest_digest=MANIFEST, now=datetime.now(UTC))
+
+
+def test_capability_receipt_and_repr_do_not_export_bearer() -> None:
+    cap = RecoveryCapability(str(uuid4()), str(uuid4()), datetime.now(UTC).isoformat(),
+                             str(uuid4()), "private-capability-marker")
+    assert "private-capability-marker" not in repr(cap)
+    assert "token" not in cap.to_receipt()
+    assert set(cap.to_receipt()) == {"capability_id", "execution_id", "expires_at", "audit_event_id"}
+
+
+def test_new_expand_only_migration_is_reachable_and_never_releases_attempts() -> None:
+    from shared.infrastructure.persistence.migrations import discover_migration_steps
+    steps = discover_migration_steps(Path("infra/db/migrations/versions"))
+    step = next(s for s in steps if s.revision == "0023")
+    assert {Path(a.path).name for a in step.assets} == {
+        "0023_dev_smoke_recovery_capability.py", "000029_dev_smoke_recovery_capability.sql",
+    }
+    migration = Path(step.path).read_text()
+    assert 'down_revision: str = "0022"' in migration
+    downgrade = migration.split("def downgrade()", 1)[1]
+    assert "DROP" not in downgrade and "DELETE" not in downgrade and "UPDATE" not in downgrade
+    sql = Path("infra/db/migrations/000029_dev_smoke_recovery_capability.sql").read_text()
+    assert "INTERVAL '600 seconds'" in sql and "attempt_count BETWEEN 0 AND 5" in sql
+    assert "token_hash TEXT" in sql and "ON DELETE CASCADE" not in sql
+    assert "identity.login_attempts" not in sql and "ALTER TABLE identity.invitations" not in sql

@@ -1,7 +1,8 @@
 """Real PostgreSQL root concurrency/rollback/preservation; NOT live evidence.
 
 Fixed incident IDs below are isolated test inputs, not repaired live history.
-No mounted recovery endpoint/capability/rotation/consumer proof is claimed yet.
+Internal capability/rotation tests are isolated source proof, not mounted API,
+consumer, deployed implementation or live recovery proof.
 """
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -32,6 +34,7 @@ from shared.identity.dev_smoke_recovery import (
     OLD_QUARANTINE_EVENT_ID,
     TARGET_ACCOUNT_ID,
     RecoveryJournal,
+    RecoveryCapabilityService,
     RecoveryRefused,
 )
 from shared.identity.invitation_service import _scope
@@ -45,6 +48,8 @@ from tests.security.test_dev_smoke_recovery import MANIFEST, SHA, plan
 @pytest.fixture
 def recovery(identity_stack: Any) -> Any:
     s = identity_stack
+    with s.db.connect(autocommit=True) as conn:
+        conn.execute(Path("infra/db/migrations/000029_dev_smoke_recovery_capability.sql").read_text())
     # Isolated persisted identity fixture; no external DB or credentials.
     for account, username, roles in (
         (PRESERVED_ACCOUNT_ID, "ajoe734", ["auditor", "platform_admin"]),
@@ -101,6 +106,8 @@ def recovery(identity_stack: Any) -> Any:
         _sign_in(s, PRESERVED_ACCOUNT_ID, TENANT_ID))).principal
     _sign_in(s, TARGET_ACCOUNT_ID, TENANT_ID)
     s.recovery = RecoveryJournal(engine=s.engine, audit_log=s.audit, environment="dev",
+        release_profile="dev-admin", release_sha=SHA, manifest_digest=MANIFEST)
+    s.capabilities = RecoveryCapabilityService(engine=s.engine, audit_log=s.audit, environment="dev",
         release_profile="dev-admin", release_sha=SHA, manifest_digest=MANIFEST)
     s.plan = plan()
     return s
@@ -253,3 +260,218 @@ def test_runtime_guard_is_not_a_plan_override(recovery: Any, environment: str, p
     with pytest.raises(RecoveryRefused, match="RECOVERY_RUNTIME_REFUSED"):
         RecoveryJournal(engine=s.engine, audit_log=s.audit, environment=environment,
                         release_profile=profile, release_sha=SHA, manifest_digest=MANIFEST)
+
+
+PASSWORD = "Random-new-offline-pair-739!"
+
+
+def issue(s: Any) -> tuple[Any, Any]:
+    root = s.recovery.reserve(s.principal, s.plan)
+    return root, s.capabilities.issue(s.principal, root)
+
+
+def consume(s: Any, root: Any, cap: Any, **changes: Any) -> dict[str, Any]:
+    inputs = {"capability_id": cap.capability_id, "token": cap.token, "password": PASSWORD}
+    return s.capabilities.consume(s.principal, root, **{**inputs, **changes})
+
+
+def test_issue_once_hash_only_short_lived_and_target_only_atomic_rotation(recovery: Any) -> None:
+    from shared.identity.credential_service import CredentialService
+    s = recovery
+    before, old = snapshot(s), old_events(s)
+    root, cap = issue(s)
+    assert snapshot(s) == before
+    assert cap.token not in repr(cap) and cap.token not in json.dumps(cap.to_receipt())
+    row = s.engine.query_one("SELECT * FROM identity.dev_smoke_recovery_capabilities")
+    import hashlib
+    assert row["token_hash"] == hashlib.sha256(cap.token.encode()).hexdigest()
+    assert 0 < (datetime.fromisoformat(row["expires_at"]) - datetime.fromisoformat(row["issued_at"])).total_seconds() <= 600
+    assert cap.token not in json.dumps(row)
+    with pytest.raises(RecoveryRefused, match="RECOVERY_CAPABILITY_ALREADY_ISSUED"):
+        s.capabilities.issue(s.principal, root)
+    # Original and an unrelated account have existing sessions; none may change.
+    other = "9c72f0ee-7634-4538-9433-de2f669607c3"
+    s.engine.execute("INSERT INTO identity.accounts (account_id, tenant_id, username, email, status, created_by) "
+                     "VALUES (?, ?, 'unrelated', 'other@example.invalid', 'active', 'test')", (other, TENANT_ID))
+    _sign_in(s, other, TENANT_ID)
+    preserved = _q(s, "SELECT row_to_json(t)::text FROM identity.sessions t WHERE account_id <> %s ORDER BY session_id", (TARGET_ACCOUNT_ID,))
+    result = consume(s, root, cap, password="Ｒandom-new-offline-pair-739!")
+    assert result["status"] == "rotated" and result["revoked_target_sessions"] == 1
+    assert result["credential_binding_verified"] is False
+    phc = s.engine.query_one("SELECT phc_hash FROM identity.password_credentials WHERE account_id = ?", (TARGET_ACCOUNT_ID,))["phc_hash"]
+    assert CredentialService().verify_password(phc, PASSWORD)
+    assert "$argon2id$v=19$m=65536,t=3,p=1$" in phc
+    after = snapshot(s)
+    for table in ("account_roles", "account_scopes", "invitations"):
+        assert after[table] == before[table]
+    assert _q(s, "SELECT row_to_json(t)::text FROM identity.sessions t WHERE account_id <> %s ORDER BY session_id", (TARGET_ACCOUNT_ID,)) == preserved
+    assert _q(s, "SELECT revoked_reason FROM identity.sessions WHERE account_id = %s", (TARGET_ACCOUNT_ID,)) == [("dev-smoke-recovery",)]
+    assert _q(s, "SELECT row_to_json(t)::text FROM identity.password_credentials t WHERE account_id = %s", (PRESERVED_ACCOUNT_ID,)) == [r for r in before["password_credentials"] if PRESERVED_ACCOUNT_ID in r[0]]
+    assert old_events(s) == old and s.recovery.inspect(s.principal) == root
+    events = s.capabilities._cap_events()
+    assert [e.metadata["stage"] for e in events] == ["issued", "rotated"]
+    assert cap.token not in json.dumps([e.to_dict() for e in events])
+    assert PASSWORD not in json.dumps(result) and phc not in json.dumps([e.to_dict() for e in events])
+    assert s.audit.verify_chain().ok
+    with pytest.raises(RecoveryRefused):
+        consume(s, root, cap)
+    with pytest.raises(RecoveryRefused):
+        s.capabilities.issue(s.principal, root)
+
+
+def test_consume_refusals_commit_budget_before_any_argon_job(recovery: Any, monkeypatch: Any) -> None:
+    s = recovery
+    root, cap = issue(s)
+    before = snapshot(s)
+    monkeypatch.setattr("shared.identity.dev_smoke_recovery.CredentialService",
+                        lambda: pytest.fail("invalid request reached Argon2 constructor"))
+    for changes in ({"token": "x" * 43}, {"capability_id": "invalid-secret-input"},
+                    {"password": "weak"}, {"password": "password12345"}, {"token": cap.token + "!"}):
+        with pytest.raises(RecoveryRefused):
+            consume(s, root, cap, **changes)
+    assert _q(s, "SELECT attempt_count FROM identity.dev_smoke_recovery_budget") == [(5,)]
+    with pytest.raises(RecoveryRefused, match="RECOVERY_RATE_LIMITED"):
+        consume(s, root, cap)
+    assert snapshot(s) == before
+    assert s.engine.query_one("SELECT consumed_at FROM identity.dev_smoke_recovery_capabilities")["consumed_at"] is None
+    assert _q(s, "SELECT * FROM identity.login_attempts") == []
+
+
+@pytest.mark.parametrize("operation", ["issue", "consume"])
+def test_capability_audit_failure_rolls_back_all_effects_but_not_budget(recovery: Any, monkeypatch: Any, operation: str) -> None:
+    s = recovery
+    root = s.recovery.reserve(s.principal, s.plan)
+    cap = s.capabilities.issue(s.principal, root) if operation == "consume" else None
+    before, old = snapshot(s), old_events(s)
+    monkeypatch.setattr(s.audit, "record", lambda _e: (_ for _ in ()).throw(RuntimeError("private-value")))
+    with pytest.raises(RecoveryRefused, match="^RECOVERY_CAPABILITY_UNAVAILABLE$"):
+        if operation == "issue":
+            s.capabilities.issue(s.principal, root)
+        else:
+            consume(s, root, cap)
+    assert snapshot(s) == before and old_events(s) == old
+    assert len(s.capabilities._cap_events()) == (1 if cap else 0)
+    if cap:
+        row = s.engine.query_one("SELECT consumed_at, rotation_event_id FROM identity.dev_smoke_recovery_capabilities")
+        assert row == {"consumed_at": None, "rotation_event_id": None}
+        assert _q(s, "SELECT attempt_count FROM identity.dev_smoke_recovery_budget") == [(1,)]
+    else:
+        assert s.engine.query("SELECT * FROM identity.dev_smoke_recovery_capabilities") == []
+
+
+@pytest.mark.parametrize("drift", ["expired", "quarantined", "fresh_session", "revoked_session", "target_role", "target_password", "original_password", "source"])
+def test_capability_cannot_outlive_session_plan_identity_or_source(recovery: Any, monkeypatch: Any, drift: str) -> None:
+    s = recovery
+    root, cap = issue(s)
+    if drift == "expired":
+        s.engine.execute("UPDATE identity.dev_smoke_recovery_capabilities SET issued_at = now() - interval '20 minutes', expires_at = now() - interval '10 minutes'")
+    elif drift == "quarantined":
+        s.recovery.quarantine(s.principal, root)
+    elif drift == "fresh_session":
+        s.principal = s.boundary.authenticate(Credentials.from_headers(_sign_in(s, PRESERVED_ACCOUNT_ID, TENANT_ID))).principal
+    elif drift == "revoked_session":
+        s.engine.execute("UPDATE identity.sessions SET revoked_at = now() WHERE account_id = ?", (PRESERVED_ACCOUNT_ID,))
+    elif drift == "target_role":
+        s.engine.execute("INSERT INTO identity.account_roles (account_id, role, granted_by) VALUES (?, 'auditor', 'test')", (TARGET_ACCOUNT_ID,))
+    elif drift in {"target_password", "original_password"}:
+        account = TARGET_ACCOUNT_ID if drift == "target_password" else PRESERVED_ACCOUNT_ID
+        s.engine.execute("UPDATE identity.password_credentials SET phc_hash = 'drift' WHERE account_id = ?", (account,))
+    else:
+        s.capabilities._release_sha = "d" * 40
+    before = snapshot(s)
+    monkeypatch.setattr("shared.identity.dev_smoke_recovery.CredentialService", lambda: pytest.fail("drift reached Argon2"))
+    with pytest.raises(RecoveryRefused):
+        consume(s, root, cap)
+    assert snapshot(s) == before and len(s.capabilities._cap_events()) == 1
+
+
+def test_revalidation_after_hashing_refuses_expired_session_without_rotation(recovery: Any, monkeypatch: Any) -> None:
+    from shared.identity.credential_service import CredentialService
+    s = recovery
+    root, cap = issue(s)
+    real_hash = CredentialService.hash_password
+
+    def hashing(service: Any, password: str) -> str:
+        phc = real_hash(service, password)
+        s.engine.execute("UPDATE identity.sessions SET idle_expires_at = now() - interval '1 second' WHERE session_id = ?",
+                         (s.principal.attributes["sid"],))
+        return phc
+
+    before = _q(s, "SELECT phc_hash FROM identity.password_credentials WHERE account_id = %s", (TARGET_ACCOUNT_ID,))
+    monkeypatch.setattr(CredentialService, "hash_password", hashing)
+    with pytest.raises(RecoveryRefused):
+        consume(s, root, cap)
+    assert _q(s, "SELECT phc_hash FROM identity.password_credentials WHERE account_id = %s", (TARGET_ACCOUNT_ID,)) == before
+    assert len(s.capabilities._cap_events()) == 1
+
+
+@pytest.mark.parametrize("operation", ["issue", "consume"])
+def test_two_pg_pools_single_capability_and_single_rotation(recovery: Any, operation: str) -> None:
+    s = recovery
+    root = s.recovery.reserve(s.principal, s.plan)
+    cap = s.capabilities.issue(s.principal, root) if operation == "consume" else None
+    engine = PostgresEngine(s.db.url(), bootstrap=False, validate_schema=False)
+    try:
+        other = RecoveryCapabilityService(engine=engine, audit_log=DurableAuditLog(engine), environment="dev",
+            release_profile="dev-admin", release_sha=SHA, manifest_digest=MANIFEST)
+
+        def attempt(service: Any) -> str:
+            try:
+                if operation == "issue":
+                    service.issue(s.principal, root)
+                else:
+                    service.consume(s.principal, root, capability_id=cap.capability_id, token=cap.token, password=PASSWORD)
+                return "success"
+            except RecoveryRefused:
+                return "refused"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            assert sorted(pool.map(attempt, (s.capabilities, other))) == ["refused", "success"]
+        assert len(s.capabilities._cap_events()) == (2 if cap else 1)
+        assert s.audit.verify_chain().ok
+    finally:
+        engine.close()
+
+
+def test_nested_transaction_cannot_undo_budget_or_return_uncommitted_capability(recovery: Any) -> None:
+    s = recovery
+    root, cap = issue(s)
+    with s.engine.lock:
+        for action in (lambda: consume(s, root, cap), lambda: s.capabilities.issue(s.principal, root)):
+            with pytest.raises(RecoveryRefused, match="RECOVERY_OUTERMOST_TRANSACTION_REQUIRED"):
+                action()
+    assert s.engine.query("SELECT * FROM identity.dev_smoke_recovery_budget") == []
+
+
+@pytest.mark.parametrize("lifetime", [0, 601, True])
+def test_issue_lifetime_cannot_be_extended_or_reinterpreted(recovery: Any, lifetime: Any) -> None:
+    s = recovery
+    root = s.recovery.reserve(s.principal, s.plan)
+    with pytest.raises(RecoveryRefused, match="RECOVERY_CAPABILITY_LIFETIME_INVALID"):
+        s.capabilities.issue(s.principal, root, lifetime_seconds=lifetime)
+    assert s.engine.query("SELECT * FROM identity.dev_smoke_recovery_capabilities") == []
+    assert s.capabilities._cap_events() == []
+
+
+def test_commit_failure_rolls_back_rotation_consumption_audit_and_session_revocation(recovery: Any) -> None:
+    s = recovery
+    root, cap = issue(s)
+    before = snapshot(s)
+    # Real PG deferred failure, not a fake transaction or SQLite approximation.
+    with s.db.connect(autocommit=True) as conn:
+        conn.execute("""
+            CREATE FUNCTION identity.refuse_recovery_commit() RETURNS trigger AS $$
+            BEGIN RAISE EXCEPTION 'private-commit-error'; END;
+            $$ LANGUAGE plpgsql;
+            CREATE CONSTRAINT TRIGGER recovery_commit_failure
+            AFTER UPDATE ON identity.dev_smoke_recovery_capabilities
+            DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+            EXECUTE FUNCTION identity.refuse_recovery_commit();
+        """)
+    with pytest.raises(RecoveryRefused, match="^RECOVERY_CAPABILITY_UNAVAILABLE$"):
+        consume(s, root, cap)
+    assert snapshot(s) == before
+    assert s.engine.query_one("SELECT consumed_at FROM identity.dev_smoke_recovery_capabilities")["consumed_at"] is None
+    assert [e.metadata["stage"] for e in s.capabilities._cap_events()] == ["issued"]
+    assert _q(s, "SELECT attempt_count FROM identity.dev_smoke_recovery_budget") == [(1,)]
+    assert s.audit.verify_chain().ok
