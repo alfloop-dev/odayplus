@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
 import { proxyApiRequest } from "../../../../lib/auth/proxy";
 import { verifyCsrfOrigin } from "../../../../lib/auth/runtime";
 
@@ -25,9 +25,10 @@ async function handler(
       if (request.headers.get("content-type")?.split(";", 1)[0].trim() !== "application/json") {
         return refuse(415, "RECOVERY_JSON_REQUIRED");
       }
-      const chunks: Uint8Array[] = [];
       let size = 0;
-      const reader = request.body?.getReader();
+      // Bound a tee before the existing proxy consumes the original request.
+      // Preserve NextRequest's durable cookie reference and headers unchanged.
+      const reader = request.clone().body?.getReader();
       if (!reader) return refuse(422, "RECOVERY_INPUT_INVALID");
       try {
         while (true) {
@@ -38,17 +39,12 @@ async function handler(
             void reader.cancel().catch(() => undefined);
             return refuse(413, "RECOVERY_BODY_TOO_LARGE");
           }
-          chunks.push(value);
         }
       } catch {
         return refuse(422, "RECOVERY_INPUT_INVALID");
       } finally {
         reader.releaseLock();
       }
-      const body = new Uint8Array(size);
-      let offset = 0;
-      for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
-      request = new NextRequest(request.url, { method: "POST", headers: request.headers, body });
     }
   }
   const response = await proxyApiRequest(

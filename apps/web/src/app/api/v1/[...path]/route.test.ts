@@ -17,6 +17,7 @@ function request(method = "POST", body = "{}", headers: Record<string, string> =
   });
   // NextRequest normalizes Origin at construction in this test runtime.
   req.headers.set("origin", origin);
+  req.cookies.set("__Host-oday_web_session", "sealed-reference");
   return req;
 }
 
