@@ -533,9 +533,9 @@ class UserRoleManagementService:
         """Return audit trail events recorded by user role management."""
         events: list[dict[str, Any]] = []
         for event in self.audit_log.list_events(tenant_id=tenant_id):
-            if event.event_type.startswith("user_role_management."):
+            if event.event_type.startswith("user_role_management.") or event.event_type.startswith("identity.account."):
                 meta = dict(event.metadata or {})
-                if subject_id and meta.get("subject_id") != subject_id:
+                if subject_id and meta.get("subject_id") != subject_id and meta.get("account_id") != subject_id:
                     continue
                 events.append(
                     {

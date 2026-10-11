@@ -1,6 +1,7 @@
+import { runInNewContext } from "node:vm";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { POST } from "../route";
+import { GET, POST } from "../route";
 import { config, middleware } from "../../../../middleware";
 import { resolveGoogleMetadataIdentityToken } from "../../../../lib/auth/cloudRunIdentity";
 
@@ -37,7 +38,111 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
+describe("actual manual acceptance handler: committed-response uncertainty", () => {
+  async function mountHandler(fetcher: ReturnType<typeof vi.fn>) {
+    const response = await GET(new NextRequest(`${ORIGIN}/auth/invitations`));
+    const html = await response.text();
+    const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
+    expect(script).toBeTruthy();
+    const button = { disabled: false };
+    const result = { textContent: "" };
+    let submit!: (event: { preventDefault(): void }) => Promise<void>;
+    const form = { hidden: false, reset: vi.fn(), querySelector: () => button,
+      addEventListener: (_name: string, handler: typeof submit) => { submit = handler; } };
+    runInNewContext(script!, {
+      document: { getElementById: (id: string) => id === "accept-invitation" ? form : result },
+      FormData: class { entries() { return Object.entries(BODY)[Symbol.iterator](); } },
+      fetch: fetcher,
+    }, { timeout: 1000 });
+    return { form, button, result, submit: () => submit({ preventDefault() {} }) };
+  }
+
+  it.each(["lost-reply", "503", "malformed-json", "malformed-201", "wrong-invitation", "unknown-422"])(
+    "holds %s as unknown and rejects duplicate events without another POST", async (outcome) => {
+      const fetcher = vi.fn().mockImplementation(async () => {
+        if (outcome === "lost-reply") throw new Error(BODY.password);
+        if (outcome === "503") return new Response(JSON.stringify({ error: { code: "WEB_AUTH_UNAVAILABLE" } }), { status: 503 });
+        if (outcome === "malformed-json") return new Response("not-json", { status: 201 });
+        if (outcome === "malformed-201") return new Response(JSON.stringify({ status: "accepted" }), { status: 201 });
+        if (outcome === "wrong-invitation") return new Response(JSON.stringify({ ...RECEIPT, invitation_id: RECEIPT.account_id }), { status: 201 });
+        return new Response(JSON.stringify({ error: { code: "unrecognized" } }), { status: 422 });
+      });
+      const page = await mountHandler(fetcher);
+      await page.submit();
+      expect(page.result.textContent).toContain("結果尚未確認");
+      expect(page.result.textContent).not.toContain(BODY.password);
+      expect(page.result.textContent).not.toContain(BODY.token);
+      expect(page.button.disabled).toBe(true);
+      expect(page.form.reset).not.toHaveBeenCalled();
+      await page.submit();
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("fences duplicate submissions while awaiting a response and after confirmed success", async () => {
+    let resolve!: (response: Response) => void;
+    const fetcher = vi.fn(() => new Promise<Response>((done) => { resolve = done; }));
+    const page = await mountHandler(fetcher);
+    const pending = page.submit();
+    await page.submit();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    resolve(new Response(JSON.stringify(RECEIPT), { status: 201 }));
+    await pending;
+    expect(page.form.hidden).toBe(true);
+    expect(page.form.reset).toHaveBeenCalledTimes(1);
+    expect(page.result.textContent).toContain("帳號已建立");
+    await page.submit();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("permits explicit correction only after a recognized noncommitting validation refusal", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      error: { code: "INVITATION_PASSWORD_REJECTED" },
+    }), { status: 422 })).mockResolvedValueOnce(new Response(JSON.stringify(RECEIPT), { status: 201 }));
+    const page = await mountHandler(fetcher);
+    await page.submit();
+    expect(page.button.disabled).toBe(false);
+    expect(page.result.textContent).toContain("本次輸入未通過驗證，未執行建立帳號");
+    await page.submit();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(page.form.hidden).toBe(true);
+  });
+
+  it("holds a definite unavailable invitation without falsely claiming it was not accepted", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: { code: "INVITATION_UNAVAILABLE" },
+    }), { status: 409 }));
+    const page = await mountHandler(fetcher);
+    await page.submit();
+    expect(page.button.disabled).toBe(true);
+    expect(page.result.textContent).toContain("可能已使用");
+    expect(page.result.textContent).not.toContain("尚未建立帳號");
+    await page.submit();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("bounded invitation capability acceptance BFF (no login or credential output)", () => {
+  it("serves private manual entry with no-store, CSP, no cookies and no URL prefill", async () => {
+    const response = await GET(new NextRequest(`${ORIGIN}/auth/invitations`));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("content-security-policy")).toContain("script-src 'sha256-");
+    expect(response.headers.has("set-cookie")).toBe(false);
+    const html = await response.text();
+    for (const field of ["invitation_id", "token", "username", "password"]) expect(html).toContain(`name="${field}"`);
+    expect(html).toContain("form.reset()");
+    expect(html).not.toContain("localStorage");
+    expect(html).not.toContain("sessionStorage");
+    expect(html).not.toContain(BODY.token);
+  });
+
+  it("refuses GET capability query strings without reflecting secrets", async () => {
+    const response = await GET(new NextRequest(`${ORIGIN}/auth/invitations?token=private-secret`));
+    expect(response.status).toBe(422);
+    expect(await response.text()).not.toContain("private-secret");
+  });
   const middlewareApplies = (path: string) => config.matcher.some(
     (pattern) => new RegExp(`^${pattern}$`).test(path),
   );
@@ -137,7 +242,7 @@ describe("bounded invitation capability acceptance BFF (no login or credential o
   });
 
   it.each([
-    [409, "INVITATION_UNAVAILABLE"], [409, "INVITATION_ACCOUNT_EXISTS"],
+    [409, "INVITATION_UNAVAILABLE"], [409, "INVITATION_ACCOUNT_EXISTS"], [409, "INVITATION_PENDING_EXISTS"],
     [422, "INVITATION_PASSWORD_REJECTED"], [429, "INVITATION_RATE_LIMITED"],
     [503, "IDENTITY_PERSISTENCE_UNAVAILABLE"],
   ])("projects only safe expected upstream error %s %s", async (status, code) => {
