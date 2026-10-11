@@ -1,7 +1,7 @@
-"""Foreground recovery custody/budget/receipt primitives; NOT an executor.
+"""Foreground recovery primitives and bounded read-only checkout observer.
 
-No CLI, credential-bearing subprocess, HTTP call, secret writer or admission
-shortcut. The eventual trusted coordinator must compose official API, fresh
+NOT a recovery executor. No CLI, credential-bearing subprocess, HTTP call,
+secret writer or admission shortcut. The eventual coordinator must compose fresh
 source/admission observations, genuine writer exclusion and a reviewed native
 consumer BEFORE effects. These objects cannot grant that authority or resume a
 persisted execution. Do not construct them with live secrets in a worker.
@@ -173,9 +173,9 @@ class ForegroundRecoveryBudget:
     """Fail-stop phase sequencing with durable starts and terminal receipts.
 
     Shape-valid plan is NOT execution approval. ``begin`` returns a maximum call
-    allowance, not cancellation support: actual adapters MUST enforce an absolute
-    deadline and preserve original child/HTTP completion receipts. No adapter or
-    live executor is provided yet. Later GET truth cannot call begin to resume.
+    allowance, not cancellation support: adapters MUST enforce its absolute
+    call_deadline and preserve original child/HTTP completion receipts. The local
+    checkout observer below is NOT a live recovery executor. GET cannot resume.
     Cleanup/quarantine remain finite, once-only recovery lanes after a stop.
     """
 
@@ -207,6 +207,23 @@ class ForegroundRecoveryBudget:
         self._last = now
         return now - self._start, max(0.0, min(self._deadline - now,
                         (self._expiry - datetime.now(UTC)).total_seconds()))
+
+    @property
+    def call_deadline(self) -> float:
+        """Active phase's absolute monotonic limit, never a refreshed allowance.
+
+        An adapter still owns cancellation and original completion proof. Reading
+        this property cannot advance a phase or restore stopped authority.
+        """
+        if self._active is None or (self._stopped and self._active[0] not in {"cleanup", "quarantine"}):
+            raise RecoveryRefused("RECOVERY_PHASE_DEADLINE_UNAVAILABLE")
+        elapsed, remaining = self._time()
+        _, started, ceiling = self._active
+        allowance = min(remaining, started + ceiling - elapsed)
+        if allowance <= 0:
+            self._stopped = True
+            raise RecoveryRefused("RECOVERY_PHASE_DEADLINE_UNAVAILABLE")
+        return self._start + elapsed + allowance
 
     def begin(self, phase: str) -> float:
         try:
@@ -269,3 +286,152 @@ class ForegroundRecoveryBudget:
             self._stopped = True
             self._active = None
             raise RecoveryRefused("RECOVERY_PHASE_TERMINAL_UNAVAILABLE") from None
+
+
+class ObserverRefused(RecoveryRefused):
+    """Static refusal and the ORIGINAL child's terminal classification only.
+
+    None means terminal status is unknown, never exit success. No stdout, stderr,
+    command, path or exception text is exposed. Later readback cannot resume.
+    """
+
+    def __init__(self, *, outcome: str, exit_code: int | None) -> None:
+        super().__init__("RECOVERY_CHECKOUT_OBSERVER_REFUSED")
+        self.outcome, self.exit_code = outcome, exit_code
+
+
+def _bounded_observer_child(args: tuple[str, ...], *, cwd: Path, deadline: float) -> bytes:
+    """Internal NON-SECRET exec adapter; no shell/inherited env/input/FDs.
+
+    Production caller below supplies ONLY fixed read-only git commands. Reserve
+    two seconds INSIDE the absolute deadline for group cancellation and reaping
+    the original Popen handle. Output is bounded in memory and never logged.
+    A start/kill/wait failure is unknown, not an invented completion receipt.
+    Exec may transiently use fork; this is not OS memory isolation. Approved
+    runtime custody/dump/debug/swap controls remain a separate prerequisite.
+    """
+    import selectors
+    import signal
+    import subprocess
+
+    if (type(deadline) not in (int, float) or not math.isfinite(deadline)
+            or not 2 < deadline - time.monotonic() <= 2400):
+        raise ObserverRefused(outcome="refused", exit_code=None)
+    process = None
+    selector = selectors.DefaultSelector()
+    output = bytearray()
+    size = 0
+    outcome = "unknown"
+    try:
+        process = subprocess.Popen(
+            args, cwd=cwd, env={
+                "PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C",
+                "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+                "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0",
+            }, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            close_fds=True, start_new_session=True,
+        )
+        for stream in (process.stdout, process.stderr):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ)
+        work_deadline = deadline - 2
+        while selector.get_map():
+            remaining = work_deadline - time.monotonic()
+            if remaining <= 0:
+                outcome = "interrupted"
+                raise ValueError
+            for key, _ in selector.select(timeout=remaining):
+                chunk = os.read(key.fd, 8192)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                size += len(chunk)
+                if size > 65536:
+                    outcome = "refused"
+                    raise ValueError
+                if key.fileobj is process.stdout:
+                    output.extend(chunk)
+        remaining = work_deadline - time.monotonic()
+        if remaining <= 0:
+            outcome = "interrupted"
+            raise ValueError
+        status = process.wait(timeout=remaining)
+        if status != 0:
+            outcome = "interrupted" if status < 0 else "refused"
+            raise ValueError
+        return bytes(output)
+    except Exception:
+        # Cancel the whole process group, including children holding the pipe
+        # open after git exits. Never infer completion from logs/process names.
+        status = None
+        if process is not None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                outcome = "unknown"
+            try:
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    status = process.wait(timeout=remaining)
+                else:
+                    status = process.poll()  # same original handle; no waiting extension
+            except Exception:
+                status = None
+        if status is None:
+            outcome = "unknown"
+        raise ObserverRefused(outcome=outcome, exit_code=status) from None
+    finally:
+        selector.close()
+        if process is not None:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+
+
+class TrustedCheckoutObserver:
+    """Re-read clean exact HEAD and independently pinned FULL reviewed Git tree.
+
+    Local immutable-checkout predicate only, NOT GitHub review/CI, current dev
+    admission, actual Web/API identity, human consent or execution authority.
+    No commands/callbacks/approval booleans are loaded from a recovery plan.
+    Trusted foreground pins the checkout and reviewed tree independently; every
+    call re-reads git. Unknown/untracked changes, mismatch or incomplete/bounded
+    output refuse. Git configuration capable of executing fsmonitor is disabled.
+    """
+
+    def __init__(self, checkout: Path, *, release_sha: str, reviewed_tree: str) -> None:
+        from shared.identity.dev_smoke_journal import _SHA
+        if (type(release_sha) is not str or not _SHA.fullmatch(release_sha)
+                or type(reviewed_tree) is not str or not _SHA.fullmatch(reviewed_tree)):
+            raise RecoveryRefused("RECOVERY_CHECKOUT_CONFIG_INVALID")
+        self._checkout, self._sha, self._tree = Path(checkout), release_sha, reviewed_tree
+
+    def observe(self, *, deadline: float) -> dict[str, str | bool]:
+        def git(*args: str) -> bytes:
+            return _bounded_observer_child((
+                "/usr/bin/git", "-c", "core.fsmonitor=false", "-c", "gc.auto=0",
+                "-c", "maintenance.auto=false", *args,
+            ), cwd=self._checkout, deadline=deadline)
+
+        try:
+            # One deadline for all commands, not one full timeout per command.
+            before = git("rev-parse", "--verify", "HEAD").decode("ascii").strip()
+            tree = git("rev-parse", "--verify", "HEAD^{tree}").decode("ascii").strip()
+            dirty = git("status", "--porcelain=v1", "--untracked-files=normal",
+                        "--ignore-submodules=none")
+            after = git("rev-parse", "--verify", "HEAD").decode("ascii").strip()
+            if before != self._sha or after != before or tree != self._tree or dirty:
+                raise ValueError
+        except ObserverRefused:
+            raise
+        except Exception:
+            # All children might have exited zero, but mismatch is NOT passing
+            # source proof. No arbitrary path/status/output reaches a receipt.
+            raise ObserverRefused(outcome="refused", exit_code=0) from None
+        return {
+            "stage": "local-checkout-observed", "release_sha": before,
+            "reviewed_tree": tree, "execution_authorized": False,
+            "credential_binding_verified": False, "secret_values_redacted": True,
+        }

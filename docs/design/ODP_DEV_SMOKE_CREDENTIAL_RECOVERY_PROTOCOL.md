@@ -233,8 +233,9 @@ reconstruct ACK after an unknown PUT or resume an execution.
 ## Foreground custody/budget primitives (unapproved; NOT an executor)
 
 `delivery_toolchain/release/recover_dev_smoke.py` now provides isolated building
-blocks, with no CLI, HTTP/cloud call, child runner, secret writer, lifecycle or
-admission callback. It cannot perform recovery or authorize effects:
+blocks, with no CLI, HTTP/cloud call, secret writer, lifecycle or admission
+callback. The later bounded read-only child adapter is described separately below.
+Neither increment can perform recovery or authorize effects:
 
 - `ParentMemoryCustody` owns one384-bit random password and one once-attached
   recovery capability. Repr/pickle/deepcopy do not export them. Access after fork
@@ -260,13 +261,56 @@ admission callback. It cannot perform recovery or authorize effects:
 The design ceilings split the reviewed2400s envelope as preflight600,
 reserve30/issue30, rotate120, reconciliation120, intent20/PUT80/ACK20,
 gate540/fresh-consumer540, cleanup180/quarantine120. They are **not measured
-production bounds**. Tests simulate elapsed time and response/exit statuses;
-retaining parent memory across a simulated observer timeout is not actual
-subprocess cancellation proof.201 input remains a declaration/classification,
-NOT authenticated remote-response or single-attempt PUT proof. A full trusted
-coordinator, credential transport with enforced absolute cancellation, original
-child-handle receipts and actual response authentication remain unimplemented.
+production bounds**. The original primitive tests simulate elapsed time and response/exit statuses;
+those simulations are not actual subprocess cancellation proof.201 input remains
+a declaration/classification, NOT authenticated remote-response or single-attempt
+PUT proof. A full trusted coordinator, credential transport with enforced absolute
+cancellation and actual response authentication remain unimplemented. The later
+read-only child increment below supplies original handles only for local observers.
 Do not treat these reusable primitives as an executable foreground entrypoint.
+
+## Bounded local checkout observer (unapproved; read-only, NOT preflight approval)
+
+`TrustedCheckoutObserver` executes only fixed `/usr/bin/git` read operations with
+shell, fsmonitor, automatic maintenance, inherited environment/stdin/FDs disabled.
+Foreground independently pins the checkout, candidate SHA and ENTIRE reviewed
+Git-tree ID, never from a passing boolean or recovery plan. Each observation reads
+HEAD, tree, tracked/untracked/submodule status, then HEAD again; dirty, changed,
+incomplete or mismatched output fails closed without emitting paths or raw output.
+There is no cached success. This is **local source consistency only**, not remote
+GitHub review/latest CI, deployment/current admission, Web/API own identity,
+account/provenance reconciliation or execution authority. It cannot complete the
+full preflight on its own; all existing fresh authority observers remain mandatory.
+
+`ForegroundRecoveryBudget.call_deadline` exposes the active phase's absolute
+monotonic limit, capped by plan expiry, without refreshing the phase allowance.
+The internal non-secret exec adapter uses that same deadline for all commands,
+bounds combined stdout/stderr to64KiB, and reserves2s INSIDE it for SIGKILL of
+the child process group and wait on the ORIGINAL `Popen` handle. Pipe EOF alone
+is not success; exit0 is required. Timeout/cancellation, output overflow or nonzero
+exit refuses. A missing start/kill/wait receipt is UNKNOWN, never fabricated exit0
+or indefinite waiting. A parent exit0 with descendants keeping a pipe open still
+refuses. No log grep, PID-name search or independently supplied terminal receipt.
+The caller must persist phase-start BEFORE observer invocation, then its terminal
+classification; failure cannot proceed to reservation/rotation. Cancellation of
+an OS-stuck/unreapable child or a stalled process creation cannot be guaranteed:
+missing original terminal receipt stops UNKNOWN, not an extended deadline/pass.
+
+Real isolated subprocess tests cover timeout with original exit-9, parent memory
+retention, no inherited test env/FD/stdin, output caps, nonzero exit, missing wait
+receipt and process-group cancellation. Isolated Git fixtures verify clean exact
+tree, later dirty/untracked changes, mismatched SHA/tree, HEAD drift and fsmonitor
+suppression. These are not measured production source/CI/admission observer bounds
+or live credential-custody proof. Exec may transiently fork in the OS; environment
+and FD isolation do NOT establish OS memory isolation/zeroization. No Python fork
+worker or credential-bearing child is introduced. Approved runtime dump/debug/swap
+controls and the reviewed custody boundary remain mandatory before real use.
+
+No official HTTP recovery adapter, secret PUT/actual201 classifier, gate runner,
+full foreground coordinator, external writer exclusion or native fresh-job consumer
+is supplied by this increment. The old600s creation runner and all old uncertainty
+barriers remain untouched. Do not mistake a local checkout receipt or successful
+child cancellation test for full preflight completion or effect permission.
 
 ## Required subsequent increments (not implemented)
 
@@ -285,8 +329,9 @@ Do not treat these reusable primitives as an executable foreground entrypoint.
    behavior/quarantine rejection unchanged. No missing-ID bypass or fallback.
 4. Compose the new memory/budget/receipt primitives into a trusted foreground
    entrypoint: absolute<=2400s, <=1h plan window, bounded non-secret observers,
-   measured ceilings, real cancellation and sufficient downstream full gate/
-   cleanup/quarantine reserves before each effect. Persist allowlisted phase
+   measured source/CI/admission ceilings, credential-transport cancellation and
+   sufficient downstream full gate/cleanup/quarantine reserves before each effect.
+   The bounded local checkout child adapter is not the complete preflight. Persist allowlisted phase
    start/terminal receipts before proceeding. The primitives alone are not this
    executor or measured observer proof. Timeout,
    lost reply, session/custody loss or receipt failure stops and quarantines NEW

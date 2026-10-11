@@ -568,3 +568,177 @@ def test_full_success_budget_still_not_binding_or_execution_proof(tmp_path: Path
         assert sum(s for _, s in PHASE_CEILINGS) == 2400
     finally:
         receipts.close()
+
+
+def test_adapter_deadline_is_absolute_and_stopped_cleanup_remains_bounded(tmp_path: Path, monkeypatch: Any) -> None:
+    budget, clock, receipts, _ = foreground_budget(tmp_path, monkeypatch)
+    try:
+        with pytest.raises(RecoveryRefused):
+            _ = budget.call_deadline
+        budget.begin("preflight")
+        deadline = budget.call_deadline
+        clock[0] += 5
+        assert budget.call_deadline == deadline
+        budget.finish(outcome="unknown")
+        with pytest.raises(RecoveryRefused):
+            _ = budget.call_deadline
+        budget.begin("cleanup")
+        assert budget.call_deadline <= 2500
+        budget.finish(outcome="completed")
+        budget.begin("quarantine")
+        assert budget.call_deadline <= 2500
+        budget.finish(outcome="completed")
+    finally:
+        receipts.close()
+
+
+def observer_child(tmp_path: Path, program: str, *, seconds: float = 5) -> bytes:
+    """Real NON-SECRET test child; no cloud/database/credential transport."""
+    import sys
+    import time
+    from delivery_toolchain.release.recover_dev_smoke import _bounded_observer_child
+    return _bounded_observer_child((sys.executable, "-c", program), cwd=tmp_path,
+                                   deadline=time.monotonic() + seconds)
+
+
+def test_real_observer_exec_does_not_inherit_parent_env_or_fds(tmp_path: Path, monkeypatch: Any) -> None:
+    import os
+    monkeypatch.setenv("RECOVERY_PRIVATE_TEST_MARKER", "not-for-child")
+    fd = os.open(tmp_path / "nonsecret-fd", os.O_CREAT | os.O_RDWR, 0o600)
+    os.set_inheritable(fd, True)
+    try:
+        assert observer_child(tmp_path, f'''
+import os
+assert "RECOVERY_PRIVATE_TEST_MARKER" not in os.environ
+assert set(os.environ) <= {{"PATH", "LANG", "LC_ALL", "GIT_CONFIG_NOSYSTEM",
+    "GIT_CONFIG_GLOBAL", "GIT_OPTIONAL_LOCKS", "GIT_TERMINAL_PROMPT", "LC_CTYPE"}}
+try:
+    os.fstat({fd})
+except OSError:
+    pass
+else:
+    raise AssertionError("inherited descriptor")
+assert not os.read(0, 1)
+print("safe-terminal")
+''') == b"safe-terminal\n"
+    finally:
+        os.close(fd)
+
+
+def test_real_observer_timeout_reaps_original_handle_without_losing_parent_custody(tmp_path: Path) -> None:
+    from delivery_toolchain.release.recover_dev_smoke import ParentMemoryCustody, ObserverRefused
+    custody = ParentMemoryCustody()
+    password = custody.password
+    custody.attach_capability("t" * 43)
+    try:
+        with pytest.raises(ObserverRefused) as caught:
+            observer_child(tmp_path, "import time; time.sleep(20)", seconds=2.2)
+        assert caught.value.outcome == "interrupted"
+        assert caught.value.exit_code == -9  # ORIGINAL Popen wait(), not inferred liveness
+        assert str(caught.value) == "RECOVERY_CHECKOUT_OBSERVER_REFUSED"
+        assert custody.password == password and custody.capability == "t" * 43
+    finally:
+        custody.close()
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_real_observer_output_limit_cancels_without_echo(tmp_path: Path, stream: str) -> None:
+    from delivery_toolchain.release.recover_dev_smoke import ObserverRefused
+    with pytest.raises(ObserverRefused) as caught:
+        observer_child(tmp_path, f"import sys, time; sys.{stream}.write('PRIVATE-MARKER' * 6000); sys.{stream}.flush(); time.sleep(20)")
+    assert caught.value.outcome == "refused" and caught.value.exit_code == -9
+    assert "PRIVATE-MARKER" not in repr(caught.value)
+
+
+def test_real_observer_nonzero_original_terminal_is_not_pass(tmp_path: Path) -> None:
+    from delivery_toolchain.release.recover_dev_smoke import ObserverRefused
+    with pytest.raises(ObserverRefused) as caught:
+        observer_child(tmp_path, "import sys; print('PRIVATE-MARKER', file=sys.stderr); sys.exit(7)")
+    assert caught.value.exit_code == 7 and caught.value.outcome == "refused"
+    assert "PRIVATE-MARKER" not in repr(caught.value)
+
+
+def test_observer_wait_receipt_loss_is_unknown_not_success(tmp_path: Path, monkeypatch: Any) -> None:
+    import subprocess
+    from delivery_toolchain.release.recover_dev_smoke import ObserverRefused
+    original = subprocess.Popen.wait
+    def lost_receipt(self: Any, *args: Any, **kwargs: Any) -> int:
+        original(self, *args, **kwargs)  # Actually reap; only receipt is lost.
+        raise OSError("PRIVATE-MARKER")
+    monkeypatch.setattr(subprocess.Popen, "wait", lost_receipt)
+    with pytest.raises(ObserverRefused) as caught:
+        observer_child(tmp_path, "pass")
+    assert caught.value.outcome == "unknown" and caught.value.exit_code is None
+    assert "PRIVATE-MARKER" not in repr(caught.value)
+
+
+def test_observer_group_cancellation_even_if_original_exited_zero(tmp_path: Path) -> None:
+    import time
+    from delivery_toolchain.release.recover_dev_smoke import ObserverRefused
+    # Descendant retains pipes after parent exit. Finite observation of a test
+    # marker supplements group cancellation; it is NOT a grandchild wait receipt.
+    child = "import time; from pathlib import Path; time.sleep(1); Path('survived').touch()"
+    with pytest.raises(ObserverRefused) as caught:
+        observer_child(tmp_path, f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])", seconds=2.2)
+    assert caught.value.exit_code == 0 and caught.value.outcome == "interrupted"
+    time.sleep(1.1)
+    assert not (tmp_path / "survived").exists()
+
+
+@pytest.fixture
+def isolated_checkout(tmp_path: Path) -> tuple[Path, str, str]:
+    import subprocess
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_CONFIG_GLOBAL": "/dev/null"}
+    def git(*args: str) -> str:
+        return subprocess.run(("/usr/bin/git", *args), cwd=tmp_path, env=env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+    git("init", "--quiet")
+    (tmp_path / "tracked").write_text("isolated-nonsecret\n")
+    git("add", "tracked")
+    git("-c", "user.name=Offline", "-c", "user.email=offline@example.invalid",
+        "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "isolated fixture")
+    return tmp_path, git("rev-parse", "HEAD"), git("rev-parse", "HEAD^{tree}")
+
+
+@pytest.mark.parametrize("drift", ["none", "tracked", "untracked", "sha", "tree", "fsmonitor"])
+def test_checkout_observer_fresh_fulltree_no_cached_pass(isolated_checkout: Any, drift: str) -> None:
+    import time
+    from delivery_toolchain.release.recover_dev_smoke import TrustedCheckoutObserver, ObserverRefused
+    checkout, sha, tree = isolated_checkout
+    observer = TrustedCheckoutObserver(checkout, release_sha=sha, reviewed_tree=tree)
+    receipt = observer.observe(deadline=time.monotonic() + 5)
+    assert receipt["release_sha"] == sha and receipt["reviewed_tree"] == tree
+    assert receipt["execution_authorized"] is False and receipt["credential_binding_verified"] is False
+    if drift in {"tracked", "untracked"}:
+        (checkout / ("tracked" if drift == "tracked" else "PRIVATE-MARKER")).write_text("changed")
+    elif drift == "sha":
+        observer = TrustedCheckoutObserver(checkout, release_sha="a" * 40, reviewed_tree=tree)
+    elif drift == "tree":
+        observer = TrustedCheckoutObserver(checkout, release_sha=sha, reviewed_tree="b" * 40)
+    elif drift == "fsmonitor":
+        # Configured executable must NOT run in the child.
+        (checkout / ".git/config").write_text("[core]\nfsmonitor = sh -c 'touch PRIVATE-MARKER'\n")
+    if drift in {"none", "fsmonitor"}:
+        assert observer.observe(deadline=time.monotonic() + 5) == receipt
+        assert not (checkout / "PRIVATE-MARKER").exists()
+    else:
+        with pytest.raises(ObserverRefused) as caught:
+            observer.observe(deadline=time.monotonic() + 5)
+        assert caught.value.outcome == "refused" and caught.value.exit_code == 0
+        assert "PRIVATE-MARKER" not in repr(caught.value)
+
+
+def test_checkout_head_drift_during_read_refuses(isolated_checkout: Any, monkeypatch: Any) -> None:
+    import time
+    from delivery_toolchain.release import recover_dev_smoke as r
+    checkout, sha, tree = isolated_checkout
+    original = r._bounded_observer_child
+    calls = []
+    def drift(args: Any, **kwargs: Any) -> bytes:
+        calls.append(args)
+        return b"a" * 40 + b"\n" if len(calls) == 4 else original(args, **kwargs)
+    monkeypatch.setattr(r, "_bounded_observer_child", drift)
+    with pytest.raises(r.ObserverRefused):
+        r.TrustedCheckoutObserver(checkout, release_sha=sha, reviewed_tree=tree).observe(deadline=time.monotonic() + 5)
+    assert len(calls) == 4
