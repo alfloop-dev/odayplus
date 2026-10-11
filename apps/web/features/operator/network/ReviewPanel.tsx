@@ -45,7 +45,7 @@ export function ReviewPanel({
   onDecide?: (reviewId: string, action: ReviewDecisionAction, form: ReviewDecisionForm) => Promise<boolean> | boolean | void;
 }) {
   const seeded = useMemo(
-    () => (reviews.length ? reviews : fallbackRows.map(fallbackToReview)),
+    () => resolveEffectiveReviews(reviews, fallbackRows),
     [reviews, fallbackRows],
   );
   const [items, setItems] = useState<ReviewItem[]>(seeded);
@@ -335,6 +335,14 @@ function ToneBadge({ children, tone }: { children: ReactNode; tone: "good" | "wa
       {children}
     </span>
   );
+}
+
+// The one rule for which review queue is shown: the dedicated reviews when it
+// has rows, otherwise the fallback rows (callers pass fallback rows only in
+// fixture mode). The workspace header chip and tab badge count this same list,
+// so a fixture-mode empty response cannot report zero while rows are listed.
+export function resolveEffectiveReviews(reviews: ReviewItem[], fallbackRows: ReviewQueueRow[]): ReviewItem[] {
+  return reviews.length ? reviews : fallbackRows.map(fallbackToReview);
 }
 
 // Fixture fallback: adapt a viewModel ReviewQueueRow into the minimal ReviewItem
