@@ -742,3 +742,216 @@ def test_checkout_head_drift_during_read_refuses(isolated_checkout: Any, monkeyp
     with pytest.raises(r.ObserverRefused):
         r.TrustedCheckoutObserver(checkout, release_sha=sha, reviewed_tree=tree).observe(deadline=time.monotonic() + 5)
     assert len(calls) == 4
+
+
+@pytest.fixture
+def tls_recovery_server(tmp_path: Path):
+    """Real loopback TLS ONLY; ephemeral fixture certificate, no live secrets.
+
+    Thread gets synthetic request data, not ParentMemoryCustody/foreground state.
+    Original thread join is bounded; no process-name or output polling.
+    """
+    import socket
+    import ssl
+    import threading
+    import time
+    from contextlib import contextmanager
+    from datetime import timedelta
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.now(UTC) - timedelta(minutes=1))
+            .not_valid_after(datetime.now(UTC) + timedelta(hours=1))
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            .sign(key, hashes.SHA256()))
+    pem = cert.public_bytes(serialization.Encoding.PEM).decode()
+    cert_path, key_path = tmp_path / "offline-cert.pem", tmp_path / "offline-key.pem"
+    cert_path.write_text(pem)
+    key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM,
+                         serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert_path, key_path)
+
+    @contextmanager
+    def server(reply: bytes, *, dribble: bool = False, handshake_pause: float = 0):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(3)
+        port = listener.getsockname()[1]
+        observed = []
+        def serve():
+            try:
+                with listener.accept()[0] as raw:
+                    raw.settimeout(3)
+                    if handshake_pause:
+                        time.sleep(handshake_pause)
+                    with context.wrap_socket(raw, server_side=True) as sock:
+                        data = bytearray()
+                        while b"\r\n\r\n" not in data:
+                            chunk = sock.recv(4096)
+                            if not chunk or len(data) > 65536:
+                                raise ValueError
+                            data.extend(chunk)
+                        header, content = bytes(data).split(b"\r\n\r\n", 1)
+                        lengths = [line.split(b":", 1)[1].strip() for line in header.split(b"\r\n")
+                                   if line.lower().startswith(b"content-length:")]
+                        length = int(lengths[0]) if lengths else 0
+                        while len(content) < length:
+                            chunk = sock.recv(4096)
+                            if not chunk:
+                                raise ValueError
+                            content += chunk
+                        observed.append((header, content))
+                        if dribble:
+                            for byte in reply:
+                                sock.sendall(bytes([byte]))
+                                time.sleep(0.02)
+                        elif reply:
+                            sock.sendall(reply)
+            except (OSError, ValueError):
+                pass  # deliberate TLS/refusal/disconnection fixtures
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        try:
+            yield f"https://localhost:{port}", pem, observed
+        finally:
+            listener.close()
+            thread.join(timeout=4)
+            assert not thread.is_alive(), "original isolated server thread did not finish"
+    return server
+
+
+def recovery_http_reply(body: bytes = b'{"ok":true}', *, status: int = 200,
+                        extra: bytes = b"", chunked: bool = False) -> bytes:
+    framing = (b"Transfer-Encoding: chunked\r\n" if chunked else
+               f"Content-Length: {len(body)}\r\n".encode())
+    encoded = f"{len(body):x}\r\n".encode() + body + b"\r\n0\r\n\r\n" if chunked else body
+    return (f"HTTP/1.1 {status} fixture\r\n".encode() + framing +
+            b"Content-Type: application/json\r\nCache-Control: no-store\r\nConnection: close\r\n" + extra + b"\r\n" + encoded)
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+def test_real_https_once_same_cookie_fixed_route_no_dns_env_or_redirect(tls_recovery_server: Any,
+                                                                      monkeypatch: Any, chunked: bool) -> None:
+    import pickle
+    import socket
+    import time
+    from delivery_toolchain.release.recover_dev_smoke import RecoveryHTTPSAttempt, RecoveryHTTPRefused
+    monkeypatch.setenv("HTTPS_PROXY", "http://not-a-proxy.invalid")
+    def forbidden(*args, **kwargs):
+        raise AssertionError("DNS forbidden inside absolute phase")
+    monkeypatch.setattr(socket, "getaddrinfo", forbidden)
+    with tls_recovery_server(recovery_http_reply(b'{"token":"OFFLINE-PRIVATE-MARKER"}', status=201,
+                                               chunked=chunked)) as (origin, ca, observed):
+        attempt = RecoveryHTTPSAttempt(origin=origin, address="127.0.0.1", ca_pem=ca)
+        result = attempt.execute(method="POST", cookie="offline-cookie", body={"action": "issue"},
+                                 deadline=time.monotonic() + 2)
+        assert result.http_status == 201 and result.payload["token"] == "OFFLINE-PRIVATE-MARKER"
+        assert "OFFLINE-PRIVATE-MARKER" not in repr(result)
+        with pytest.raises(RecoveryRefused, match="SERIALIZATION_REFUSED"):
+            pickle.dumps(result)
+        with pytest.raises(RecoveryHTTPRefused) as caught:
+            attempt.execute(method="POST", cookie="offline-cookie", body={"action": "issue"},
+                            deadline=time.monotonic() + 2)
+        assert caught.value.outcome == "refused" and caught.value.http_status is None
+    assert len(observed) == 1
+    header, content = observed[0]
+    assert header.startswith(b"POST /api/v1/operator/users/dev-smoke-recovery HTTP/1.1\r\n")
+    assert f"Origin: {origin}".encode() in header
+    assert b"Cookie: __Host-oday_web_session=offline-cookie" in header
+    assert b"actor" not in header and b"tenant" not in header
+    assert content == b'{"action":"issue"}'
+
+
+@pytest.mark.parametrize("failure", ["lost", "redirect", "204", "500", "duplicate_json", "nan",
+                                      "oversized", "duplicate_length", "mixed_framing", "truncated",
+                                      "truncated_chunk", "cache", "header_cap"])
+def test_real_https_unknown_post_never_reconstructs_commit_or_retries(tls_recovery_server: Any, failure: str) -> None:
+    import time
+    from delivery_toolchain.release.recover_dev_smoke import RecoveryHTTPSAttempt, RecoveryHTTPRefused
+    replies = {
+        "lost": b"", "redirect": recovery_http_reply(status=302, extra=b"Location: https://elsewhere.invalid\r\n"),
+        "204": recovery_http_reply(status=204), "500": recovery_http_reply(status=500),
+        "duplicate_json": recovery_http_reply(b'{"nested":{"token":1,"token":2}}'),
+        "nan": recovery_http_reply(b'{"token":NaN}'),
+        "oversized": recovery_http_reply(b"x" * 16385),
+        "duplicate_length": recovery_http_reply(extra=b"Content-Length: 11\r\n"),
+        "mixed_framing": recovery_http_reply(extra=b"Transfer-Encoding: chunked\r\n"),
+        "truncated": recovery_http_reply()[:-2],
+        "truncated_chunk": recovery_http_reply(chunked=True)[:-5],
+        "cache": recovery_http_reply().replace(b"no-store", b"public"),
+        "header_cap": recovery_http_reply(extra=b"X-Large: " + b"x" * 65000 + b"\r\n"),
+    }
+    with tls_recovery_server(replies[failure]) as (origin, ca, observed):
+        attempt = RecoveryHTTPSAttempt(origin=origin, address="127.0.0.1", ca_pem=ca)
+        with pytest.raises(RecoveryHTTPRefused) as caught:
+            attempt.execute(method="POST", cookie="offline-cookie", body={"action": "consume", "password": "OFFLINE-PRIVATE-MARKER"},
+                            deadline=time.monotonic() + 2)
+        assert caught.value.outcome == "unknown"
+        assert "OFFLINE-PRIVATE-MARKER" not in repr(caught.value)
+        with pytest.raises(RecoveryHTTPRefused):
+            attempt.execute(method="GET", cookie="offline-cookie", deadline=time.monotonic() + 2)
+    assert len(observed) == 1
+
+
+@pytest.mark.parametrize("phase", ["headers", "handshake"])
+def test_real_https_absolute_deadline_cannot_refresh_with_dribble(tls_recovery_server: Any, phase: str) -> None:
+    import time
+    from delivery_toolchain.release.recover_dev_smoke import RecoveryHTTPSAttempt, RecoveryHTTPRefused
+    with tls_recovery_server(recovery_http_reply(), dribble=phase == "headers",
+                             handshake_pause=0.7 if phase == "handshake" else 0) as (origin, ca, _):
+        attempt = RecoveryHTTPSAttempt(origin=origin, address="127.0.0.1", ca_pem=ca)
+        start = time.monotonic()
+        with pytest.raises(RecoveryHTTPRefused) as caught:
+            attempt.execute(method="POST", cookie="offline-cookie", body={"action": "consume"}, deadline=start + 0.25)
+        assert time.monotonic() - start < 0.6
+        assert caught.value.outcome == ("unknown" if phase == "headers" else "refused")
+        assert caught.value.http_status is None
+
+
+def test_real_https_certificate_hostname_verified_before_any_request(tls_recovery_server: Any) -> None:
+    import time
+    from delivery_toolchain.release.recover_dev_smoke import RecoveryHTTPSAttempt, RecoveryHTTPRefused
+    with tls_recovery_server(recovery_http_reply()) as (origin, ca, observed):
+        attempt = RecoveryHTTPSAttempt(origin=origin.replace("localhost", "wrong.invalid"), address="127.0.0.1", ca_pem=ca)
+        with pytest.raises(RecoveryHTTPRefused) as caught:
+            attempt.execute(method="POST", cookie="offline-cookie", body={"action": "issue"}, deadline=time.monotonic() + 2)
+        assert caught.value.outcome == "refused"
+    assert not observed
+
+
+@pytest.mark.parametrize("bad", ["cookie", "body", "deadline", "get_body"])
+def test_https_bad_input_poisons_attempt_without_socket_or_echo(monkeypatch: Any, bad: str) -> None:
+    import socket
+    import time
+    from delivery_toolchain.release.recover_dev_smoke import RecoveryHTTPSAttempt, RecoveryHTTPRefused
+    attempt = RecoveryHTTPSAttempt(origin="https://offline.invalid", address="127.0.0.1")
+    calls = []
+    def forbidden(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError
+    monkeypatch.setattr(socket, "socket", forbidden)
+    values = {"method": "POST", "cookie": "offline-cookie", "body": {"action": "issue"}, "deadline": time.monotonic() + 2}
+    if bad == "cookie":
+        values["cookie"] = "OFFLINE-PRIVATE-MARKER\r\n"
+    elif bad == "body":
+        values["body"] = {"password": "OFFLINE-PRIVATE-MARKER" * 1000}
+    elif bad == "deadline":
+        values["deadline"] = float("nan")
+    else:
+        values["method"] = "GET"
+    with pytest.raises(RecoveryHTTPRefused) as caught:
+        attempt.execute(**values)
+    assert caught.value.outcome == "refused" and not calls
+    assert "OFFLINE-PRIVATE-MARKER" not in repr(caught.value)
+    with pytest.raises(RecoveryHTTPRefused):
+        attempt.execute(method="GET", cookie="offline-cookie", deadline=time.monotonic() + 2)
+    assert not calls

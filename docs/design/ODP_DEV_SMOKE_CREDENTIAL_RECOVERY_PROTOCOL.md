@@ -306,11 +306,58 @@ and FD isolation do NOT establish OS memory isolation/zeroization. No Python for
 worker or credential-bearing child is introduced. Approved runtime dump/debug/swap
 controls and the reviewed custody boundary remain mandatory before real use.
 
-No official HTTP recovery adapter, secret PUT/actual201 classifier, gate runner,
+The next increment below supplies a one-use official-route HTTPS transport only.
+No same-session lifecycle adapter, secret PUT/actual201 classifier, gate runner,
 full foreground coordinator, external writer exclusion or native fresh-job consumer
-is supplied by this increment. The old600s creation runner and all old uncertainty
+is supplied by this checkout-observer increment. The old600s creation runner and all old uncertainty
 barriers remain untouched. Do not mistake a local checkout receipt or successful
 child cancellation test for full preflight completion or effect permission.
+
+## One-use absolute-deadline HTTPS primitive (unapproved, NOT a coordinator)
+
+`RecoveryHTTPSAttempt` now sends exactly one GET/POST to the fixed official
+`/api/v1/operator/users/dev-smoke-recovery` route. The trusted foreground runtime
+independently pins HTTPS origin, numeric IPv4/IPv6 connection address and normal
+public CA trust; certificate chain/hostname verification and SNI remain mandatory.
+No DNS, proxy/environment lookup, redirect, retry, reconnect, subprocess or debug
+logging is used. Public CA PEM is trust configuration, not a verification waiver.
+No cookie/capability/password/response enters a file, child or receipt. The caller
+retains its SAME execution-owned original-admin cookie in memory; the domain's
+persisted session validation still runs on each official call. This transport
+cannot create/authenticate a session or perform full preflight by itself.
+
+One absolute monotonic deadline bounds numeric TCP connect, TLS handshake, each
+sendall, EVERY underlying response read, and final parsing. Slow header/body
+dribbles cannot refresh it. Combined header/framing/body bytes are capped64KiB,
+JSON body16KiB; request JSON is capped8192bytes. No-store JSON response, unambiguous
+length/chunk framing and duplicate-key/nonfinite-number refusal are mandatory.
+Only original200/201 responses with complete bounded framing return a private,
+repr-hidden/non-pickleable payload (which may contain the once-issued capability).
+That response still needs action-specific root/plan/session/lineage validation by
+the future coordinator before any completed phase receipt. It is not authority.
+
+Each instance is poisoned before validation/network access, including on connect
+or TLS failure. A response error, incomplete reply, malformed JSON or timeout
+AFTER starting POST send is UNKNOWN; remote rotation may have committed. No GET
+can reconstruct completion/ACK or permit replay. Before-send failure is a refusal,
+not a retry grant. Only the original status, when actually received, and static
+classification may be persisted. Socket/response closure is best effort with no
+compensating operation. There is no GitHub PUT or ACK201 authenticity proof here.
+Newly constructing an attempt cannot override durable no-retry/uncertainty truth.
+
+Isolated loopback TLS tests use ephemeral OFFLINE certificates and synthetic
+cookies/JSON only. They cover real certificate-hostname verification, no DNS/proxy,
+fixed route/same cookie, Content-Length/chunk completion, redirect/error/lost reply,
+truncated framing, aggregate limits, duplicate keys, slow-dribble/handshake deadline,
+redaction and one-use poisoning. Those bounds are offline adapter checks, NOT
+measured production source/CI/admission/gate/cleanup bounds or live custody proof.
+OS-stuck calls, scheduling and parsing cannot promise hard-real-time termination;
+a missed absolute deadline refuses rather than authorizing late continuation.
+
+Full same-session action adapters, fresh source/CI/current-admission/Web+API and
+account/provenance coordinator, measured downstream gate/consumer/cleanup reserves,
+actual GitHub201 transport, genuine writer exclusion and native fresh-job consumer
+remain missing. All effect blockers continue to apply BEFORE any rotation.
 
 ## Required subsequent increments (not implemented)
 

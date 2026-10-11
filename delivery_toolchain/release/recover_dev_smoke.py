@@ -1,18 +1,21 @@
 """Foreground recovery primitives and bounded read-only checkout observer.
 
-NOT a recovery executor. No CLI, credential-bearing subprocess, HTTP call,
-secret writer or admission shortcut. The eventual coordinator must compose fresh
+NOT a recovery executor. No CLI, credential-bearing subprocess, secret writer
+or admission shortcut. The one-use HTTPS primitive is not a coordinator.
+The eventual coordinator must compose fresh
 source/admission observations, genuine writer exclusion and a reviewed native
 consumer BEFORE effects. These objects cannot grant that authority or resume a
 persisted execution. Do not construct them with live secrets in a worker.
 """
 from __future__ import annotations
 
+import io
 import json
 import math
 import os
 import secrets
 import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -435,3 +438,207 @@ class TrustedCheckoutObserver:
             "reviewed_tree": tree, "execution_authorized": False,
             "credential_binding_verified": False, "secret_values_redacted": True,
         }
+
+
+class RecoveryHTTPRefused(RecoveryRefused):
+    """Only original HTTP status, if received, and fail-stop classification.
+
+    An HTTP error/malformed response to POST is UNKNOWN, not rollback evidence.
+    No upstream body, cookie, capability or exception text belongs in receipts.
+    """
+
+    def __init__(self, *, outcome: str, http_status: int | None) -> None:
+        super().__init__("RECOVERY_HTTPS_ATTEMPT_REFUSED")
+        self.outcome, self.http_status = outcome, http_status
+
+
+@dataclass(frozen=True)
+class RecoveryHTTPResult:
+    """Private in-process response, NOT an audit/phase receipt or permission.
+
+    May contain the once-issued capability. No pickle/report/child transport.
+    Caller must validate action-specific lineage before recording completion.
+    """
+
+    http_status: int
+    payload: dict = field(repr=False)
+
+    def __reduce_ex__(self, protocol: int):
+        raise RecoveryRefused("RECOVERY_HTTP_SERIALIZATION_REFUSED")
+
+
+def _http_remaining(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if not math.isfinite(remaining) or remaining <= 0:
+        raise TimeoutError
+    return remaining
+
+
+class _DeadlineReader(io.RawIOBase):
+    """Bound aggregate header/framing/body bytes and EVERY underlying TLS read.
+
+    Recomputing the same absolute remaining time prevents a slow dribble from
+    refreshing read timeouts. Buffered parsing cannot bypass the aggregate cap.
+    """
+
+    def __init__(self, sock, deadline: float) -> None:
+        self._sock, self._deadline, self._size = sock, deadline, 0
+        self._stream = sock.makefile("rb", buffering=0)
+
+    def close(self) -> None:
+        self._stream.close()
+        super().close()
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer) -> int:
+        self._sock.settimeout(_http_remaining(self._deadline))
+        size = self._stream.readinto(buffer)
+        self._size += size
+        if self._size > 65536:
+            raise ValueError
+        return size
+
+
+class _DeadlineSocket:
+    def __init__(self, sock, deadline: float) -> None:
+        self._sock, self._deadline = sock, deadline
+
+    def sendall(self, data) -> None:
+        # socket.sendall's timeout bounds the entire send, not each fragment.
+        self._sock.settimeout(_http_remaining(self._deadline))
+        self._sock.sendall(data)
+
+    def makefile(self, mode: str):
+        if mode != "rb":
+            raise ValueError
+        return io.BufferedReader(_DeadlineReader(self._sock, self._deadline))
+
+    def close(self) -> None:
+        self._sock.close()
+
+
+class RecoveryHTTPSAttempt:
+    """One HTTPS request to the FIXED official recovery route, foreground only.
+
+    The trusted runtime independently pins HTTPS origin and numeric connection
+    address (not a plan/redirect/DNS result from untrusted evidence). Certificate
+    chain AND origin hostname are verified with SNI; no proxy/env, DNS, retry,
+    redirect, subprocess, or remote response logging. Public CA PEM may extend
+    normal trust; it cannot disable certificate/hostname verification.
+
+    This is NOT a session owner/preflight/execution entrypoint. The caller must
+    retain the SAME approved original-admin cookie in memory, persist a durable
+    phase start and pass budget.call_deadline. Server checks the persisted issuer
+    session on every call. New instances cannot confer replay/continuation rights.
+    Writer exclusion/native-consumer/coordinator blockers remain BEFORE effects.
+    """
+
+    PATH = "/api/v1/operator/users/dev-smoke-recovery"
+
+    def __init__(self, *, origin: str, address: str, ca_pem: str | None = None) -> None:
+        import ipaddress
+        import ssl
+        from urllib.parse import urlsplit
+
+        self._used = False
+        try:
+            parsed = urlsplit(origin)
+            if (type(origin) is not str or parsed.scheme != "https" or not parsed.hostname
+                    or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment
+                    or any(c in origin for c in "\r\n") or not parsed.hostname.isascii()
+                    or type(address) is not str or "%" in address):
+                raise ValueError
+            ip = ipaddress.ip_address(address)  # NEVER resolve DNS inside a phase
+            self._address, self._ipv6 = str(ip), ip.version == 6
+            self._origin = origin
+            self._host, self._port = parsed.hostname, parsed.port or 443
+            self._context = ssl.create_default_context(cadata=ca_pem)
+            self._context.minimum_version = ssl.TLSVersion.TLSv1_2
+        except Exception:
+            raise RecoveryRefused("RECOVERY_HTTPS_CONFIG_INVALID") from None
+
+    def execute(self, *, method: str, cookie: str, deadline: float,
+                body: dict | None = None) -> RecoveryHTTPResult:
+        import http.client
+        import socket
+
+        if self._used:
+            raise RecoveryHTTPRefused(outcome="refused", http_status=None)
+        self._used = True  # even validation/connect failure cannot be retried
+        status = None
+        raw = tls = connection = response = None
+        submitted = False
+        try:
+            if (method not in {"GET", "POST"} or type(cookie) is not str or not 0 < len(cookie) <= 8192
+                    or any(c in cookie for c in ";\r\n") or not cookie.isascii()
+                    or type(deadline) not in (int, float) or not math.isfinite(deadline)
+                    or not 0 < deadline - time.monotonic() <= 2400
+                    or (method == "GET" and body is not None)
+                    or (method == "POST" and type(body) is not dict)):
+                raise ValueError
+            encoded = None if body is None else json.dumps(body, separators=(",", ":"),
+                                                         allow_nan=False).encode("utf-8")
+            if encoded is not None and len(encoded) > 8192:
+                raise ValueError
+            # No getaddrinfo/create_connection: numeric IPv4/IPv6 connect only.
+            raw = socket.socket(socket.AF_INET6 if self._ipv6 else socket.AF_INET, socket.SOCK_STREAM)
+            raw.settimeout(_http_remaining(deadline))
+            raw.connect((self._address, self._port))
+            raw.settimeout(_http_remaining(deadline))
+            tls = self._context.wrap_socket(raw, server_hostname=self._host)
+            connection = http.client.HTTPConnection(self._host, self._port)
+            connection.auto_open = 0  # never reconnect after a closed/lost socket
+            connection.sock = _DeadlineSocket(tls, deadline)
+            # Preserve the exact independently pinned origin for BFF CSRF.
+            headers = {"Accept": "application/json", "Origin": self._origin,
+                       "Cookie": f"__Host-oday_web_session={cookie}", "Connection": "close"}
+            if encoded is not None:
+                headers["Content-Type"] = "application/json"
+            submitted = True  # a partial send may have committed; never reconstruct
+            connection.request(method, self.PATH, body=encoded, headers=headers)
+            response = connection.getresponse()
+            status = response.status
+            lengths = response.headers.get_all("Content-Length", [])
+            transfers = response.headers.get_all("Transfer-Encoding", [])
+            if (len(lengths) > 1 or len(transfers) > 1 or (lengths and transfers)
+                    or (lengths and (not lengths[0].isascii() or not lengths[0].isdigit()
+                                     or int(lengths[0]) > 16384))
+                    or (transfers and transfers[0].lower() != "chunked")
+                    or response.headers.get_content_type() != "application/json"
+                    or response.headers.get_all("Cache-Control", []) != ["no-store"]
+                    or status not in {200, 201}):
+                raise ValueError
+            clear = response.read(16385)
+            if len(clear) > 16384 or (lengths and len(clear) != int(lengths[0])):
+                raise ValueError
+            # read(amt) may return a truncated chunk without noticing premature
+            # EOF. Require the framing terminator too; still under SAME deadline.
+            if response.read(1):
+                raise ValueError
+
+            def unique(pairs):
+                value = {}
+                for key, item in pairs:
+                    if key in value:
+                        raise ValueError
+                    value[key] = item
+                return value
+
+            payload = json.loads(clear, object_pairs_hook=unique,
+                                 parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+            if type(payload) is not dict:
+                raise ValueError
+            _http_remaining(deadline)  # parsing/EOF is not permission beyond expiry
+            return RecoveryHTTPResult(status, payload)
+        except Exception:
+            raise RecoveryHTTPRefused(outcome="unknown" if submitted and method == "POST" else "refused",
+                                      http_status=status) from None
+        finally:
+            for resource in (response, connection, tls, raw):
+                if resource is not None:
+                    try:
+                        resource.close()
+                    except Exception:
+                        pass  # no cleanup exception/body may escape redaction
