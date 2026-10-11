@@ -359,6 +359,64 @@ native fresh-consumer custody, complete Web/final clean-head verification,
 independent Codex2 security review and ordinary deployment/current admission.
 Original interrupted-admin cleanup remains UNKNOWN.
 
+## Mounted binding declaration checkpoint (2026-10-11, not final submission)
+
+Clean source anchor `df1a0af3da130fdb1acf9f07fee92dffc0dafd4a` exposes
+binding-intent/binding-acknowledged through the existing bounded recovery POST
+union and safe binding history through GET. Same persisted original-admin,
+tenant, issuer-session/root/source/expiry and post-rotation target-revision fences
+remain in the same-engine domain. The existing route-level no-store, strict
+8192-byte duplicate-key-free JSON, extra-field refusal and Web CSRF boundary
+apply; no new route or Web adapter was introduced. OpenAPI is regenerated and
+client freshness checked. Old AUTH001 and old NULL binding remain untouched.
+
+Strict integer201 is an original-admin declaration only. The API does NOT
+authenticate a GitHub response; the trusted foreground actual-response boundary
+still does not exist. The new mounted roundtrip drives reserve/issue/consume/
+intent/ACK through actual HTTP handlers and PG storage, then actual authenticated
+safe audit/user projection into the strict schema2 predicate. Its target-session
+insertion and201 are explicitly isolated synthetic inputs, NOT deployed Web
+login, PUT, writer exclusion, decrypted-value or fresh-consumer evidence.
+
+Mounted cases cover non201/boolean/string/extra authority/credential fields,
+different original issuer session, revoked fresh target session, source drift,
+quarantine and replay. Committed intent/ACK receipt-loss injection returns static
+409, preserves the actual committed ledger, and requires new-root quarantine;
+a later GET resolves truth but supplies no retry authority. Existing permission
+negative tests now instrument all binding methods too, proving denial before
+malformed DTO/domain work without caller actor/tenant shortcuts.
+
+Each command below ran once at the clean source anchor through the shared
+verification receipt policy. Original child terminal exit/duration decides
+completion; no grep wait, count-only rerun or receipt reassignment was used.
+Original JSON is retained in receipts/:
+
+| Measurement at df1a0af3da13 | Receipt | Exit | Duration |
+| --- | --- | --- | --- |
+| mounted integration pytest `-k mounted -q` | 9d2ef85ed508a211 | 0 | 48.786s |
+| declared six-file pytest `-q` | 67ef902d758f69fb | 0 | 659.722s |
+| declared code-boundary checker | effe781a74ead3b1 | 0 | 11.790s |
+| existing OpenAPI/client drift gate vs origin/dev | 213c368879be0005 | 0 | 22.406s |
+| declared `git diff --check` | 75b16a01a43dd137 | 0 | 0.023s |
+| declared `pnpm --dir apps/web typecheck` | 0b24986b3d6472af | 127 | 0.001s |
+
+The full-suite displayed skip remains NOT actual Web-store PG verification.
+The pnpm command did NOT run because pnpm is absent; no dependency install,
+lockfile rewrite or host search was performed. No new Web diff occurred in this
+dispatch, but final composed Web typecheck/lint/build/300kB proof remains unmet.
+Latest fetched origin/dev is e995aa26032542160a177d421ad13157dd6db058.
+
+This evidence checkpoint has a DIFFERENT SHA; none of the source-anchor receipts
+is transferred to it. Task stays in_progress, NOT review-ready/no PR. NEXT:
+trusted foreground parent memory-custody executor with absolute<=2400 deadline,
+allowlisted pre-effect/terminal receipts and actual single-attempt response
+classification. Genuine external-writer exclusion and independently reviewed
+native fresh-job custody remain precise execution blockers, not invented
+proofs or missing general human consent. Final clean-head verification,
+independent Codex2 review, ordinary deployment/current admission and fresh exact
+reviewed foreground plan remain required before effects. Original interrupted
+admin-session cleanup remains UNKNOWN.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
