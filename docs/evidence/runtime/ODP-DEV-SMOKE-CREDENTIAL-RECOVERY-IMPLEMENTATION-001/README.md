@@ -817,6 +817,66 @@ amendment, independent review, normal deployment and final operational plan rema
 BEFORE-effect blockers. This dispatch delivers source progress only, not an
 operational approval or docs-only ready/awaiting-review handoff.
 
+## Bounded remote source increment (2026-10-11; not final submission)
+
+Anchors `143b93735859` / `77db0d9d7e3d` add `TrustedGitHubSourceObserver`:
+canonical merged-PR/review-writer/latest reviewed+candidate CI/check predicates,
+plus independent ENTIRE reviewed-tree pin matched by BOTH remote commits. Fresh
+fixed-path GitHub HTTPS GETs stay in parent memory; no credential-bearing gh/child,
+env/proxy, retry, redirect or passing receipt input. Complete64KiB JSON bodies,
+duplicate/nonfinite/next-page/compressed/incomplete evidence refusal and ONE
+absolute main-thread timer prevent convenient partial/history selection. Any
+uncertainty permanently stops the observer, including later repaired readback.
+The timer never replaces an existing runtime timer; PID/pickle/close fencing
+and static errors avoid token/raw evidence persistence. Source identifiers in
+safe output do not grant current admission/custody/exclusion or execution.
+
+Offline tests cover pinned full trees (equal but unpinned trees also refuse),
+latest pending/failed gate/CI superseding old success, skipped/wrong-app/future/
+duplicate checks, list incompleteness, oversize/malformed evidence, redaction,
+real timer/dribble termination, existing timer preservation and no resume.
+First security run failed because reusing the source fixture with a40min recovery
+plan generated a FUTURE expiry-minus30min evidence time. Only the synthetic expiry
+was corrected; production future-time refusal remained intact. Failure is retained.
+No live GitHub source/custody/serving/account calls or recovery effects occurred.
+
+Fresh `origin/dev` fetch retained `e995aa26032542160a177d421ad13157dd6db058`.
+Canonical source observer and current deployment-history predicates were inspected
+at that ref; no branch sync/frozen delivery edits. Each command ran through the
+existing shared receipt policy at a clean listed anchor, using documented user-bin
+PATH and allowed offline `NODE_ENV=test`. Original terminal exit/duration is
+completion proof; no summary/count rerun, output wait loop or receipt reassignment.
+Nine original receipt JSONs are retained in `receipts/`:
+
+| Clean measured head | Selection (exact command in JSON) | Receipt | Exit | Seconds |
+| --- | --- | --- | --- | --- |
+|143b93735859|security recovery pytest; future synthetic source timestamp fixture failed|327e2e704cfe157f|1|19.423|
+|143b93735859|two-file frozen Ruff|a0332e3eb0f905bb|0|0.181|
+|143b93735859|`git diff --check`|a73c539c96bf59f0|0|0.029|
+|77db0d9d7e3d|same security recovery pytest, corrected fixture|c02866b657a5a05c|0|18.784|
+|77db0d9d7e3d|two-file frozen Ruff|51d46b443a125cf4|0|0.108|
+|77db0d9d7e3d|`git diff --check`|2399f46663257fbb|0|0.017|
+|77db0d9d7e3d|declared frozen code-boundary check|ce6af3644178673b|0|10.166|
+|77db0d9d7e3d|declared six-file recovery/PG/API/BFF/invitation/journal/decoder/fullgate/workflow regression|781e1a576322d8e6|0|600.443|
+|77db0d9d7e3d|declared consumer security/workflow regression|bab9ef0ca18dc51a|0|7.268|
+
+One absent frozen-Node Web-store PG skip remains NOT credited. No previous Web
+receipts are assigned to these heads. This later evidence commit changes SHA;
+its head is NOT proven by source-anchor receipts, and final-head Web typecheck/
+lint/300kB verification or final review readiness is not claimed.
+
+NEXT: bounded current ordinary admission reads reusing canonical newest-changing-
+attempt/restoration/complete manifest/admission predicates without credential
+children. The existing `automatic_dev` reader uses gh subprocesses and cannot be
+silently used as this memory-only adapter; do not substitute cached admission or
+replay a consumed lease. Then compose full samepair gate, quarantine BEFORE own
+cleanup and normally authorized fresh-job consumer coordination. Complete declared
+exact-head regression/Web checks and actual `task_finalize.sh` PR to Codex2 once
+source is ready. External writer exclusion, measured production bounds, explicit
+UNAPPROVED native-ingress amendment, independent security review, ordinary deployment
+and reviewed final execution plan remain BEFORE-effect blockers. This is durable
+implementation progress, not ready/awaiting-review or operational approval.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
