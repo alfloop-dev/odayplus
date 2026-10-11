@@ -541,6 +541,30 @@ class _ObservedWeb:
             self._owned.clear()  # Best effort reference release, not zeroization.
             self._cleaning = False
 
+    def _retain_login_cookies(self, pairs: tuple[tuple[str, str], ...]) -> tuple[bool, bool]:
+        """Keep safe custody before the absolute-deadline context can refuse.
+
+        Returning/closing a partial response can cross the deadline. Cookie
+        retention must precede that final fence, without acknowledging login.
+        """
+        issued: list[str] = []
+        unsafe = False
+        for name, value in pairs:
+            if name == _SESSION_COOKIE and value:
+                if _valid_cookie_value(value):
+                    if value not in issued:
+                        issued.append(value)
+                else:
+                    unsafe = True
+            elif value:
+                unsafe = True
+        for value in issued:
+            if len(self._owned) >= 4 or value in self._owned:
+                self._unknown()
+            else:
+                self._owned[value] = {"logout_attempted": False, "logout_acknowledged": False}
+        return bool(issued), unsafe or len(issued) > 1
+
     def request(self, method: str, path: str, **kwargs: Any) -> Any:
         cookie, ambiguous = _session_cookie((kwargs.get("headers") or {}).get("cookie", ""))
         if ambiguous:
@@ -565,33 +589,19 @@ class _ObservedWeb:
         try:
             with _absolute_deadline(limit):
                 response = self.client.request(method, path, **kwargs)
-            pairs, ambiguous = _response_cookie_pairs(response)
+                pairs, ambiguous = _response_cookie_pairs(response)
+                if method == "POST" and path == "/login":
+                    issued, unsafe = self._retain_login_cookies(pairs)
+            # Custody above survives the context's final deadline check. Normal
+            # response acknowledgement only happens AFTER that check succeeds.
             if ambiguous:
                 # Raw duplicate/malformed Set-Cookie (or a drifted normalized
                 # view) on ANY reply: custody is unprovable. Latch NOW; owned
                 # cookies (below, for login) keep only bounded cleanup.
                 self._unknown()
             if method == "POST" and path == "/login":
-                issued: list[str] = []
-                unsafe = False
-                for name, value in pairs:
-                    if name == _SESSION_COOKIE and value:
-                        if _valid_cookie_value(value):
-                            if value not in issued:
-                                issued.append(value)
-                        else:
-                            unsafe = True  # unusable for logout: unaccounted session
-                    elif value:
-                        unsafe = True  # any other cookie alongside a login reply
-                # Own EVERY distinct safely-known issued value, even from an
-                # ambiguous reply, so each gets its single bounded logout.
-                for value in issued:
-                    if len(self._owned) >= 4 or value in self._owned:
-                        self._unknown()
-                    else:
-                        self._owned[value] = {"logout_attempted": False, "logout_acknowledged": False}
-                if (ambiguous or unsafe or len(issued) > 1
-                        or not _login_reply_canonical(response, kwargs, issued=bool(issued))):
+                if (ambiguous or unsafe
+                        or not _login_reply_canonical(response, kwargs, issued=issued)):
                     self._unknown()
             if method == "POST" and path == "/auth/logout" and state is not None:
                 state["logout_acknowledged"] = (not ambiguous and not response.failed and response.status == 200

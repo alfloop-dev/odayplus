@@ -609,17 +609,35 @@ class UrllibHttpClient:
             if follow_redirects
             else urllib.request.build_opener(_NoRedirect)
         )
+        received: HttpResponse | None = None
         try:
-            with opener.open(request, timeout=self._timeout) as response:
-                return _to_response(response.status, response.headers, response.read())
+            try:
+                stream = opener.open(request, timeout=self._timeout)
+            except urllib.error.HTTPError as exc:
+                # HTTPError is also a response with headers/body. Read it via
+                # the SAME custody path; exceptions in an except block would
+                # otherwise bypass the partial-response failure handler.
+                stream = exc
+            with stream as response:
+                # Capture raw multiplicity and safely known cookies BEFORE
+                # body I/O. A timeout/truncated body may follow a committed
+                # login: retain custody solely for bounded owned cleanup.
+                received = _to_response(response.status, response.headers, b"")
+                received = _to_response(response.status, response.headers, response.read())
+            return received
         except _CrossOriginRedirectRefused:
             return HttpResponse(
                 status=0, error=f"refused cross-origin redirect for {safe_path}"
             )
-        except urllib.error.HTTPError as exc:
-            return _to_response(exc.code, exc.headers, exc.read())
-        except (OSError, urllib.error.URLError, TimeoutError) as exc:
-            return HttpResponse(status=0, error=f"{type(exc).__name__} for {safe_path}")
+        except Exception as exc:
+            # Includes incomplete HTTP bodies and the caller's absolute timer.
+            # No payload/exception message is exposed and status=0 is NEVER an
+            # acknowledgement, even if headers carried a successful status.
+            return HttpResponse(
+                status=0, error=f"{type(exc).__name__} for {safe_path}",
+                cookies=received.cookies if received is not None else {},
+                set_cookie_pairs=received.set_cookie_pairs if received is not None else None,
+            )
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

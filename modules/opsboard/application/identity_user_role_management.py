@@ -204,12 +204,17 @@ class IdentityUserRoleManagementService:
                                                  "identity.dev_smoke.recovery", "identity.dev_smoke.recovery_capability",
                                                  "release.dev_smoke.recovery_binding"}):
                 continue
+            is_recovery = event.event_type in {
+                "identity.dev_smoke.recovery", "identity.dev_smoke.recovery_capability",
+                "release.dev_smoke.recovery_binding",
+            }
+            if is_recovery and type(event.metadata) is not dict:
+                raise UserRolePolicyError("RECOVERY_AUDIT_LINEAGE_INVALID")
             meta = dict(event.metadata or {})
-            if event.event_type in {"identity.dev_smoke.recovery", "identity.dev_smoke.recovery_capability",
-                                     "release.dev_smoke.recovery_binding"}:
-                # Exact allowlisted safe schemas; corrupt/extended metadata is
-                # omitted, NEVER projected with arbitrary credential fields. A
-                # missing event must make downstream lineage verification fail.
+            if is_recovery:
+                # Refuse the whole read BEFORE subject filtering. Dropping a
+                # corrupt quarantine/duplicate could leave a valid ACK history
+                # and turn uncertainty into success. Never echo unsafe metadata.
                 from shared.identity.dev_smoke_recovery import (
                     RECOVERY_BINDING_KEYS,
                     RECOVERY_BINDING_TYPE,
@@ -220,7 +225,7 @@ class IdentityUserRoleManagementService:
                            RecoveryCapabilityService._CAP_TYPE: RecoveryCapabilityService._CAP_KEYS,
                            RECOVERY_BINDING_TYPE: RECOVERY_BINDING_KEYS}[event.event_type]
                 if set(meta) != allowed or meta.get("secret_values_redacted") is not True:
-                    continue
+                    raise UserRolePolicyError("RECOVERY_AUDIT_LINEAGE_INVALID")
             if subject_id and subject_id not in {meta.get("subject_id"), meta.get("account_id"), meta.get("target_account_id")}:
                 continue
             events.append(

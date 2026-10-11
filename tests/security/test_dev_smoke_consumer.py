@@ -1138,3 +1138,132 @@ def test_real_deployment_history_artifact_chain_never_runs_manifest_git_with_tok
     # extraction is NOT a new admission bypass for the existing release caller.
     monkeypatch.setattr(automatic_dev, "api", fake_api)
     assert automatic_dev.previous_deployment()[0] == manifest
+
+
+@pytest.mark.parametrize("failure", ["timeout", "incomplete", "oserror", "deadline"])
+@pytest.mark.parametrize("http_error", [False, True])
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_native_partial_login_body_retains_raw_custody_for_once_only_cleanup(
+        monkeypatch, failure: str, http_error: bool, duplicate: bool) -> None:
+    """Actual urllib parser + canonical evaluator; no sockets or real sessions.
+
+    Headers arrive before the body fails (including the HTTPError path and
+    caller absolute timer). Every safely known cookie survives for cleanup,
+    but UNKNOWN is sticky, no further login/work reaches transport, and an
+    acknowledged cleanup never turns the refused gate into success.
+    """
+    import http.client
+    import io
+    import socket
+    import urllib.error
+    import urllib.request
+    from urllib.parse import urlsplit
+
+    from tests.e2e import test_live_e2e_gate_dev_admin as f
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("NETWORK_FORBIDDEN")
+    for name in ("create_connection", "getaddrinfo"):
+        monkeypatch.setattr(socket, name, forbidden)
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(f.base, "WEB_URL", c.WEB_ORIGIN)
+    backend = f.AdminWeb(f.web_routes())
+    active: set[str] = set()
+    sent: list[tuple[str, str, str]] = []
+    owned_at_failure: list[str] = []
+
+    class Reply:
+        def __init__(self, response, fail_body: bool) -> None:
+            self.status = response.status
+            raw = b"Content-Type: application/json\r\n"
+            if fail_body and duplicate:
+                raw += _RAW_SESSION % b"synthetic-extra"
+            for name, value in response.cookies.items():
+                raw += f"Set-Cookie: {name}={value}; Path=/; Secure; HttpOnly\r\n".encode()
+            if response.location:
+                raw += f"Location: {response.location}\r\n".encode()
+            self.headers = http.client.parse_headers(io.BytesIO(raw + b"\r\n"))
+            self.body = json.dumps(response.payload).encode()
+            self.fail_body = fail_body
+            self.closed = False
+
+        def read(self):
+            if self.fail_body:
+                if failure == "timeout":
+                    raise TimeoutError("private-partial-body-marker")
+                if failure == "incomplete":
+                    raise http.client.IncompleteRead(b"private-partial-body-marker", 99)
+                if failure == "oserror":
+                    raise OSError("private-partial-body-marker")
+                # Exercise the REAL caller timer while headers are already in
+                # custody. The final deadline check must not discard ownership.
+                time.sleep(0.5)
+                pytest.fail("absolute timer did not fire")
+            return self.body
+
+        def close(self):
+            self.closed = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class Opener:
+        def open(self, request, timeout):
+            parsed = urlsplit(request.full_url)
+            path = parsed.path + ("?" + parsed.query if parsed.query else "")
+            method = request.get_method()
+            headers = {name.lower(): value for name, value in request.header_items()}
+            cookie = headers.get("cookie", "")
+            body = json.loads(request.data) if request.data else None
+            sent.append((method, path, cookie))
+            response = backend.request(method, path, authenticated=False, body=body,
+                                       headers=headers, follow_redirects=False)
+            issued = method == "POST" and path == "/login" and bool(response.cookies.get(f.SESSION_COOKIE))
+            if issued:
+                active.add(response.cookies[f.SESSION_COOKIE])
+                if duplicate:
+                    active.add("synthetic-extra")
+            if method == "POST" and path == "/auth/logout":
+                active.discard(cookie.partition("=")[2])
+            reply = Reply(response, issued)
+            if issued and http_error:
+                raise urllib.error.HTTPError(request.full_url, 500, "synthetic", reply.headers, reply)
+            return reply
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: Opener())
+    client = c.gate.UrllibHttpClient(c.WEB_ORIGIN, timeout=1, bearer_token="", operator_role="",
+                                    operator_subject="", operator_tenant="", correlation_id="offline-partial-body")
+    now = time.monotonic()
+    observed = c._ObservedWeb(client, execution_id="offline",
+        deadline=now + (0.15 if failure == "deadline" else 5), cleanup_deadline=now + 6)
+    # Capture the genuine partial response without persisting cookies/payloads.
+    actual_request = client.request
+    def inspect_reply(*args, **kwargs):
+        response = actual_request(*args, **kwargs)
+        if args[:2] == ("POST", "/login") and response.failed:
+            assert response.status == 0 and response.payload == {}
+            assert "private-partial-body-marker" not in response.error
+            owned_at_failure.extend(value for name, value in response.set_cookie_pairs or () if name == f.SESSION_COOKIE)
+        return response
+    monkeypatch.setattr(client, "request", inspect_reply)
+    clock = f.base.FakeClock()
+    _, report = c.gate.evaluate_gate(f.dev_admin_config(), http=f.base.FakeHttp(f.api_routes()),
+        worker_driver=c.gate.ScheduledWorkerDriver(), correlation_id=f.base.CORRELATION_ID,
+        now=f.base.NOW, web_http=observed, monotonic=clock.monotonic, sleep=clock.sleep)
+    expected = (["synthetic-extra"] if duplicate else []) + [f.SESSION_VALUE]
+    assert owned_at_failure == expected and list(observed._owned) == expected
+    assert observed.uncertainty_latched and report["ok"] is False
+    before = len(sent)
+    assert observed.request("POST", "/login", body=dict(_LOGIN), headers={}).status == 0
+    assert len(sent) == before
+    assert observed.cleanup_owned_sessions() is False  # known cleanup, historical UNKNOWN retained
+    assert not active and backend.logged_out
+    logouts = [cookie for method, path, cookie in sent if method == "POST" and path == "/auth/logout"]
+    assert logouts == [f"{f.SESSION_COOKIE}={value}" for value in expected]
+    assert all(path in {"/auth/logout", "/auth/session", "/api/v1/auth/principal"}
+               for _, path, _ in sent[before:])
+    assert "private-partial-body-marker" not in json.dumps(report)
+    assert observed.cleanup_owned_sessions() is False and len(sent) == before + 3 * len(expected)

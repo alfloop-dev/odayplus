@@ -181,10 +181,14 @@ proxy, body or service-token-provider work, enforces GET/POST and bounded JSON
 transport, and rejects query token transport. It then uses the EXISTING durable
 Web-session/Bearer + service IAM proxy, not caller actor/tenant headers or a new
 authentication scheme. No redirects/retries or credential logging are added.
-Recovery audit events are projected only with their exact safe root/capability
-metadata allowlists; unexpected credential-bearing extensions are omitted so
-lineage fails closed. Target-filtered audit now includes target_account_id lineage.
-No capability hash, password/PHC or cookie is projected.
+Recovery audit events are projected only with their exact safe root/capability/
+binding metadata allowlists. Non-object metadata, missing/extra fields or a
+non-true redaction marker refuse the ENTIRE authenticated audit read with the
+static `RECOVERY_AUDIT_LINEAGE_INVALID` policy error, before subject filtering.
+Never drop malformed quarantine/duplicate rows: a surviving otherwise-valid ACK
+history could then falsely pass the decoder. The response contains neither a
+partial events list nor unsafe metadata. Target-filtered audit includes
+target_account_id lineage. No capability hash, password/PHC or cookie is projected.
 
 Isolated PG mounted tests cover real permission/session denials before malformed
 DTO/domain work, same-account rotation, old-history preservation, no-store,

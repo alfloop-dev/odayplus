@@ -1840,7 +1840,8 @@ def test_gate_matches_bundle_account_and_requires_real_invitation(mismatch: str)
     assert PASSWORD not in json.dumps(report)
 
 
-@pytest.mark.parametrize("failure", ["none", "missing_ack", "quarantined", "204", "wrong_rotation", "schema1"])
+@pytest.mark.parametrize("failure", ["none", "missing_ack", "quarantined", "204", "wrong_rotation", "schema1",
+    "projection-control", "projection-quarantine", "projection-duplicate", "projection-redaction"])
 def test_full_gate_recovery_bundle_keeps_invitation_and_all_auth_checks(monkeypatch: Any, failure: str) -> None:
     from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle
     from tests.security.test_dev_smoke_recovery import recovery_consumer_inputs
@@ -1865,14 +1866,52 @@ def test_full_gate_recovery_bundle_keeps_invitation_and_all_auth_checks(monkeypa
         events[-1]["metadata"]["put_status"] = 204
     elif failure == "wrong_rotation":
         events[-1]["metadata"]["rotation_event_id"] = events[5]["event_id"]
+    audit_response = base.response(200, {"events": events})
+    if failure.startswith("projection"):
+        # Unmocked production service + mounted route + canonical evaluator;
+        # only audit storage/HTTP are synthetic, NOT a live authority receipt.
+        from datetime import datetime
+        from types import SimpleNamespace
+        from uuid import uuid4
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from apps.api.app.routes.operator_modules.users_roles import create_user_role_sub_router
+        from delivery_toolchain.release.provision_dev_smoke import credential_bundle_acknowledged
+        from modules.opsboard.application.identity_user_role_management import (
+            IdentityUserRoleManagementService,
+        )
+
+        if failure != "projection-control":
+            extra = deepcopy(events[4])
+            extra["event_id"] = str(uuid4())
+            if failure in {"projection-quarantine", "projection-duplicate"}:
+                extra["metadata"]["token"] = "private-injected-marker"
+                if failure == "projection-quarantine":
+                    extra["metadata"]["stage"] = "recovery-required"
+            else:
+                extra["metadata"]["secret_values_redacted"] = False
+            events.append(extra)
+        assert credential_bundle_acknowledged(bundle, events, target_account=user) is (failure == "projection-control")
+        rows = [SimpleNamespace(**{**e, "occurred_at": datetime.fromisoformat(e["timestamp"])}) for e in events]
+        service = IdentityUserRoleManagementService(engine=SimpleNamespace(dialect="postgresql"),
+            audit_log=SimpleNamespace(list_events=lambda **kwargs: rows))
+        app = FastAPI()
+        app.include_router(create_user_role_sub_router(service), prefix="/api/v1/operator")
+        with TestClient(app) as client:
+            projected = client.get("/api/v1/operator/users/audit-trail", headers={"x-tenant-id": bundle.tenant_id})
+        assert projected.status_code == (200 if failure == "projection-control" else 403)
+        assert "private-injected-marker" not in projected.text
+        audit_response = base.response(projected.status_code, projected.json())
     checks, report, web = run_dev_admin(cfg=cfg, web=AdminWeb(web_routes(**{
         "GET /api/v1/operator/users [session]": base.response(200, {"users": [user], "count": 1}),
-        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, {"events": events}),
+        "GET /api/v1/operator/users/audit-trail [session]": audit_response,
         "GET /api/v1/auth/principal [session]": base.response(200, {
             "account_id": bundle.account_id, "tenant_id": bundle.tenant_id, "roles": ["platform_admin"]}),
     })))
-    assert report["ok"] is (failure == "none"), report["blockers"]
-    if failure == "none":
+    assert report["ok"] is (failure in {"none", "projection-control"}), report["blockers"]
+    if failure in {"none", "projection-control"}:
         names = {c.name for c in checks if c.ok}
         assert {"admin:credential_bundle_durable_acknowledgement", "admin:invitation_audited",
                 "admin:invitation_principal_bound", "admin:business_shell_denied", "session:wrong_role_denied",

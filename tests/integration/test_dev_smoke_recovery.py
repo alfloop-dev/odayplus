@@ -234,7 +234,7 @@ def test_mounted_recovery_limits_query_body_runtime_and_quarantine(recovery_runt
     assert s.client.post(RECOVERY_PATH, headers=s.headers, json={"action": "issue", "reservation": root}).status_code == 409
 
 
-def test_recovery_audit_projection_omits_extended_credential_metadata(recovery_runtime: Any) -> None:
+def test_recovery_audit_projection_refuses_extended_credential_metadata(recovery_runtime: Any) -> None:
     s = recovery_runtime
     s.recovery.reserve(s.principal, s.plan)
     root = s.audit.list_events(correlation_id=RecoveryJournal._CORRELATION)[0]
@@ -242,8 +242,43 @@ def test_recovery_audit_projection_omits_extended_credential_metadata(recovery_r
         resource=root.resource, correlation_id=root.correlation_id, outcome="success",
         metadata={**root.metadata, "token": "private-injected-marker"}))
     response = s.client.get("/api/v1/operator/users/audit-trail", headers=s.headers)
-    assert response.status_code == 200 and "private-injected-marker" not in response.text
-    assert len([e for e in response.json()["events"] if e["event_type"] == root.event_type]) == 1
+    assert response.status_code == 403 and "private-injected-marker" not in response.text
+    assert "RECOVERY_AUDIT_LINEAGE_INVALID" in response.text
+    assert "events" not in response.json()
+
+
+@pytest.mark.parametrize("event_type", [
+    RecoveryJournal._TYPE, RecoveryCapabilityService._CAP_TYPE, "release.dev_smoke.recovery_binding",
+])
+@pytest.mark.parametrize("corruption", ["extended-quarantine", "extended-duplicate", "missing", "redaction"])
+def test_mounted_ack_cannot_hide_malformed_recovery_history(recovery_runtime: Any, event_type: str,
+                                                           corruption: str) -> None:
+    """Actual PG audit + authenticated route: an existing ACK cannot hide a bad extra row."""
+    s = recovery_runtime
+    root, cap = binding_ready(s)
+    intent = s.binding.binding_intent(s.principal, root)
+    s.binding.binding_acknowledge(s.principal, root, intent_event_id=intent["audit_event_id"], put_status=201)
+    assert binding_proven(s, root, cap, intent)
+    source = next(e for e in s.audit.list_events(tenant_id=TENANT_ID) if e.event_type == event_type)
+    metadata = dict(source.metadata)
+    if corruption.startswith("extended"):
+        metadata["token"] = "private-injected-marker"
+        if corruption == "extended-quarantine":
+            metadata["stage"] = "recovery-required"
+    elif corruption == "missing":
+        metadata.pop("stage")
+    else:
+        metadata["secret_values_redacted"] = False
+    s.audit.record(AuditEvent(event_type=source.event_type, actor=source.actor, action=source.action,
+        resource=source.resource, correlation_id=source.correlation_id, outcome="success", metadata=metadata))
+    before = snapshot(s)
+    # Corrupt target identifiers/subject filters cannot make the extra event disappear.
+    for subject in (None, TARGET_ACCOUNT_ID, PRESERVED_ACCOUNT_ID, str(uuid4())):
+        response = s.client.get("/api/v1/operator/users/audit-trail", headers=s.headers,
+                                params={} if subject is None else {"subject_id": subject})
+        assert response.status_code == 403 and "RECOVERY_AUDIT_LINEAGE_INVALID" in response.text
+        assert "private-injected-marker" not in response.text and "events" not in response.json()
+    assert snapshot(s) == before and s.audit.verify_chain().ok
 
 
 def snapshot(s: Any) -> dict[str, Any]:
