@@ -102,3 +102,19 @@ def test_new_expand_only_migration_is_reachable_and_never_releases_attempts() ->
     assert "INTERVAL '600 seconds'" in sql and "attempt_count BETWEEN 0 AND 5" in sql
     assert "token_hash TEXT" in sql and "ON DELETE CASCADE" not in sql
     assert "identity.login_attempts" not in sql and "ALTER TABLE identity.invitations" not in sql
+
+
+def test_session_fence_migration_is_reachable_expand_only_and_contains_no_credential_copy() -> None:
+    from shared.infrastructure.persistence.migrations import discover_migration_steps
+    step = next(s for s in discover_migration_steps(Path("infra/db/migrations/versions")) if s.revision == "0024")
+    assert {Path(a.path).name for a in step.assets} == {
+        "0024_dev_smoke_session_fence.py", "000030_dev_smoke_session_fence.sql",
+    }
+    migration = Path(step.path).read_text()
+    assert 'down_revision: str = "0023"' in migration
+    downgrade = migration.split("def downgrade()", 1)[1]
+    assert "DROP" not in downgrade and "DELETE" not in downgrade and "UPDATE" not in downgrade
+    sql = Path("infra/db/migrations/000030_dev_smoke_session_fence.sql").read_text()
+    assert "FOR SHARE" in sql and "OLD.credential_revision + 1" in sql
+    assert "verified_credential_revision BIGINT" in sql
+    assert "SET phc_hash" not in sql and "token_hash" not in sql

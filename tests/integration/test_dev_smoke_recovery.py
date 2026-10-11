@@ -50,6 +50,7 @@ def recovery(identity_stack: Any) -> Any:
     s = identity_stack
     with s.db.connect(autocommit=True) as conn:
         conn.execute(Path("infra/db/migrations/000029_dev_smoke_recovery_capability.sql").read_text())
+        conn.execute(Path("infra/db/migrations/000030_dev_smoke_session_fence.sql").read_text())
     # Isolated persisted identity fixture; no external DB or credentials.
     for account, username, roles in (
         (PRESERVED_ACCOUNT_ID, "ajoe734", ["auditor", "platform_admin"]),
@@ -298,6 +299,7 @@ def test_issue_once_hash_only_short_lived_and_target_only_atomic_rotation(recove
     result = consume(s, root, cap, password="Ｒandom-new-offline-pair-739!")
     assert result["status"] == "rotated" and result["revoked_target_sessions"] == 1
     assert result["credential_binding_verified"] is False
+    assert s.capabilities._credential_revisions() == ("1", "2")
     phc = s.engine.query_one("SELECT phc_hash FROM identity.password_credentials WHERE account_id = ?", (TARGET_ACCOUNT_ID,))["phc_hash"]
     assert CredentialService().verify_password(phc, PASSWORD)
     assert "$argon2id$v=19$m=65536,t=3,p=1$" in phc
@@ -475,3 +477,110 @@ def test_commit_failure_rolls_back_rotation_consumption_audit_and_session_revoca
     assert [e.metadata["stage"] for e in s.capabilities._cap_events()] == ["issued"]
     assert _q(s, "SELECT attempt_count FROM identity.dev_smoke_recovery_budget") == [(1,)]
     assert s.audit.verify_chain().ok
+
+
+def insert_fenced_session(engine: PostgresEngine, revision: str | None, *, account: str = TARGET_ACCOUNT_ID) -> str:
+    sid = str(uuid4())
+    engine.execute(
+        "INSERT INTO identity.sessions (session_id, account_id, provider, access_token, "
+        "created_at, last_seen_at, idle_expires_at, absolute_expires_at, verified_credential_revision) "
+        "VALUES (?, ?, 'local_password', 'offline-token', clock_timestamp(), clock_timestamp(), "
+        "clock_timestamp() + interval '30 minutes', clock_timestamp() + interval '1 hour', ?)",
+        (sid, account, revision),
+    )
+    return sid
+
+
+@pytest.mark.parametrize("revision", [None, "1"])
+def test_old_verified_login_cannot_insert_after_rotation_on_separate_pool(recovery: Any, revision: str | None) -> None:
+    s = recovery
+    root, cap = issue(s)
+    engine = PostgresEngine(s.db.url(), bootstrap=False, validate_schema=False)
+    try:
+        # This is the non-secret revision observed alongside the OLD PHC before
+        # Argon verification. Legacy in-flight writers have no revision at all.
+        old_revision = engine.query_one("SELECT credential_revision::text AS revision "
+            "FROM identity.password_credentials WHERE account_id = ?", (TARGET_ACCOUNT_ID,))["revision"]
+        assert old_revision == "1"
+        assert consume(s, root, cap)["status"] == "rotated"
+        before = snapshot(s)
+        with pytest.raises(Exception, match="SESSION_CREDENTIAL_REVISION_REFUSED"):
+            insert_fenced_session(engine, revision)
+        assert snapshot(s) == before
+        sid = insert_fenced_session(engine, "2")
+        assert engine.query_one("SELECT revoked_at FROM identity.sessions WHERE session_id = ?", (sid,)) == {"revoked_at": None}
+        # No broad denial/revocation of original or unrelated legacy writers.
+        insert_fenced_session(engine, None, account=PRESERVED_ACCOUNT_ID)
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("revision", [None, "1"])
+def test_session_insert_waits_on_uncommitted_rotation_not_stale_snapshot(recovery: Any, monkeypatch: Any, revision: str | None) -> None:
+    from threading import Event
+    s = recovery
+    root, cap = issue(s)
+    ready, release = Event(), Event()
+    real_record = s.capabilities._record_cap
+    engine = PostgresEngine(s.db.url(), bootstrap=False, validate_schema=False)
+
+    def record(*args: Any, **kwargs: Any) -> AuditEvent:
+        if kwargs["stage"] == "rotated":
+            ready.set()  # target credential row UPDATE is uncommitted
+            if not release.wait(10):
+                raise RuntimeError("offline-test-release-timeout")
+        return real_record(*args, **kwargs)
+
+    monkeypatch.setattr(s.capabilities, "_record_cap", record)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(consume, s, root, cap)
+            try:
+                assert ready.wait(10)
+                # Bounded real PG wait demonstrates the INSERT trigger takes
+                # the same credential lock, rather than trusting its snapshot.
+                with pytest.raises(Exception, match="lock timeout"):
+                    with engine.lock:
+                        engine.execute("SET LOCAL lock_timeout = '200ms'")
+                        insert_fenced_session(engine, revision)
+            finally:
+                release.set()
+            assert future.result(timeout=10)["status"] == "rotated"
+        with pytest.raises(Exception, match="SESSION_CREDENTIAL_REVISION_REFUSED"):
+            insert_fenced_session(engine, revision)
+        assert len(s.capabilities._cap_events()) == 2
+        assert s.audit.verify_chain().ok
+    finally:
+        release.set()
+        engine.close()
+
+
+def test_sessions_committed_before_rotation_are_revoked_even_with_future_client_clock(recovery: Any) -> None:
+    s = recovery
+    root, cap = issue(s)
+    engine = PostgresEngine(s.db.url(), bootstrap=False, validate_schema=False)
+    try:
+        sid = insert_fenced_session(engine, "1")
+        # Web writes JS time; a forward-skewed creation clock must not escape
+        # target-only revocation simply by being greater than DB rotation time.
+        engine.execute("UPDATE identity.sessions SET created_at = clock_timestamp() + interval '5 minutes' "
+                       "WHERE session_id = ?", (sid,))
+        assert consume(s, root, cap)["revoked_target_sessions"] == 2
+        assert engine.query_one("SELECT revoked_reason FROM identity.sessions WHERE session_id = ?", (sid,)) == {
+            "revoked_reason": "dev-smoke-recovery",
+        }
+    finally:
+        engine.close()
+
+
+def test_credential_revision_advances_even_when_transaction_timestamps_collide(recovery: Any) -> None:
+    s = recovery
+    with s.engine.lock:
+        s.engine.execute("UPDATE identity.password_credentials SET phc_hash = 'offline-phc-one' WHERE account_id = ?", (TARGET_ACCOUNT_ID,))
+        first = s.engine.query_one("SELECT updated_at, credential_revision FROM identity.password_credentials WHERE account_id = ?", (TARGET_ACCOUNT_ID,))
+        s.engine.execute("UPDATE identity.password_credentials SET phc_hash = 'offline-phc-two', credential_revision = 1 WHERE account_id = ?", (TARGET_ACCOUNT_ID,))
+        second = s.engine.query_one("SELECT updated_at, credential_revision FROM identity.password_credentials WHERE account_id = ?", (TARGET_ACCOUNT_ID,))
+        assert first["updated_at"] == second["updated_at"]
+        assert (first["credential_revision"], second["credential_revision"]) == (2, 3)
+        s.engine.execute("UPDATE identity.password_credentials SET credential_revision = 100 WHERE account_id = ?", (TARGET_ACCOUNT_ID,))
+        assert s.capabilities._credential_revisions() == ("1", "3")

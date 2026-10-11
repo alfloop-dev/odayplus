@@ -66,21 +66,46 @@ no foreground executor or bundle-provenance integration. No store/receipt alone
 supplies human/source/admission/exclusion authority. Tests use isolated PostgreSQL
 fixtures with incident IDs as inputs, not fabricated live recovery receipts.
 
+## Credential/session fence domain increment (Web integration pending)
+
+Expand-only `000030` / Alembic `0024` adds a non-secret monotonic credential
+revision. The DB trigger advances it on PHC/algorithm/must-change changes, even
+when PostgreSQL transaction timestamps collide. A caller-assigned revision cannot
+rewind it. New root/capability checks bind both account revisions in addition to
+timestamps; revisions, not hashes, may accompany server-only session insertion.
+
+The session-insert trigger takes the SAME target credential row SHARE lock that
+rotation takes for UPDATE. A target session inserted before rotation commits is
+therefore visible to target-only revocation; an insert after rotation must supply
+the current verified revision. An old revision fails. Legacy target writers with
+no revision fail once recovery is consumed, instead of inserting an old-password
+session. Other accounts' legacy inserts are unchanged. Rotation revokes all active
+target sessions under that fence, not a client-time cutoff: a future-skewed Web
+created_at must not evade revocation. Existing session rows remain intact apart
+from the already authorized target revocation; the trigger never deletes them.
+Isolated PG tests exercise independent pools, insert lock timeout during an
+uncommitted rotation, stale/missing revision refusal after commit, and future-clock
+pre-rotation session revocation. No database credentials or live effects are used.
+
+**Not yet end-to-end login proof:** origin/dev Web `/login` verifies a PHC and
+later inserts a session without carrying its revision. Consequently this DB
+increment intentionally fails closed for target logins after recovery until the
+Web adapter is completed; it is NOT ready to deploy or execute. Web
+`updatePasswordHash` also needs revision compare-and-swap: an old-PHC verifier's
+rehash must never overwrite a concurrent rotation. Obtain manager-serialized
+identityStore/localAuth/sessionStore/login scope; return the revision read with
+PHC through authentication, atomically CAS rehash (returning its new revision),
+and pass the verified revision to insertion. Do not fetch a later revision and
+attach it to an earlier password verification. Mock tests cannot substitute for
+this production path, and no blanket account/session denial is the final design.
+
 ## Required subsequent increments (not implemented)
 
-1. Independent review of the new migration/capability/atomic-domain increment;
-   no rollout/effects may use this unreviewed source. Complete transport failure
-   tests, including lost reply after committed rotation (never automatic resume).
-   **Before mounting:** fence in-flight password-login/session creation against
-   credential rotation. At origin/dev `e995aa260`, Web `/login` authenticates at
-   L522 and separately inserts a session at L600; no verified credential revision
-   accompanies that insertion. Current internal rotation revokes committed target
-   sessions whose created_at is <= rotation cutoff, but cannot alone stop a login
-   that verified the OLD PHC and inserts AFTER the transaction. Do not claim that
-   internal revocation proves this login race is closed. A reviewed revision check
-   at session creation (same lock/transaction as credential read), with real PG
-   interleaving tests and serialized ownership of affected Web identity/session
-   paths, is required. No session-wide deny or blanket revocation workaround.
+1. Independent review of migration/capability/session-fence domain increments;
+   no rollout/effects may use this unreviewed source. Complete the serialized Web
+   verified-revision and CAS-rehash integration plus real store/route tests above.
+   Complete transport failure tests including lost reply after committed rotation
+   (never automatic resume).
 2. Official bounded authenticated API/BFF mounting with CSRF/service transport,
    permission-before-malformed-DTO denial, generated OpenAPI/client/inventory and
    audit projection. Root inspection alone is not a supported recovery API.

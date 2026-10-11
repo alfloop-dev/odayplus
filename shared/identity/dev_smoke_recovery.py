@@ -128,7 +128,9 @@ class RecoveryJournal:
     _ACTION = "DEV_SMOKE_RECOVERY"
     _KEYS = _PLAN_KEYS | {
         "plan_digest", "issuer_session_id", "original_identity_digest", "target_identity_digest",
-        "original_credential_updated_at", "target_credential_updated_at", "stage", "execution_authorized", "credential_binding_verified", "secret_values_redacted",
+        "original_credential_updated_at", "target_credential_updated_at",
+        "original_credential_revision", "target_credential_revision",
+        "stage", "execution_authorized", "credential_binding_verified", "secret_values_redacted",
     }
 
     def __init__(
@@ -194,6 +196,13 @@ class RecoveryJournal:
         )["updated_at"] for account in (PRESERVED_ACCOUNT_ID, TARGET_ACCOUNT_ID)]
         return times[0], times[1]
 
+    def _credential_revisions(self) -> tuple[str, str]:
+        revisions = [self._engine.query_one(
+            "SELECT credential_revision::text AS revision FROM identity.password_credentials "
+            "WHERE account_id = ? FOR SHARE", (account,),
+        )["revision"] for account in (PRESERVED_ACCOUNT_ID, TARGET_ACCOUNT_ID)]
+        return revisions[0], revisions[1]
+
     def _lock(self) -> None:
         # Always after the shared tenant administration lock acquired by _actor.
         self._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (self._CORRELATION,))
@@ -219,6 +228,8 @@ class RecoveryJournal:
                     or any(not _DIGEST.fullmatch(m[k]) for k in ("original_identity_digest", "target_identity_digest"))
                     or str(UUID(m["issuer_session_id"])) != m["issuer_session_id"]
                     or not UUID(m["issuer_session_id"]).int
+                    or any(type(m[k]) is not str or not re.fullmatch(r"[1-9][0-9]{0,18}", m[k])
+                           for k in ("original_credential_revision", "target_credential_revision"))
                     or any(not _aware(datetime.fromisoformat(m[k])) for k in (
                         "original_credential_updated_at", "target_credential_updated_at"))
                     or (index and {k: v for k, v in m.items() if k != "stage"} != {
@@ -277,6 +288,7 @@ class RecoveryJournal:
                     raise RecoveryRefused("RECOVERY_IDENTITY_DRIFT")
                 self._old_lineage(target)
                 original_time, target_time = self._credential_times()
+                original_revision, target_revision = self._credential_revisions()
                 event = self._audit.record(AuditEvent(
                     event_type=self._TYPE, actor=PRESERVED_ACCOUNT_ID, action=self._ACTION,
                     resource=self._CORRELATION, correlation_id=self._CORRELATION,
@@ -284,7 +296,10 @@ class RecoveryJournal:
                         **plan, "plan_digest": digest, "issuer_session_id": sid,
                         "original_identity_digest": _digest(original), "target_identity_digest": _digest(target),
                         "original_credential_updated_at": original_time,
-                        "target_credential_updated_at": target_time, "stage": "reserved", "execution_authorized": False,
+                        "target_credential_updated_at": target_time,
+                        "original_credential_revision": original_revision,
+                        "target_credential_revision": target_revision,
+                        "stage": "reserved", "execution_authorized": False,
                         "credential_binding_verified": False, "secret_values_redacted": True,
                     },
                 ))
@@ -392,7 +407,8 @@ class RecoveryCapabilityService(RecoveryJournal):
         original, target = self._account(PRESERVED_ACCOUNT_ID), self._account(TARGET_ACCOUNT_ID)
         if (_digest(original) != m["original_identity_digest"]
                 or _digest(target) != m["target_identity_digest"]
-                or self._credential_times() != (m["original_credential_updated_at"], m["target_credential_updated_at"])):
+                or self._credential_times() != (m["original_credential_updated_at"], m["target_credential_updated_at"])
+                or self._credential_revisions() != (m["original_credential_revision"], m["target_credential_revision"])):
             raise RecoveryRefused("RECOVERY_IDENTITY_DRIFT")
         self._old_lineage(target)
         return root
@@ -438,6 +454,7 @@ class RecoveryCapabilityService(RecoveryJournal):
                 if expires <= now:
                     raise RecoveryRefused("RECOVERY_EXECUTION_DRIFT")
                 original_time, target_time = self._credential_times()
+                original_revision, target_revision = self._credential_revisions()
                 token, cap_id = secrets.token_urlsafe(32), str(uuid4())
                 event = self._record_cap(root, capability_id=cap_id, expires=expires,
                                          stage="issued", now=now)
@@ -445,13 +462,14 @@ class RecoveryCapabilityService(RecoveryJournal):
                     f"INSERT INTO {self._TABLE} (authorization_id, capability_id, execution_id, "
                     "plan_digest, root_event_id, issue_event_id, tenant_id, target_account_id, "
                     "issuer_account_id, issuer_session_id, token_hash, issued_at, expires_at, "
-                    "original_credential_updated_at, target_credential_updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "original_credential_updated_at, target_credential_updated_at, "
+                    "original_credential_revision, target_credential_revision) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (AUTHORIZATION_ID, cap_id, reservation.execution_id, reservation.plan_digest,
                      root.event_id, event.event_id, TENANT_ID, TARGET_ACCOUNT_ID,
                      PRESERVED_ACCOUNT_ID, root.metadata["issuer_session_id"],
                      hashlib.sha256(token.encode("ascii")).hexdigest(), now, expires,
-                     original_time, target_time),
+                     original_time, target_time, original_revision, target_revision),
                 )
             return RecoveryCapability(cap_id, reservation.execution_id, expires.isoformat(), event.event_id, token)
         except RecoveryRefused:
@@ -496,7 +514,8 @@ class RecoveryCapabilityService(RecoveryJournal):
                 or row["issuer_session_id"] != root.metadata["issuer_session_id"]
                 or row["tenant_id"] != TENANT_ID or row["target_account_id"] != TARGET_ACCOUNT_ID
                 or row["issuer_account_id"] != PRESERVED_ACCOUNT_ID
-                or self._credential_times() != (row["original_credential_updated_at"], row["target_credential_updated_at"])):
+                or self._credential_times() != (row["original_credential_updated_at"], row["target_credential_updated_at"])
+                or self._credential_revisions() != (str(row["original_credential_revision"]), str(row["target_credential_revision"]))):
             raise RecoveryRefused("RECOVERY_CAPABILITY_UNAVAILABLE")
         events = self._cap_events()
         if len(events) != 1:
@@ -548,8 +567,8 @@ class RecoveryCapabilityService(RecoveryJournal):
                 )
                 revoked = self._engine.execute(
                     "UPDATE identity.sessions SET revoked_at = ?, revoked_reason = 'dev-smoke-recovery' "
-                    "WHERE account_id = ? AND revoked_at IS NULL AND created_at <= ?",
-                    (now, TARGET_ACCOUNT_ID, now),
+                    "WHERE account_id = ? AND revoked_at IS NULL",
+                    (now, TARGET_ACCOUNT_ID),
                 ).rowcount
                 event = self._record_cap(root, capability_id=capability_id,
                     expires=datetime.fromisoformat(row["expires_at"]), stage="rotated", now=now,
