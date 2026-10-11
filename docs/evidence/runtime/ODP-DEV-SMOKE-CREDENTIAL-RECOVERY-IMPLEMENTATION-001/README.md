@@ -526,6 +526,71 @@ Independent Codex2 security review, normal deployment/current admission and an
 exact reviewed foreground execution plan remain mandatory. No live effects; old
 quarantine/NULL binding and interrupted original-admin session uncertainty unchanged.
 
+## One-use HTTPS primitive checkpoint (2026-10-11, NOT an executor/submission)
+
+Anchors `326f8c1bbfea` / `35c6da37fea0` add a trusted in-process one-use transport
+for the FIXED official recovery route. Numeric connection address avoids DNS;
+normal public CA chain and origin-hostname verification/SNI stay mandatory. No
+proxy/env, redirect, retry, reconnect, child or remote-body logging. The caller's
+same original-admin cookie stays in memory; the server revalidates that durable
+session on each call. No login/logout/session owner or full coordinator exists.
+
+One absolute deadline covers numeric TCP connect, TLS handshake, entire sendall,
+EVERY underlying read and final parsing; dribble cannot refresh timeouts. Aggregate
+header/framing/body64KiB, JSON16KiB and request8192bytes are enforced, including
+ambiguous/truncated framing, duplicate keys/nonfinite numbers and no-store. A
+private repr-hidden/non-pickleable200/201 response is NOT action/lineage validation,
+phase completion or execution permission. Once POST send starts, any uncertain
+response remains UNKNOWN even if the original HTTP status is available. Instances
+are poisoned before validation/network work; later GET cannot reconstruct ACK or
+resume. New instances confer no retry authority. No GitHub PUT/actual201 proof.
+
+Real isolated loopback TLS tests use ephemeral offline certificates and synthetic
+cookies/JSON, never foreground secrets. They cover exact route/cookie/origin,
+certificate-hostname refusal, absent DNS/proxy, real length/chunk completion,
+redirect/error/lost reply, truncated framing, aggregate bounds, duplicate keys,
+slow-dribble/handshake deadlines, private response redaction and one-use poisoning.
+These are adapter regressions, NOT measured production preflight/gate/cleanup
+bounds or live custody proof. OS scheduling/stalls are not hard-real-time promises;
+late completion refuses rather than granting continuation.
+
+Original shared-policy receipt JSON is retained in receipts/, including failures:
+
+| Exact head | Measurement | Receipt | Exit | Duration |
+| --- | --- | --- | --- | --- |
+|326f8c1|security pytest, initial uv missing from worker PATH|86bda3ab603f06db|127|0.001s|
+|326f8c1|same selection, explicit known-user-bin PATH correction|dd00df7b69a523fd|1|12.445s|
+|35c6da37|security pytest after aggregate-header fixture correction|bc4a2dbe5fa7c83a|0|12.358s|
+|35c6da37|exact declared six-file pytest|7ad8a24aa72b6ddb|0|633.515s|
+|35c6da37|declared diff check|f70e0b495e5a812a|0|0.018s|
+|35c6da37|declared boundary checker|e6e65d88c574ba6f|0|10.459s|
+|35c6da37|declared pnpm Web typecheck, tool missing|a04e1199074000f6|127|0.001s|
+|35c6da37|two-file Python lint, import ordering findings|29240085f34b347f|1|0.470s|
+|2e319d15|same lint after import-only correction|439541bd25b8faac|0|0.131s|
+|2e319d15|same security pytest, import-only NEW head|2c0c7b06a96b08d1|0|11.955s|
+
+Initial security failure was a fixture expecting65000 bytes to exceed the65536
+aggregate cap; fixed to two33000-byte headers. Production cap was not weakened.
+The correction also adds strict cookie/config controls, defective/duplicate-type
+header refusal and additive CA trust. Import-only follow-up changes no runtime
+behavior or selection. Both failed verification receipts remain failures; no
+count-only rerun or output/process-name completion polling was used. Each original
+terminal status/exit and duration is retained. The full-suite displayed one skip
+is NOT actual Web-store PG proof. pnpm typecheck did NOT run; Web lint/build/300kB
+and final entire-tree verification remain unmet, not waived. No dependency install,
+lockfile rewrite, host-wide search or live credentials were used.
+
+This evidence-only checkpoint has a DIFFERENT head from these measurements;
+none is transferred onto its SHA. Task remains in_progress, NOT review-ready/no
+PR. NEXT: same-session action-specific official adapters, fresh full-tree remote
+review/latest CI/current admission/actual Web+API tuple/account/provenance
+coordinator and measured gate/consumer/cleanup/quarantine reserves; actual
+single-attempt GitHub201 transport AFTER genuine external writer exclusion.
+Native fresh-job memory custody is still a concrete blocker, not imagined value
+retrieval or a silent env waiver. Independent Codex2 review, ordinary deployment
+and an exact reviewed foreground plan remain mandatory BEFORE effects. Old
+quarantine/NULL binding and original interrupted-session uncertainty unchanged.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
