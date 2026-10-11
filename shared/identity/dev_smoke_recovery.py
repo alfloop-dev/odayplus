@@ -591,3 +591,177 @@ class RecoveryCapabilityService(RecoveryJournal):
             raise
         except Exception:
             raise RecoveryRefused("RECOVERY_CAPABILITY_UNAVAILABLE") from None
+
+
+# Strict consumer contract only. The foreground/server binding producer is a
+# separate required increment; these constants are not an implemented writer.
+RECOVERY_BINDING_CORRELATION = f"dev-smoke-recovery-binding:{AUTHORIZATION_ID}"
+RECOVERY_BINDING_TYPE = "release.dev_smoke.recovery_binding"
+RECOVERY_BINDING_ACTION = "DEV_SMOKE_RECOVERY_BINDING"
+RECOVERY_BINDING_KEYS = _PLAN_KEYS | {
+    "plan_digest", "root_event_id", "issuer_session_id", "capability_id",
+    "capability_issue_event_id", "rotation_event_id", "secret_name", "stage",
+    "put_status", "execution_authorized", "credential_binding_verified", "secret_values_redacted",
+}
+
+
+@dataclass(frozen=True)
+class RecoveryBundleLineage:
+    """Non-secret schema-2 expectations, never execution/ACK authority."""
+
+    plan_digest: str
+    root_event_id: str
+    capability_id: str
+    capability_issue_event_id: str
+    rotation_event_id: str
+    binding_intent_event_id: str
+    old_execution_id: str
+    old_plan_digest: str
+    old_quarantine_event_id: str
+    invitation_id: str
+    issue_event_id: str
+    accept_event_id: str
+
+
+def recovery_bundle_lineage(value: Any) -> RecoveryBundleLineage:
+    try:
+        keys = set(RecoveryBundleLineage.__dataclass_fields__)
+        if (type(value) is not dict or set(value) != keys
+                or any(type(v) is not str for v in value.values())):
+            raise ValueError
+        for k in ("old_execution_id", "old_plan_digest", "old_quarantine_event_id",
+                  "invitation_id", "issue_event_id", "accept_event_id"):
+            if value[k] != _FIXED_PLAN[k]:
+                raise ValueError
+        for k, v in value.items():
+            if k.endswith("digest"):
+                if not _DIGEST.fullmatch(v):
+                    raise ValueError
+            elif str(UUID(v)) != v or not UUID(v).int:
+                raise ValueError
+        return RecoveryBundleLineage(**value)
+    except Exception:
+        raise RecoveryRefused("RECOVERY_BUNDLE_LINEAGE_INVALID") from None
+
+
+def recovery_bundle_acknowledged(
+    *, execution_id: str, lineage: RecoveryBundleLineage, events: Any, target_account: Any,
+) -> bool:
+    """Verify complete authenticated tenant-audit projection, NOT a PUT receipt.
+
+    Old creation must STILL be quarantined with no binding, not repaired. New
+    root/issuance/rotation/intent/201-ACK must be exact, unique and unquarantined.
+    Expiry constrains execution timestamps, not later standing-bundle use. A
+    caller's passing boolean or ACK-shaped object cannot replace signed server
+    audit readback; the canonical gate supplies the authenticated projection.
+    """
+    from .dev_smoke_journal import CREDENTIAL_BUNDLE_SECRET_NAME
+
+    try:
+        if (type(lineage) is not RecoveryBundleLineage
+                or recovery_bundle_lineage(vars(lineage)) != lineage
+                or type(events) is not list or any(type(e) is not dict for e in events)
+                or str(UUID(execution_id)) != execution_id or not UUID(execution_id).int
+                or execution_id == OLD_EXECUTION_ID):
+            return False
+        expected_provenance = {"invitation_id": INVITATION_ID, "issue_event_id": ISSUE_EVENT_ID,
+                               "accept_event_id": ACCEPT_EVENT_ID, "issuer_account_id": PRESERVED_ACCOUNT_ID}
+        if (type(target_account) is not dict or target_account.get("subject_id") != TARGET_ACCOUNT_ID
+                or target_account.get("username") != "odp-dev-smoke"
+                or invitation_provenance(target_account, events) != expected_provenance):
+            return False
+
+        def group(kind: str, correlation: str, actor: str, action: str, keys: Any,
+                  stages: list[str]) -> list[dict[str, Any]]:
+            found = [e for e in events if e.get("event_type") == kind or e.get("correlation_id") == correlation]
+            found.sort(key=lambda e: datetime.fromisoformat(e["timestamp"]))
+            if len(found) != len(stages):
+                raise ValueError
+            for e, stage in zip(found, stages, strict=True):
+                m = e["metadata"]
+                if (e["event_type"] != kind or e["correlation_id"] != correlation
+                        or e["resource"] != correlation or e["actor"] != actor or e["action"] != action
+                        or e["outcome"] != "success" or type(m) is not dict or set(m) != keys
+                        or m["stage"] != stage or m["tenant_id"] != TENANT_ID
+                        or m["execution_authorized"] is not False or m["secret_values_redacted"] is not True
+                        or not _aware(datetime.fromisoformat(e["timestamp"]))
+                        or str(UUID(e["event_id"])) != e["event_id"] or not UUID(e["event_id"]).int):
+                    raise ValueError
+            return found
+
+        old = group(ProvisioningJournal._TYPE, ProvisioningJournal._CORRELATION,
+                    ProvisioningJournal._ACTOR, "DEV_SMOKE_RESERVATION", ProvisioningJournal._KEYS,
+                    ["reserved", "recovery-required"])
+        old_base = old[0]["metadata"]
+        if (old[1]["event_id"] != OLD_QUARANTINE_EVENT_ID
+                or old_base["authorization_id"] != ProvisioningJournal._CORRELATION.split(":", 1)[1]
+                or old_base["execution_id"] != OLD_EXECUTION_ID or old_base["plan_digest"] != OLD_PLAN_DIGEST
+                or not _SHA.fullmatch(old_base["release_sha"]) or not _DIGEST.fullmatch(old_base["manifest_digest"])
+                or {k: v for k, v in old[1]["metadata"].items() if k != "stage"} != {
+                    k: v for k, v in old_base.items() if k != "stage"}
+                or any(e.get("event_type") == DevSmokeBindingJournal._TYPE
+                       or e.get("correlation_id") == DevSmokeBindingJournal._CORRELATION for e in events)):
+            return False
+        roots = group(RecoveryJournal._TYPE, RecoveryJournal._CORRELATION, PRESERVED_ACCOUNT_ID,
+                      RecoveryJournal._ACTION, RecoveryJournal._KEYS, ["reserved"])
+        root, m = roots[0], roots[0]["metadata"]
+        plan = {k: m[k] for k in _PLAN_KEYS}
+        digest = validate_recovery_plan(plan, release_sha=m["release_sha"],
+                                       manifest_digest=m["manifest_digest"], now=datetime.fromisoformat(root["timestamp"]))
+        if (m["execution_id"] != execution_id or m["plan_digest"] != lineage.plan_digest
+                or digest != lineage.plan_digest or root["event_id"] != lineage.root_event_id
+                or m["credential_binding_verified"] is not False
+                or any(type(m[k]) is not str or not _DIGEST.fullmatch(m[k])
+                       for k in ("original_identity_digest", "target_identity_digest"))
+                or str(UUID(m["issuer_session_id"])) != m["issuer_session_id"] or not UUID(m["issuer_session_id"]).int
+                or any(type(m[k]) is not str or not re.fullmatch(r"[1-9][0-9]{0,18}", m[k])
+                       for k in ("original_credential_revision", "target_credential_revision"))
+                or any(not _aware(datetime.fromisoformat(m[k])) for k in (
+                    "original_credential_updated_at", "target_credential_updated_at"))):
+            return False
+        caps = group(RecoveryCapabilityService._CAP_TYPE, RecoveryCapabilityService._CAP_CORRELATION,
+                     PRESERVED_ACCOUNT_ID, "DEV_SMOKE_RECOVERY_CAPABILITY", RecoveryCapabilityService._CAP_KEYS,
+                     ["issued", "rotated"])
+        issue, rotation = caps
+        cm = issue["metadata"]
+        base = {**plan, "plan_digest": digest, "root_event_id": root["event_id"],
+                "issuer_session_id": m["issuer_session_id"], "capability_id": lineage.capability_id,
+                "execution_authorized": False, "credential_binding_verified": False, "secret_values_redacted": True}
+        expires = datetime.fromisoformat(cm["capability_expires_at"])
+        issued_at = datetime.fromisoformat(issue["timestamp"])
+        rotated_at = datetime.fromisoformat(rotation["timestamp"])
+        if (not _aware(expires) or not issued_at <= rotated_at < expires <= issued_at + timedelta(seconds=600)
+                or expires > datetime.fromisoformat(plan["expires_at"])
+                or issue["event_id"] != lineage.capability_issue_event_id
+                or rotation["event_id"] != lineage.rotation_event_id
+                or cm != {**base, "capability_expires_at": cm["capability_expires_at"], "stage": "issued",
+                          "issue_event_id": "", "revoked_target_sessions": 0}
+                or type(cm["revoked_target_sessions"]) is not int
+                or type(rotation["metadata"]["revoked_target_sessions"]) is not int
+                or rotation["metadata"]["revoked_target_sessions"] < 0
+                or rotation["metadata"] != {**cm, "stage": "rotated", "issue_event_id": issue["event_id"],
+                    "revoked_target_sessions": rotation["metadata"]["revoked_target_sessions"]}):
+            return False
+        bindings = group(RECOVERY_BINDING_TYPE, RECOVERY_BINDING_CORRELATION, PRESERVED_ACCOUNT_ID,
+                         RECOVERY_BINDING_ACTION, RECOVERY_BINDING_KEYS, ["binding-intent", "binding-acknowledged"])
+        binding_base = {**plan, "plan_digest": digest, "root_event_id": root["event_id"],
+                        "issuer_session_id": m["issuer_session_id"], "capability_id": lineage.capability_id,
+                        "capability_issue_event_id": issue["event_id"], "rotation_event_id": rotation["event_id"],
+                        "secret_name": CREDENTIAL_BUNDLE_SECRET_NAME, "execution_authorized": False,
+                        "credential_binding_verified": False, "secret_values_redacted": True}
+        if (bindings[0]["event_id"] != lineage.binding_intent_event_id
+                or any(e["metadata"] != {**binding_base, "stage": stage, "put_status": status}
+                       or type(e["metadata"]["put_status"]) is not int
+                       for e, stage, status in zip(bindings, ["binding-intent", "binding-acknowledged"], [0, 201], strict=True))):
+            return False
+        provenance = [next(e for e in events if e["event_id"] == identifier)
+                      for identifier in (ISSUE_EVENT_ID, ACCEPT_EVENT_ID)]
+        ordered = [old[0], *provenance, old[1], root, *caps, *bindings]
+        if (len({e["event_id"] for e in ordered}) != len(ordered)
+                or any(sum(e.get("event_id") == item["event_id"] for e in events) != 1 for item in ordered)):
+            return False
+        times = [datetime.fromisoformat(e["timestamp"]) for e in ordered]
+        return (all(_aware(t) for t in times) and all(a <= b for a, b in zip(times, times[1:]))
+                and times[-1] < datetime.fromisoformat(plan["expires_at"]))
+    except Exception:
+        return False

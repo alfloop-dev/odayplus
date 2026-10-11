@@ -389,6 +389,8 @@ class GateConfig:
     dev_admin_bundle_account_id: str = ""
     dev_admin_bundle_tenant_id: str = ""
     dev_admin_bundle_execution_id: str = ""
+    dev_admin_bundle_schema_version: int = 1
+    dev_admin_bundle_recovery_lineage: Any = None
     dev_admin_denied_role: str = ""
     bootstrap_admin_username: str = ""
     bootstrap_admin_password: str = ""
@@ -836,6 +838,23 @@ def _operator_source(payload: Mapping[str, Any]) -> str:
 
 def validate_config(config: GateConfig) -> list[CheckResult]:
     checks: list[CheckResult] = []
+    bundle_ids = (config.dev_admin_bundle_account_id, config.dev_admin_bundle_tenant_id,
+                  config.dev_admin_bundle_execution_id)
+    if any(bundle_ids) or config.dev_admin_bundle_schema_version != 1 or config.dev_admin_bundle_recovery_lineage is not None:
+        from shared.identity.dev_smoke_recovery import RecoveryBundleLineage, recovery_bundle_lineage
+        coherent = False
+        try:
+            coherent = (config.dev_admin and config.expected_deployment == "dev"
+                        and all(_canonical_uuid(v) is not None for v in bundle_ids)
+                        and type(config.dev_admin_bundle_schema_version) is int
+                        and ((config.dev_admin_bundle_schema_version == 1 and config.dev_admin_bundle_recovery_lineage is None)
+                             or (config.dev_admin_bundle_schema_version == 2
+                                 and type(config.dev_admin_bundle_recovery_lineage) is RecoveryBundleLineage
+                                 and recovery_bundle_lineage(vars(config.dev_admin_bundle_recovery_lineage))
+                                     == config.dev_admin_bundle_recovery_lineage)))
+        except Exception:
+            pass
+        _check(checks, coherent, "config:credential_bundle_lineage", "strict matched bundle expectations", "config")
     try:
         _normalize_origin(config.api_url, allow_http=config.allow_http)
         _check(checks, True, "config:api_url", "configured deployed API origin", "config")
@@ -2119,10 +2138,11 @@ def _check_dev_admin_session(
         )
         acknowledged = credential_bundle_acknowledged(DevCredentialBundle(
             username, "", config.dev_admin_bundle_account_id, config.dev_admin_bundle_tenant_id,
-            config.dev_admin_bundle_execution_id,
-        ), events)
+            config.dev_admin_bundle_execution_id, config.dev_admin_bundle_schema_version,
+            config.dev_admin_bundle_recovery_lineage,
+        ), events, target_account=own_record)
         _check(checks, acknowledged, "admin:credential_bundle_durable_acknowledgement",
-               f"reservedIntentAcknowledgementWithoutQuarantine={acknowledged}", "audit")
+               f"strictVersionedLineageAcknowledged={acknowledged}", "audit")
         if not acknowledged:
             return
     bootstrap_events = [
@@ -3389,6 +3409,8 @@ def main(argv: list[str] | None = None) -> int:
         dev_admin_bundle_account_id=bundle.account_id if bundle else "",
         dev_admin_bundle_tenant_id=bundle.tenant_id if bundle else "",
         dev_admin_bundle_execution_id=bundle.execution_id if bundle else "",
+        dev_admin_bundle_schema_version=bundle.schema_version if bundle else 1,
+        dev_admin_bundle_recovery_lineage=bundle.recovery_lineage if bundle else None,
         dev_admin_denied_role=os.environ.get(DEV_ADMIN_DENIED_ROLE_ENV, "").strip() or "cs-lead",
         bootstrap_admin_username="" if bundle else os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
         bootstrap_admin_password="" if bundle else os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),

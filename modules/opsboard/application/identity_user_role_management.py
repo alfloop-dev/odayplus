@@ -201,16 +201,21 @@ class IdentityUserRoleManagementService:
             # consumer must refuse uncertain roots, not infer ACK from a secret.
             if (not event.event_type.startswith(IDENTITY_EVENT_PREFIX)
                     and event.event_type not in {"release.dev_smoke.reservation", "release.dev_smoke.binding",
-                                                 "identity.dev_smoke.recovery", "identity.dev_smoke.recovery_capability"}):
+                                                 "identity.dev_smoke.recovery", "identity.dev_smoke.recovery_capability",
+                                                 "release.dev_smoke.recovery_binding"}):
                 continue
             meta = dict(event.metadata or {})
-            if event.event_type in {"identity.dev_smoke.recovery", "identity.dev_smoke.recovery_capability"}:
+            if event.event_type in {"identity.dev_smoke.recovery", "identity.dev_smoke.recovery_capability",
+                                     "release.dev_smoke.recovery_binding"}:
                 # Exact allowlisted safe schemas; corrupt/extended metadata is
                 # omitted, NEVER projected with arbitrary credential fields. A
                 # missing event must make downstream lineage verification fail.
-                from shared.identity.dev_smoke_recovery import RecoveryJournal, RecoveryCapabilityService
-                allowed = (RecoveryJournal._KEYS if event.event_type == RecoveryJournal._TYPE
-                           else RecoveryCapabilityService._CAP_KEYS)
+                from shared.identity.dev_smoke_recovery import (
+                    RecoveryJournal, RecoveryCapabilityService, RECOVERY_BINDING_KEYS, RECOVERY_BINDING_TYPE,
+                )
+                allowed = {RecoveryJournal._TYPE: RecoveryJournal._KEYS,
+                           RecoveryCapabilityService._CAP_TYPE: RecoveryCapabilityService._CAP_KEYS,
+                           RECOVERY_BINDING_TYPE: RECOVERY_BINDING_KEYS}[event.event_type]
                 if set(meta) != allowed or meta.get("secret_values_redacted") is not True:
                     continue
             if subject_id and subject_id not in {meta.get("subject_id"), meta.get("account_id"), meta.get("target_account_id")}:

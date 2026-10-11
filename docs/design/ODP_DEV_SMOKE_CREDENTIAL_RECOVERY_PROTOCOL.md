@@ -64,7 +64,8 @@ endpoint or an executable foreground protocol. The domain provides:
 
 The runtime constructor's dev/profile/tuple arguments must eventually come
 from server configuration, never a request plan. There is still no foreground
-executor or bundle-provenance integration. No store/receipt alone
+executor. The consumer-only bundle-provenance increment below cannot stage a
+binding. No store/receipt alone
 supplies human/source/admission/exclusion authority. Tests use isolated PostgreSQL
 fixtures with incident IDs as inputs, not fabricated live recovery receipts.
 
@@ -152,6 +153,43 @@ tests exercise the actual mounted handler's CSRF/body/query boundary; existing
 proxy tests retain the durable session/IAM/header boundary. These are source tests,
 not deployed recovery, ACK or fresh-consumer evidence.
 
+## Strict schema-2 consumer increment (unapproved, no live binding)
+
+The canonical matched-bundle decoder now distinguishes schema1/AUTH001 from
+schema2/new recovery authorization, with exact fixed target/tenant/username and
+an exact nested non-secret lineage envelope. It carries plan/root, capability/
+issuance/rotation, binding intent and immutable old execution/plan/quarantine and
+invitation issue/accept identifiers. A missing key, duplicate key at any depth,
+wrong version/authorization/account, malformed nonempty input or partial pair
+refuses with a static error; no legacy/bootstrap/per-field fallback. Password
+remains repr-hidden memory input. The existing CLI environment ingress is NOT a
+new approved custody boundary: the no-env native consumer blocker still applies.
+
+`recovery_bundle_acknowledged` verifies the authenticated tenant-audit projection:
+exact old reserved + quarantine, STILL no old binding; exact original invitation
+and authoritative active pure-admin fixed-scope target; one new root, one issue
+and one rotation under its same issuer session/plan/tuple; one distinct intent and
+201-ACK. Missing/extra/duplicate/cross-lineage events, new quarantine, timestamp
+reordering, execution expiry, capability expiry/replay or ACK204 refuse. Plan
+hash is recomputed and old provenance must remain intact. Expiry constrains the
+execution, not use of a standing bundle by later normally admitted candidates.
+Identifiers, parsed bundle and projected ACK are never execution authority or
+proof of decrypted GitHub value. Schema1 quarantined-root rejection is unchanged.
+
+The full canonical gate carries the schema/lineage (including CLI parsing),
+refuses partial bundle IDs that could skip ACK, and supplies its authoritative
+user/audit readbacks to the strict predicate. Invitation/principal/tenant binding,
+negative-role probes, all existing transport/runtime checks and own-session
+cleanup remain required. Offline mocked full-gate tests do not establish a live
+fresh consumer or F11 acceptance.
+
+The new binding event metadata and safe audit projection are a **consumer
+contract only**: no server binding-intent/ACK producer or foreground writer has
+been implemented yet. Consequently deployed audit cannot currently satisfy this
+new contract. This is a deliberate fail-closed intermediate layer, not a claim
+of supported end-to-end execution. The next increment must implement the
+append-only producer and authentic real201-before-ACK boundary under review.
+
 ## Required subsequent increments (not implemented)
 
 1. Independent review of migration/capability/session-fence domain increments;
@@ -162,10 +200,11 @@ not deployed recovery, ACK or fresh-consumer evidence.
 2. Independently review and verify the complete mounted API/BFF and safe audit
    composition with production identity/session/IAM configuration and generated
    OpenAPI/client/inventory. This transport increment is not deployed or approved.
-3. Strict NEW versioned recovery envelope and canonical full-gate lineage proof,
-   connecting immutable old invitation/quarantine/binding NULL to new root,
-   capability issue/rotation/intent/real PUT ACK. Keep schema-1 AUTH001 behavior
-   and quarantined-root rejection unchanged. No missing-ID bypass or fallback.
+3. Complete the consumer increment with actual same-engine server-side binding
+   intent/ACK producer, after rotation and preservation reconciliation, safe
+   projection and real201 transport receipt; test actual PG-produced full lineage.
+   Consumer shape tests do not substitute for that producer. Keep schema1
+   behavior/quarantine rejection unchanged. No missing-ID bypass or fallback.
 4. Trusted foreground parent memory custody and new finite entrypoint: absolute
    <=2400s, <=1h plan window, bounded non-secret observers, measured ceilings and
    sufficient downstream full gate/cleanup/quarantine reserves before each effect.

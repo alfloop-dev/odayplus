@@ -13,6 +13,7 @@ from shared.identity.dev_smoke_recovery import (
     RecoveryRefused,
     RecoveryReservation,
     RecoveryCapability,
+    RecoveryBundleLineage,
     _FIXED_PLAN,
     validate_recovery_plan,
 )
@@ -118,3 +119,223 @@ def test_session_fence_migration_is_reachable_expand_only_and_contains_no_creden
     assert "FOR SHARE" in sql and "OLD.credential_revision + 1" in sql
     assert "verified_credential_revision BIGINT" in sql
     assert "SET phc_hash" not in sql and "token_hash" not in sql
+
+
+def recovery_consumer_inputs() -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    """Synthetic consumer contracts only; NOT a binding producer/live receipt."""
+    from shared.identity import dev_smoke_recovery as r
+    from shared.identity.dev_smoke_journal import (
+        AUTHORIZATION_ID as old_authorization, PRESERVED_ACCOUNT_ID, TENANT_ID,
+        CREDENTIAL_BUNDLE_SECRET_NAME, ProvisioningJournal,
+    )
+    from shared.identity.invitation_service import _scope
+    now = datetime(2026, 10, 11, 5, tzinfo=UTC)
+    p = plan(now)
+    digest = r._digest(p)
+    sid, root_id, cap_id, cap_issue, rotation_id, intent_id = [str(uuid4()) for _ in range(6)]
+    lineage = dict(plan_digest=digest, root_event_id=root_id, capability_id=cap_id,
+                   capability_issue_event_id=cap_issue, rotation_event_id=rotation_id,
+                   binding_intent_event_id=intent_id, **{k: r._FIXED_PLAN[k] for k in (
+                       "old_execution_id", "old_plan_digest", "old_quarantine_event_id",
+                       "invitation_id", "issue_event_id", "accept_event_id")})
+    bundle = {"schema_version": 2, "authorization_id": r.AUTHORIZATION_ID,
+              "execution_id": p["execution_id"], "repository": r.REPOSITORY, "environment": "dev",
+              "tenant_id": TENANT_ID, "account_id": r.TARGET_ACCOUNT_ID, "username": "odp-dev-smoke",
+              "password": "Offline-Recovered-Password-8721!", "recovery_lineage": lineage}
+    events = []
+
+    def event(kind: str, actor: str, correlation: str, action: str, metadata: Any,
+              seconds: int, event_id: str | None = None, resource: str | None = None) -> None:
+        events.append(dict(event_id=event_id or str(uuid4()), event_type=kind, actor=actor,
+                           correlation_id=correlation, resource=resource or correlation, action=action,
+                           outcome="success", timestamp=(now + timedelta(seconds=seconds)).isoformat(), metadata=metadata))
+
+    old_meta = dict(authorization_id=old_authorization, execution_id=r.OLD_EXECUTION_ID,
+                    plan_digest=r.OLD_PLAN_DIGEST, release_sha=SHA, manifest_digest=MANIFEST,
+                    tenant_id=TENANT_ID, execution_authorized=False, secret_values_redacted=True)
+    event(ProvisioningJournal._TYPE, ProvisioningJournal._ACTOR, ProvisioningJournal._CORRELATION,
+          "DEV_SMOKE_RESERVATION", {**old_meta, "stage": "reserved"}, -100)
+    scope = _scope(TENANT_ID)
+    event("identity.account.invite", PRESERVED_ACCOUNT_ID, f"identity-invitation-{r.INVITATION_ID}",
+          "IDENTITY_ACCOUNT_INVITE", dict(tenant_id=TENANT_ID, invitation_id=r.INVITATION_ID,
+              preset_roles=["platform_admin"], preset_scope=scope, expires_at=(now + timedelta(hours=1)).isoformat()),
+          -90, r.ISSUE_EVENT_ID, f"identity.invitation:{r.INVITATION_ID}")
+    event("identity.account.accept", r.TARGET_ACCOUNT_ID, f"identity-invitation-{r.INVITATION_ID}",
+          "IDENTITY_ACCOUNT_ACCEPT", dict(tenant_id=TENANT_ID, invitation_id=r.INVITATION_ID,
+              account_id=r.TARGET_ACCOUNT_ID, subject_id=r.TARGET_ACCOUNT_ID, roles=["platform_admin"],
+              scope=scope, status="active", must_change=False), -80, r.ACCEPT_EVENT_ID,
+          f"identity.invitation:{r.INVITATION_ID}")
+    event(ProvisioningJournal._TYPE, ProvisioningJournal._ACTOR, ProvisioningJournal._CORRELATION,
+          "DEV_SMOKE_RESERVATION", {**old_meta, "stage": "recovery-required"}, -70, r.OLD_QUARANTINE_EVENT_ID)
+    root_meta = {**p, "plan_digest": digest, "issuer_session_id": sid,
+                 "original_identity_digest": "sha256:" + "c" * 64, "target_identity_digest": "sha256:" + "d" * 64,
+                 "original_credential_updated_at": (now - timedelta(days=1)).isoformat(),
+                 "target_credential_updated_at": (now - timedelta(days=1)).isoformat(),
+                 "original_credential_revision": "1", "target_credential_revision": "1",
+                 "stage": "reserved", "execution_authorized": False, "credential_binding_verified": False,
+                 "secret_values_redacted": True}
+    event(r.RecoveryJournal._TYPE, PRESERVED_ACCOUNT_ID, r.RecoveryJournal._CORRELATION,
+          r.RecoveryJournal._ACTION, root_meta, 0, root_id)
+    cap_meta = {**p, "plan_digest": digest, "root_event_id": root_id, "issuer_session_id": sid,
+                "capability_id": cap_id, "capability_expires_at": (now + timedelta(seconds=610)).isoformat(),
+                "issue_event_id": "", "revoked_target_sessions": 0, "execution_authorized": False,
+                "credential_binding_verified": False, "secret_values_redacted": True}
+    event(r.RecoveryCapabilityService._CAP_TYPE, PRESERVED_ACCOUNT_ID, r.RecoveryCapabilityService._CAP_CORRELATION,
+          "DEV_SMOKE_RECOVERY_CAPABILITY", {**cap_meta, "stage": "issued"}, 10, cap_issue)
+    event(r.RecoveryCapabilityService._CAP_TYPE, PRESERVED_ACCOUNT_ID, r.RecoveryCapabilityService._CAP_CORRELATION,
+          "DEV_SMOKE_RECOVERY_CAPABILITY", {**cap_meta, "stage": "rotated", "issue_event_id": cap_issue,
+                                          "revoked_target_sessions": 2}, 20, rotation_id)
+    binding_meta = {**p, "plan_digest": digest, "root_event_id": root_id, "issuer_session_id": sid,
+                    "capability_id": cap_id, "capability_issue_event_id": cap_issue, "rotation_event_id": rotation_id,
+                    "secret_name": CREDENTIAL_BUNDLE_SECRET_NAME, "execution_authorized": False,
+                    "credential_binding_verified": False, "secret_values_redacted": True}
+    event(r.RECOVERY_BINDING_TYPE, PRESERVED_ACCOUNT_ID, r.RECOVERY_BINDING_CORRELATION,
+          r.RECOVERY_BINDING_ACTION, {**binding_meta, "stage": "binding-intent", "put_status": 0}, 30, intent_id)
+    event(r.RECOVERY_BINDING_TYPE, PRESERVED_ACCOUNT_ID, r.RECOVERY_BINDING_CORRELATION,
+          r.RECOVERY_BINDING_ACTION, {**binding_meta, "stage": "binding-acknowledged", "put_status": 201}, 40)
+    target = dict(subject_id=r.TARGET_ACCOUNT_ID, username="odp-dev-smoke", status="active",
+                  roles=["platform_admin"], scope=scope, updated_by=PRESERVED_ACCOUNT_ID,
+                  attributes={"identity_source": "identity.accounts"})
+    return bundle, events, target
+
+
+def test_recovery_schema2_standing_bundle_requires_complete_separate_lineage() -> None:
+    import json
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, credential_bundle_acknowledged
+    raw, events, target = recovery_consumer_inputs()
+    bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+    assert bundle.schema_version == 2 and bundle.password == raw["password"]
+    assert raw["password"] not in repr(bundle)
+    assert credential_bundle_acknowledged(bundle, events, target_account=target)
+    assert not credential_bundle_acknowledged(bundle, events)  # no authoritative target, no waiver
+    # Legacy schema1 STILL refuses its quarantined root, even with new recovery ACK.
+    from dataclasses import replace
+    assert not credential_bundle_acknowledged(replace(bundle, schema_version=1, recovery_lineage=None), events)
+
+
+@pytest.mark.parametrize("missing", range(9))
+def test_recovery_lineage_missing_any_required_event_refuses(missing: int) -> None:
+    import json
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, credential_bundle_acknowledged
+    raw, events, target = recovery_consumer_inputs()
+    bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+    events.pop(missing)
+    assert not credential_bundle_acknowledged(bundle, events, target_account=target)
+
+
+@pytest.mark.parametrize("index", range(9))
+@pytest.mark.parametrize("field,value", [
+    ("actor", "foreign-actor"), ("outcome", "failure"), ("event_id", "00000000-0000-0000-0000-000000000000"),
+    ("resource", "foreign-resource"), ("correlation_id", "foreign-correlation"),
+    ("timestamp", "2026-10-11T05:00:00"), ("event_type", "foreign-type"),
+])
+def test_recovery_lineage_event_envelope_corruption_refuses(index: int, field: str, value: Any) -> None:
+    import json
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, credential_bundle_acknowledged
+    raw, events, target = recovery_consumer_inputs()
+    bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+    events[index][field] = value
+    assert not credential_bundle_acknowledged(bundle, events, target_account=target)
+
+
+@pytest.mark.parametrize("index", [0, 3, 4, 5, 6, 7, 8])
+@pytest.mark.parametrize("field,value", [
+    ("tenant_id", "foreign-tenant"), ("authorization_id", "foreign-authorization"),
+    ("execution_id", OLD_EXECUTION_ID), ("plan_digest", "sha256:" + "f" * 64),
+    ("stage", "recovery-required"), ("secret_values_redacted", False), ("execution_authorized", True),
+    ("password", "private-marker"),
+])
+def test_recovery_lineage_metadata_corruption_refuses(index: int, field: str, value: Any) -> None:
+    import json
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, credential_bundle_acknowledged
+    raw, events, target = recovery_consumer_inputs()
+    bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+    # Unchanged old reserved/quarantine share the expected old execution by definition.
+    if index in (0, 3) and field == "execution_id":
+        value = raw["execution_id"]
+    if index == 3 and field == "stage":
+        value = "reserved"
+    events[index]["metadata"][field] = value
+    assert not credential_bundle_acknowledged(bundle, events, target_account=target)
+
+
+@pytest.mark.parametrize("change", [
+    {"schema_version": 1}, {"schema_version": True}, {"schema_version": 3},
+    {"authorization_id": "HUMAN-ODP-DEV-SMOKE-20261010-001"}, {"username": "ajoe734"},
+    {"account_id": "17e9cb99-db46-4a07-8e61-6bf9b22cf5d2"}, {"recovery_lineage": {}},
+    {"password": ""}, {"extra": "private-marker"},
+])
+def test_recovery_bundle_never_falls_back_or_downgrades(change: Any) -> None:
+    import json
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, ProvisioningRefused
+    raw, _, _ = recovery_consumer_inputs()
+    raw.update(change)
+    with pytest.raises(ProvisioningRefused, match="^PROVISIONING_CREDENTIAL_BUNDLE_INVALID$"):
+        read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+
+
+@pytest.mark.parametrize("field", list(RecoveryBundleLineage.__dataclass_fields__))
+def test_recovery_bundle_all_lineage_fields_required(field: str) -> None:
+    import json
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, ProvisioningRefused
+    raw, _, _ = recovery_consumer_inputs()
+    raw["recovery_lineage"].pop(field)
+    with pytest.raises(ProvisioningRefused):
+        read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+
+
+@pytest.mark.parametrize("failure", ["duplicate_ack", "duplicate_root", "old_binding", "new_quarantine",
+    "204", "bool_status", "rotated_expired", "long_cap_expiry", "late_ack", "reordered_intent",
+    "wrong_sid", "wrong_capability", "wrong_root", "wrong_invitation", "wrong_rotation_issue", "bool_revoked"])
+def test_recovery_proof_rejects_uncertainty_replay_expiry_and_cross_lineage(failure: str) -> None:
+    import json
+    from copy import deepcopy
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, credential_bundle_acknowledged
+    from shared.identity.dev_smoke_journal import DevSmokeBindingJournal
+    raw, events, target = recovery_consumer_inputs()
+    bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+    if failure in {"duplicate_ack", "duplicate_root", "old_binding", "new_quarantine"}:
+        extra = deepcopy(events[-1] if failure == "duplicate_ack" else events[4])
+        if failure == "old_binding":
+            extra.update(event_type=DevSmokeBindingJournal._TYPE, correlation_id=DevSmokeBindingJournal._CORRELATION)
+        if failure == "new_quarantine":
+            extra["event_id"] = str(uuid4())
+            extra["metadata"]["stage"] = "recovery-required"
+        events.append(extra)
+    elif failure in {"204", "bool_status"}:
+        events[-1]["metadata"]["put_status"] = 204 if failure == "204" else True
+    elif failure == "rotated_expired":
+        events[6]["timestamp"] = events[5]["metadata"]["capability_expires_at"]
+    elif failure == "long_cap_expiry":
+        for i in (5, 6):
+            events[i]["metadata"]["capability_expires_at"] = "2026-10-11T05:10:11+00:00"
+    elif failure == "late_ack":
+        events[-1]["timestamp"] = events[4]["metadata"]["expires_at"]
+    elif failure == "reordered_intent":
+        events[7]["timestamp"] = events[5]["timestamp"]
+    elif failure == "wrong_sid":
+        events[6]["metadata"]["issuer_session_id"] = str(uuid4())
+    elif failure == "wrong_capability":
+        events[-1]["metadata"]["capability_id"] = str(uuid4())
+    elif failure == "wrong_root":
+        events[5]["metadata"]["root_event_id"] = str(uuid4())
+    elif failure == "wrong_invitation":
+        events[4]["metadata"]["invitation_id"] = str(uuid4())
+    elif failure == "wrong_rotation_issue":
+        events[6]["metadata"]["issue_event_id"] = events[1]["event_id"]
+    else:
+        events[6]["metadata"]["revoked_target_sessions"] = True
+    assert not credential_bundle_acknowledged(bundle, events, target_account=target)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_recovery_bundle_duplicate_keys_fail_static_without_plaintext_echo(nested: bool) -> None:
+    import json
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, ProvisioningRefused
+    raw, _, _ = recovery_consumer_inputs()
+    serialized = json.dumps(raw)
+    key = "plan_digest" if nested else "password"
+    serialized = serialized.replace(f'"{key}":', f'"{key}": "private-marker", "{key}":', 1)
+    with pytest.raises(ProvisioningRefused) as exc:
+        read_dev_credential_bundle(serialized, environment="dev", release_profile="dev-admin")
+    assert str(exc.value) == "PROVISIONING_CREDENTIAL_BUNDLE_INVALID" and "private-marker" not in repr(exc.value)
