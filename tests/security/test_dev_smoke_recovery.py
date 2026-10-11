@@ -1848,7 +1848,7 @@ def account_observer_payloads(p: dict, actions=None) -> dict:
     now = datetime.now(UTC)
     fixture_now = datetime(2026, 10, 11, 5, tzinfo=UTC)
     for event in events:
-        event["timestamp"] = (datetime.fromisoformat(event["timestamp"]) + now - fixture_now - timedelta(seconds=60)).isoformat()
+        event["timestamp"] = (datetime.fromisoformat(event["timestamp"]) + (now - fixture_now - timedelta(seconds=60))).isoformat()
     events[1]["metadata"]["expires_at"] = (now + timedelta(hours=1)).isoformat()
     original = deepcopy(target)
     original.update(subject_id=p["actor_account_id"], username="ajoe734", roles=["auditor", "platform_admin"],
@@ -2033,5 +2033,5 @@ def test_real_observation_https_fixed_read_routes_no_retry(tls_recovery_server: 
         assert attempt.observe(operation, cookie="offline-own-cookie", deadline=time.monotonic() + 3).http_status == 200
         with pytest.raises(r.RecoveryHTTPRefused):
             attempt.observe(operation, cookie="offline-own-cookie", deadline=time.monotonic() + 3)
-    assert len(observed) == 1 and observed[0].startswith(f"GET {path} HTTP/1.1\r\n".encode())
-    assert b"Cookie: __Host-oday_web_session=offline-own-cookie\r\n" in observed[0]
+    assert len(observed) == 1 and observed[0][0].startswith(f"GET {path} HTTP/1.1\r\n".encode())
+    assert b"Cookie: __Host-oday_web_session=offline-own-cookie" in observed[0][0]
