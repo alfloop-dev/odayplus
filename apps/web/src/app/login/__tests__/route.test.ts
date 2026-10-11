@@ -10,9 +10,12 @@ const entries = [{ accountId: "offline-account", tenantId: "offline-tenant", use
   email: "offline@example.invalid", status: "active" as const, password }];
 
 function request() {
-  return new NextRequest("https://ops.oday.plus/login", { method: "POST", headers: {
-    origin: "https://ops.oday.plus", "content-type": "application/json", accept: "application/json",
+  const req = new NextRequest("https://ops.oday.plus/login", { method: "POST", headers: {
+    "content-type": "application/json", accept: "application/json",
   }, body: JSON.stringify({ username: "offline-user", password, verifiedCredentialRevision: "999" }) });
+  // Match the maintained NextRequest/Happy DOM route harness's origin setup.
+  req.headers.set("origin", "https://ops.oday.plus");
+  return req;
 }
 
 function install() {
