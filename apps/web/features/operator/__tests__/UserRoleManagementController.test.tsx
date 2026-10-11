@@ -191,7 +191,47 @@ describe("UserRoleManagementController", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
+
+  it.each(["pending", "503", "rejected"])(
+    "keeps the sole handoff accessible in production before a %s list refresh", async (outcome) => {
+      vi.stubEnv("ODP_REQUIRE_LIVE_DATA", "true");
+      const stub = stubStatefulFetch([]);
+      const normalFetch = stub.mock.getMockImplementation()!;
+      let userReads = 0;
+      stub.mock.mockImplementation((url: string, options?: any) => {
+        if (url === "/api/v1/operator/users" && options?.method !== "POST") {
+          userReads += 1;
+          if (userReads > 1) {
+            if (outcome === "pending") return new Promise(() => {});
+            if (outcome === "rejected") return Promise.reject(new Error("offline list unavailable"));
+            return Promise.resolve({ ok: false, status: 503, statusText: "Unavailable" });
+          }
+        }
+        return normalFetch(url, options);
+      });
+      render(<UserRoleManagementController currentRoleId="platform-admin" />);
+      fireEvent.click(await screen.findByTestId("add-user-button"));
+      fireEvent.change(screen.getByTestId("edit-subject-id-input"), { target: { value: "invited-manager" } });
+      fireEvent.change(screen.getByTestId("edit-email-input"), { target: { value: "invited@example.invalid" } });
+      fireEvent.change(screen.getByPlaceholderText(/請輸入權限調整原因/i), { target: { value: "離線正式模式交接測試" } });
+      fireEvent.click(screen.getByTestId("save-user-roles-submit"));
+      expect(await screen.findByTestId("invited-credentials-modal")).toBeInTheDocument();
+      expect(screen.getByTestId("invited-password-display")).toHaveTextContent("a".repeat(43));
+      expect(userReads).toBe(1);
+      expect(stub.posted).toHaveLength(1);
+      expect(screen.getByTestId("copy-password-button")).toBeEnabled();
+      // No account row was created by issuing an invitation.
+      expect(stub.serverUsers).toHaveLength(0);
+      fireEvent.click(screen.getByTestId("close-credentials-modal"));
+      await waitFor(() => expect(userReads).toBe(2));
+      expect(screen.queryByTestId("invited-credentials-modal")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("add-user-button")).not.toBeInTheDocument();
+      // The production data loading/error gate is not bypassed after dismissal.
+      expect(stub.posted).toHaveLength(1);
+    },
+  );
 
   it("renders user table with default users and role badges", async () => {
     render(<UserRoleManagementController currentRoleId="platform-admin" />);

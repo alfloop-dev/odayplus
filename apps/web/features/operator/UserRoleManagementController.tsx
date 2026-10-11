@@ -287,7 +287,8 @@ export function UserRoleManagementController({
           // or report a role change before the recipient accepts the capability.
           setInvitedCredentials({ username: targetSubjectId, token: data.token,
             invitationId: data.invitation_id, expiresAt: data.expires_at });
-          fetchUsers();
+          // Issuance adds no account row. Refresh only after handoff closes:
+          // the production loading/error gate must not hide this sole token.
           setIsEditModalOpen(false);
           showToast(`已邀請 ${targetSubjectId}；接受邀請後才建立帳號，首次登入需改密碼`);
         } else {
@@ -982,6 +983,9 @@ export function UserRoleManagementController({
                   setCopiedPassword(false);
                   setIsCopyingPassword(false);
                   setCopyPasswordError(null);
+                  // Restore ordinary list loading/error behavior only after
+                  // the issuer deliberately dismisses the one-time handoff.
+                  void fetchUsers();
                 }}
                 style={{
                   padding: "8px 16px",

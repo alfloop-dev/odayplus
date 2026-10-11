@@ -2,6 +2,26 @@
 
 Owner: Pi · Current reviewer: Codex · PR: [#1447](https://github.com/alfloop-dev/odayplus/pull/1447)
 
+## Independent c0 review: preserve the sole capability handoff (2026-10-11)
+
+Codex independently reviewed exact c0e7d0f7675 (fresh CI38110653749SUCCESS,
+7701 passed/23 skipped) and confirmed the preceding four security findings are
+repaired, but reopened a genuine P2. Successful invitation issuance immediately
+called fetchUsers; production's loading/error early return then hid the one-time
+token modal during a pending/503/rejected list request. Navigating away could
+lose the only raw capability while pending invitation collision prevented another
+issuance. This was not dismissed because CI passed; the original review remains.
+
+The bounded repair defers that unnecessary list refresh until the issuer closes
+the one-time handoff. Issuance creates no account row, so no optimistic row or
+list count is fabricated. The ordinary production availability gate remains
+unchanged and applies again after dismissal. Three production-mode regressions
+simulate a successful issue with a pending/503/rejected next list read; each proves
+the token/copy control remains accessible, there is exactly one issue/initial
+list read, no account row is created, and only dismissal triggers the next read
+and data gate. No capability storage, role/credential/account effect or delivery
+success claim is added. Exact new-head checks/CI/independent review remain required.
+
 ## Unknown acceptance outcome repair (2026-10-11)
 
 This is a meaningful follow-up to submitted `b1100be162f0`, not a cosmetic CI
