@@ -340,3 +340,231 @@ def test_recovery_bundle_duplicate_keys_fail_static_without_plaintext_echo(neste
     with pytest.raises(ProvisioningRefused) as exc:
         read_dev_credential_bundle(serialized, environment="dev", release_profile="dev-admin")
     assert str(exc.value) == "PROVISIONING_CREDENTIAL_BUNDLE_INVALID" and "private-marker" not in repr(exc.value)
+
+
+# Foreground primitives are isolated contract tests, NOT an executable recovery
+# or genuine writer-exclusion/native fresh-consumer proof.
+def foreground_budget(tmp_path: Path, monkeypatch: Any, *, total: float = 2400):
+    from types import SimpleNamespace
+    from delivery_toolchain.release import recover_dev_smoke as r
+    clock = SimpleNamespace(value=100.0)
+    monkeypatch.setattr(r, "time", SimpleNamespace(monotonic=lambda: clock.value))
+    p = plan()
+    receipts = r.ExclusivePhaseReceipts(tmp_path, execution_id=p["execution_id"], plan_digest=r.validate_recovery_plan(
+        p, release_sha=SHA, manifest_digest=MANIFEST, now=datetime.now(UTC)))
+    try:
+        budget = r.ForegroundRecoveryBudget(p, receipts=receipts, total_seconds=total)
+    except Exception:
+        receipts.close()
+        raise
+    return budget, clock, receipts, p
+
+
+def advance_to(budget: Any, phase: str) -> None:
+    from delivery_toolchain.release.recover_dev_smoke import PHASE_CEILINGS
+    for name, _ in PHASE_CEILINGS:
+        if name == phase:
+            return
+        budget.begin(name)
+        assert budget.finish(outcome="completed", http_status=201 if name == "put" else None) == "completed"
+
+
+def test_parent_custody_unique_repr_pickle_fork_and_close(monkeypatch: Any) -> None:
+    import pickle
+    from copy import deepcopy
+    from delivery_toolchain.release import recover_dev_smoke as r
+    from shared.identity.password_policy import PasswordPolicy
+    first, second = r.ParentMemoryCustody(), r.ParentMemoryCustody()
+    password = first.password
+    assert password != second.password and len(password) >= 64
+    assert password not in repr(first) and "redacted" in repr(first)
+    assert PasswordPolicy().validate(password, username="odp-dev-smoke").valid
+    first.attach_capability("c" * 43)
+    assert first.capability == "c" * 43
+    with pytest.raises(RecoveryRefused):
+        first.attach_capability("d" * 43)
+    for serialize in (pickle.dumps, deepcopy):
+        with pytest.raises(RecoveryRefused, match="SERIALIZATION_REFUSED"):
+            serialize(first)
+    monkeypatch.setattr(r.os, "getpid", lambda: first._pid + 1)
+    with pytest.raises(RecoveryRefused, match="CUSTODY_LOST"):
+        _ = first.password
+    first.close()
+    second.close()
+    with pytest.raises(RecoveryRefused, match="CUSTODY_LOST"):
+        _ = first.capability
+
+
+@pytest.mark.parametrize("token", ["", "private-marker", "c" * 44, None, True])
+def test_custody_rejects_bad_capability_without_echo(token: Any) -> None:
+    from delivery_toolchain.release.recover_dev_smoke import ParentMemoryCustody
+    custody = ParentMemoryCustody()
+    with pytest.raises(RecoveryRefused) as exc:
+        custody.attach_capability(token)
+    assert str(exc.value) == "RECOVERY_CAPABILITY_INPUT_REFUSED"
+    with pytest.raises(RecoveryRefused, match="UNAVAILABLE"):
+        _ = custody.capability
+    custody.close()
+
+
+def test_phase_receipts_precede_effect_and_no_secret_fields(tmp_path: Path, monkeypatch: Any) -> None:
+    import json
+    budget, clock, receipts, p = foreground_budget(tmp_path, monkeypatch)
+    try:
+        ceiling = budget.begin("preflight")
+        assert 599 < ceiling <= 600
+        files = sorted((tmp_path / p["execution_id"]).iterdir())
+        assert len(files) == 1
+        start = json.loads(files[0].read_text())
+        assert start["stage"] == "start" and start["outcome"] == "pending"
+        assert start["execution_authorized"] is False
+        assert files[0].stat().st_mode & 0o777 == 0o600
+        clock.value += 1
+        assert budget.finish(outcome="completed", exit_code=0) == "completed"
+        terminal = json.loads(sorted((tmp_path / p["execution_id"]).iterdir())[1].read_text())
+        assert terminal["elapsed_seconds"] == 1 and terminal["exit_code"] == 0
+        assert set(terminal) == set(start)
+        assert not {"password", "token", "cookie", "capability", "body", "plan", "custodian"} & terminal.keys()
+    finally:
+        receipts.close()
+
+
+def test_no_receipt_directory_resume_or_overwrite(tmp_path: Path, monkeypatch: Any) -> None:
+    from delivery_toolchain.release.recover_dev_smoke import ExclusivePhaseReceipts
+    _, _, receipts, p = foreground_budget(tmp_path, monkeypatch)
+    try:
+        with pytest.raises(RecoveryRefused, match="STORAGE_UNAVAILABLE"):
+            ExclusivePhaseReceipts(tmp_path, execution_id=p["execution_id"], plan_digest=receipts._digest)
+    finally:
+        receipts.close()
+
+
+@pytest.mark.parametrize("phase", ["rotate", "put", "ack", "gate", "fresh_consumer"])
+def test_cannot_skip_preflight_or_downstream_phases(phase: str, tmp_path: Path, monkeypatch: Any) -> None:
+    budget, _, receipts, _ = foreground_budget(tmp_path, monkeypatch)
+    try:
+        with pytest.raises(RecoveryRefused, match="START_REFUSED"):
+            budget.begin(phase)
+        with pytest.raises(RecoveryRefused, match="START_REFUSED"):
+            budget.begin("preflight")  # later truth cannot resume this object
+        budget.begin("quarantine")
+        budget.finish(outcome="completed")
+        with pytest.raises(RecoveryRefused):
+            budget.begin("quarantine")
+    finally:
+        receipts.close()
+
+
+@pytest.mark.parametrize("seconds", [0, -1, 2401, float("nan"), float("inf"), True])
+def test_invalid_absolute_deadline_refuses(seconds: Any, tmp_path: Path, monkeypatch: Any) -> None:
+    with pytest.raises(RecoveryRefused, match="BUDGET_INVALID"):
+        _, _, receipts, _ = foreground_budget(tmp_path, monkeypatch, total=seconds)
+
+
+def test_full_gate_cleanup_quarantine_reserved_before_first_mutation(tmp_path: Path, monkeypatch: Any) -> None:
+    budget, _, receipts, _ = foreground_budget(tmp_path, monkeypatch, total=1799)
+    try:
+        # Read-only preflight cannot eat the 1800s downstream ceiling either.
+        with pytest.raises(RecoveryRefused, match="START_REFUSED"):
+            budget.begin("preflight")
+        budget.begin("cleanup")
+        budget.finish(outcome="completed")
+        budget.begin("quarantine")
+        budget.finish(outcome="completed")
+    finally:
+        receipts.close()
+
+
+def test_timeout_preserves_parent_memory_but_forbids_continuation(tmp_path: Path, monkeypatch: Any) -> None:
+    from delivery_toolchain.release.recover_dev_smoke import ParentMemoryCustody
+    budget, clock, receipts, _ = foreground_budget(tmp_path, monkeypatch)
+    custody = ParentMemoryCustody()
+    password = custody.password
+    custody.attach_capability("t" * 43)
+    try:
+        allowance = budget.begin("preflight")
+        clock.value += allowance
+        assert budget.finish(outcome="completed", exit_code=0) == "unknown"
+        assert custody.password == password and custody.capability == "t" * 43
+        with pytest.raises(RecoveryRefused):
+            budget.begin("reserve")
+        budget.begin("quarantine")
+        budget.finish(outcome="completed")
+    finally:
+        receipts.close()
+        custody.close()
+
+
+@pytest.mark.parametrize("status", [None, 200, 204, 302, 403, 500, 201])
+def test_put_response_classification_never_reconstructs_ack(status: Any, tmp_path: Path, monkeypatch: Any) -> None:
+    budget, _, receipts, _ = foreground_budget(tmp_path, monkeypatch)
+    try:
+        advance_to(budget, "put")
+        budget.begin("put")
+        assert budget.finish(outcome="completed", http_status=status) == ("completed" if status == 201 else "unknown")
+        if status == 201:
+            budget.begin("ack")
+            budget.finish(outcome="unknown")  # failed/lost ACK cannot retry
+        with pytest.raises(RecoveryRefused):
+            budget.begin("ack")
+        with pytest.raises(RecoveryRefused):
+            budget.begin("put")
+    finally:
+        receipts.close()
+
+
+@pytest.mark.parametrize("code,expected", [(0, "completed"), (1, "refused"), (-9, "interrupted")])
+def test_original_terminal_exit_code_controls_outcome(code: int, expected: str, tmp_path: Path, monkeypatch: Any) -> None:
+    budget, _, receipts, _ = foreground_budget(tmp_path, monkeypatch)
+    try:
+        budget.begin("preflight")
+        assert budget.finish(outcome="completed", exit_code=code) == expected
+    finally:
+        receipts.close()
+
+
+@pytest.mark.parametrize("failure", ["start_fsync", "terminal_fsync", "private_event", "boolean_exit", "overlap", "clock_reverse"])
+def test_receipt_and_clock_uncertainty_fail_stop(failure: str, tmp_path: Path, monkeypatch: Any) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    budget, clock, receipts, _ = foreground_budget(tmp_path, monkeypatch)
+    try:
+        def unavailable(fd: int) -> None:
+            raise OSError("private-marker")
+        if failure == "start_fsync":
+            monkeypatch.setattr(r.os, "fsync", unavailable)
+            with pytest.raises(RecoveryRefused):
+                budget.begin("preflight")
+        else:
+            budget.begin("preflight")
+            if failure == "terminal_fsync":
+                monkeypatch.setattr(r.os, "fsync", unavailable)
+            if failure == "clock_reverse":
+                clock.value -= 1
+            with pytest.raises(RecoveryRefused) as exc:
+                if failure == "overlap":
+                    budget.begin("reserve")
+                else:
+                    budget.finish(outcome="completed", event_id="private-marker" if failure == "private_event" else "",
+                                  exit_code=True if failure == "boolean_exit" else None)
+            assert "private-marker" not in str(exc.value)
+        with pytest.raises(RecoveryRefused):
+            budget.begin("reserve")
+    finally:
+        receipts.close()
+
+
+def test_full_success_budget_still_not_binding_or_execution_proof(tmp_path: Path, monkeypatch: Any) -> None:
+    from delivery_toolchain.release.recover_dev_smoke import PHASE_CEILINGS
+    budget, _, receipts, _ = foreground_budget(tmp_path, monkeypatch)
+    try:
+        for phase, _ in PHASE_CEILINGS[:-1]:
+            budget.begin(phase)
+            budget.finish(outcome="completed", http_status=201 if phase == "put" else None)
+        # Cleanup finished; quarantine can still be recorded, never normal resume.
+        budget.begin("quarantine")
+        budget.finish(outcome="completed")
+        with pytest.raises(RecoveryRefused):
+            budget.begin("preflight")
+        assert sum(s for _, s in PHASE_CEILINGS) == 2400
+    finally:
+        receipts.close()

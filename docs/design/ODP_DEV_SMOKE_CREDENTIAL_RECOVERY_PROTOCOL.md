@@ -230,6 +230,44 @@ source drift, quarantine, replay and committed-receipt loss followed by hold/
 new-root quarantine. A later successful GET is commit truth, not permission to
 reconstruct ACK after an unknown PUT or resume an execution.
 
+## Foreground custody/budget primitives (unapproved; NOT an executor)
+
+`delivery_toolchain/release/recover_dev_smoke.py` now provides isolated building
+blocks, with no CLI, HTTP/cloud call, child runner, secret writer, lifecycle or
+admission callback. It cannot perform recovery or authorize effects:
+
+- `ParentMemoryCustody` owns one384-bit random password and one once-attached
+  recovery capability. Repr/pickle/deepcopy do not export them. Access after fork
+  or close refuses. Managed-memory release is best effort, NOT zeroization or
+  protection from a debugger/core dump; trusted foreground runtime custody
+  requirements remain mandatory. Original password custody is not implemented.
+- `ExclusivePhaseReceipts` creates a NEW execution directory exclusively beneath
+  a trusted existing runtime directory. Safe phase records alone are persisted,
+  with0600 files, fsync of records/directories and no overwrite/reopen/resume API.
+  Partial-write/fsync failures permanently poison the instance. This LOCAL
+  uncertainty barrier cannot exclude external GitHub writers or prove remote
+  commit. Old incident locks/history are not opened or changed.
+- `ForegroundRecoveryBudget` pins a shape-valid exact non-secret plan/digest to
+  that receipt store. It enforces one monotonic absolute<=2400s deadline capped by
+  plan expiry, wall-clock expiry refusal, strict once-only phase order and durable
+  starts BEFORE a caller can begin a phase. Before every effect it reserves all
+  downstream full-gate/fresh-consumer/cleanup/quarantine ceilings. Interrupted,
+  timed-out, failed or missing PUT201 classifications stop normal continuation;
+  finite once-only cleanup/quarantine lanes remain. Terminal persistence failure
+  also stops. No readback can restore progression. A budget allowance is NOT a
+  timeout/cancellation adapter or evidence that a phase actually ran.
+
+The design ceilings split the reviewed2400s envelope as preflight600,
+reserve30/issue30, rotate120, reconciliation120, intent20/PUT80/ACK20,
+gate540/fresh-consumer540, cleanup180/quarantine120. They are **not measured
+production bounds**. Tests simulate elapsed time and response/exit statuses;
+retaining parent memory across a simulated observer timeout is not actual
+subprocess cancellation proof.201 input remains a declaration/classification,
+NOT authenticated remote-response or single-attempt PUT proof. A full trusted
+coordinator, credential transport with enforced absolute cancellation, original
+child-handle receipts and actual response authentication remain unimplemented.
+Do not treat these reusable primitives as an executable foreground entrypoint.
+
 ## Required subsequent increments (not implemented)
 
 1. Independent review of migration/capability/session-fence domain increments;
@@ -245,10 +283,12 @@ reconstruct ACK after an unknown PUT or resume an execution.
    ACK. Real PG-produced full-lineage tests now exist; synthetic
    status declarations are NOT proof of remote response authenticity. Keep schema1
    behavior/quarantine rejection unchanged. No missing-ID bypass or fallback.
-4. Trusted foreground parent memory custody and new finite entrypoint: absolute
-   <=2400s, <=1h plan window, bounded non-secret observers, measured ceilings and
-   sufficient downstream full gate/cleanup/quarantine reserves before each effect.
-   Persist allowlisted phase start/terminal receipts before proceeding. Timeout,
+4. Compose the new memory/budget/receipt primitives into a trusted foreground
+   entrypoint: absolute<=2400s, <=1h plan window, bounded non-secret observers,
+   measured ceilings, real cancellation and sufficient downstream full gate/
+   cleanup/quarantine reserves before each effect. Persist allowlisted phase
+   start/terminal receipts before proceeding. The primitives alone are not this
+   executor or measured observer proof. Timeout,
    lost reply, session/custody loss or receipt failure stops and quarantines NEW
    execution. Later readback never resumes authority. Never replay the old600s
    creation child or remove local uncertainty barriers.
