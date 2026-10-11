@@ -235,8 +235,26 @@ function normalizeStatusRows(value: unknown): GovernanceStatusRow[] {
  * an invented one.
  */
 export function normalizeGovernanceStatusBoard(value: unknown): GovernanceStatusBoard | null {
+  if (Array.isArray(value)) {
+    // This is the real canonical GovernanceService DTO. Do not turn counts
+    // into healthy model/connector flags or manufacture monitoring panels.
+    if (!value.every((row) => {
+      const record = asRecord(row);
+      return record && usableText(record.name) && usableText(record.status) &&
+        typeof record.count === "number" && Number.isSafeInteger(record.count) && record.count >= 0;
+    })) return null;
+    return {
+      dataQuality: [], models: [], connectors: [], sla: [], users: [],
+      recordCounts: value.map((row) => ({ name: row.name, status: row.status, count: row.count })),
+    };
+  }
   const record = asRecord(value);
   if (!record) return null;
+  const requiredGroups = ["dataQuality", "models", "connectors", "sla", "users"];
+  if (!requiredGroups.every((key) => Array.isArray(record[key]) &&
+    (record[key] as unknown[]).every((row) => normalizeStatusRow(row) !== null))) return null;
+  if (record.runbooks !== undefined && (!Array.isArray(record.runbooks) ||
+    !record.runbooks.every((row) => normalizeStatusRow(row) !== null))) return null;
   return {
     dataQuality: normalizeStatusRows(record.dataQuality),
     models: normalizeStatusRows(record.models),

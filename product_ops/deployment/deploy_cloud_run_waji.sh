@@ -38,6 +38,21 @@ run_locked_python() {
 : "${ODP_SCHEDULER_CRON:?Error: ODP_SCHEDULER_CRON is required.}"
 : "${ODP_SCHEDULER_TIME_ZONE:?Error: ODP_SCHEDULER_TIME_ZONE is required.}"
 : "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
+
+# Service-level minimum instances for the API and Web services, applied after
+# promotion with the service update `--min` flag. A revision-level minimum
+# would also keep every tagged candidate revision warm. Dev defaults to 1 because the API cold start was
+# measured at ~24-29s (ODP-WEB-BOOTSTRAP-COLDSTART-001), longer than the Web
+# BFF's 10s upstream timeout. Other environments change only when
+# ODP_CLOUD_RUN_MIN_INSTANCES is set explicitly.
+CLOUD_RUN_MIN_INSTANCES="${ODP_CLOUD_RUN_MIN_INSTANCES:-}"
+if [ -z "${CLOUD_RUN_MIN_INSTANCES}" ] && [ "${ODP_DEPLOY_ENV}" = "dev" ]; then
+  CLOUD_RUN_MIN_INSTANCES=1
+fi
+if [ -n "${CLOUD_RUN_MIN_INSTANCES}" ] && [[ ! "${CLOUD_RUN_MIN_INSTANCES}" =~ ^[0-9]+$ ]]; then
+  echo "Error: ODP_CLOUD_RUN_MIN_INSTANCES must be a non-negative integer, got '${CLOUD_RUN_MIN_INSTANCES}'." >&2
+  exit 1
+fi
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
 : "${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT:?Error: ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT is required.}"
 
@@ -47,6 +62,25 @@ run_locked_python() {
 # A narrowed profile is refused here, before the preflight and before any
 # Cloud Run mutation, for anything but dev or without its sign-in inputs.
 ODP_RELEASE_PROFILE="${ODP_RELEASE_PROFILE:-full}"
+# Only the trusted foreground library supplies an inherited control descriptor.
+# The ordinary workflow never sets this and never provisions an identity.
+if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then
+  if [ "${ODP_DEPLOY_ENV}" != "dev" ] || [ "${ODP_RELEASE_PROFILE}" != "dev-admin" ] \
+    || [ -n "${ODP_DEV_ADMIN_CREDENTIAL_BUNDLE:-}" ]; then
+    echo "Error: PROVISIONING_FOREGROUND_SCOPE_INVALID" >&2
+    exit 1
+  fi
+  # This descriptor check imports only Python's standard library.
+  python3 - <<'PY'
+import os, socket, sys
+try:
+    s = socket.socket(fileno=int(os.environ["ODP_DEV_SMOKE_FOREGROUND_FD"]))
+    s.getpeername()
+    s.detach()
+except Exception:
+    sys.exit("Error: PROVISIONING_FOREGROUND_CHANNEL_INVALID")
+PY
+fi
 case "${ODP_RELEASE_PROFILE}" in
   full)
     ;;
@@ -55,10 +89,12 @@ case "${ODP_RELEASE_PROFILE}" in
       echo "Error: release profile 'dev-admin' may only deploy to dev, not '${ODP_DEPLOY_ENV}'." >&2
       exit 1
     fi
-    ODP_DEV_ADMIN_USERNAME="${ODP_DEV_ADMIN_USERNAME:-${ODP_DEV_BOOTSTRAP_ADMIN_USERNAME:-}}"
-    ODP_DEV_ADMIN_PASSWORD="${ODP_DEV_ADMIN_PASSWORD:-${ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD:-}}"
-    : "${ODP_DEV_ADMIN_USERNAME:?Error: the dev-admin profile requires ODP_DEV_ADMIN_USERNAME (the platform_admin account).}"
-    : "${ODP_DEV_ADMIN_PASSWORD:?Error: the dev-admin profile requires ODP_DEV_ADMIN_PASSWORD (secret).}"
+    if [ -z "${ODP_DEV_ADMIN_CREDENTIAL_BUNDLE:-}" ] && [ -z "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then
+      ODP_DEV_ADMIN_USERNAME="${ODP_DEV_ADMIN_USERNAME:-${ODP_DEV_BOOTSTRAP_ADMIN_USERNAME:-}}"
+      ODP_DEV_ADMIN_PASSWORD="${ODP_DEV_ADMIN_PASSWORD:-${ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD:-}}"
+      : "${ODP_DEV_ADMIN_USERNAME:?Error: the dev-admin profile requires ODP_DEV_ADMIN_USERNAME (the platform_admin account).}"
+      : "${ODP_DEV_ADMIN_PASSWORD:?Error: the dev-admin profile requires ODP_DEV_ADMIN_PASSWORD (secret).}"
+    fi
     : "${ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE:?Error: the dev-admin profile requires ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE (an operator role the account does not hold).}"
     export ODP_DEV_ADMIN_USERNAME ODP_DEV_ADMIN_PASSWORD
     ;;
@@ -68,6 +104,20 @@ case "${ODP_RELEASE_PROFILE}" in
     ;;
 esac
 export ODP_RELEASE_PROFILE
+# Validate a staged matched pair before cloud mutation. Never decode credentials
+# into shell/argv/files/outputs; the gate reads the same bundle in its own memory.
+# Nonempty malformed/wrong-environment bundles MUST NOT fall back to legacy inputs.
+if [ -n "${ODP_DEV_ADMIN_CREDENTIAL_BUNDLE:-}" ]; then
+  run_locked_python -c '
+import os, sys
+from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, read_dev_credential_bundle
+try:
+    read_dev_credential_bundle(os.environ["ODP_DEV_ADMIN_CREDENTIAL_BUNDLE"],
+        environment=os.environ["ODP_DEPLOY_ENV"], release_profile=os.environ["ODP_RELEASE_PROFILE"])
+except ProvisioningRefused:
+    sys.exit("Error: PROVISIONING_CREDENTIAL_BUNDLE_INVALID")
+'
+fi
 if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
   : "${ODP_PROD_DEPLOY_URL:?Error: ODP_PROD_DEPLOY_URL is required for production live E2E.}"
   : "${ODP_PROD_API_URL:?Error: ODP_PROD_API_URL is required for production live E2E.}"
@@ -948,6 +998,9 @@ payload = {
     # Normalised to full|dev-admin at the top of this script; the default only
     # matters when this serializer is exercised on its own.
     "ODP_RELEASE_PROFILE": os.environ.get("ODP_RELEASE_PROFILE", "full"),
+    # Same admitted MANIFEST_DIGEST export as the API; never infer Web identity
+    # from an API response. Missing metadata stays empty and fails strict readback.
+    "ODP_RELEASE_MANIFEST_DIGEST": os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""),
     "ODP_REQUIRE_LIVE_DATA": os.environ["ODP_REQUIRE_LIVE_DATA"],
     "ODP_DATA_BINDING_MODE": os.environ["ODP_DATA_BINDING_MODE"],
     "ODP_PRODUCT_MODE": os.environ["ODP_PRODUCT_MODE"],
@@ -1095,11 +1148,16 @@ fi
 # so the transport token is refreshed right before each probe stage.
 mint_api_invoker_token "${API_SERVICE_AUDIENCE}"
 echo "Running release-aware smoke checks against tagged candidate revisions..."
+# A tagged candidate revision gets no warm instance (the service-level minimum
+# only serves traffic-bearing revisions), so its first probe pays the API cold
+# start, measured at ~24-29s on dev. Cloud Run queues the request until the
+# instance serves; the per-probe timeout must outlast that, not the 15s default.
 run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py smoke \
   --api-url "${API_URL}" \
   --web-url "${WEB_URL}" \
   --expected-sha "${ODAY_RELEASE_SHA}" \
   --correlation-id "corr-cloud-run-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
+  --timeout "${CANDIDATE_SMOKE_TIMEOUT_SECONDS:-60}" \
   --output "${SMOKE_REPORT}"
 
 SCHEDULER_ROLLBACK_ARMED=true
@@ -1117,6 +1175,17 @@ if [ "${WEB_SERVICE_PRESENCE}" = "absent" ]; then
   grant_service_invoker "${WEB_SERVICE}" "allUsers"
 fi
 promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
+
+if [ -n "${CLOUD_RUN_MIN_INSTANCES:-}" ]; then
+  for min_service in "${API_SERVICE}" "${WEB_SERVICE}"; do
+    echo "Keeping ${CLOUD_RUN_MIN_INSTANCES} warm instance(s) for ${min_service} (service-level minimum)..."
+    gcloud run services update "${min_service}" \
+      --min="${CLOUD_RUN_MIN_INSTANCES}" \
+      --region="${GCP_REGION}" \
+      --project="${GCP_PROJECT}" \
+      --quiet
+  done
+fi
 
 # ODP-LIVE-E2E-001: the release is serving but is not committed yet. The live
 # E2E gate drives the promoted release the way an operator would -- authenticate,
@@ -1169,6 +1238,31 @@ fi
 # Production reaches the API through its custom domain, but the transport
 # audience stays the API's stable Cloud Run service URL.
 mint_api_invoker_token "${API_SERVICE_AUDIENCE}"
+if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then
+  # No command/plugin/receipt path: the parent owns the actual lifecycle and
+  # canonical same-process gate. Only minted service tokens cross this socket;
+  # admin/new-account/GitHub credentials never enter this shell or a file.
+  export LIVE_E2E_API_URL LIVE_E2E_WEB_URL LIVE_E2E_DEPLOYMENT_MODE WORKER_CANDIDATE_JOB
+  # This socket acknowledgement imports only Python's standard library.
+  python3 - <<'PY'
+import json, os, socket, sys
+try:
+    channel = socket.socket(fileno=int(os.environ["ODP_DEV_SMOKE_FOREGROUND_FD"]))
+    channel.settimeout(1800)
+    names = ("ODAY_RELEASE_SHA", "MANIFEST_DIGEST", "ODP_DEPLOY_ENV", "ODP_RELEASE_PROFILE",
+             "ODP_EXTERNAL_PROVIDER_MODE", "LIVE_E2E_API_URL", "LIVE_E2E_WEB_URL",
+             "LIVE_E2E_DEPLOYMENT_MODE", "WORKER_CANDIDATE_JOB", "GCP_REGION", "GCP_PROJECT",
+             "ODP_OPERATOR_SMOKE_BEARER_TOKEN", "ODP_API_INVOKER_TOKEN")
+    payload = {name: os.environ.get(name, "") for name in names}
+    channel.sendall(json.dumps(payload).encode() + b"\n")
+    # Fixed acknowledgement, not an uploaded passing receipt or a gate override.
+    reply = channel.recv(16)
+    if reply != b"PASS\n":
+        raise ValueError
+except Exception:
+    sys.exit("Error: PROVISIONING_FOREGROUND_GATE_REFUSED")
+PY
+else
 run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --api-url "${LIVE_E2E_API_URL}" \
   --web-url "${LIVE_E2E_WEB_URL}" \
@@ -1180,6 +1274,7 @@ run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --worker-deadline-seconds "${ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS:-600}" \
   --release-profile "${ODP_RELEASE_PROFILE:-full}" \
   --output "${LIVE_E2E_REPORT}"
+fi
 
 DEPLOYMENT_COMMITTED=true
 

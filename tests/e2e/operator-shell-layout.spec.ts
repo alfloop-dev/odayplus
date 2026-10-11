@@ -65,6 +65,68 @@ async function openWorkspace(page: Page, workspace: string) {
 test.describe.configure({ timeout: 120_000 });
 
 test.describe("Operator shared header layout", () => {
+  for (const width of [390, 1024, 1440]) {
+    test(`Today long ingestion identifiers and human titles remain readable at ${width}px`, async ({ page }, testInfo) => {
+      // Sanitized identifiers from the predecessor authenticated Today readback.
+      // Offline response substitution exercises the actual React/CSS, not live
+      // acceptance, business data mutation or a DOM/prototype layout surrogate.
+      const timestamps = [
+        "20261005234153", "20261006111822", "20261007061834", "20261007115623",
+        "20261008040013", "20261008190312", "20261009010154",
+      ];
+      const ids = timestamps.map(
+        (time) => `external-fetch:listing.partner_feed:blocked:${time}:e34f2117-de4b-478c-82fd-13c4ef428d42`,
+      );
+      const title = "External ingestion requires review";
+      await page.route(/\/api\/v1\/operator\/(bootstrap|today)(\?.*)?$/, async (route) => {
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        const envelope = await response.json();
+        expect(envelope.today.queue.length).toBeGreaterThan(0);
+        envelope.today.queue = ids.map((id) => ({
+          ...envelope.today.queue[0], id, title,
+          description: "External provider fetch is disabled for this deployment.",
+          meta: "listing.partner_feed", status: "failed", owner: "Data Operations",
+        }));
+        await route.fulfill({ response, json: envelope });
+      });
+      await page.setViewportSize({ width, height: 900 });
+      await openWorkspace(page, "today");
+      const rows = page.getByTestId("operator-today-queue").getByRole("button");
+      await expect(rows).toHaveCount(ids.length, { timeout: 45_000 });
+      for (const [index, id] of ids.entries()) {
+        await expect(rows.nth(index).locator("small").first()).toHaveText(id);
+        await expect(rows.nth(index).locator("strong").first()).toHaveText(title);
+        await expect(rows.nth(index)).toHaveAccessibleName(new RegExp(`${id}.*${title}`));
+      }
+      const geometry = await rows.evaluateAll((buttons) => buttons.map((button) => {
+        const row = button.getBoundingClientRect();
+        const viewport = document.documentElement.clientWidth;
+        const labels = Array.from(button.querySelectorAll("small, strong")).slice(0, 2);
+        return labels.map((label) => {
+          const box = label.getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(label);
+          // Check painted text, not only document/header width: console overflow
+          // can conceal offscreen labels while those coarse checks still pass.
+          const textRects = Array.from(range.getClientRects());
+          return {
+            text: label.textContent,
+            readable: box.width > 0 && box.height > 0 && textRects.length > 0 &&
+              textRects.every((rect) => rect.left >= Math.max(0, row.left, box.left) - 0.5 &&
+                rect.right <= Math.min(viewport, row.right, box.right) + 0.5 &&
+                rect.top >= box.top - 0.5 && rect.bottom <= box.bottom + 0.5),
+          };
+        });
+      }));
+      expect(geometry.flat().filter((label) => !label.readable), "clipped identifier/title text").toEqual([]);
+      expect((await measureHeader(page)).docScrollWidth).toBeLessThanOrEqual(width);
+      await testInfo.attach(`today-long-identifiers-${width}`, {
+        body: await page.screenshot({ fullPage: true }), contentType: "image/png",
+      });
+    });
+  }
+
   for (const width of WIDTHS) {
     test(`header geometry is identical across workspaces at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });

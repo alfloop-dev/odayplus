@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { createOdpApiClient } from "@oday-plus/openapi-client";
+import dynamic from "next/dynamic";
 import {
   Button,
   Chip,
@@ -18,7 +19,7 @@ import {
   type Tone,
 } from "./components";
 import { DesignStoreOpsWorkspace } from "./DesignAlignedWorkspaces";
-import { GovernanceWorkspace } from "./GovernanceWorkspace";
+import type { GovernanceWorkspaceProps } from "./GovernanceWorkspace";
 import {
   normalizeGovernanceApprovals,
   normalizeGovernanceAuditRows,
@@ -71,16 +72,32 @@ import {
   signOutOperator,
 } from "./operatorSession";
 
+// Governance (including its admin controllers) is dormant on Today/Network.
+// Load it only when selected, without changing its server-verified authority
+// or any of its account/config controls. The shell is client-data driven.
+const GovernanceWorkspace = dynamic<GovernanceWorkspaceProps>(
+  () => import("./GovernanceWorkspace").then((mod) => mod.GovernanceWorkspace),
+  {
+    ssr: false,
+    loading: () => <div aria-live="polite" role="status">治理工作區載入中…</div>,
+  },
+);
+
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
 // The browser budget must exceed the Web BFF's own 10s upstream timeout plus
 // its session lookup and service-identity work, so a slow API surfaces as the
 // BFF's structured 504 (with correlation id) instead of a bare client abort.
 const operatorBootstrapTimeoutMs = 20_000;
-// One automatic retry absorbs a scale-to-zero cold start; the retry reuses
-// the correlation id so both attempts trace as one operator request.
+// Retries absorb a scale-to-zero cold start. Dev Cloud Run logs show the API
+// container needs ~24-29s before uvicorn serves, while the BFF gives up after
+// 10s per request, so four attempts (pauses 0.3s, 2s, 2s) cover ~45s. Every
+// attempt reuses the correlation id so they trace as one operator request.
 const operatorBootstrapRetryableStatuses = new Set([502, 503, 504]);
-const operatorBootstrapRetryDelayMs = 300;
+/** Pauses before each retry; exported so tests can shorten them. */
+export const operatorBootstrapRetryPolicy = { delaysMs: [300, 2_000, 2_000] };
+const operatorBootstrapWarmingUpDetail =
+  "營運資料服務正在啟動（閒置一段時間後第一次使用約需 30 秒），請稍候，不需要重新整理。";
 
 class RetryableBootstrapStatus extends Error {
   constructor(readonly status: number) {
@@ -416,6 +433,7 @@ export function OperatorConsole({
     fixturesAllowed ? "fixture" : "loading",
   );
   const [shellLoadFailure, setShellLoadFailure] = useState<OperatorLoadFailure | null>(null);
+  const [shellWarmingUp, setShellWarmingUp] = useState(false);
   const [shellReloadToken, setShellReloadToken] = useState(0);
   const [liveNotifications, setLiveNotifications] = useState<any[]>(fixturesAllowed ? notifications : []);
   const [liveIssues, setLiveIssues] = useState<Issue[]>(fixturesAllowed ? ISSUE_FIXTURES : []);
@@ -540,8 +558,10 @@ export function OperatorConsole({
         setShellDataStatus("loading");
       }
       setShellLoadFailure(null);
+      setShellWarmingUp(false);
       const correlationId = newCorrelationId("operator-bootstrap");
       const failWith = (error: unknown, httpStatus?: number, responseCorrelationId?: string | null) => {
+        setShellWarmingUp(false);
         setShellDataStatus("error");
         setShellLoadFailure({
           correlationId: responseCorrelationId || correlationId,
@@ -574,17 +594,25 @@ export function OperatorConsole({
         }
       };
       try {
-        let attempt: Awaited<ReturnType<typeof attemptBootstrap>>;
-        try {
-          attempt = await attemptBootstrap(false);
-        } catch (firstError) {
-          if (!isRetryableBootstrapFailure(firstError)) throw firstError;
-          if (cancelled) return;
-          console.warn("Retrying operator bootstrap once:", firstError);
-          await new Promise((resolve) => window.setTimeout(resolve, operatorBootstrapRetryDelayMs));
-          if (cancelled) return;
-          attempt = await attemptBootstrap(true);
+        let attempt: Awaited<ReturnType<typeof attemptBootstrap>> | undefined;
+        for (let retry = 0; attempt === undefined; retry++) {
+          const delays = operatorBootstrapRetryPolicy.delaysMs;
+          const finalAttempt = retry === delays.length;
+          try {
+            attempt = await attemptBootstrap(finalAttempt);
+          } catch (error) {
+            if (finalAttempt || !isRetryableBootstrapFailure(error)) throw error;
+            if (cancelled) return;
+            console.warn(`Retrying operator bootstrap (${retry + 1}/${delays.length}):`, error);
+            setShellWarmingUp(true);
+            await new Promise((resolve) => window.setTimeout(resolve, delays[retry]));
+            if (cancelled) return;
+          }
         }
+        // A superseded load must not clear the warming notice of the load
+        // that replaced it (e.g. after a role switch) while that one retries.
+        if (cancelled || attempt === undefined) return;
+        setShellWarmingUp(false);
         const bootstrapRes = attempt.response;
         if (!bootstrapRes.ok) {
           const responseCorrelationId = bootstrapRes.headers?.get?.("x-correlation-id") ?? null;
@@ -1478,6 +1506,7 @@ export function OperatorConsole({
         {!canRenderWorkspace && !canRenderDirectIntake ? (
           <OperatorDataUnavailableGate
             failure={shellLoadFailure}
+            loadingDetail={shellWarmingUp ? operatorBootstrapWarmingUpDetail : undefined}
             onRetry={() => setShellReloadToken((token) => token + 1)}
             status={toUnavailableOperatorStatus(shellDataStatus)}
           />

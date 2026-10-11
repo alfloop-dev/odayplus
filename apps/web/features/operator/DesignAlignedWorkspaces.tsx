@@ -889,12 +889,12 @@ export function DesignStoreOpsWorkspace({
     if (normalized.includes("triage")) return "triage";
     if (normalized.includes("assign") || normalized.includes("指派")) return "assign";
     if (normalized.includes("action") || normalized.includes("處置") || normalized.includes("工單")) return "action";
-    if (normalized.includes("observation") || normalized.includes("field report") || normalized.includes("現場回報")) return "fieldReport";
+    if (normalized.includes("observation") || normalized.includes("field report") || normalized.includes("現場回報") || normalized.includes("觀察")) return "fieldReport";
     if (normalized.includes("outcome") || normalized.includes("成效") || normalized.includes("判斷")) return "outcome";
-    if (normalized.includes("escalate") || normalized.includes("升級") || normalized.includes("approval")) return "escalate";
+    if (normalized.includes("escalate") || normalized.includes("升級") || normalized.includes("approval") || normalized.includes("核准")) return "escalate";
     if (normalized.includes("camera") || normalized.includes("影像")) return "cameraPurpose";
     if (normalized.includes("reply") || normalized.includes("回覆")) return "replyReview";
-    if (normalized.includes("transfer") || normalized.includes("audit") || normalized.includes("packet") || normalized.includes("稽核")) return "transfer";
+    if (normalized.includes("transfer") || normalized.includes("audit") || normalized.includes("packet") || normalized.includes("稽核") || normalized.includes("轉交")) return "transfer";
     return "triage";
   };
 
@@ -906,7 +906,7 @@ export function DesignStoreOpsWorkspace({
   };
 
   const primaryActionLabel = getPrimaryActionLabel(issue);
-  const secondaryActionLabels = getSecondaryActionLabels(issue);
+  const secondaryActionLabels = getSecondaryActionLabels(issue).filter((label) => label !== primaryActionLabel);
   const hasActiveFilters =
     Boolean(
       searchQuery ||
@@ -1243,14 +1243,13 @@ export function DesignStoreOpsWorkspace({
               </article>
               <article
                 className={evCamera && evCamera.lockedReason ? styles.evidenceClickable : ""}
-                onClick={() => evCamera && evCamera.lockedReason && onOpenWorkflow("cameraPurpose", issue)}
               >
                 <small>Camera 影像</small>
                 {evCamera ? (
                   evCamera.lockedReason ? (
                     <>
                       <strong style={{ color: "#d18700" }}>影像鎖定 • 需授權</strong>
-                      <p style={{ textDecoration: "underline" }}>點擊填寫調閱目的</p>
+                      <button className={styles.cameraTrigger} onClick={() => onOpenWorkflow("cameraPurpose", issue)} type="button">點擊填寫調閱目的</button>
                     </>
                   ) : (
                     <>
@@ -1309,10 +1308,71 @@ export function DesignStoreOpsWorkspace({
               </article>
             </div>
 
+            <div className={styles.metricChart} aria-label="付款失敗率趨勢">
+              <div>
+                <small>付款失敗率</small>
+                <strong>{evPayment?.paymentTrend ? `${evPayment.paymentTrend.failureRate}%` : "—"}</strong>
+                <span>{evPayment?.paymentTrend ? `較 baseline +${evPayment.paymentTrend.baselineDeltaPp}pp` : "來源未提供付款失敗率序列"}</span>
+                <small>{evPayment?.paymentTrend ? "近 14 日付款失敗率（相對值）" : "不以信心度代替付款失敗率"}</small>
+              </div>
+              <div className={styles.bars} role="img" aria-label={evPayment?.paymentTrend ? "付款失敗率每日相對值長條圖" : "付款失敗率圖表無資料"}
+                data-baseline={evPayment?.paymentTrend?.baselineRelativeValue !== undefined}
+                style={{ "--payment-baseline": `${Math.max(0, Math.min(100, evPayment?.paymentTrend?.baselineRelativeValue ?? 0))}%` } as CSSProperties}>
+                {evPayment?.paymentTrend?.relativeValues.map((value, index) => (
+                  <i key={index} style={{ height: `${Math.max(0, Math.min(100, value))}%` }} />
+                ))}
+              </div>
+            </div>
+
+            <div className={styles.evidenceLists}>
+              <section>
+                <h4>支持證據 {supportingEvidence.length}</h4>
+                {supportingEvidence.map((e) => <p key={e.id}>{e.title}：{e.summary}</p>)}
+              </section>
+              <section>
+                <h4>反向證據 {contraryEvidence.length}</h4>
+                {contraryEvidence.map((e) => <p key={e.id}>{e.title}：{e.summary}</p>)}
+                {contraryEvidence.length === 0 && <p>目前無反向反駁證據</p>}
+              </section>
+            </div>
+            <div className={styles.aiBox}>
+              <b>AI 建議</b><small>由證據融合產生 · 僅供參考</small>
+              <p>{getAiRecommendation(issue)}</p>
+              <button onClick={() => onOpenWorkflow("action", issue)} type="button">採用建議並建立處置</button>
+            </div>
+          </section>
+
+          <section className={styles.eventTimeline} aria-label="事件與處置時間軸">
+            <h3>事件與處置時間軸 <small>由系統事件與操作紀錄自動彙整</small></h3>
+            <ol>
+              {[{ id: `${issue.id}-created`, occurredAt: issue.createdAt, actorName: "系統", message: "建立事件" },
+                ...issueEvidence.map((item) => ({ id: item.id, occurredAt: item.occurredAt, actorName: item.sourceLabel, message: item.title })),
+                ...localAuditEvents,
+              ].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt)).map((event) => (
+                <li key={event.id}><time>{formatCompactDateTime(event.occurredAt)}</time><span><strong>{event.actorName}</strong> {event.message}</span></li>
+              ))}
+            </ol>
+          </section>
+
+          <section className={styles.sourceDetails} aria-label="證據來源明細卡片">
             <div className={styles.evidenceTabs} role="tablist" aria-label="證據來源明細">
               {availableEvidenceTabs.map((kind) => (
                 <button
                   aria-selected={activeEvidenceTab === kind}
+                  aria-controls="store-evidence-panel"
+                  id={`store-evidence-tab-${kind}`}
+                  tabIndex={activeEvidenceTab === kind ? 0 : -1}
+                  onKeyDown={(event) => {
+                    const index = availableEvidenceTabs.indexOf(kind);
+                    const nextIndex = event.key === "ArrowRight" ? (index + 1) % availableEvidenceTabs.length
+                      : event.key === "ArrowLeft" ? (index - 1 + availableEvidenceTabs.length) % availableEvidenceTabs.length
+                      : event.key === "Home" ? 0 : event.key === "End" ? availableEvidenceTabs.length - 1 : -1;
+                    if (nextIndex < 0) return;
+                    event.preventDefault();
+                    const nextKind = availableEvidenceTabs[nextIndex];
+                    setActiveEvidenceTab(nextKind);
+                    document.getElementById(`store-evidence-tab-${nextKind}`)?.focus();
+                  }}
                   data-active={activeEvidenceTab === kind}
                   key={kind}
                   onClick={() => setActiveEvidenceTab(kind)}
@@ -1326,7 +1386,7 @@ export function DesignStoreOpsWorkspace({
             </div>
 
             {activeEvidenceTab !== "forecastOps" && activeEvidenceItem ? (
-              <div className={styles.evidenceDetail} role="tabpanel">
+              <div className={styles.evidenceDetail} role="tabpanel" id="store-evidence-panel" aria-labelledby={`store-evidence-tab-${activeEvidenceTab}`} tabIndex={0}>
                 <span>
                   <small>{evidenceTabLabels[activeEvidenceItem.kind]}</small>
                   <strong>{activeEvidenceItem.title}</strong>
@@ -1355,7 +1415,7 @@ export function DesignStoreOpsWorkspace({
             ) : null}
 
             {activeEvidenceTab === "forecastOps" ? (fixturesAllowed ? (
-              <div className={styles.forecastChartSection}>
+              <div className={styles.forecastChartSection} role="tabpanel" id="store-evidence-panel" aria-labelledby="store-evidence-tab-forecastOps" tabIndex={0}>
               <h4>28 天門市營運營收預測與異常帶 (Forecast Band Chart)</h4>
               <svg
                 width="100%"
@@ -1393,7 +1453,7 @@ export function DesignStoreOpsWorkspace({
                   <>
                     <circle cx={chartParams.getX(13)} cy={chartParams.getY(forecastData[13].actual!)} r="5" fill="#ef4444" />
                     <circle cx={chartParams.getX(13)} cy={chartParams.getY(forecastData[13].actual!)} r="10" fill="none" stroke="#ef4444" strokeWidth="1.5" opacity="0.7">
-                      <animate attributeName="r" values="5;12;5" dur="2s" repeatCount="indefinite" />
+
                     </circle>
                   </>
                 )}
@@ -1417,32 +1477,12 @@ export function DesignStoreOpsWorkspace({
               </div>
               </div>
             ) : (
-              <div className={styles.forecastChartSection} data-testid="store-forecast-unavailable">
+              <div className={styles.forecastChartSection} data-testid="store-forecast-unavailable" role="tabpanel" id="store-evidence-panel" aria-labelledby="store-evidence-tab-forecastOps" tabIndex={0}>
                 <h4>28 天門市營運營收預測與異常帶</h4>
                 <p>FORECAST_DATA_UNAVAILABLE · Store Ops API 未提供正式 ForecastOps 序列。</p>
               </div>
             )) : null}
 
-            <div className={styles.evidenceLists}>
-              <section>
-                <h4>支持證據 {supportingEvidence.length}</h4>
-                {supportingEvidence.map((e) => (
-                  <p key={e.id}>{e.title}：{e.summary}</p>
-                ))}
-              </section>
-              <section>
-                <h4>反向證據 {contraryEvidence.length}</h4>
-                {contraryEvidence.map((e) => (
-                  <p key={e.id}>{e.title}：{e.summary}</p>
-                ))}
-                {contraryEvidence.length === 0 && <p style={{ color: "#8794aa", fontStyle: "italic" }}>目前無反向反駁證據</p>}
-              </section>
-            </div>
-
-            <div className={styles.aiBox}>
-              <b>AI 建議</b>
-              {getAiRecommendation(issue)}
-            </div>
           </section>
         </section>
 
@@ -1474,7 +1514,7 @@ export function DesignStoreOpsWorkspace({
             >
               {primaryActionLabel}
             </button>
-            {secondaryActionLabels.map((label) => (
+            {secondaryActionLabels.slice(0, 1).map((label) => (
               <button
                 key={label}
                 className={styles.secondaryAction}
@@ -1485,6 +1525,15 @@ export function DesignStoreOpsWorkspace({
               </button>
             ))}
           </section>
+
+          {secondaryActionLabels.length > 1 ? (
+            <details className={styles.moreActions}>
+              <summary>更多動作</summary>
+              {secondaryActionLabels.slice(1).map((label) => (
+                <button key={label} className={styles.secondaryAction} onClick={() => handleActionClick(label)} type="button">{label}</button>
+              ))}
+            </details>
+          ) : null}
 
           <section>
             <h2>AUDIT TIMELINE <span>全部 →</span></h2>

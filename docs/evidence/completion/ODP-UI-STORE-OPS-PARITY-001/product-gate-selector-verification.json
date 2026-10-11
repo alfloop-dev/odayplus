@@ -1,0 +1,36 @@
+{
+  "task_id": "ODP-UI-STORE-OPS-PARITY-001",
+  "owner": "Pi",
+  "reviewer": "Codex2",
+  "tested_source_sha": "41fab06000858f6bac3f2d88ce205906f00079a7",
+  "failed_ci_source_sha": "cc963ff5459367ec39c92fee749dcbb2459f900a",
+  "failed_ci_job_url": "https://github.com/alfloop-dev/odayplus/actions/runs/37929996581/job/113818211136",
+  "test_file": "tests/e2e/e2e-operator-console.spec.ts",
+  "test_file_sha256": "c56289898531abd4f3b9c45f08469ed05ef268518dcea4803402798822d83c63",
+  "evidence_mode": "local-focused-real-api-fixture-ui",
+  "checks": [
+    {
+      "command": "CI=1 ODP_ENV=e2e ODP_PRODUCT_MODE=poc ODP_E2E_MODE=true ODP_PERSISTENCE=durable ODP_DB_PATH=\"$ORCH_SCRATCH_DIR/product-gate.sqlite3\" ODP_OPERATOR_PRODUCT_GATE=1 OPSBOARD_PORT=3187 ODP_API_PORT=8107 ODP_API_BASE_URL=http://127.0.0.1:8107 npx playwright test tests/e2e/e2e-operator-console.spec.ts --grep ODP-OC-PROD-014 --retries=0",
+      "exit_code": 0,
+      "result": "1 passed; gate enabled; no retries",
+      "log": "product-gate-selector.log"
+    },
+    {
+      "command": "npx playwright test --list",
+      "exit_code": 0,
+      "result": "122 tests in 18 files",
+      "log": "product-gate-inventory.log"
+    },
+    {
+      "command": "python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge",
+      "exit_code": 0,
+      "result": "dev merge gate static checks passed"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "completion_basis": "Original synchronous tool terminal statuses and shell exit codes; no process-name polling or summary wait loop",
+  "boundary": "No UI changes or new screenshots; not a full Docker product E2E run, remote CI success, live deployment, reviewer approval, or production GO. Test bytes were verified before the source-only anchor commit."
+}

@@ -202,7 +202,8 @@ def _segment(start_marker: str, end_marker: str, text: str | None = None) -> str
         text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     start = text.index(start_marker)
     end = text.index(end_marker, start)
-    end = text.index("\n", end) + 1
+    # End markers can span lines (the gate argv plus its closing fi).
+    end = text.index("\n", end + len(end_marker)) + 1
     return text[start:end]
 
 
@@ -213,7 +214,9 @@ API_SEGMENT_MARKERS = (
 # Web candidate deploy -> smoke -> promotion -> public invoker wait -> live E2E gate.
 WEB_SEGMENT_MARKERS = (
     'echo "Deploying immutable Web candidate',
-    '--output "${LIVE_E2E_REPORT}"',
+    # Include the closing branch of the foreground socket / normal gate
+    # conditional, not just the last argv line inside its else branch.
+    '--output "${LIVE_E2E_REPORT}"\nfi',
 )
 
 HARNESS = r"""

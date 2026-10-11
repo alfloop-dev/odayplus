@@ -31,6 +31,21 @@ describe("Package 10 Store Ops parity", () => {
     expect(screen.getByText("TREND · API SNAPSHOT")).toBeInTheDocument();
   });
 
+  it("keeps source tabs in an independent bottom card and exposes metric, timeline and AI CTA", () => {
+    const onOpenWorkflow = vi.fn();
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={onOpenWorkflow} />);
+    const source = screen.getByRole("region", { name: "證據來源明細卡片" });
+    expect(source).toContainElement(screen.getByRole("tablist"));
+    const fusion = screen.getByRole("heading", { name: "證據融合" }).closest("section")!;
+    expect(fusion).not.toContainElement(screen.getByRole("tablist"));
+    expect(screen.getByLabelText("付款失敗率趨勢")).toHaveTextContent("12.4%");
+    expect(screen.getByRole("region", { name: "事件與處置時間軸" })).not.toContainElement(screen.getByRole("tablist"));
+    fireEvent.click(screen.getByRole("button", { name: "採用建議並建立處置" }));
+    expect(onOpenWorkflow).toHaveBeenCalledWith("action", expect.objectContaining({ id: "ISS-1024" }));
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Google 評價" }), { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "客服案件" })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("applies and clears Package 10 quick filters against the Issue queue", async () => {
     render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
 

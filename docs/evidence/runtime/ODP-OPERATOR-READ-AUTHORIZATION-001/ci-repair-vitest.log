@@ -1,0 +1,13 @@
+
+> @oday-plus/web@0.1.0 test
+> vitest run features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx
+
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-operator-read-authorization-001/apps/web
+
+
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+   Start at  05:19:19
+   Duration  3.54s (transform 1.28s, setup 0ms, import 1.90s, tests 422ms, environment 856ms)
+

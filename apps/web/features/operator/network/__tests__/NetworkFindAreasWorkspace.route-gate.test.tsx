@@ -28,6 +28,12 @@ vi.mock("../ListingRadarPanel", () => ({
   },
 }));
 
+vi.mock("../ReviewPanel", () => ({
+  ReviewPanel: ({ canDecide }: { canDecide: boolean }) => (
+    <div data-testid="review-authority" data-can-decide={String(canDecide)} />
+  ),
+}));
+
 function unavailableBinding<T>(): ApiBinding<T> {
   return {
     error: "snapshot unavailable",
@@ -40,6 +46,45 @@ function unavailableBinding<T>(): ApiBinding<T> {
 
 const unavailableCandidates = unavailableBinding<Candidate>();
 const unavailableHeatZones = unavailableBinding<OperatorHeatZone>();
+
+// The canonical envelope (shared/api/errors.py) a guarded read answers with.
+function forbiddenResponse(correlationId: string, resource: string) {
+  const message = `role does not permit view on ${resource}`;
+  return new Response(
+    JSON.stringify({
+      detail: message,
+      error: {
+        code: "forbidden",
+        message,
+        next_action: "Request access for this role or tenant; do not retry as-is.",
+        occurred_at: "2026-10-10T12:17:00.000Z",
+        details: [],
+        correlation_id: correlationId,
+      },
+    }),
+    { status: 403, headers: { "Content-Type": "application/json", "X-Correlation-Id": correlationId } },
+  );
+}
+
+/** Every Network read refused with 403, as the deployed dev answered on 2026-10-10. */
+function stubDeniedNetworkReads() {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const path = String(input);
+    if (path.includes("/network-listings")) return forbiddenResponse("corr-listings-403", "operator_network");
+    if (path.includes("/network-scoring")) return forbiddenResponse("corr-scoring-403", "sitescore");
+    if (path.includes("/network-reviews")) return forbiddenResponse("corr-reviews-403", "sitescore");
+    if (path.includes("/merge-split/proposals")) return forbiddenResponse("corr-proposals-403", "heatzone");
+    if (path.includes("/network-rebalance")) {
+      return new Response(JSON.stringify({ source: "api", stores: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("{}", { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
 
 describe("NetworkFindAreasWorkspace route and gate behavior", () => {
   beforeEach(() => {
@@ -59,6 +104,112 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it("uses the active verified persona for every Network read without false fixture labels", async () => {
+    const view = render(
+      <NetworkFindAreasWorkspace activeRoleId="platform-admin" selectedHeatZoneId="live-zone"
+        liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />,
+    );
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+    const calls = vi.mocked(fetch).mock.calls;
+    expect(calls.map(([url]) => String(url))).toEqual(expect.arrayContaining([
+      expect.stringContaining("network-listings?"), "/api/v1/operator/network-scoring",
+      "/api/v1/operator/network-rebalance", "/api/v1/operator/network-reviews",
+    ]));
+    for (const [, init] of calls) {
+      expect(init?.headers).toMatchObject({ "X-Operator-Role": "platform-admin" });
+      expect(init?.headers).not.toHaveProperty("X-Roles");
+    }
+    expect(screen.queryByLabelText("Data source: fixtures")).toBeNull();
+    expect(screen.queryByText("fixture data")).toBeNull();
+    vi.mocked(fetch).mockClear();
+    view.rerender(
+      <NetworkFindAreasWorkspace activeRoleId="pm-audit" selectedHeatZoneId="live-zone"
+        liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />,
+    );
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+    for (const [, init] of vi.mocked(fetch).mock.calls) {
+      expect(init?.headers).toMatchObject({ "X-Operator-Role": "pm-audit" });
+    }
+  });
+
+  it.each([
+    ["expansion-manager", "true"],
+    ["ops-lead", "false"],
+    ["pm-audit", "false"],
+    ["platform-admin", "false"],
+  ] as const)("presents review authority for %s without impersonation", (roleId, canDecide) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    navigation.search = "ws=network&tab=review";
+    render(<NetworkFindAreasWorkspace activeRoleId={roleId} initialTabId="review" />);
+    expect(screen.getByTestId("review-authority")).toHaveAttribute("data-can-decide", canDecide);
+  });
+
+  it.each([
+    ["overview", "network-panel-find-areas", "corr-listings-403"],
+    ["candidates", "network-panel-candidates", "corr-scoring-403"],
+    ["sitescore", "network-panel-sitescore", "corr-scoring-403"],
+    ["review", "review-authority", "corr-reviews-403"],
+    ["merge-split", "heatzone-merge-split-panel", "corr-proposals-403"],
+  ])("presents a received 403 on the %s tab as an authenticated denial", async (tab, panelTestId, correlationId) => {
+    stubDeniedNetworkReads();
+    navigation.search = `ws=network&tab=${tab}`;
+    render(
+      <NetworkFindAreasWorkspace activeRoleId="platform-admin"
+        liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />,
+    );
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "forbidden"));
+    expect(gate).toHaveAttribute("data-status", "error");
+    expect(gate).toHaveTextContent("沒有權限");
+    expect(gate).not.toHaveTextContent("連線失敗");
+    expect(gate).not.toHaveTextContent("無法連到營運資料服務");
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent(correlationId);
+    expect(gate).toHaveTextContent("403");
+    // The refused collection is never rendered as an empty authorized panel.
+    expect(screen.queryByTestId(panelTestId)).toBeNull();
+  });
+
+  it("hands a refused listings read to Listing Radar instead of an empty listing collection", async () => {
+    stubDeniedNetworkReads();
+    render(
+      <NetworkFindAreasWorkspace activeRoleId="platform-admin"
+        liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />,
+    );
+
+    await waitFor(() =>
+      expect(radarProps.calls.at(-1)?.listingsReadFailure).toMatchObject({
+        correlationId: "corr-listings-403",
+        httpStatus: 403,
+        kind: "forbidden",
+      }),
+    );
+    expect(radarProps.calls.at(-1)?.listings).toEqual([]);
+  });
+
+  it("does not manufacture zero counts for collections that were refused", async () => {
+    const fetchMock = stubDeniedNetworkReads();
+    navigation.search = "ws=network&tab=overview";
+    render(
+      <NetworkFindAreasWorkspace activeRoleId="platform-admin"
+        liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />,
+    );
+
+    const state = screen.getByLabelText("展店與店網摘要");
+    await waitFor(() => expect(state).toHaveTextContent("今日新物件（未授權）"));
+    for (const label of ["今日新物件", "進行中候選", "待審 Review"]) {
+      expect(state).toHaveTextContent(`— ${label}（未授權）`);
+      expect(state).not.toHaveTextContent(`0 ${label}`);
+    }
+    // Rebalance really answered 200 with no stores: that zero is authoritative.
+    await waitFor(() => expect(state).toHaveTextContent("0 重配候選"));
+    // Presentation only: nothing was written and no grant was requested.
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init?.method ?? "GET").toBe("GET");
+    }
+    expect(fetchMock.mock.calls.every(([url]) => !/\/(users|roles)\b/.test(String(url)))).toBe(true);
   });
 
   it("cold-opens Radar even when every unrelated Network snapshot is unavailable", async () => {

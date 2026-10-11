@@ -50,6 +50,19 @@ from typing import Any, Protocol
 from uuid import UUID
 
 ROOT = Path(__file__).resolve().parents[2]
+# Keep the canonical gate usable as a direct script as well as a library.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from shared.identity.invitation_provenance import (
+    canonical_uuid as _canonical_uuid,
+)
+from shared.identity.invitation_provenance import (
+    identity_snapshot as _identity_snapshot,
+)
+from shared.identity.invitation_provenance import (
+    invitation_provenance as _invitation_provenance,
+)
+
 DEFAULT_OUTPUT = ROOT / ".odp_data" / "live-e2e-gate" / "live-e2e-gate-report.json"
 LIVE_DATA_GATE = ROOT / "delivery_toolchain" / "e2e" / "check_live_production_data.py"
 # ODP-BUSINESS-LIVE-E2E-COVERAGE-001: the six real business journeys whose
@@ -369,8 +382,13 @@ class GateConfig:
     # dev-admin only: the bootstrap-created pure platform_admin account the gate
     # signs in as through the Web password form. Never written to the report.
     dev_admin_username: str = ""
-    dev_admin_password: str = ""
-    dev_admin_initial_password: str = ""
+    dev_admin_password: str = field(default="", repr=False)
+    dev_admin_initial_password: str = field(default="", repr=False)
+    # Non-secret expectations from a strictly parsed matched bundle. The gate
+    # binds these to authoritative reads; they confer no permissions/provenance.
+    dev_admin_bundle_account_id: str = ""
+    dev_admin_bundle_tenant_id: str = ""
+    dev_admin_bundle_execution_id: str = ""
     dev_admin_denied_role: str = ""
     bootstrap_admin_username: str = ""
     bootstrap_admin_password: str = ""
@@ -1672,13 +1690,6 @@ def _cookie_header(cookies: Mapping[str, str]) -> str:
     return "; ".join(f"{name}={value}" for name, value in sorted(cookies.items()) if value)
 
 
-def _canonical_uuid(value: Any) -> str | None:
-    try:
-        return str(UUID(str(value)))
-    except (TypeError, ValueError):
-        return None
-
-
 def _foreign_tenant_for(own_tenant: str) -> str:
     """A valid tenant UUID guaranteed to differ from the admin's own tenant."""
     if own_tenant != FOREIGN_TENANT_PROBE_ID:
@@ -1686,37 +1697,35 @@ def _foreign_tenant_for(own_tenant: str) -> str:
     return str(UUID(int=UUID(own_tenant).int ^ 1))
 
 
-def _identity_snapshot(record: Mapping[str, Any]) -> dict[str, Any] | None:
-    """The identity facts a refused tenant move must leave untouched.
+def _read_admin_roles(roles: Any) -> bool:
+    """Accept only explicit finite read grants, pinned against canonical RBAC.
 
-    Returns ``None`` when any of them is absent, so a readback that drops a
-    field is treated as changed rather than silently compared as missing.
+    Auditor's existing audit export is retained; no new export or mutating
+    business privilege is admitted. Future RBAC expansion fails closed here.
     """
-    subject_id = record.get("subject_id")
-    username = record.get("username")
-    roles = record.get("roles")
-    status = record.get("status")
-    scope = record.get("scope")
-    if not (
-        isinstance(subject_id, str)
-        and subject_id
-        and isinstance(username, str)
-        and username
-        and isinstance(roles, list)
-        and roles
-        and isinstance(status, str)
-        and status
-        and isinstance(scope, dict)
-        and _canonical_uuid(scope.get("tenant_id")) is not None
-    ):
-        return None
-    return {
-        "subject_id": subject_id,
-        "username": username,
-        "roles": sorted(str(r) for r in roles),
-        "status": status,
-        "scope": json.loads(json.dumps(scope, sort_keys=True)),
+    if not isinstance(roles, list) or not all(isinstance(r, str) for r in roles):
+        return False
+    if len(set(roles)) != len(roles) or "platform_admin" not in roles:
+        return False
+    expected = {
+        "platform_admin": {(r, a) for r in ("user", "role", "feature_flag")
+                           for a in ("view", "create", "update", "delete")},
+        "auditor": {(r, "view") for r in ("operator_console", "avm", "listing", "audit",
+                                          "model", "decision", "data_quality")} | {("audit", "export")},
+        "operator_viewer": {(r, "view") for r in ("operator_console", "operator_network")},
     }
+    if not set(roles) <= expected.keys() or not set(roles) & {"auditor", "operator_viewer"}:
+        return False
+    # The gate also runs as a standalone script, outside a package invocation.
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from shared.auth.identity import Role
+    from shared.auth.rbac import ROLE_PERMISSIONS
+
+    return all(
+        {(p.resource, p.action.value) for p in ROLE_PERMISSIONS.get(Role(role), ())} == expected[role]
+        for role in roles
+    )
 
 
 def _payload_mentions(response: HttpResponse, code: str) -> bool:
@@ -1748,12 +1757,14 @@ def _check_dev_admin_session(
     3. password sign-in (or initial secret sign-in + first-password rotation if fresh);
     4. the session resolves to that account;
     5. GET /api/v1/operator/users is served from the identity schema, lists the
-       account itself with exactly platform_admin, active;
+       active pure admin or explicitly read-enabled admin; the latter must bind
+       to /auth/principal and an audited finite canonical read-role grant;
     6. the user audit trail carries the identity.account.bootstrap event;
     7. moving the account itself to a valid foreign tenant UUID is refused by the
        identity tenant policy (422) and the readback account, tenant, full scope,
        roles and status are unchanged;
-    8. the business operator shell is refused (platform_admin holds no business read);
+    8. pure-admin business reads are refused; explicit read-enabled admins must
+       successfully read scoped live data and be refused business mutations;
     9. an Operator Console role outside grants is refused (wrong-role probe);
     10. GET /operator?view=admin is served as an authenticated Web page;
     11. sign-out succeeds and the revoked cookie is refused by Web and API.
@@ -2022,7 +2033,12 @@ def _check_dev_admin_session(
         if u.get("username") == username
         or _as_dict(u.get("attributes")).get("username") == username
     ]
-    own_record = own[0] if own else {}
+    own_record = own[0] if len(own) == 1 else {}
+    read_admin = (
+        _read_admin_roles(own_record.get("roles"))
+        and own_record.get("status") == "active"
+        and _as_dict(own_record.get("attributes")).get("identity_source") == "identity.accounts"
+    )
     pure_admin = (
         sorted(str(r) for r in own_record.get("roles") or []) == ["platform_admin"]
         and own_record.get("status") == "active"
@@ -2030,7 +2046,7 @@ def _check_dev_admin_session(
     )
     _check(
         checks,
-        (not users.failed) and users.status == 200 and pure_admin,
+        (not users.failed) and users.status == 200 and (pure_admin or read_admin),
         "admin:identity_user_list",
         (
             (
@@ -2051,8 +2067,43 @@ def _check_dev_admin_session(
         _dependency_for(users, "auth"),
     )
     operations.append("identity_user_list")
+    report["dev_admin"]["account_mode"] = "read-enabled-admin" if read_admin else "pure-admin"
+    if users.failed or users.status != 200 or not (pure_admin or read_admin):
+        return
+    if config.dev_admin_bundle_account_id:
+        matched = (pure_admin and own_record.get("subject_id") == config.dev_admin_bundle_account_id
+                   and _as_dict(own_record.get("scope")).get("tenant_id") == config.dev_admin_bundle_tenant_id)
+        _check(checks, matched, "admin:credential_bundle_account_bound",
+               f"authoritativeMatchedPairAccount={matched}", "auth")
+        if not matched:
+            return
+    if read_admin:
+        principal = web.request(
+            "GET", "/api/v1/auth/principal", authenticated=False, headers=session_headers(cookies)
+        )
+        snapshot = _identity_snapshot(own_record)
+        bound = (
+            not principal.failed and principal.status == 200 and snapshot is not None
+            and _canonical_uuid(snapshot["subject_id"]) is not None
+            and principal.payload.get("account_id") == snapshot["subject_id"]
+            and principal.payload.get("tenant_id") == snapshot["scope"]["tenant_id"]
+            and _read_admin_roles(principal.payload.get("roles"))
+            and sorted(principal.payload["roles"]) == snapshot["roles"]
+            and not current.failed and current.status == 200
+            and current.payload.get("subject") == snapshot["username"]
+        )
+        _check(checks, bound, "admin:read_principal_bound",
+               f"status={principal.status} accountTenantRolesBound={bound}", "auth")
+        if not bound:
+            return
+        report["dev_admin"]["read_account_binding"] = {
+            "account_id": snapshot["subject_id"],
+            "tenant_id": snapshot["scope"]["tenant_id"],
+            "roles": snapshot["roles"],
+            "canonical_finite_grants_verified": True,
+        }
 
-    # 6. User audit trail carries identity.account.bootstrap event.
+    # 6. Genuine bootstrap OR a strict invitation issue/accept lifecycle.
     trail = web.request(
         "GET",
         "/api/v1/operator/users/audit-trail",
@@ -2061,6 +2112,19 @@ def _check_dev_admin_session(
     )
     events = trail.payload.get("events") if not trail.failed else None
     events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
+    if config.dev_admin_bundle_account_id:
+        from delivery_toolchain.release.provision_dev_smoke import (
+            DevCredentialBundle,
+            credential_bundle_acknowledged,
+        )
+        acknowledged = credential_bundle_acknowledged(DevCredentialBundle(
+            username, "", config.dev_admin_bundle_account_id, config.dev_admin_bundle_tenant_id,
+            config.dev_admin_bundle_execution_id,
+        ), events)
+        _check(checks, acknowledged, "admin:credential_bundle_durable_acknowledgement",
+               f"reservedIntentAcknowledgementWithoutQuarantine={acknowledged}", "audit")
+        if not acknowledged:
+            return
     bootstrap_events = [
         e
         for e in events
@@ -2068,18 +2132,69 @@ def _check_dev_admin_session(
         and own_record
         and _as_dict(e.get("metadata")).get("account_id") == own_record.get("subject_id")
     ]
-    _check(
-        checks,
-        (not trail.failed) and trail.status == 200 and bool(bootstrap_events),
-        "admin:bootstrap_audited",
-        (
-            _failure_detail(trail, expected="200")
-            if trail.failed or trail.status != 200
-            else f"status=200 identityEvents={len(events)} bootstrapEvents={len(bootstrap_events)}"
-        ),
-        "audit",
+    invited = any(
+        e.get("event_type") == "identity.account.accept"
+        and (e.get("actor") == own_record.get("subject_id")
+             or _as_dict(e.get("metadata")).get("account_id") == own_record.get("subject_id"))
+        for e in events
     )
-    operations.append("bootstrap_audit_readback")
+    if config.dev_admin_bundle_account_id and not invited:
+        _check(checks, False, "admin:credential_bundle_invitation_required",
+               "matched bundle requires genuine invitation provenance", "audit")
+        return
+    if invited:
+        provenance = _invitation_provenance(own_record, events)
+        audited = not trail.failed and trail.status == 200 and provenance is not None
+        _check(checks, audited, "admin:invitation_audited",
+               f"status={trail.status} uniqueTenantBoundIssueAccept={audited}", "audit")
+        operations.append("invitation_audit_readback")
+        if not audited:
+            return
+        # Even a pure invited administrator must bind the cookie's subject to
+        # the API's server-verified account, tenant and exact finite role set.
+        principal = web.request(
+            "GET", "/api/v1/auth/principal", authenticated=False, headers=session_headers(cookies)
+        )
+        bound = (
+            not principal.failed and principal.status == 200
+            and principal.payload.get("account_id") == own_record["subject_id"]
+            and principal.payload.get("tenant_id") == own_record["scope"]["tenant_id"]
+            and principal.payload.get("roles") == ["platform_admin"]
+            and not current.failed and current.status == 200 and current.payload.get("subject") == username
+        )
+        _check(checks, bound, "admin:invitation_principal_bound",
+               f"status={principal.status} accountTenantRolesBound={bound}", "auth")
+        if not bound:
+            return
+        report["dev_admin"]["identity_provenance"] = {"mode": "invitation", **provenance}
+    else:
+        _check(
+            checks,
+            (not trail.failed) and trail.status == 200 and bool(bootstrap_events),
+            "admin:bootstrap_audited",
+            (
+                _failure_detail(trail, expected="200")
+                if trail.failed or trail.status != 200
+                else f"status=200 identityEvents={len(events)} bootstrapEvents={len(bootstrap_events)}"
+            ),
+            "audit",
+        )
+        operations.append("bootstrap_audit_readback")
+    if read_admin:
+        grant_events = [
+            e for e in events
+            if e.get("event_type") == "identity.account.roles_updated"
+            and _as_dict(e.get("metadata")).get("account_id") == own_record["subject_id"]
+            and _as_dict(e.get("metadata")).get("roles_after") == sorted(own_record["roles"])
+            and _as_dict(e.get("metadata")).get("scope_after") == own_record["scope"]
+            and _as_dict(e.get("metadata")).get("tenant_id") == own_record["scope"]["tenant_id"]
+            and _as_dict(e.get("metadata")).get("status") == "active"
+        ]
+        audited = not trail.failed and trail.status == 200 and bool(grant_events)
+        _check(checks, audited, "admin:read_grant_audited",
+               f"status={trail.status} matchingExplicitGrants={len(grant_events)}", "audit")
+        if not audited:
+            return
 
     # 7. Tenant isolation: moving the admin's own account to a valid foreign
     #    tenant is refused by the identity tenant policy, and the account reads
@@ -2179,14 +2294,47 @@ def _check_dev_admin_session(
     business = web.request(
         "GET", "/api/v1/operator/bootstrap", authenticated=False, headers=session_headers(cookies)
     )
-    _check(
-        checks,
-        (not business.failed) and business.status == 403,
-        "admin:business_shell_denied",
-        _failure_detail(business, expected="403 (platform_admin holds no business read)"),
-        "auth",
-    )
-    operations.append("business_shell_denied")
+    if read_admin:
+        markers = find_surrogate_values(business.payload)
+        served = (not business.failed and business.status == 200
+                  and _declared_data_mode(business.payload) == "live"
+                  and bool(_operator_source(business.payload)) and not markers)
+        _check(checks, served, "admin:scoped_business_read",
+               f"status={business.status} liveOriginVerified={served}", "data-binding")
+        detail = web.request(
+            "GET", f"/api/v1/operator/users/{own_snapshot['subject_id']}",
+            authenticated=False, headers=session_headers(cookies),
+        )
+        _check(checks, not detail.failed and detail.status == 200
+               and _identity_snapshot(detail.payload) == own_snapshot,
+               "admin:scoped_account_read", f"status={detail.status}", "tenant-isolation")
+        # Each probe deliberately violates a typed DTO field, so validation
+        # stops before the handler even if its authorization guard regresses.
+        # In particular, {} is VALID for batch scoring and can score all sites.
+        # A non-existent id alone is not a safety boundary. Only 403 passes;
+        # validation 422 must block the gate, never count as authorization proof.
+        for label, path, invalid_body in (
+            ("write", "network-listings/intake/submit", {"url": {}}),
+            ("approve", "network-reviews/live-gate-no-such-review/decide", {"decision": {}}),
+            ("execute", "network-scoring/score", {"candidateIds": {}}),
+            ("publish", "governance/decisions", {"approvalId": {}, "action": {}}),
+        ):
+            refused = web.request(
+                "POST", f"/api/v1/operator/{path}", body=invalid_body, authenticated=False,
+                headers=session_headers(cookies, origin=origin), follow_redirects=False,
+            )
+            _check(checks, not refused.failed and refused.status == 403,
+                   f"admin:business_{label}_denied", _failure_detail(refused, expected="403"), "auth")
+        operations.append("scoped_read_and_business_mutations_denied")
+    else:
+        _check(
+            checks,
+            (not business.failed) and business.status == 403,
+            "admin:business_shell_denied",
+            _failure_detail(business, expected="403 (platform_admin holds no business read)"),
+            "auth",
+        )
+        operations.append("business_shell_denied")
 
     # 9. RBAC wrong-role probe:
     denied_role = config.dev_admin_denied_role or "cs-lead"
@@ -3198,6 +3346,21 @@ def _required_providers(args: argparse.Namespace) -> tuple[str, ...]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
+
+    try:
+        bundle = read_dev_credential_bundle(
+            os.environ.get("ODP_DEV_ADMIN_CREDENTIAL_BUNDLE", ""),
+            environment=args.expected_deployment.strip().lower(),
+            release_profile=str(args.release_profile or "").strip().lower(),
+        )
+    except ProvisioningRefused:
+        # No raw JSON/password, diagnostics, fallback or network on parse failure.
+        print("Live E2E gate refused: PROVISIONING_CREDENTIAL_BUNDLE_INVALID", file=sys.stderr)
+        return 2
     config = GateConfig(
         api_url=args.api_url.strip(),
         expected_sha=args.expected_sha.strip().lower(),
@@ -3219,13 +3382,16 @@ def main(argv: list[str] | None = None) -> int:
         # The six-journey receipt is bound to this admitted manifest digest;
         # without it full acceptance can never be claimed (fail closed).
         expected_manifest_digest=str(args.expected_manifest_digest or "").strip().lower(),
-        dev_admin_username=os.environ.get(DEV_ADMIN_USERNAME_ENV, "").strip() or os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
-        # Not stripped: a password is exactly what the operator set.
-        dev_admin_password=os.environ.get(DEV_ADMIN_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
-        dev_admin_initial_password=os.environ.get(DEV_ADMIN_INITIAL_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_SECRET_ENV, ""),
+        dev_admin_username=bundle.username if bundle else (os.environ.get(DEV_ADMIN_USERNAME_ENV, "").strip() or os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip()),
+        # No stripping and NO per-field fallback when a matched bundle is present.
+        dev_admin_password=bundle.password if bundle else (os.environ.get(DEV_ADMIN_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, "")),
+        dev_admin_initial_password="" if bundle else (os.environ.get(DEV_ADMIN_INITIAL_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_SECRET_ENV, "")),
+        dev_admin_bundle_account_id=bundle.account_id if bundle else "",
+        dev_admin_bundle_tenant_id=bundle.tenant_id if bundle else "",
+        dev_admin_bundle_execution_id=bundle.execution_id if bundle else "",
         dev_admin_denied_role=os.environ.get(DEV_ADMIN_DENIED_ROLE_ENV, "").strip() or "cs-lead",
-        bootstrap_admin_username=os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
-        bootstrap_admin_password=os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
+        bootstrap_admin_username="" if bundle else os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
+        bootstrap_admin_password="" if bundle else os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
     )
     correlation_id = f"corr-live-e2e-{config.expected_sha[:12] or 'unbound'}-{int(time.time())}"
 

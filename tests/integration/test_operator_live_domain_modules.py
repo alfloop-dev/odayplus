@@ -28,7 +28,10 @@ from shared.infrastructure.persistence import (
 )
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.factory import _durable_bundle
-from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+from shared.infrastructure.persistence.operator_domains import (
+    DurableOperatorDomainStateRepository,
+    TenantScopedDocumentStore,
+)
 from shared.infrastructure.persistence.repositories import DurableDecisionStore
 
 BASE = "/api/v1/operator"
@@ -1101,6 +1104,48 @@ def test_live_governance_write_and_idempotency_survive_restart(
         assert replay.json()["idempotentReplay"] is True
     finally:
         reopened_bundle.engine.close()
+
+
+@pytest.mark.parametrize(("header", "axis", "allowed"), [
+    ("x-heat-zone-ids", "heatZoneId", "ZONE-A"),
+    ("x-brand-ids", "brandId", "BRAND-A"),
+    ("x-region-ids", "regionId", "NORTH"),
+    ("x-store-ids", "storeId", "STORE-A"),
+])
+def test_live_network_viewer_scope_is_projected_after_tenant_resolution(tmp_path, header, axis, allowed):
+    app, bundle = _live_app(tmp_path / "read-scope.sqlite")
+    store = SqliteDocumentStore(bundle.engine)
+    state_repository = DurableOperatorDomainStateRepository(store, "network-listings")
+    state_repository.save("tenant-a", {
+        "heatZones": [{"id": "ZONE-A", "label": "A"}, {"id": "ZONE-B", "label": "B"}],
+        "listings": [
+            {"id": "LISTING-A", "tenantId": "tenant-a", "heatZoneId": "ZONE-A", axis: allowed},
+            {"id": "LISTING-B", "tenantId": "tenant-a", "heatZoneId": "ZONE-B", axis: "excluded"},
+        ],
+        "candidates": [
+            {"id": "CANDIDATE-A", "listingId": "LISTING-A"},
+            {"id": "CANDIDATE-B", "listingId": "LISTING-B", "tenantId": "tenant-a"},
+        ],
+        "siteReviews": [{"id": "REVIEW-A", "candidateId": "CANDIDATE-A"},
+                        {"id": "REVIEW-B", "candidateId": "CANDIDATE-B"}],
+        "assistedIntakes": [], "listingSources": [], "auditEvents": [],
+    })
+    headers = {"x-subject-id": "reader", "x-roles": "platform_admin,operator_viewer",
+               "x-operator-role": "pm-audit", "x-tenant-id": "tenant-a", header: allowed}
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"{BASE}/network-listings", headers=headers)
+            assert response.status_code == 200, response.text
+            snap = response.json()
+            assert [row["id"] for row in snap["listings"]] == ["LISTING-A"]
+            assert [row["id"] for row in snap["candidates"]] == ["CANDIDATE-A"]
+            assert [row["id"] for row in snap["siteReviews"]] == ["REVIEW-A"]
+            assert snap["counts"]["listings"] == 1
+            assert "LISTING-B" not in response.text and "CANDIDATE-B" not in response.text
+            foreign = client.get(f"{BASE}/network-listings", headers={**headers, "x-tenant-id": "tenant-b"})
+            assert foreign.status_code == 200 and foreign.json()["listings"] == []
+    finally:
+        bundle.engine.close()
 
 
 def test_tenant_scoped_document_store_never_queries_unpartitioned_collections() -> None:

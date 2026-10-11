@@ -15,6 +15,12 @@ Auth: write endpoints require the intervention guards passed from operator.py
 surface).  Idempotency-Key is handled by the service; X-Correlation-Id is read
 from request.state.correlation_id.
 
+The snapshot also carries ``actionAuthority``: what the authenticated principal
+the read guard verified may do here, derived from its durable platform roles
+with the same RBAC table the write guards use.  It is presentation evidence
+only, so the console stops treating a selected workspace persona as decision
+authority; it grants nothing, and every write is still decided by its guard.
+
 Composes with: create_operator_router() in operator.py.  Owned layer: the
 Govern workspace API only — it does not redefine approvals/evidence routes.
 """
@@ -34,6 +40,30 @@ from modules.opsboard.application.governance import (
     GovernancePolicyError,
     GovernanceService,
 )
+from shared.auth import Action, Principal, rbac_allows
+
+# The resource/action pairs the operator.py write guards demand for
+# POST /decisions and POST /evidence-package.
+DECISION_PERMISSION = ("intervention", Action.APPROVE)
+EVIDENCE_EXPORT_PERMISSION = ("intervention", Action.CREATE)
+
+
+def action_authority(request: Request) -> dict[str, Any]:
+    """Server-verified action authority of the principal behind this read.
+
+    ``verified`` is false when no guard resolved a principal (unguarded test
+    wiring); the console then treats every business action as unconfirmed.
+    """
+
+    principal = getattr(request.state, "operator_principal", None)
+    if not isinstance(principal, Principal) or not principal.authenticated:
+        return {"verified": False, "systemRoles": [], "decide": False, "exportEvidence": False}
+    return {
+        "verified": True,
+        "systemRoles": sorted(role.value for role in principal.roles),
+        "decide": rbac_allows(principal, *DECISION_PERMISSION),
+        "exportEvidence": rbac_allows(principal, *EVIDENCE_EXPORT_PERMISSION),
+    }
 
 # ---------------------------------------------------------------------------
 # Request DTOs
@@ -118,10 +148,11 @@ def create_governance_sub_router(
         request: Request,
         x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
     ) -> dict[str, Any]:
-        return resolve_service(request, service, service_resolver).snapshot(
+        snapshot = resolve_service(request, service, service_resolver).snapshot(
             role_id=getattr(request.state, "operator_role_id", None) or x_operator_role,
             correlation_id=request.state.correlation_id,
         )
+        return {**snapshot, "actionAuthority": action_authority(request)}
 
     @router.get("/evidence-packages", dependencies=read_deps)
     def list_evidence_packages(request: Request) -> dict[str, Any]:

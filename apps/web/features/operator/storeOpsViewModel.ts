@@ -86,17 +86,17 @@ export const STORE_OPS_EVIDENCE_TABS: StoreOpsEvidenceTab[] = [
 ];
 
 export const STORE_OPS_STATUS_LABELS: Record<IssueStatus, string> = {
-  new: "New",
-  triaged: "Triaged",
-  assigned: "Assigned",
-  inprogress: "In progress",
-  executed: "Executed",
-  observing: "Observing",
-  outcomeready: "Outcome ready",
-  closed: "Closed",
-  waitingevidence: "Waiting evidence",
-  waitingapproval: "Waiting approval",
-  escalated: "Escalated",
+  new: "新進",
+  triaged: "已分類",
+  assigned: "已指派",
+  inprogress: "處置中",
+  executed: "已執行",
+  observing: "觀察中",
+  outcomeready: "成效待判斷",
+  closed: "已結案",
+  waitingevidence: "待補證據",
+  waitingapproval: "待核准",
+  escalated: "已升級",
 };
 
 export const STORE_OPS_SOURCE_LABELS: Record<StoreOpsSource, string> = {
@@ -111,10 +111,10 @@ export const STORE_OPS_SOURCE_LABELS: Record<StoreOpsSource, string> = {
 };
 
 export const STORE_OPS_SEVERITY_LABELS: Record<Severity, string> = {
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  critical: "Critical",
+  low: "低",
+  medium: "中",
+  high: "高",
+  critical: "嚴重",
 };
 
 export const STORE_OPS_LIGHT_LABELS: Record<keyof Store["lights"], string> = {
@@ -357,19 +357,19 @@ export function getTrendPoints(issue: Issue | undefined, evidence: EvidenceItem[
 }
 
 export function getAiRecommendation(issue: Issue | undefined): string {
-  if (!issue) return "No issue selected.";
+  if (!issue) return "尚未選擇事件。";
 
   switch (issue.status) {
     case "new":
-      return "Complete triage, record camera purpose if needed, then assign field owner before the SLA window.";
+      return "完成根因分類，必要時記錄影像調閱目的，並在期限內指派現場負責人。";
     case "waitingapproval":
-      return "Review approval dependency and keep field action staged until the required approver decides.";
+      return "確認核准依賴；核准者決策前，保留現場處置並暫緩執行。";
     case "observing":
-      return "Keep the issue in observation through the next demand window and compare CS trend before outcome review.";
+      return "持續觀察至下一個需求時段，比較客服趨勢後再判斷成效。";
     case "closed":
-      return "Issue is closed. Retain audit evidence and reopen only if a fresh signal crosses threshold.";
+      return "事件已結案，保留稽核證據；新訊號超過閾值時才重新開啟審查。";
     default:
-      return "Continue lifecycle action based on the current owner, evidence strength, and SLA pressure.";
+      return "依目前負責人、證據強度與期限壓力，繼續下一步處置。";
   }
 }
 
@@ -380,39 +380,39 @@ export function getPrimaryActionLabel(issue: Issue | undefined): string {
     case "new":
       return "完成 Triage";
     case "triaged":
-      return "指派 Owner";
+      return "指派負責人";
     case "assigned":
-      return "建立 Field Action";
+      return "建立處置";
     case "inprogress":
-      return "提交 Field Report";
+      return "提交現場回報";
     case "executed":
-      return "開始 Observation";
+      return "開始觀察";
     case "observing":
-      return "檢視 Outcome";
+      return "判斷成效";
     case "outcomeready":
-      return "關閉 Issue";
+      return "成效結案審查";
     case "waitingapproval":
-      return "查看 Approval";
+      return "查看核准";
     case "waitingevidence":
-      return "Request Evidence";
+      return "要求補證據";
     case "escalated":
       return "升級處理";
     case "closed":
-      return "Reopen Review";
+      return "重新開啟審查";
     default:
-      return "Update Issue";
+      return "更新事件";
   }
 }
 
 export function getSecondaryActionLabels(issue: Issue | undefined): string[] {
   if (!issue) return [];
 
-  const shared = ["Assign owner", "Create action", "Add audit note"];
-  if (issue.status === "new") return ["Reply review", "Request camera purpose", ...shared];
-  if (issue.status === "waitingapproval") return ["Open approval", "Escalate", "Add audit note"];
-  if (issue.status === "observing") return ["Open field report", "Outcome review", "Transfer"];
-  if (issue.status === "closed") return ["View packet", "Export audit"];
-  return [...shared, "Escalate"];
+  const shared = ["指派負責人", "建立處置", "新增稽核備註"];
+  if (issue.status === "new") return ["回覆審查", "填寫影像調閱目的", ...shared];
+  if (issue.status === "waitingapproval") return ["查看核准", "升級處理", "新增稽核備註"];
+  if (issue.status === "observing") return ["檢視現場回報", "判斷成效", "轉交事件"];
+  if (issue.status === "closed") return ["檢視稽核資料", "匯出稽核資料"];
+  return [...shared, "升級處理"];
 }
 
 export function getRelatedItems(issue: Issue | undefined): StoreOpsRelatedItem[] {

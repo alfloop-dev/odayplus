@@ -671,7 +671,12 @@ class _ReachableProbeEngine:
     is_production = True
     dialect = "postgresql"
 
-    def query(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+    def query(self, sql: str, *_args: Any, **_kwargs: Any) -> list[Any]:
+        if sql == "PRAGMA table_info(durable_audit_events)":
+            return [{"name": name} for name in (
+                "sequence", "previous_hash", "event_hash", "signature_key_id",
+                "signature_version", "signature_alg", "worm_sink_id",
+            )]
         return []
 
     def query_one(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
@@ -684,7 +689,9 @@ class _UnreachableProbeEngine:
     is_production = True
     dialect = "postgresql"
 
-    def query(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+    def query(self, sql: str, *_args: Any, **_kwargs: Any) -> list[Any]:
+        if sql == "PRAGMA table_info(durable_audit_events)":
+            return _ReachableProbeEngine().query(sql)
         raise ConnectionError("preflight probe: database unreachable")
 
     def query_one(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
@@ -752,10 +759,16 @@ def _production_like_bundle(persistence_module: Any, engine: Any) -> Any:
     intake_module = importlib.import_module(
         "shared.infrastructure.persistence.assisted_listing_intake"
     )
+    audit_module = importlib.import_module(
+        "shared.infrastructure.persistence.audit_log"
+    )
+    # Offline composition only: construct the actual same-engine audit adapter
+    # from declared schema metadata. No audit write or live readiness is proven.
     return replace(
         persistence_module._memory_bundle(),
         mode="postgresql",
         engine=engine,
+        audit_log=audit_module.DurableAuditLog(engine),
         assisted_intake_store=intake_module.DurableAssistedIntakeStore(
             SimpleNamespace(engine=engine)
         ),

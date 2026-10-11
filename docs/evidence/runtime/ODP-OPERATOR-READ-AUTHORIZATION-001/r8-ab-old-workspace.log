@@ -1,0 +1,27 @@
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-operator-read-authorization-001/apps/web
+
+ ❯ features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx (3 tests | 1 failed | 2 skipped) 5049ms
+     × keeps authorized listing rows in Listing Radar when HeatZone aggregates are withheld 5043ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx > Network Find Areas in the production Operator Console composition > keeps authorized listing rows in Listing Radar when HeatZone aggregates are withheld
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx:210:3
+    208|   });
+    209|
+    210|   it("keeps authorized listing rows in Listing Radar when HeatZone agg…
+       |   ^
+    211|     const { networkListingUrls } = stubProductionFetch(zonesWithheldSn…
+    212|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 skipped (3)
+   Start at  12:26:22
+   Duration  10.12s (transform 3.38s, setup 0ms, import 4.12s, tests 5.05s, environment 635ms)
+

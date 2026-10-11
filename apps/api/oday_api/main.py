@@ -2149,6 +2149,19 @@ else:
                 engine=bundle_engine, audit_log=audit_log
             )
 
+        from apps.api.app.routes.identity_invitations import create_invitation_acceptance_router
+
+        # Capability consumption is NOT public registration or login: it only
+        # consumes an authenticated admin's hashed, expiring single-use invite.
+        # No memory/document fallback; same PG engine and atomic audit channel.
+        mount_versioned(
+            api,
+            create_invitation_acceptance_router(
+                identity_user_role_service.invitation_service
+                if identity_user_role_service is not None else None
+            ),
+        )
+
         mount_versioned(
             api,
             create_operator_router(

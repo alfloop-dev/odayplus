@@ -1,0 +1,20 @@
+# A/B: rbac.py reverted to b968c303 in tmp copy; new tests run; terminal exit 1 (expected)
+E           AssertionError: ('/api/v1/sitescore/realized', '{"items":[],"count":0}')
+E           AssertionError: ('/api/v1/sitescore/realized', '{"items":[],"count":0}')
+E           AssertionError: ('/api/v1/sitescore/realized', '{"items":[],"count":0}')
+E           AssertionError: ('/api/v1/sitescore/realized', '{"items":[],"count":0}')
+E         Left contains 18 more items, first extra item: '/api/v1/heatzones'
+FAILED tests/security/test_operator_read_authorization.py::test_viewer_is_finite_view_only_and_composes_with_admin
+FAILED tests/security/test_operator_read_authorization.py::test_viewer_object_tenant_evidence_required_and_audited[None]
+FAILED tests/security/test_operator_read_authorization.py::test_viewer_object_tenant_evidence_required_and_audited[tenant-b]
+FAILED tests/security/test_operator_read_authorization.py::test_read_grant_keeps_abac_restrictions[scope0-resource0]
+FAILED tests/security/test_operator_read_authorization.py::test_read_grant_keeps_abac_restrictions[scope1-resource1]
+FAILED tests/security/test_operator_read_authorization.py::test_read_grant_keeps_abac_restrictions[scope2-resource2]
+FAILED tests/security/test_operator_read_authorization.py::test_read_grant_keeps_abac_restrictions[scope3-resource3]
+FAILED tests/security/test_operator_read_authorization.py::test_read_grant_keeps_abac_restrictions[scope4-resource4]
+FAILED tests/security/test_operator_read_authorization.py::test_scoped_read_resource_admits_only_view_on_opted_in_guards
+FAILED tests/security/test_operator_read_authorization.py::test_viewer_is_refused_by_unscoped_domain_routes_for_every_tenant_and_scope[scope_headers0]
+FAILED tests/security/test_operator_read_authorization.py::test_viewer_is_refused_by_unscoped_domain_routes_for_every_tenant_and_scope[scope_headers1]
+FAILED tests/security/test_operator_read_authorization.py::test_viewer_is_refused_by_unscoped_domain_routes_for_every_tenant_and_scope[scope_headers2]
+FAILED tests/security/test_operator_read_authorization.py::test_viewer_is_refused_by_unscoped_domain_routes_for_every_tenant_and_scope[scope_headers3]
+FAILED tests/security/test_operator_read_authorization.py::test_viewer_adds_no_read_outside_scoped_operator_routes

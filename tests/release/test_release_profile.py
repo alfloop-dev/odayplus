@@ -703,4 +703,4 @@ def test_the_workflow_validates_the_profile_before_the_build_publishes() -> None
     # start unless that check succeeded.
     build_job = jobs["build"]
     assert build_job["needs"] == "release_phase"
-    assert any("cosign sign" in str(step.get("run", "")) for step in build_job["steps"])
+    assert any("sign_images.sh sign" in str(step.get("run", "")) for step in build_job["steps"])

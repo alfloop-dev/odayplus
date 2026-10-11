@@ -14,8 +14,10 @@ import importlib.util
 import json
 import sys
 from copy import deepcopy
+from functools import wraps
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -1179,6 +1181,256 @@ def test_missing_web_client_blocks_the_session_journey() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Explicit read-enabled administration (same configured account/credentials)
+# ---------------------------------------------------------------------------
+
+
+def read_admin_routes(roles: list[str]) -> dict[str, Any]:
+    record = admin_users(roles)["users"][0]
+    audit = admin_audit_trail()
+    audit["events"].append({
+        "event_type": "identity.account.roles_updated",
+        "metadata": {"account_id": ADMIN_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID,
+                     "roles_after": sorted(roles), "scope_after": admin_scope(), "status": "active"},
+    })
+    routes = web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, admin_users(roles)),
+        "GET /api/v1/auth/principal [session]": base.response(200, {
+            "account_id": ADMIN_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID, "roles": sorted(roles),
+        }),
+        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, audit),
+        f"GET /api/v1/operator/users/{ADMIN_ACCOUNT_ID} [session]": base.response(200, record),
+        "GET /api/v1/operator/bootstrap [session]": base.response(200, {
+            "data_mode": "live", "data_source": "postgresql://operator-live",
+        }),
+    })
+    for path in ("network-listings/intake/submit", "network-reviews/live-gate-no-such-review/decide",
+                 "network-scoring/score", "governance/decisions"):
+        routes[f"POST /api/v1/operator/{path} [session]"] = base.response(403, {"detail": "role denied"})
+    return routes
+
+
+@pytest.mark.parametrize("roles", [
+    ["platform_admin", "auditor"], ["platform_admin", "operator_viewer"],
+    ["platform_admin", "auditor", "operator_viewer"],
+])
+def test_explicit_read_admin_requires_positive_reads_and_negative_mutations(roles: list[str]) -> None:
+    checks, report, _ = run_dev_admin(web=AdminWeb(read_admin_routes(roles)))
+    assert report["ok"], report["blockers"]
+    assert report["dev_admin"]["account_mode"] == "read-enabled-admin"
+    names = {c.name for c in checks}
+    assert "admin:business_shell_denied" not in names
+    assert {"admin:read_principal_bound", "admin:read_grant_audited", "admin:scoped_business_read",
+            "admin:scoped_account_read", "admin:business_write_denied", "admin:business_approve_denied",
+            "admin:business_execute_denied", "admin:business_publish_denied"} <= names
+    assert report["release_profile"]["full_product_acceptance_claimed"] is False
+
+
+@pytest.mark.parametrize("extra", ["unknown", "architecture_owner", "expansion_user", "site_reviewer",
+                                   "operations_manager", "executive", "model_owner", "platform_admin"])
+def test_read_admin_additional_or_duplicate_roles_fail_closed(extra: str) -> None:
+    _, report, _ = run_dev_admin(web=AdminWeb(read_admin_routes(["platform_admin", "auditor", extra])))
+    assert "admin:identity_user_list" in blockers(report)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("account_id", "another-account"), ("tenant_id", gate.FOREIGN_TENANT_PROBE_ID),
+    ("tenant_id", None), ("roles", ["platform_admin"]),
+    ("roles", ["platform_admin", "auditor", "executive"]),
+])
+def test_read_admin_principal_must_bind_account_tenant_and_exact_roles(field: str, value: Any) -> None:
+    routes = read_admin_routes(["platform_admin", "auditor"])
+    routes["GET /api/v1/auth/principal [session]"].payload[field] = value
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    assert "admin:read_principal_bound" in blockers(report)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("account_id", "another-account"), ("tenant_id", gate.FOREIGN_TENANT_PROBE_ID),
+    ("roles_after", ["platform_admin"]), ("scope_after", {}), ("status", "disabled"),
+])
+def test_read_admin_requires_matching_explicit_audit(field: str, value: Any) -> None:
+    routes = read_admin_routes(["platform_admin", "auditor"])
+    routes["GET /api/v1/operator/users/audit-trail [session]"].payload["events"][-1]["metadata"][field] = value
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    assert "admin:read_grant_audited" in blockers(report)
+
+
+@pytest.mark.parametrize("path,check", [
+    ("operator/bootstrap", "admin:scoped_business_read"),
+    (f"operator/users/{ADMIN_ACCOUNT_ID}", "admin:scoped_account_read"),
+    ("operator/network-listings/intake/submit", "admin:business_write_denied"),
+    ("operator/network-reviews/live-gate-no-such-review/decide", "admin:business_approve_denied"),
+    ("operator/network-scoring/score", "admin:business_execute_denied"),
+    ("operator/governance/decisions", "admin:business_publish_denied"),
+])
+def test_read_admin_each_required_read_and_denial_blocks(path: str, check: str) -> None:
+    routes = read_admin_routes(["platform_admin", "auditor"])
+    method = "GET" if "read" in check else "POST"
+    routes[f"{method} /api/v1/{path} [session]"] = base.response(503 if method == "GET" else 422, {})
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    assert check in blockers(report)
+
+
+@pytest.mark.parametrize("roles", [
+    ["platform_admin", "auditor"], ["platform_admin", "operator_viewer"],
+    ["platform_admin", "auditor", "operator_viewer"],
+])
+@pytest.mark.parametrize("bypass_guard", [False, True], ids=["real-guard", "broken-guard"])
+def test_read_admin_gate_mutation_probes_never_reach_real_handlers(
+    monkeypatch: pytest.MonkeyPatch, roles: list[str], bypass_guard: bool,
+) -> None:
+    """Feed the gate's actual bodies through real DTOs, routers and RBAC guards.
+
+    The bypass models a permission regression, not an expected live operation.
+    Validation must stop all handlers/services and fail the gate with 422.
+    """
+    from fastapi import FastAPI
+    from fastapi.routing import APIRoute
+    from fastapi.testclient import TestClient
+
+    from apps.api.app.routes.operator_modules.governance import create_governance_sub_router
+    from apps.api.app.routes.operator_modules.network_listings import (
+        create_network_listings_sub_router,
+    )
+    from apps.api.app.routes.operator_modules.network_reviews import (
+        create_network_review_sub_router,
+    )
+    from apps.api.app.routes.operator_modules.network_scoring import (
+        NetworkScoringBatchPayload,
+        create_network_scoring_sub_router,
+    )
+    from apps.api.oday_api.security import dependencies
+    from modules.opsboard.application.network_scoring import NetworkScoringService
+    from shared.audit import InMemoryAuditLog
+    from shared.auth import Action, AuthorizationEngine, Principal, Role, Scope
+
+    # This is exactly why the old {} scoring probe was unsafe.
+    assert NetworkScoringBatchPayload.model_validate({}).candidateIds is None
+    principal = Principal(ADMIN_ACCOUNT_ID, frozenset(Role(r) for r in roles),
+                          Scope(tenant_id=ADMIN_TENANT_ID))
+    monkeypatch.setattr(dependencies, "principal_from_headers", lambda *a, **k: principal)
+    monkeypatch.setattr(dependencies, "default_boundary", lambda: None)
+    audit = InMemoryAuditLog()
+    engine = AuthorizationEngine(audit_log=audit)
+    app = FastAPI()
+    guards = []
+
+    def guard(resource: str, action: Action) -> Any:
+        dependency = dependencies.require_operator_permission(resource, action, engine=engine)
+        guards.append(dependency)
+        return dependency
+
+    listing_repository = Mock(tenant_id=ADMIN_TENANT_ID)
+    score_repository = Mock(tenant_id=ADMIN_TENANT_ID)
+    model_runtime = Mock()
+    scoring = Mock(wraps=NetworkScoringService(
+        seed_fixtures=False, listing_repository=listing_repository,
+        sitescore_repository=score_repository, model_runtime=model_runtime,
+        tenant_id=ADMIN_TENANT_ID,
+    ))
+    services = [Mock(), Mock(), scoring, Mock()]
+    resolvers = [Mock(return_value=service) for service in services]
+    factories = [
+        (create_network_listings_sub_router, "require_write_permission_fn", "listing", Action.UPDATE),
+        (create_network_review_sub_router, "require_decide_permission_fn", "sitescore", Action.APPROVE),
+        (create_network_scoring_sub_router, "require_write_permission_fn", "sitescore", Action.EXECUTE),
+        (create_governance_sub_router, "require_decision_permission_fn", "intervention", Action.APPROVE),
+    ]
+    paths = {
+        "/api/v1/operator/network-listings/intake/submit": "write",
+        "/api/v1/operator/network-reviews/live-gate-no-such-review/decide": "approve",
+        "/api/v1/operator/network-scoring/score": "execute",
+        "/api/v1/operator/governance/decisions": "publish",
+    }
+    handlers = []
+
+    def observe(endpoint: Any) -> Any:
+        spy = Mock(wraps=endpoint)
+        handlers.append(spy)
+
+        @wraps(endpoint)
+        def observed(*args: Any, **kwargs: Any) -> Any:
+            return spy(*args, **kwargs)
+
+        return observed
+
+    for (factory, permission_arg, resource, action), service, resolver in zip(
+        factories, services, resolvers, strict=True,
+    ):
+        router = factory(
+            service, require_view_permission_fn=lambda: None,
+            service_resolver=resolver, **{permission_arg: guard(resource, action)},
+        )
+        # Instrument before inclusion; FastAPI may compose included routers lazily.
+        for route in router.routes:
+            if isinstance(route, APIRoute) and (
+                "/api/v1/operator" + route.path.replace("{review_id}", "live-gate-no-such-review")
+            ) in paths:
+                route.endpoint = observe(route.endpoint)
+                route.dependant.call = route.endpoint
+        app.include_router(router, prefix="/api/v1/operator")
+    if bypass_guard:
+        for dependency in guards:
+            app.dependency_overrides[dependency] = lambda: None
+    assert len(handlers) == 4
+    client = TestClient(app)
+    routes = read_admin_routes(roles)
+    received = {}
+
+    def send(path: str, body: Any, headers: dict[str, str]) -> Any:
+        assert headers["origin"] == base.WEB_URL
+        assert headers["cookie"] == f"{SESSION_COOKIE}={SESSION_VALUE}"
+        response = client.post(path, json=body)
+        received[path] = response
+        return base.response(response.status_code, response.json())
+
+    for path in paths:
+        # Capture only the path; bodies still come from the real gate under test.
+        routes[f"POST {path} [session]"] = lambda body, headers, path=path: send(path, body, headers)
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    assert set(received) == set(paths)
+    assert {response.status_code for response in received.values()} == {422 if bypass_guard else 403}
+    assert report["ok"] is (not bypass_guard), report["blockers"]
+    if bypass_guard:
+        assert {f"admin:business_{label}_denied" for label in paths.values()} <= blockers(report).keys()
+        assert not audit.list_events()  # No authorization proof is fabricated.
+        for response in received.values():
+            assert any(error["loc"][0] == "body" for error in response.json()["detail"])
+    else:
+        assert len(audit.list_events()) == 4
+        assert all(event.outcome == "deny" for event in audit.list_events())
+    for spy in [*handlers, *resolvers, *services, listing_repository, score_repository, model_runtime]:
+        assert spy.mock_calls == [], "probe must never invoke handlers, scoring, providers or persistence"
+    assert report["release_profile"]["full_product_acceptance_claimed"] is False
+
+    # Offline sensitivity control: the original {} probe WOULD reach batch
+    # scoring with candidate_ids=None if authorization broke. Stub the method
+    # for this control only, so no real scoring/provider/persistence executes.
+    for dependency in guards:
+        app.dependency_overrides[dependency] = lambda: None
+    scoring.score_batch.return_value = {"offline_handler_control": True}
+    control = client.post("/api/v1/operator/network-scoring/score", json={})
+    assert control.status_code == 200, control.text
+    assert sum(spy.call_count for spy in handlers) == 1
+    resolvers[2].assert_called_once()
+    scoring.score_batch.assert_called_once()
+    assert scoring.score_batch.call_args.kwargs["candidate_ids"] is None
+    for spy in (listing_repository, score_repository, model_runtime):
+        assert spy.mock_calls == []
+
+
+def test_read_admin_canonical_permission_expansion_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shared.auth import Action, Role
+    from shared.auth.rbac import ROLE_PERMISSIONS, Permission
+
+    monkeypatch.setitem(ROLE_PERMISSIONS, Role.AUDITOR,
+                        ROLE_PERMISSIONS[Role.AUDITOR] | {Permission("listing", Action.UPDATE)})
+    _, report, _ = run_dev_admin(web=AdminWeb(read_admin_routes(["platform_admin", "auditor"])))
+    assert "admin:identity_user_list" in blockers(report)
+
+
+# ---------------------------------------------------------------------------
 # The runtime the gate reads: real API composition, no fixture
 # ---------------------------------------------------------------------------
 
@@ -1294,3 +1546,295 @@ def test_bootstrap_admin_inputs_use_the_documented_environment_names() -> None:
     assert gate.BOOTSTRAP_ADMIN_PASSWORD_ENV == "ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD"
     assert gate.DEV_ADMIN_INITIAL_PASSWORD_ENV == "ODP_DEV_ADMIN_INITIAL_PASSWORD"
     assert gate.BOOTSTRAP_SECRET_ENV == "ODP_IDENTITY_BOOTSTRAP_SECRET"
+
+
+INVITATION_ID = "51c78ac4-c1b0-45da-b8c3-501c02c305d9"
+INVITER_ID = "17e9cb99-db46-4a07-8e61-6bf9b22cf5d2"
+
+
+def invited_admin_inputs() -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    user = admin_users()["users"][0]
+    user["updated_by"] = INVITER_ID
+    events = [
+        {"event_id": "1199ca11-e976-4b5a-a537-f43b28b0c635",
+         "event_type": "identity.account.invite", "actor": INVITER_ID,
+         "timestamp": "2026-10-10T05:00:00+00:00", "outcome": "success",
+         "resource": f"identity.invitation:{INVITATION_ID}",
+         "correlation_id": f"identity-invitation-{INVITATION_ID}",
+         "metadata": {"invitation_id": INVITATION_ID, "tenant_id": ADMIN_TENANT_ID,
+                      "preset_roles": ["platform_admin"], "preset_scope": admin_scope(),
+                      "expires_at": "2026-10-10T06:00:00+00:00"}},
+        {"event_id": "43a1c2d9-e3f5-4889-9118-6e6c65c2cd8b",
+         "event_type": "identity.account.accept", "actor": ADMIN_ACCOUNT_ID,
+         "timestamp": "2026-10-10T05:01:00+00:00", "outcome": "success",
+         "resource": f"identity.invitation:{INVITATION_ID}",
+         "correlation_id": f"identity-invitation-{INVITATION_ID}",
+         "metadata": {"invitation_id": INVITATION_ID, "tenant_id": ADMIN_TENANT_ID,
+                      "account_id": ADMIN_ACCOUNT_ID, "subject_id": ADMIN_ACCOUNT_ID,
+                      "roles": ["platform_admin"], "scope": admin_scope(),
+                      "status": "active", "must_change": False}},
+    ]
+    principal = {"account_id": ADMIN_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID,
+                 "roles": ["platform_admin"]}
+    return user, events, principal
+
+
+def run_invited_admin(user: Any, events: Any, principal: Any) -> tuple[Any, Any, Any]:
+    return run_dev_admin(web=AdminWeb(web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, {"users": [user], "count": 1}),
+        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, {"events": events}),
+        "GET /api/v1/auth/principal [session]": base.response(200, principal),
+    })))
+
+
+def test_invited_pure_admin_passes_without_manufacturing_bootstrap() -> None:
+    user, events, principal = invited_admin_inputs()
+    checks, report, web = run_invited_admin(user, events, principal)
+    assert report["ok"] is True, report["blockers"]
+    assert report["dev_admin"]["account_mode"] == "pure-admin"
+    assert report["dev_admin"]["identity_provenance"] == {
+        "mode": "invitation", "invitation_id": INVITATION_ID,
+        "issue_event_id": events[0]["event_id"], "accept_event_id": events[1]["event_id"],
+        "issuer_account_id": INVITER_ID,
+    }
+    names = {c.name for c in checks}
+    assert {"admin:invitation_audited", "admin:invitation_principal_bound",
+            "admin:business_shell_denied", "admin:logout_revokes_admin_api"} <= names
+    assert "admin:bootstrap_audited" not in names
+    assert "invitation_audit_readback" in report["dev_admin"]["operations"]
+    assert not any(method.startswith("POST") and "/invitations" in method
+                   for method, _ in web.headers_seen)
+
+
+@pytest.mark.parametrize("event_index,path,value", [
+    (0, ("actor",), ADMIN_ACCOUNT_ID),
+    (0, ("actor",), "not-a-verified-account"),
+    (0, ("event_id",), None),
+    (1, ("event_id",), "1199ca11-e976-4b5a-a537-f43b28b0c635"),
+    (1, ("outcome",), "failure"),
+    (1, ("actor",), INVITER_ID),
+    (1, ("resource",), "identity.account:forged"),
+    (1, ("correlation_id",), "foreign-invitation"),
+    (1, ("metadata", "tenant_id"), gate.FOREIGN_TENANT_PROBE_ID),
+    (1, ("metadata", "invitation_id"), "malformed"),
+    (1, ("metadata", "subject_id"), INVITER_ID),
+    (1, ("metadata", "must_change"), True),
+    (1, ("metadata", "roles"), ["platform_admin", "operations_manager"]),
+    (0, ("metadata", "preset_roles"), ["platform_admin", "auditor"]),
+    (0, ("metadata", "preset_scope", "store_ids"), ["foreign-store"]),
+    (1, ("metadata", "scope", "clearance"), "PUBLIC"),
+    (1, ("timestamp",), "2026-10-10T06:00:00+00:00"),
+    (1, ("timestamp",), "2026-10-10T04:59:59+00:00"),
+    (0, ("timestamp",), "2026-10-10T05:00:00"),
+    (0, ("metadata", "expires_at"), "2026-10-13T05:00:01+00:00"),
+    (0, ("metadata", "expires_at"), "bad-date"),
+])
+def test_invitation_provenance_rejects_mismatched_or_incomplete_events(
+    event_index: int, path: tuple[str, ...], value: Any,
+) -> None:
+    user, events, principal = invited_admin_inputs()
+    target = events[event_index]
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    _, report, _ = run_invited_admin(user, events, principal)
+    assert report["ok"] is False
+    assert blockers(report)["admin:invitation_audited"] == "audit"
+
+
+@pytest.mark.parametrize("kind", ["missing_issue", "duplicate_issue", "duplicate_accept",
+                                  "other_account_accept", "revoked", "fake_bootstrap", "creator_changed"])
+def test_invitation_provenance_rejects_ambiguous_lifecycles(kind: str) -> None:
+    user, events, principal = invited_admin_inputs()
+    if kind == "missing_issue":
+        events.pop(0)
+    elif kind == "duplicate_issue":
+        events.append(deepcopy(events[0]))
+    elif kind in {"duplicate_accept", "other_account_accept"}:
+        events.append(deepcopy(events[1]))
+        if kind == "other_account_accept":
+            events[-1]["actor"] = INVITER_ID
+            events[-1]["metadata"]["account_id"] = INVITER_ID
+    elif kind == "revoked":
+        events.append({"event_type": "identity.account.invitation_revoked",
+                       "metadata": {"invitation_id": INVITATION_ID}})
+    elif kind == "fake_bootstrap":
+        events.extend(admin_audit_trail()["events"])
+    else:
+        user["updated_by"] = ADMIN_ACCOUNT_ID
+    _, report, _ = run_invited_admin(user, events, principal)
+    assert report["ok"] is False
+    assert blockers(report)["admin:invitation_audited"] == "audit"
+
+
+@pytest.mark.parametrize("field,value", [("account_id", INVITER_ID),
+                                         ("tenant_id", gate.FOREIGN_TENANT_PROBE_ID),
+                                         ("roles", ["platform_admin", "operations_manager"])])
+def test_invited_pure_admin_requires_cookie_to_verified_principal_binding(field: str, value: Any) -> None:
+    user, events, principal = invited_admin_inputs()
+    principal[field] = value
+    _, report, _ = run_invited_admin(user, events, principal)
+    assert report["ok"] is False
+    assert blockers(report)["admin:invitation_principal_bound"] == "auth"
+
+
+def credential_bundle_input() -> dict[str, Any]:
+    from delivery_toolchain.release.provision_dev_smoke import AUTHORIZATION_ID, TENANT_ID
+    return {"schema_version": 1, "authorization_id": AUTHORIZATION_ID,
+            "execution_id": "747efb4e-230d-4864-9bb9-194bec13045b",
+            "repository": "alfloop-dev/odayplus", "environment": "dev", "tenant_id": TENANT_ID,
+            "account_id": ADMIN_ACCOUNT_ID, "username": USERNAME, "password": PASSWORD}
+
+
+@pytest.mark.parametrize("key,value", [
+    ("schema_version", True), ("schema_version", 2), ("authorization_id", "other"),
+    ("repository", "foreign/repo"), ("environment", "staging"),
+    ("tenant_id", ADMIN_TENANT_ID), ("account_id", INVITER_ID),
+    ("account_id", "not-a-uuid"), ("execution_id", "00000000-0000-0000-0000-000000000000"),
+    ("username", "ajoe734"), ("username", " new.admin"), ("password", ""),
+    ("password", None), ("initial_password", "private-bootstrap-never-use"),
+])
+def test_matched_bundle_rejects_wrong_scope_shape_or_partial_pair(key: str, value: Any) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
+    raw = credential_bundle_input()
+    raw[key] = value
+    with pytest.raises(ProvisioningRefused, match="^PROVISIONING_CREDENTIAL_BUNDLE_INVALID$") as error:
+        read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+    assert error.value.__cause__ is None and PASSWORD not in str(error.value)
+
+
+@pytest.mark.parametrize("raw", [" ", "null", "[]", "{private-password", "x" * 16385,
+    '{"password":"private-duplicate","password":"another-private"}'])
+def test_matched_bundle_bad_json_never_becomes_legacy(raw: str) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
+    with pytest.raises(ProvisioningRefused, match="^PROVISIONING_CREDENTIAL_BUNDLE_INVALID$"):
+        read_dev_credential_bundle(raw, environment="dev", release_profile="dev-admin")
+
+
+def test_matched_bundle_parser_keeps_exact_password_memory_only() -> None:
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle
+    raw = credential_bundle_input()
+    raw["password"] = "  private exact password  "
+    bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+    assert bundle.password == raw["password"] and bundle.account_id == ADMIN_ACCOUNT_ID
+    assert raw["password"] not in repr(bundle)
+    assert read_dev_credential_bundle("", environment="production", release_profile="full") is None
+
+
+@pytest.mark.parametrize("environment,profile", [("staging", "dev-admin"), ("dev", "full"),
+                                                  ("production", "full")])
+def test_matched_bundle_never_admitted_outside_dev_admin(environment: str, profile: str) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
+    with pytest.raises(ProvisioningRefused):
+        read_dev_credential_bundle(json.dumps(credential_bundle_input()), environment=environment,
+                                   release_profile=profile)
+
+
+def test_gate_cli_bundle_suppresses_every_old_password_and_username(monkeypatch: Any, tmp_path: Path) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import TENANT_ID
+    monkeypatch.setenv("ODP_DEV_ADMIN_CREDENTIAL_BUNDLE", json.dumps(credential_bundle_input()))
+    for name in (gate.DEV_ADMIN_USERNAME_ENV, gate.DEV_ADMIN_PASSWORD_ENV, gate.DEV_ADMIN_INITIAL_PASSWORD_ENV,
+                 gate.BOOTSTRAP_SECRET_ENV, gate.BOOTSTRAP_ADMIN_USERNAME_ENV, gate.BOOTSTRAP_ADMIN_PASSWORD_ENV):
+        monkeypatch.setenv(name, "private-stale-binding-never-use")
+
+    class Captured(Exception):
+        pass
+
+    def capture(config: Any, **kwargs: Any) -> Any:
+        assert config.dev_admin_username == USERNAME and config.dev_admin_password == PASSWORD
+        assert config.dev_admin_initial_password == config.bootstrap_admin_password == config.bootstrap_admin_username == ""
+        assert config.dev_admin_bundle_account_id == ADMIN_ACCOUNT_ID
+        assert config.dev_admin_bundle_tenant_id == TENANT_ID
+        assert PASSWORD not in repr(config)
+        raise Captured
+
+    monkeypatch.setattr(gate, "evaluate_gate", capture)
+    monkeypatch.setattr(gate, "_web_client", lambda *a: None)
+    with pytest.raises(Captured):
+        gate.main(["--release-profile", "dev-admin", "--expected-deployment", "dev",
+                   "--output", str(tmp_path / "no-report.json")])
+    assert not list(tmp_path.iterdir())
+
+
+def test_gate_cli_malformed_bundle_refuses_before_network_or_output(monkeypatch: Any, tmp_path: Path, capsys: Any) -> None:
+    monkeypatch.setenv("ODP_DEV_ADMIN_CREDENTIAL_BUNDLE", "{private-password-malformed")
+    monkeypatch.setattr(gate, "UrllibHttpClient", lambda *a, **k: pytest.fail("invalid bundle made a client"))
+    assert gate.main(["--release-profile", "dev-admin", "--expected-deployment", "dev",
+                      "--output", str(tmp_path / "no-report.json")]) == 2
+    assert "private-password" not in capsys.readouterr().err
+    assert not list(tmp_path.iterdir())
+
+
+def bundle_journal_events() -> list[dict[str, Any]]:
+    from delivery_toolchain.release.provision_dev_smoke import (
+        AUTHORIZATION_ID,
+        DevCredentialBundleExecutor,
+        ProvisioningJournal,
+    )
+    common = {"authorization_id": AUTHORIZATION_ID, "execution_id": credential_bundle_input()["execution_id"],
+              "plan_digest": "sha256:" + "0" * 64, "release_sha": "b" * 40, "manifest_digest": "sha256:" + "a" * 64,
+              "tenant_id": ADMIN_TENANT_ID, "execution_authorized": False, "secret_values_redacted": True}
+    events = []
+    for i, (cls, stage) in enumerate(((ProvisioningJournal, "reserved"),
+                                     (DevCredentialBundleExecutor, "binding-intent"),
+                                     (DevCredentialBundleExecutor, "binding-acknowledged"))):
+        metadata = {**common, "stage": stage}
+        if cls is DevCredentialBundleExecutor:
+            metadata.update(account_id=ADMIN_ACCOUNT_ID, secret_name="ODP_DEV_ADMIN_CREDENTIAL_BUNDLE",
+                            credential_binding_verified=False)
+        events.append({"event_id": f"1199ca11-e976-4b5a-a537-f43b28b0c63{i}", "event_type": cls._TYPE,
+                       "actor": cls._ACTOR, "resource": cls._CORRELATION, "correlation_id": cls._CORRELATION,
+                       "action": "DEV_SMOKE_RESERVATION" if i == 0 else "DEV_SMOKE_BINDING",
+                       "outcome": "success", "timestamp": f"2026-10-10T05:02:0{i}+00:00", "metadata": metadata})
+    return events
+
+
+@pytest.mark.parametrize("mismatch", ["none", "account", "tenant", "bootstrap", "missing_ack", "quarantine",
+                                     "wrong_execution", "wrong_plan", "duplicate_ack", "claimed_verified"])
+def test_gate_matches_bundle_account_and_requires_real_invitation(mismatch: str) -> None:
+    user, events, principal = invited_admin_inputs()
+    cfg = dev_admin_config(dev_admin_bundle_account_id=ADMIN_ACCOUNT_ID,
+                           dev_admin_bundle_tenant_id=ADMIN_TENANT_ID,
+                           dev_admin_bundle_execution_id=credential_bundle_input()["execution_id"])
+    if mismatch in {"account", "tenant"}:
+        from dataclasses import replace
+        cfg = replace(cfg, **{"dev_admin_bundle_" + ("account_id" if mismatch == "account" else "tenant_id"):
+                              gate.FOREIGN_TENANT_PROBE_ID})
+    if mismatch == "bootstrap":
+        events = admin_audit_trail()["events"]
+    journals = bundle_journal_events()
+    if mismatch == "missing_ack":
+        journals.pop()
+    elif mismatch == "quarantine":
+        journals[-1]["metadata"]["stage"] = "recovery-required"
+    elif mismatch == "wrong_execution":
+        journals[-1]["metadata"]["execution_id"] = INVITATION_ID
+    elif mismatch == "wrong_plan":
+        journals[-1]["metadata"]["plan_digest"] = "sha256:" + "f" * 64
+    elif mismatch == "duplicate_ack":
+        journals.append(deepcopy(journals[-1]))
+    elif mismatch == "claimed_verified":
+        journals[-1]["metadata"]["credential_binding_verified"] = True
+    events.extend(journals)
+    _, report, _ = run_dev_admin(cfg=cfg, web=AdminWeb(web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, {"users": [user], "count": 1}),
+        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, {"events": events}),
+        "GET /api/v1/auth/principal [session]": base.response(200, principal),
+    })))
+    assert report["ok"] is (mismatch == "none"), report["blockers"]
+    if mismatch in {"account", "tenant"}:
+        assert blockers(report)["admin:credential_bundle_account_bound"] == "auth"
+    elif mismatch == "bootstrap":
+        assert blockers(report)["admin:credential_bundle_invitation_required"] == "audit"
+    elif mismatch != "none":
+        assert blockers(report)["admin:credential_bundle_durable_acknowledgement"] == "audit"
+    assert PASSWORD not in json.dumps(report)

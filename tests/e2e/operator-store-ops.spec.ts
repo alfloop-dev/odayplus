@@ -174,63 +174,63 @@ test("ISS-1024 lifecycle writes through Store Ops API and reloads updated state"
   await page.getByRole("button", { name: /門市營運|Store Ops/ }).click();
 
   await page.getByRole("button", { exact: true, name: "完成 Triage" }).click();
-  await page
-    .getByRole("button", { exact: true, name: "Submit Triage" })
+  await page.getByRole("dialog")
+    .getByRole("button", { exact: true, name: "完成 Triage" })
     .click();
   await waitForWrite(api, "/api/v1/operator/store-ops/issues/ISS-1024/triage");
   await expect(
-    page.getByRole("button", { exact: true, name: "指派 Owner" }),
+    page.getByRole("button", { exact: true, name: "指派負責人" }),
   ).toBeVisible();
 
-  await page.getByRole("button", { exact: true, name: "指派 Owner" }).click();
-  await page.getByRole("button", { exact: true, name: "Assign Owner" }).click();
+  await page.getByRole("button", { exact: true, name: "指派負責人" }).click();
+  await page.getByRole("dialog").getByRole("button", { exact: true, name: "確認指派" }).click();
   await waitForWrite(api, "/api/v1/operator/store-ops/issues/ISS-1024/assign");
   await expect(
-    page.getByRole("button", { exact: true, name: "建立 Field Action" }),
+    page.getByRole("button", { exact: true, name: "建立處置" }),
   ).toBeVisible();
 
   await page
-    .getByRole("button", { exact: true, name: "建立 Field Action" })
+    .getByRole("button", { exact: true, name: "建立處置" })
     .click();
-  await page
-    .getByRole("button", { exact: true, name: "Create Action" })
+  await page.getByRole("dialog")
+    .getByRole("button", { exact: true, name: "建立處置" })
     .click();
   await waitForWrite(api, "/api/v1/operator/store-ops/issues/ISS-1024/actions");
   await expect(
-    page.getByRole("button", { exact: true, name: "提交 Field Report" }),
+    page.getByRole("button", { exact: true, name: "提交現場回報" }),
   ).toBeVisible();
 
   await page
-    .getByRole("button", { exact: true, name: "提交 Field Report" })
+    .getByRole("button", { exact: true, name: "提交現場回報" })
     .click();
   await page
-    .getByLabel("Report summary")
+    .getByLabel("回報摘要")
     .fill("Counter lane cleaned and payment queue cleared.");
   await page
-    .getByRole("button", { exact: true, name: "Submit Report" })
+    .getByRole("button", { exact: true, name: "送出回報" })
     .click();
   await waitForWrite(
     api,
     "/api/v1/operator/store-ops/issues/ISS-1024/field-report",
   );
   await expect(
-    page.getByRole("button", { exact: true, name: "檢視 Outcome" }),
+    page.getByRole("button", { exact: true, name: "判斷成效" }),
   ).toBeVisible();
 
-  await page.getByRole("button", { exact: true, name: "檢視 Outcome" }).click();
+  await page.getByRole("button", { exact: true, name: "判斷成效" }).click();
   await page
-    .getByLabel("Impact summary")
+    .getByLabel("判斷理由")
     .fill("Negative review cluster stopped after field action.");
   await page
-    .getByLabel("Evidence summary")
+    .getByLabel("證據核對摘要")
     .fill("Payment queue and CS case trend returned to baseline.");
   await page
-    .getByRole("button", { exact: true, name: "Submit Outcome" })
+    .getByRole("button", { exact: true, name: "送出成效判斷" })
     .click();
   await waitForWrite(api, "/api/v1/operator/store-ops/issues/ISS-1024/outcome");
 
   await expect(page.locator('[aria-label="ISS-1024 detail"]')).toContainText(
-    "Closed",
+    "已結案",
   );
   expect(api.writeRequests.map((url) => url.pathname)).toEqual(
     expect.arrayContaining([
@@ -258,15 +258,15 @@ test("camera evidence remains locked until permitted purpose is submitted", asyn
   await expect(page.getByText("影像鎖定 • 需授權")).toBeVisible();
 
   await page.getByText("點擊填寫調閱目的").click();
-  const dialog = page.getByRole("dialog", { name: "Camera Purpose" });
+  const dialog = page.getByRole("dialog", { name: "調閱 Camera 片段" });
   await dialog
-    .getByRole("textbox", { name: /Purpose Required/ })
+    .getByRole("textbox", { name: /調閱目的/ })
     .fill("payment incident quality audit");
   await dialog
-    .getByRole("checkbox", { name: /Acknowledge privacy and audit warning/ })
+    .getByRole("checkbox", { name: /確認隱私與稽核告知/ })
     .check();
   await dialog
-    .getByRole("button", { exact: true, name: "Record Purpose" })
+    .getByRole("button", { exact: true, name: "記錄目的並檢視" })
     .click();
   await waitForWrite(
     api,

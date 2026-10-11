@@ -1,0 +1,47 @@
+{
+  "detail": {
+    "x": 359,
+    "y": 330.984375,
+    "width": 742,
+    "height": 1464,
+    "scrollWidth": 742,
+    "radius": "8px"
+  },
+  "fusion": {
+    "x": 359,
+    "y": 639.28125,
+    "width": 742,
+    "height": 801.96875,
+    "scrollWidth": 740,
+    "radius": "12px"
+  },
+  "timeline": {
+    "x": 359,
+    "y": 1453.25,
+    "width": 742,
+    "height": 273.140625,
+    "scrollWidth": 740,
+    "radius": "12px"
+  },
+  "source": {
+    "x": 359,
+    "y": 1738.390625,
+    "width": 742,
+    "height": 159.21875,
+    "scrollWidth": 740,
+    "radius": "12px"
+  },
+  "metric": {
+    "x": 376,
+    "y": 903.96875,
+    "width": 708,
+    "height": 119.046875,
+    "scrollWidth": 706,
+    "radius": "10px"
+  },
+  "document": {
+    "width": 1440,
+    "scrollWidth": 1440
+  },
+  "accessibilityViolations": []
+}

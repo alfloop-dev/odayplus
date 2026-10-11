@@ -28,8 +28,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from models.shared_ml.production_runtime import ProductionModelRuntimeError
+from modules.opsboard.application.network_read_scope import (
+    scoped_audit_events,
+    visible_candidate_ids,
+)
 from modules.sitescore.application.reporting import SiteScoreReportService
 from modules.sitescore.domain.scoring import SiteScoreFeatureInput, SiteScoreReport
+from shared.auth import Principal
 
 MODEL_VERSION = "SiteScore v2.3"
 
@@ -379,11 +384,25 @@ class NetworkScoringService:
             "compareSet": list(self._compare_set),
         }
 
-    def snapshot(self, *, correlation_id: str | None = None) -> dict[str, Any]:
+    def snapshot(
+        self, *, correlation_id: str | None = None,
+        principal: Principal | None = None, scope_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if self._require_canonical:
             self._refresh_canonical()
-        candidates = [self._candidate_view(candidate) for candidate in self._candidates]
+        visible = self._candidates
         scorecards = self._sorted_scorecards()
+        audit_events = _copy(self._audit_events)
+        compare_set = list(self._compare_set)
+        if principal is not None:
+            ids = visible_candidate_ids(principal, {
+                **(scope_snapshot or {}), "candidates": self._candidates,
+            })
+            visible = [row for row in visible if row["id"] in ids]
+            scorecards = [row for row in scorecards if row["id"] in ids]
+            compare_set = [cid for cid in compare_set if cid in ids]
+            audit_events = scoped_audit_events(audit_events, {"candidate": ids})
+        candidates = [self._candidate_view(candidate) for candidate in visible]
         return {
             "source": "canonical" if self._require_canonical else "api",
             "modelVersion": (
@@ -397,14 +416,14 @@ class NetworkScoringService:
             "scorecards": scorecards,
             "batchResults": self._batch_results(scorecards),
             "compare": self._compare(scorecards),
-            "compareSet": list(self._compare_set),
-            "auditEvents": _copy(self._audit_events),
+            "compareSet": compare_set,
+            "auditEvents": audit_events,
             "correlationId": correlation_id,
             "counts": {
-                "candidates": len(self._candidates),
-                "scored": len(self._scores),
+                "candidates": len(visible),
+                "scored": len(scorecards),
                 "gateBlocked": sum(
-                    1 for candidate in self._candidates if not self._gate(candidate)["passed"]
+                    1 for candidate in visible if not self._gate(candidate)["passed"]
                 ),
             },
         }

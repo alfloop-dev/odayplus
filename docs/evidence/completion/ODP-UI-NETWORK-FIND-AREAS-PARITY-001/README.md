@@ -21,6 +21,23 @@ exact composed-source checks/build/300kB/geometry and independent review remain
 required. The historical screenshots/tests BELOW belong to the old963090d6/9e6
 fixture source, not new-head or live acceptance; do not transfer their receipts.
 
+### Current-dev integration (Pi)
+
+Non-rewriting merge of approved serving/current-dev e995aa26 after fb3d6520.
+Two actual conflicts: workspace extraction/header, and E2E registry count.
+Retain the task's extracted FindAreasPanel and Package10 four-KPI shape, PLUS
+current-dev canonical 403/availability handling and unknown-count renderer.
+Pending review counts use their own read state, rebalance keeps its independent
+authorized-empty 200 zero. Update existing production-mode GET-only denial
+regression for the four Chinese KPI labels, NOT weaken the no-zero/no-write
+assertions. Discard obsolete inline panel/helpers rather than duplicate UI.
+Actual composed focused selections:48 passed; Web typecheck exit0. Actual
+Playwright --list:129 tests/18files, retaining ALL current-dev Today/shell cases
+and four task layout cases. Regenerate boundary inventory using existing tool.
+Whole merge-vs-old-HEAD whitespace check reported imported historical approved
+logs/code; preserve those byte-for-byte, not erase failure evidence. Final
+clean-head/source-vs-current-base proofs remain separate and required.
+
 ## Historical original source evidence (unchanged)
 
 Recorded 2026-10-09 by Claude2. Base `origin/dev` 963090d6f. Design reference:

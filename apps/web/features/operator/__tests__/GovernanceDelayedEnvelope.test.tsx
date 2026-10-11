@@ -414,7 +414,7 @@ describe("normalizeGovernance* admission gate", () => {
     expect(undated).not.toHaveProperty("timestamp");
   });
 
-  it("drops status-board rows and evidence packages that are not fully reported", () => {
+  it("refuses malformed status boards and drops incomplete evidence packages", () => {
     const board = normalizeGovernanceStatusBoard({
       dataQuality: [
         { source: "Listings", status: "正常", good: true, note: "live" },
@@ -424,10 +424,13 @@ describe("normalizeGovernance* admission gate", () => {
       models: "nope",
     });
 
-    expect(board?.dataQuality).toEqual([
+    expect(board).toBeNull();
+    expect(normalizeGovernanceStatusBoard({
+      dataQuality: [{ source: "Listings", status: "正常", good: true, note: "live" }],
+      models: [], connectors: [], sla: [], users: [],
+    })?.dataQuality).toEqual([
       { source: "Listings", status: "正常", good: true, note: "live" },
     ]);
-    expect(board?.models).toEqual([]);
 
     expect(
       normalizeGovernanceEvidencePackages([

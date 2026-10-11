@@ -1,0 +1,14 @@
+
+Running 9 tests using 1 worker
+
+  ✓  1 [chromium] › tests/e2e/operator-store-ops-parity.spec.ts:55:5 › Missing payment series stays unavailable; AI CTA opens action without a write (4.1s)
+  ✓  2 [chromium] › tests/e2e/operator-store-ops-parity.spec.ts:69:7 › Store content geometry and reachable bottom cards at 1440 (41.2s)
+  ✓  3 [chromium] › tests/e2e/operator-store-ops-parity.spec.ts:69:7 › Store content geometry and reachable bottom cards at 1024 (13.4s)
+  ✓  4 [chromium] › tests/e2e/operator-store-ops-parity.spec.ts:69:7 › Store content geometry and reachable bottom cards at 390 (48.9s)
+  ✓  5 [chromium] › tests/e2e/operator-store-ops-parity.spec.ts:120:7 › Seven Store dialogs preserve Package 10 geometry and keyboard return at 1440 (42.6s)
+  ✓  6 [chromium] › tests/e2e/operator-store-ops-parity.spec.ts:120:7 › Seven Store dialogs preserve Package 10 geometry and keyboard return at 390 (29.7s)
+  ✓  7 [chromium] › tests/e2e/operator-store-ops.spec.ts:146:5 › Package 10 issue detail exposes the four-light evidence without legacy filter chips (3.9s)
+  ✓  8 [chromium] › tests/e2e/operator-store-ops.spec.ts:168:5 › ISS-1024 lifecycle writes through Store Ops API and reloads updated state (7.8s)
+  ✓  9 [chromium] › tests/e2e/operator-store-ops.spec.ts:251:5 › camera evidence remains locked until permitted purpose is submitted (7.2s)
+
+  9 passed (3.4m)

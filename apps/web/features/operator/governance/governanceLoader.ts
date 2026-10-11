@@ -95,7 +95,10 @@ export type GovernanceStatusRow = {
   note: string;
 };
 
-/** The five status-board panels every value builder must expose. */
+/** Canonical producer reports persisted record counts, not model readiness. */
+export type GovernanceRecordCount = { name: string; status: string; count: number };
+
+/** Grouped local/legacy status panels, plus canonical repository observations. */
 export type GovernanceStatusBoard = {
   dataQuality: GovernanceStatusRow[];
   models: GovernanceStatusRow[];
@@ -103,6 +106,7 @@ export type GovernanceStatusBoard = {
   sla: GovernanceStatusRow[];
   users: GovernanceStatusRow[];
   runbooks?: GovernanceStatusRow[];
+  recordCounts?: GovernanceRecordCount[];
 };
 
 /** An evidence-package history row. */
@@ -115,13 +119,43 @@ export type GovernanceEvidencePackage = {
   by: string;
 };
 
+/**
+ * What the authenticated principal may do in Govern, as verified by the API
+ * from its durable platform roles. The selected workspace persona is a view,
+ * not authority; only this record may enable or label business decisions.
+ */
+export type GovernanceActionAuthority = {
+  verified: boolean;
+  systemRoles: string[];
+  decide: boolean;
+  exportEvidence: boolean;
+};
+
+/** Parse `actionAuthority` defensively; anything malformed confirms nothing. */
+export function normalizeGovernanceActionAuthority(value: unknown): GovernanceActionAuthority | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (record.verified !== true) {
+    return { verified: false, systemRoles: [], decide: false, exportEvidence: false };
+  }
+  return {
+    verified: true,
+    systemRoles: Array.isArray(record.systemRoles)
+      ? record.systemRoles.filter((role): role is string => typeof role === "string" && role.length > 0)
+      : [],
+    decide: record.decide === true,
+    exportEvidence: record.exportEvidence === true,
+  };
+}
+
 /** The full Govern workspace snapshot returned by the API. */
 export type GovernanceSnapshot = {
   approvals: GovernanceApproval[];
   decisions: GovernanceDecisionRow[];
   auditRows: GovernanceAuditRow[];
-  statusBoard: GovernanceStatusBoard;
+  statusBoard: GovernanceStatusBoard | GovernanceRecordCount[];
   evidencePackages: GovernanceEvidencePackage[];
+  actionAuthority?: GovernanceActionAuthority | null;
   correlationId?: string;
   source?: string;
 };
@@ -171,19 +205,21 @@ export async function fetchGovernanceSnapshot(
     approvals: GovernanceApproval[];
     decisions: GovernanceDecisionRow[];
     auditRows: GovernanceAuditRow[];
-    statusBoard: GovernanceStatusBoard;
+    statusBoard: GovernanceStatusBoard | GovernanceRecordCount[];
     evidencePackages: GovernanceEvidencePackage[];
+    actionAuthority?: unknown;
     correlation_id?: string;
     source?: string;
   }>("/snapshot", { method: "GET", headers, roleId });
   if (!result.ok || !result.data) return null;
   const data = result.data;
   return {
-    approvals: data.approvals ?? [],
-    decisions: data.decisions ?? [],
-    auditRows: data.auditRows ?? [],
+    approvals: data.approvals,
+    decisions: data.decisions,
+    auditRows: data.auditRows,
     statusBoard: data.statusBoard,
-    evidencePackages: data.evidencePackages ?? [],
+    evidencePackages: data.evidencePackages,
+    actionAuthority: normalizeGovernanceActionAuthority(data.actionAuthority),
     correlationId: data.correlation_id,
     source: data.source,
   };

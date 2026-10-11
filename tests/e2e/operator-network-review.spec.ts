@@ -27,7 +27,11 @@ const EXPANSION_HEADERS = {
 test.describe.configure({ mode: "serial" });
 
 test.describe("ODP-OC-R4-007 Network Review decision", () => {
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ page }) => {
+    // Canonical reviewer persona; never turn ops-lead into site_reviewer.
+    await page.addInitScript(() => {
+      window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
+    });
     const api = await reviewerContext();
     const reset = await api.post("/api/v1/operator/network-reviews/reset");
     expect(reset.status()).toBe(200);
@@ -153,11 +157,11 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
     await api.dispose();
   });
 
-  test("Expansion active role sees read-only review actions (no decision bar)", async ({ page }) => {
-    // Bind the console to the Expansion role before hydration. Expansion may
-    // read/prepare/submit but not decide, so the decision bar must be hidden.
+  test("Operations lead sees read-only review actions (no decision bar)", async ({ page }) => {
+    // operations_manager does not hold sitescore APPROVE. Keep its persona
+    // intact rather than impersonating a reviewer to make the flow succeed.
     await page.addInitScript(() => {
-      window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
+      window.sessionStorage.setItem("oday.operator.role", "ops-lead");
     });
     await page.goto("/operator?ws=network");
     await expect(page.getByTestId("network-find-areas-workspace")).toBeVisible();
@@ -166,7 +170,7 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
     const panel = page.getByTestId("network-panel-review");
     await expect(panel).toBeVisible();
 
-    // Queue still hydrates for Expansion (sitescore VIEW via expansion_user).
+    // The fixture queue is visible; decision controls remain read-only.
     await expect(page.getByTestId("review-card-RV-702")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("review-card-RV-702").click();
 

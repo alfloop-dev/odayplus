@@ -282,10 +282,20 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({
 
   // ODP-OC-R4-007: reset the review service before the panel first fetches so
   // the golden GO review (RV-702) is pending and decidable in this smoke.
-  await request
-    .post(`${API_BASE_URL}/api/v1/operator/network-reviews/reset`)
-    .catch(() => undefined);
+  const resetReviews = await request.post(`${API_BASE_URL}/api/v1/operator/network-reviews/reset`);
+  expect(resetReviews.status()).toBe(200);
 
+  // Use the canonical reviewer persona for this approving flow. Ops-lead
+  // must not be silently promoted to a reviewer by the Network workspace.
+  await page.addInitScript(() => {
+    window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
+  });
+  const listingSnapshotResponse = page.waitForResponse(
+    (response) => response.url().includes("/api/v1/operator/network-listings?") &&
+      response.request().method() === "GET" &&
+      response.request().headers()["x-operator-role"] === "expansion-manager",
+    { timeout: 15_000 },
+  );
   await page.goto("/operator");
 
   // Enter the Network (展店與店網) workspace.
@@ -295,6 +305,10 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({
 
   // Default tab is Find Areas.
   await expect(page.getByTestId("network-panel-find-areas")).toBeVisible();
+
+  // Require the API binding rather than racing the local fixture fallback.
+  const listingSnapshot = await listingSnapshotResponse;
+  expect(listingSnapshot.status(), await listingSnapshot.text()).toBe(200);
 
   // 物件雷達 / Listing Radar
   await page.getByTestId("network-tab-1").click();
@@ -423,11 +437,12 @@ test("ODP-OC-PROD-014 productization gate rejects iframe-only or non-API-backed 
     .getByRole("button", { exact: true, name: "完成 Triage" })
     .last()
     .click();
-  await expect(
-    page.locator('[data-screen-label="Dialog Triage"]'),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { exact: true, name: "Submit Triage" })
+  const triageDialog = page.locator('[data-screen-label="Dialog Triage"]');
+  await expect(triageDialog).toBeVisible();
+  // Package 10 uses the same Chinese CTA in the rail and submit action;
+  // scope to the dialog so this exercises the API-backed form, not its opener.
+  await triageDialog
+    .getByRole("button", { exact: true, name: "完成 Triage" })
     .click();
   await expect
     .poll(() =>

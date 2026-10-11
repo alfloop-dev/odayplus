@@ -17,9 +17,14 @@ import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
+  OperatorLoadFailureError,
   operatorFixturesAllowed,
+  operatorLoadFailureFromError,
+  operatorLoadFailureFromResponse,
   payloadContainsSeedData,
+  unreadCountLabel,
   type OperatorDataAvailability,
+  type OperatorLoadFailure,
 } from "./operatorDataMode";
 import styles from "./networkFindAreas.module.css";
 import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview } from "./types";
@@ -224,29 +229,28 @@ export function resolveNetworkDataUnavailableState(
 
 export function resolveNetworkTabGateState({
   activeTab,
-  bindingLoadStates,
+  findAreasLoadState,
   fixturesAllowed,
-  networkLoadState,
   proposalsLoadState,
   rebalanceLoadState,
   reviewsLoadState,
   scoringLoadState,
 }: {
   activeTab: number;
-  bindingLoadStates: readonly OperatorDataAvailability[];
+  /** The scoped snapshot state as seen by Find Areas (HeatZones required). */
+  findAreasLoadState: OperatorDataAvailability;
   fixturesAllowed: boolean;
-  networkLoadState: OperatorDataAvailability;
   proposalsLoadState?: OperatorDataAvailability;
   rebalanceLoadState: OperatorDataAvailability;
   reviewsLoadState: OperatorDataAvailability;
   scoringLoadState: OperatorDataAvailability;
 }): Exclude<OperatorDataAvailability, "ready" | "fixture"> | null {
   if (fixturesAllowed || activeTab === 1) return null;
+  // Find Areas renders the scoped operator snapshot, which supersedes the
+  // legacy heatzone/candidate domain bindings. Those domain reads stay denied
+  // for operator-only grants, so they must not gate a ready scoped snapshot.
   if (activeTab === 0) {
-    return resolveNetworkDataUnavailableState([
-      ...bindingLoadStates,
-      networkLoadState,
-    ]);
+    return resolveNetworkDataUnavailableState([findAreasLoadState]);
   }
   if (activeTab >= 2 && activeTab <= 4) {
     return resolveNetworkDataUnavailableState([scoringLoadState]);
@@ -278,11 +282,23 @@ export function inspectNetworkListingsSnapshot(
   const hasRequiredShape =
     snapshot.source === "api" &&
     requiredCollections.every(Array.isArray);
+  // A scoped read may legitimately withhold whole-zone HeatZone aggregates
+  // while still authorizing individual listings/candidates. The snapshot is
+  // usable when it carries any authorized record; each tab then decides
+  // whether the records it renders are present (see resolveNetworkTabGateState).
   const hasUsableRows =
-    (snapshot.heatZones?.length ?? 0) > 0 &&
-    (snapshot.listingSources?.length ?? 0) > 0 &&
-    ((snapshot.listings?.length ?? 0) > 0 || (snapshot.candidates?.length ?? 0) > 0);
+    (snapshot.heatZones?.length ?? 0) > 0 ||
+    (snapshot.listings?.length ?? 0) > 0 ||
+    (snapshot.candidates?.length ?? 0) > 0;
   return hasRequiredShape && hasUsableRows ? "ready" : "empty";
+}
+
+/** Find Areas renders HeatZones; a ready snapshot without any is empty for that tab. */
+export function resolveNetworkFindAreasLoadState(
+  networkLoadState: OperatorDataAvailability,
+  heatZoneCount: number,
+): OperatorDataAvailability {
+  return networkLoadState === "ready" && heatZoneCount === 0 ? "empty" : networkLoadState;
 }
 
 export function inspectNetworkScoringSnapshot(
@@ -318,10 +334,6 @@ export function inspectNetworkReviewsSnapshot(
     : "empty";
 }
 
-const NETWORK_OPERATOR_HEADERS = operatorSecurityHeaders(
-  "expansion-manager",
-);
-
 const NETWORK_ACTOR = {
   actorRoleId: "expansionManager",
 };
@@ -330,32 +342,17 @@ const NETWORK_ACTOR = {
 // role, not hardcoded. Deciding a review requires sitescore APPROVE, which the
 // Site Reviewer backend role holds but Expansion (expansion_user) does not.
 //
-// - An authorized reviewer console role (see NETWORK_REVIEW_DECIDER_ROLE_IDS)
-//   reads and decides as the Site Reviewer backend identity (sitescore
-//   VIEW+APPROVE) and sees the GO / WAIT / 退回 / 駁回 decision bar.
-// - Expansion (and any other network-capable role) reads as expansion_user
-//   (sitescore VIEW) and can prepare/submit, but the decision bar is hidden
-//   (canDecide=false). If a decide POST is still attempted it carries the
-//   role's own non-approving identity, so the API fails closed with 403 —
-//   defense in depth behind the hidden bar.
-const SITE_REVIEWER_REVIEW_HEADERS = operatorSecurityHeaders("site-reviewer");
+// UI decision visibility is only presentation: every request retains the
+// active persona and the API enforces sitescore APPROVE against durable grants.
+// Read-only administrators/auditors must never be projected as expansion users.
+// Never substitute a reviewer/expansion persona for the active console role.
+// The API resolves the durable identity and enforces its real grants.
 
-const EXPANSION_REVIEW_HEADERS = operatorSecurityHeaders(
-  "expansion-manager",
-);
-
-const SITE_REVIEWER_ACTOR = {
-  actorRoleId: "siteReviewer",
-};
-
-const EXPANSION_ACTOR = {
-  actorRoleId: "expansionManager",
-};
-
-// Console roles authorized to decide a Network site review. Only the operations
-// lead carries an approval mandate on this surface; Expansion prepares/submits
-// but cannot decide (ODP-OC-R4-007 acceptance).
-const NETWORK_REVIEW_DECIDER_ROLE_IDS: ReadonlySet<OperatorRoleId> = new Set(["ops-lead"]);
+// The canonical expansion-manager persona requires site_reviewer/executive
+// grants; ops-lead alone is operations_manager, not a SiteScore approver.
+// This only controls presentation. The API verifies APPROVE and derives the
+// decision actor from its authenticated principal, never from this persona.
+const NETWORK_REVIEW_DECIDER_ROLE_IDS: ReadonlySet<OperatorRoleId> = new Set(["expansion-manager"]);
 
 type NetworkReviewIdentity = {
   canDecide: boolean;
@@ -365,101 +362,111 @@ type NetworkReviewIdentity = {
 };
 
 function resolveNetworkReviewIdentity(roleId: OperatorRoleId): NetworkReviewIdentity {
-  if (NETWORK_REVIEW_DECIDER_ROLE_IDS.has(roleId)) {
-    return {
-      canDecide: true,
-      readHeaders: SITE_REVIEWER_REVIEW_HEADERS,
-      decideHeaders: SITE_REVIEWER_REVIEW_HEADERS,
-      actor: SITE_REVIEWER_ACTOR,
-    };
-  }
+  const headers = operatorSecurityHeaders(roleId);
   return {
-    canDecide: false,
-    readHeaders: EXPANSION_REVIEW_HEADERS,
-    decideHeaders: EXPANSION_REVIEW_HEADERS,
-    actor: EXPANSION_ACTOR,
+    canDecide: NETWORK_REVIEW_DECIDER_ROLE_IDS.has(roleId),
+    readHeaders: headers,
+    decideHeaders: headers,
+    actor: { actorRoleId: roleId },
   };
 }
 
-async function fetchNetworkReviewsSnapshot(
+/**
+ * A Network read either produced a snapshot or a typed failure that keeps the
+ * HTTP status, canonical error code and correlation ID. A refused read is never
+ * collapsed into "no snapshot", which used to surface a received 403 as a
+ * transport failure and its collection as an authoritative zero.
+ */
+type NetworkRead<T> = { ok: true; snapshot: T } | { ok: false; failure: OperatorLoadFailure };
+
+async function readNetworkSnapshot<T>(
+  label: string,
+  path: string,
+  headers: Record<string, string>,
+  correlationId: string,
+): Promise<NetworkRead<T>> {
+  try {
+    const response = await fetch(path, {
+      cache: "no-store",
+      headers: {
+        ...headers,
+        "X-Correlation-Id": correlationId,
+      },
+    });
+    if (!response.ok) {
+      return { ok: false, failure: await operatorLoadFailureFromResponse(response, label, correlationId) };
+    }
+    const body: unknown = await response.json();
+    if (typeof body !== "object" || body === null) {
+      return {
+        ok: false,
+        failure: {
+          correlationId: response.headers?.get?.("x-correlation-id") ?? correlationId,
+          httpStatus: response.status,
+          kind: "unknown",
+          occurredAt: new Date().toISOString(),
+          technicalDetail: `${label} returned ${response.status} without a snapshot body`,
+        },
+      };
+    }
+    return { ok: true, snapshot: body as T };
+  } catch (error) {
+    return { ok: false, failure: operatorLoadFailureFromError(error, label, correlationId) };
+  }
+}
+
+function fetchNetworkReviewsSnapshot(
   readHeaders: Record<string, string>,
-): Promise<NetworkReviewsSnapshot | null> {
-  try {
-    const response = await fetch(`/api/v1/operator/network-reviews`, {
-      cache: "no-store",
-      headers: {
-        ...readHeaders,
-        "X-Correlation-Id": "corr-r4-007-reviews-read",
-      },
-    });
-    if (!response.ok) {
-      return null;
-    }
-    return (await response.json()) as NetworkReviewsSnapshot;
-  } catch {
-    return null;
-  }
+): Promise<NetworkRead<NetworkReviewsSnapshot>> {
+  return readNetworkSnapshot(
+    "network-reviews",
+    "/api/v1/operator/network-reviews",
+    readHeaders,
+    "corr-r4-007-reviews-read",
+  );
 }
 
-async function fetchNetworkSnapshot(
-  selectedHeatZoneId: string,
+// The scoped operator snapshot is the authoritative Network read. Without a
+// selection it is requested unfiltered, and the API projects it to the verified
+// scope and names the first visible zone; legacy /heatzones grants are never
+// needed to choose one.
+function fetchNetworkSnapshot(
+  selectedHeatZoneId: string | null,
   lens: NetworkFindAreasLens,
-): Promise<NetworkListingsSnapshot | null> {
-  try {
-    const params = new URLSearchParams({
-      lens,
-      selectedHeatZoneId,
-    });
-    const response = await fetch(`/api/v1/operator/network-listings?${params.toString()}`, {
-      cache: "no-store",
-      headers: {
-        ...NETWORK_OPERATOR_HEADERS,
-        "X-Correlation-Id": `corr-r4-005-read-${selectedHeatZoneId}-${lens}`,
-      },
-    });
-    if (!response.ok) {
-      return null;
-    }
-    return (await response.json()) as NetworkListingsSnapshot;
-  } catch {
-    return null;
-  }
+  roleId: OperatorRoleId,
+): Promise<NetworkRead<NetworkListingsSnapshot>> {
+  const params = new URLSearchParams({ lens });
+  if (selectedHeatZoneId) params.set("selectedHeatZoneId", selectedHeatZoneId);
+  return readNetworkSnapshot(
+    "network-listings",
+    `/api/v1/operator/network-listings?${params.toString()}`,
+    operatorSecurityHeaders(roleId),
+    `corr-r4-005-read-${selectedHeatZoneId ?? "initial"}-${lens}`,
+  );
 }
 
-async function fetchNetworkScoringSnapshot(): Promise<NetworkScoringSnapshot | null> {
-  try {
-    const response = await fetch(`/api/v1/operator/network-scoring`, {
-      cache: "no-store",
-      headers: {
-        ...NETWORK_OPERATOR_HEADERS,
-        "X-Correlation-Id": "corr-r4-006-scoring-read",
-      },
-    });
-    if (!response.ok) {
-      return null;
-    }
-    return (await response.json()) as NetworkScoringSnapshot;
-  } catch {
-    return null;
-  }
+function fetchNetworkScoringSnapshot(roleId: OperatorRoleId): Promise<NetworkRead<NetworkScoringSnapshot>> {
+  return readNetworkSnapshot(
+    "network-scoring",
+    "/api/v1/operator/network-scoring",
+    operatorSecurityHeaders(roleId),
+    "corr-r4-006-scoring-read",
+  );
 }
 
-async function fetchNetworkRebalanceSnapshot(): Promise<NetworkRebalanceSnapshot | null> {
-  try {
-    const response = await fetch("/api/v1/operator/network-rebalance", {
-      cache: "no-store",
-      headers: {
-        ...NETWORK_OPERATOR_HEADERS,
-        "X-Correlation-Id": "corr-r4-008-rebalance-read",
-      },
-    });
-    if (!response.ok) {
-      return null;
-    }
-    return (await response.json()) as NetworkRebalanceSnapshot;
-  } catch {
-    return null;
-  }
+function fetchNetworkRebalanceSnapshot(roleId: OperatorRoleId): Promise<NetworkRead<NetworkRebalanceSnapshot>> {
+  return readNetworkSnapshot(
+    "network-rebalance",
+    "/api/v1/operator/network-rebalance",
+    operatorSecurityHeaders(roleId),
+    "corr-r4-008-rebalance-read",
+  );
+}
+
+function proposalsFailure(error: unknown): OperatorLoadFailure {
+  return error instanceof OperatorLoadFailureError
+    ? error.failure
+    : operatorLoadFailureFromError(error, "heatzone merge-split proposals");
 }
 
 function buildFallbackExpansionSteps(selectedHeatZoneId: string, hasCandidate: boolean): ExpansionStep[] {
@@ -558,6 +565,7 @@ export function NetworkFindAreasWorkspace({
   const router = useRouter();
   const searchParams = useSearchParams();
   const fixturesAllowed = operatorFixturesAllowed();
+  const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId]);
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
   const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
@@ -611,6 +619,7 @@ export function NetworkFindAreasWorkspace({
   }, [urlTab, urlCandidateZoneId]);
   const [networkSnapshot, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
   const [networkApiError, setNetworkApiError] = useState<string | null>(null);
+  const [networkLoadFailure, setNetworkLoadFailure] = useState<OperatorLoadFailure | null>(null);
   const [networkLoadState, setNetworkLoadState] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
   );
@@ -622,17 +631,20 @@ export function NetworkFindAreasWorkspace({
   const [scoringLoadState, setScoringLoadState] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
   );
+  const [scoringLoadFailure, setScoringLoadFailure] = useState<OperatorLoadFailure | null>(null);
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
   const [rebalanceSnapshot, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
   const [rebalanceApiError, setRebalanceApiError] = useState<string | null>(null);
   const [rebalanceLoadState, setRebalanceLoadState] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
   );
+  const [rebalanceLoadFailure, setRebalanceLoadFailure] = useState<OperatorLoadFailure | null>(null);
   const [busyRebalanceAction, setBusyRebalanceAction] = useState<string | null>(null);
   const [reviewsSnapshot, setReviewsSnapshot] = useState<NetworkReviewsSnapshot | null>(null);
   const [reviewsLoadState, setReviewsLoadState] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
   );
+  const [reviewsLoadFailure, setReviewsLoadFailure] = useState<OperatorLoadFailure | null>(null);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
 
@@ -641,6 +653,7 @@ export function NetworkFindAreasWorkspace({
     fixturesAllowed ? "fixture" : "loading",
   );
   const [proposalsApiError, setProposalsApiError] = useState<string | null>(null);
+  const [proposalsLoadFailure, setProposalsLoadFailure] = useState<OperatorLoadFailure | null>(null);
 
   const getCompositionClient = useCallback(async () => {
     const { buildHeatZoneCompositionClient } = await import(
@@ -661,9 +674,11 @@ export function NetworkFindAreasWorkspace({
         setProposalsLoadState(fixturesAllowed ? "fixture" : "empty");
       }
       setProposalsApiError(null);
-    } catch {
+      setProposalsLoadFailure(null);
+    } catch (error) {
       setProposalsLoadState(fixturesAllowed ? "fixture" : "error");
       setProposalsApiError("Failed to load merge/split proposals");
+      setProposalsLoadFailure(proposalsFailure(error));
     }
   }, [fixturesAllowed, getCompositionClient]);
 
@@ -685,11 +700,13 @@ export function NetworkFindAreasWorkspace({
             setProposalsLoadState(fixturesAllowed ? "fixture" : "empty");
           }
           setProposalsApiError(null);
+          setProposalsLoadFailure(null);
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
           setProposalsLoadState(fixturesAllowed ? "fixture" : "error");
           setProposalsApiError("Failed to load merge/split proposals");
+          setProposalsLoadFailure(proposalsFailure(error));
         }
       }
     }
@@ -786,7 +803,7 @@ export function NetworkFindAreasWorkspace({
 
   // True when every Network R4 binding is using the local/POC fixture path.
   const isFixtureFallback =
-    networkSnapshot?.source !== "api" &&
+    fixturesAllowed && networkSnapshot?.source !== "api" &&
     ((liveHeatZones !== undefined && liveHeatZones.source !== "api") ||
       (liveCandidates !== undefined && liveCandidates.source !== "api"));
 
@@ -819,19 +836,26 @@ export function NetworkFindAreasWorkspace({
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      if (!effectiveSelectedId) {
-        if (!fixturesAllowed) setNetworkLoadState("loading");
-        return;
-      }
-      const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
+      const read = await fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId);
+      const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && snapshot) {
         const inspection = inspectNetworkListingsSnapshot(snapshot);
+        const serverSelectedId = snapshot.selectedHeatZoneId;
+        if (
+          inspection === "ready" &&
+          !effectiveSelectedId &&
+          serverSelectedId &&
+          snapshot.heatZones?.some((zone) => zone.id === serverSelectedId)
+        ) {
+          setLocalSelectedId(serverSelectedId);
+        }
         setNetworkSnapshot(
           inspection === "ready" || fixturesAllowed
             ? snapshot
             : null,
         );
         setNetworkApiError(null);
+        setNetworkLoadFailure(null);
         setNetworkLoadState(
           inspection === "ready"
             ? "ready"
@@ -839,11 +863,15 @@ export function NetworkFindAreasWorkspace({
               ? "fixture"
               : inspection,
         );
-      } else if (!cancelled && !snapshot) {
+      } else if (!cancelled && !read.ok) {
+        // A refused read leaves no snapshot behind: its collections were not
+        // read, so nothing below may present them as an authorized result.
+        setNetworkSnapshot(null);
+        setNetworkLoadFailure(read.failure);
         setNetworkApiError(
           fixturesAllowed
             ? "network-listings API unavailable; using local fixtures"
-            : "network-listings API unavailable",
+            : read.failure.technicalDetail ?? "network-listings read failed",
         );
         setNetworkLoadState(fixturesAllowed ? "fixture" : "error");
       }
@@ -852,12 +880,13 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [effectiveLens, effectiveSelectedId, fixturesAllowed]);
+  }, [activeRoleId, effectiveLens, effectiveSelectedId, fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadScoring() {
-      const snapshot = await fetchNetworkScoringSnapshot();
+      const read = await fetchNetworkScoringSnapshot(activeRoleId);
+      const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && snapshot) {
         const inspection = inspectNetworkScoringSnapshot(snapshot);
         setScoringSnapshot(
@@ -865,6 +894,7 @@ export function NetworkFindAreasWorkspace({
             ? snapshot
             : null,
         );
+        setScoringLoadFailure(null);
         setScoringLoadState(
           inspection === "ready"
             ? "ready"
@@ -872,7 +902,8 @@ export function NetworkFindAreasWorkspace({
               ? "fixture"
               : inspection,
         );
-      } else if (!cancelled) {
+      } else if (!cancelled && !read.ok) {
+        setScoringLoadFailure(read.failure);
         setScoringLoadState(fixturesAllowed ? "fixture" : "error");
       }
     }
@@ -880,12 +911,13 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [fixturesAllowed]);
+  }, [activeRoleId, fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadRebalance() {
-      const snapshot = await fetchNetworkRebalanceSnapshot();
+      const read = await fetchNetworkRebalanceSnapshot(activeRoleId);
+      const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && snapshot) {
         const inspection = inspectNetworkRebalanceSnapshot(snapshot);
         setRebalanceSnapshot(
@@ -894,6 +926,7 @@ export function NetworkFindAreasWorkspace({
             : null,
         );
         setRebalanceApiError(null);
+        setRebalanceLoadFailure(null);
         setRebalanceLoadState(
           inspection === "ready"
             ? "ready"
@@ -901,11 +934,12 @@ export function NetworkFindAreasWorkspace({
               ? "fixture"
               : inspection,
         );
-      } else if (!cancelled && !snapshot) {
+      } else if (!cancelled && !read.ok) {
+        setRebalanceLoadFailure(read.failure);
         setRebalanceApiError(
           fixturesAllowed
             ? "network-rebalance API unavailable; using local fixtures"
-            : "network-rebalance API unavailable",
+            : read.failure.technicalDetail ?? "network-rebalance read failed",
         );
         setRebalanceLoadState(fixturesAllowed ? "fixture" : "error");
       }
@@ -914,12 +948,13 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [fixturesAllowed]);
+  }, [activeRoleId, fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadReviews() {
-      const snapshot = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
+      const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
+      const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && snapshot) {
         const inspection = inspectNetworkReviewsSnapshot(snapshot);
         setReviewsSnapshot(
@@ -927,6 +962,7 @@ export function NetworkFindAreasWorkspace({
             ? snapshot
             : null,
         );
+        setReviewsLoadFailure(null);
         setReviewsLoadState(
           inspection === "ready"
             ? "ready"
@@ -934,7 +970,8 @@ export function NetworkFindAreasWorkspace({
               ? "fixture"
               : inspection,
         );
-      } else if (!cancelled) {
+      } else if (!cancelled && !read.ok) {
+        setReviewsLoadFailure(read.failure);
         setReviewsLoadState(fixturesAllowed ? "fixture" : "error");
       }
     }
@@ -983,9 +1020,9 @@ export function NetworkFindAreasWorkspace({
         setReviewError(`review decision failed (${response.status})`);
         return false;
       }
-      const snapshot = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
-      if (snapshot) {
-        setReviewsSnapshot(snapshot);
+      const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
+      if (read.ok) {
+        setReviewsSnapshot(read.snapshot);
       }
       return true;
     } catch {
@@ -997,9 +1034,9 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadScoringSnapshot() {
-    const snapshot = await fetchNetworkScoringSnapshot();
-    if (snapshot) {
-      setScoringSnapshot(snapshot);
+    const read = await fetchNetworkScoringSnapshot(activeRoleId);
+    if (read.ok) {
+      setScoringSnapshot(read.snapshot);
     }
   }
 
@@ -1065,9 +1102,9 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadRebalanceSnapshot() {
-    const snapshot = await fetchNetworkRebalanceSnapshot();
-    if (snapshot) {
-      setRebalanceSnapshot(snapshot);
+    const read = await fetchNetworkRebalanceSnapshot(activeRoleId);
+    if (read.ok) {
+      setRebalanceSnapshot(read.snapshot);
       setRebalanceApiError(null);
     }
   }
@@ -1280,10 +1317,11 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadNetworkSnapshot() {
-    const snapshot = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens);
-    if (snapshot) {
-      setNetworkSnapshot(snapshot);
+    const read = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId);
+    if (read.ok) {
+      setNetworkSnapshot(read.snapshot);
       setNetworkApiError(null);
+      setNetworkLoadFailure(null);
     }
   }
 
@@ -1413,20 +1451,11 @@ export function NetworkFindAreasWorkspace({
     : null;
   const selectedZoneLabel = selectedZone?.label ?? heatZones.find((zone) => zone.id === effectiveSelectedId)?.label;
 
-  const bindingLoadStates: OperatorDataAvailability[] = [liveHeatZones, liveCandidates].map(
-    (binding) => {
-      if (!binding) return "loading";
-      if (binding.state === "ready" && binding.source === "api") return "ready";
-      if (binding.state === "empty") return "empty";
-      if (binding.state === "error" || binding.state === "unconfigured") return "error";
-      return "seed";
-    },
-  );
+  const findAreasLoadState = resolveNetworkFindAreasLoadState(networkLoadState, heatZones.length);
   const activeTabGateState = resolveNetworkTabGateState({
     activeTab,
-    bindingLoadStates,
+    findAreasLoadState,
     fixturesAllowed,
-    networkLoadState,
     proposalsLoadState,
     rebalanceLoadState,
     reviewsLoadState,
@@ -1434,12 +1463,41 @@ export function NetworkFindAreasWorkspace({
   });
   const activeTabGateDetail =
     activeTab === 0
-      ? networkApiError
+      ? networkApiError ??
+        (findAreasLoadState !== networkLoadState
+          ? "HeatZone aggregates are not authorized for this read scope; scoped listings remain in Listing Radar."
+          : null)
       : activeTab === 6
         ? rebalanceApiError
         : activeTab === 7
           ? proposalsApiError
           : null;
+  // The received failure (status, canonical code, correlation ID) of the read
+  // backing the active tab. It names a 403 as an authenticated denial instead
+  // of letting the gate guess a kind from the prose detail.
+  const activeTabGateFailure =
+    activeTabGateState !== "error"
+      ? null
+      : activeTab === 0
+        ? networkLoadFailure
+        : activeTab >= 2 && activeTab <= 4
+          ? scoringLoadFailure
+          : activeTab === 5
+            ? reviewsLoadFailure
+            : activeTab === 6
+              ? rebalanceLoadFailure
+              : activeTab === 7
+                ? proposalsLoadFailure
+                : null;
+  // Listing Radar is never gated as a whole (its intake queue owns its own
+  // binding), so a refused listings read is handed to the panel instead.
+  const listingsReadFailure =
+    !fixturesAllowed && networkLoadState === "error" ? networkLoadFailure : null;
+  const snapshotCountState = resolveNetworkCountState(networkLoadState, networkLoadFailure, fixturesAllowed);
+  // Package10 uses four workflow KPIs, not unauthorized HeatZone aggregates.
+  // Each independent read must keep its own denial/unknown count semantics.
+  const reviewCountState = resolveNetworkCountState(reviewsLoadState, reviewsLoadFailure, fixturesAllowed);
+  const rebalanceCountState = resolveNetworkCountState(rebalanceLoadState, rebalanceLoadFailure, fixturesAllowed);
 
   const listingRadarPanel = (
     <ListingRadarPanel
@@ -1447,6 +1505,7 @@ export function NetworkFindAreasWorkspace({
       busyListingId={busyListingId}
       intakeDetailOpen={intakeDetailOpen}
       listings={listingsEffective}
+      listingsReadFailure={listingsReadFailure}
       onArchive={archiveListing}
       onConvert={convertListing}
       onMerge={mergeListing}
@@ -1498,7 +1557,7 @@ export function NetworkFindAreasWorkspace({
 
   return (
     <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
-      {/* Package 10 S05: one row — title, flow summary, four KPI chips. */}
+      {/* Package 10 S05: one row — title, flow summary, four truthful KPI chips. */}
       <header className={styles.header} data-testid="network-header">
         <h2>展店與店網</h2>
         <p className={styles.headerSummary}>找區域 → 物件收件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配</p>
@@ -1508,10 +1567,10 @@ export function NetworkFindAreasWorkspace({
           </span>
         ) : null}
         <ul className={styles.headerStats} aria-label="展店與店網摘要" data-testid="network-header-stats">
-          <li><strong>{viewModel.totals.newListings}</strong> 今日新物件</li>
-          <li><strong>{viewModel.totals.activeCandidates}</strong> 進行中候選</li>
-          <li><strong>{pendingReviewCount}</strong> 待審 Review</li>
-          <li><strong>{viewModel.totals.openRebalances}</strong> 重配候選</li>
+          <li><NetworkCount count={viewModel.totals.newListings} label="今日新物件" state={snapshotCountState} /></li>
+          <li><NetworkCount count={viewModel.totals.activeCandidates} label="進行中候選" state={snapshotCountState} /></li>
+          <li><NetworkCount count={pendingReviewCount} label="待審 Review" state={reviewCountState} /></li>
+          <li><NetworkCount count={viewModel.totals.openRebalances} label="重配候選" state={rebalanceCountState} /></li>
         </ul>
         {networkApiError ? (
           <p className={styles.headerNotice} role="status">
@@ -1530,6 +1589,7 @@ export function NetworkFindAreasWorkspace({
         {activeTabGateState ? (
           <OperatorDataUnavailableGate
             detail={activeTabGateDetail}
+            failure={activeTabGateFailure}
             onRetry={() => window.location.reload()}
             status={activeTabGateState}
           />
@@ -1617,5 +1677,54 @@ export function NetworkFindAreasWorkspace({
 
       {listingMergeDialog}
     </section>
+  );
+}
+
+/**
+ * Whether a header count is an authoritative result. Only an answered read
+ * (ready, or an authorized empty 200) yields a number; a refused, failed,
+ * blocked or pending read yields no count at all, never a manufactured 0.
+ */
+export type NetworkCountState =
+  | { known: true }
+  | { known: false; label: string; reason: "pending" | "unread" | "withheld" };
+
+export function resolveNetworkCountState(
+  loadState: OperatorDataAvailability,
+  failure: OperatorLoadFailure | null,
+  fixturesAllowed: boolean,
+  aggregateWithheld = false,
+): NetworkCountState {
+  if (!fixturesAllowed && aggregateWithheld) {
+    return { known: false, label: "未授權", reason: "withheld" };
+  }
+  if (fixturesAllowed || loadState === "ready" || loadState === "empty" || loadState === "fixture") {
+    return { known: true };
+  }
+  if (loadState === "loading") return { known: false, label: "載入中", reason: "pending" };
+  if (loadState === "seed") return { known: false, label: "資料來源未通過", reason: "unread" };
+  return { known: false, label: unreadCountLabel(failure?.kind), reason: "unread" };
+}
+
+function NetworkCount({
+  count,
+  label,
+  state,
+}: {
+  count: number | string;
+  label: string;
+  state: NetworkCountState;
+}) {
+  if (state.known) {
+    return (
+      <span data-count-state="known">
+        <strong>{count}</strong> {label}
+      </span>
+    );
+  }
+  return (
+    <span data-count-state={state.reason} title={`${label}：${state.label}，不是 0 筆`}>
+      <strong>—</strong> {label}（{state.label}）
+    </span>
   );
 }

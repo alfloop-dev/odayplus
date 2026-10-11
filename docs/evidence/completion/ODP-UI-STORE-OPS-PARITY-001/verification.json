@@ -1,0 +1,25 @@
+{
+  "task_id": "ODP-UI-STORE-OPS-PARITY-001",
+  "owner": "Pi",
+  "reviewer": "Codex2",
+  "tested_head": "3e9ecc94cec6dc66c8bfa33e020495bf4760204b",
+  "baseline_head": "963090d6fc320e973c6c2d993b5342fbebbbe3e3",
+  "evidence_mode": "local-fixture-browser-and-mocked-api",
+  "production_or_remote_visual_approval": false,
+  "completion_basis": "original synchronous shell terminal completion and captured child exit codes; no process-name or log-summary polling",
+  "environment": { "node": "v22.23.2", "playwright": "1.61.1", "chromium": "149.0.7827.55" },
+  "design_sha256": "1aefb8068faa39666599ceeafe74ba24f1ddc8abd57ba9a6513a724abaee7d0f",
+  "checks": [
+    { "command": "npm run typecheck --workspace=@oday-plus/web", "exit_code": 0, "log": "typecheck.log" },
+    { "command": "npm run test --workspace=@oday-plus/web -- features/operator/__tests__/StoreOpsPackage10Parity.test.tsx features/operator/__tests__/StoreOpsWorkflowDialogs.production.test.tsx", "exit_code": 0, "tests_passed": 15, "log": "unit.log" },
+    { "command": "OPSBOARD_PORT=3186 STORE_OPS_PARITY_DESIGN=1 STORE_OPS_PARITY_EVIDENCE_DIR=$PWD/docs/evidence/completion/ODP-UI-STORE-OPS-PARITY-001/shots npx playwright test --config tests/e2e/operator-store-ops-parity.config.ts", "exit_code": 0, "tests_passed": 9, "log": "playwright.log", "web_server": "reused fixture-only server on port 3186; Store API intercepted" },
+    { "command": "python3 delivery_toolchain/governance/check_code_boundaries.py", "exit_code": 0, "log": "boundaries.log" },
+    { "command": "git diff --check", "exit_code": 0 }
+  ],
+  "screenshots": { "png_count": 48, "surfaces": 8, "widths": [1440, 390], "variants": ["before", "after", "design"], "hash_manifest": "shots.sha256" },
+  "geometry_widths": [1440, 1024, 390],
+  "axe_scope": "restored payment metric, event timeline, source card; all seven workflow dialogs",
+  "axe_violations": 0,
+  "earlier_300s_terminal_timeout": "unknown/incomplete receipt; not used as proof of success",
+  "independent_discipline_and_release_approvals": "not granted by this owner receipt"
+}

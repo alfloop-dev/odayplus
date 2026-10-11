@@ -1,0 +1,149 @@
+FFFFFF                                                                   [100%]
+=================================== FAILURES ===================================
+_ test_selected_zone_read_admits_combined_scope_and_keeps_record_projection[X-Brand-Ids-brandId-brand-a] _
+
+header = 'X-Brand-Ids', axis = 'brandId', allowed = 'brand-a'
+
+    @pytest.mark.parametrize(("header", "axis", "allowed"), COMBINED_AXES)
+    def test_selected_zone_read_admits_combined_scope_and_keeps_record_projection(header, axis, allowed):
+        listings, _, _, client = services_and_client(axis, allowed)
+        before = deepcopy(listings.export_state())
+        headers = {**HEADERS, header: allowed, "X-Heat-Zone-Ids": "HZ-01"}
+        queryless = client.get("/network-listings", headers=headers)
+        selected = client.get("/network-listings?selectedHeatZoneId=HZ-01", headers=headers)
+        assert queryless.status_code == 200, queryless.text
+>       assert selected.status_code == 200, selected.text
+E       AssertionError: {"detail":"SCOPE_DENIED"}
+E       assert 403 == 200
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/security/test_operator_network_read_scope.py:317: AssertionError
+_ test_selected_zone_read_admits_combined_scope_and_keeps_record_projection[X-Region-Ids-regionId-north] _
+
+header = 'X-Region-Ids', axis = 'regionId', allowed = 'north'
+
+    @pytest.mark.parametrize(("header", "axis", "allowed"), COMBINED_AXES)
+    def test_selected_zone_read_admits_combined_scope_and_keeps_record_projection(header, axis, allowed):
+        listings, _, _, client = services_and_client(axis, allowed)
+        before = deepcopy(listings.export_state())
+        headers = {**HEADERS, header: allowed, "X-Heat-Zone-Ids": "HZ-01"}
+        queryless = client.get("/network-listings", headers=headers)
+        selected = client.get("/network-listings?selectedHeatZoneId=HZ-01", headers=headers)
+        assert queryless.status_code == 200, queryless.text
+>       assert selected.status_code == 200, selected.text
+E       AssertionError: {"detail":"SCOPE_DENIED"}
+E       assert 403 == 200
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/security/test_operator_network_read_scope.py:317: AssertionError
+_ test_selected_zone_read_admits_combined_scope_and_keeps_record_projection[X-Store-Ids-storeId-store-a] _
+
+header = 'X-Store-Ids', axis = 'storeId', allowed = 'store-a'
+
+    @pytest.mark.parametrize(("header", "axis", "allowed"), COMBINED_AXES)
+    def test_selected_zone_read_admits_combined_scope_and_keeps_record_projection(header, axis, allowed):
+        listings, _, _, client = services_and_client(axis, allowed)
+        before = deepcopy(listings.export_state())
+        headers = {**HEADERS, header: allowed, "X-Heat-Zone-Ids": "HZ-01"}
+        queryless = client.get("/network-listings", headers=headers)
+        selected = client.get("/network-listings?selectedHeatZoneId=HZ-01", headers=headers)
+        assert queryless.status_code == 200, queryless.text
+>       assert selected.status_code == 200, selected.text
+E       AssertionError: {"detail":"SCOPE_DENIED"}
+E       assert 403 == 200
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/security/test_operator_network_read_scope.py:317: AssertionError
+_ test_selected_zone_read_admits_combined_scope_and_keeps_record_projection[X-Assigned-Area-Ids-assignedAreaId-area-a] _
+
+header = 'X-Assigned-Area-Ids', axis = 'assignedAreaId', allowed = 'area-a'
+
+    @pytest.mark.parametrize(("header", "axis", "allowed"), COMBINED_AXES)
+    def test_selected_zone_read_admits_combined_scope_and_keeps_record_projection(header, axis, allowed):
+        listings, _, _, client = services_and_client(axis, allowed)
+        before = deepcopy(listings.export_state())
+        headers = {**HEADERS, header: allowed, "X-Heat-Zone-Ids": "HZ-01"}
+        queryless = client.get("/network-listings", headers=headers)
+        selected = client.get("/network-listings?selectedHeatZoneId=HZ-01", headers=headers)
+        assert queryless.status_code == 200, queryless.text
+>       assert selected.status_code == 200, selected.text
+E       AssertionError: {"detail":"SCOPE_DENIED"}
+E       assert 403 == 200
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/security/test_operator_network_read_scope.py:317: AssertionError
+__ test_selected_zone_read_admits_restricted_nonviewer_without_new_projection __
+
+    def test_selected_zone_read_admits_restricted_nonviewer_without_new_projection():
+        listings, _, _, client = services_and_client("brandId", "brand-a")
+        headers = {**HEADERS, "X-Roles": "site_reviewer", "X-Operator-Role": "expansion-manager",
+                   "X-Brand-Ids": "brand-a", "X-Heat-Zone-Ids": "HZ-01"}
+        selected = client.get("/network-listings?selectedHeatZoneId=HZ-01", headers=headers)
+>       assert selected.status_code == 200, selected.text
+E       AssertionError: {"detail":"SCOPE_DENIED"}
+E       assert 403 == 200
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/security/test_operator_network_read_scope.py:341: AssertionError
+_ test_collection_reads_check_supplied_filters_but_creates_need_complete_scope _
+
+    def test_collection_reads_check_supplied_filters_but_creates_need_complete_scope() -> None:
+        combined = viewer(
+            Role.PLATFORM_ADMIN,
+            brand_ids=frozenset({"brand-a"}),
+            heat_zone_ids=frozenset({"HZ-01"}),
+        )
+>       authorize_intake_action(
+            combined, "view", collection_scope={"heatZoneId": "HZ-01"}, tenant_id="tenant-a"
+        )
+
+tests/security/test_operator_read_authorization.py:108: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+modules/listing/application/intake_authorization.py:225: in authorize_intake_action
+    _raise_and_audit(status_code=403, detail="SCOPE_DENIED")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+status_code = 403, detail = 'SCOPE_DENIED', decision = None
+
+    def _raise_and_audit(status_code: int, detail: str, *, decision: Decision | None = None) -> None:
+        if audit_log is not None:
+            action_enum = map_action_to_enum(action)
+            desc = ResourceDescriptor(
+                type=res_type,
+                resource_id=res_id,
+                tenant_id=target_tenant,
+            )
+            access = AccessRequest(
+                principal=principal,
+                action=action_enum,
+                resource=desc,
+                environment=Environment(
+                    source_ip=None,
+                    attributes={"correlation_id": correlation_id or "unknown"}
+                ),
+            )
+            dec = decision or Decision.deny(
+                reason=detail,
+                policy_id="intake_authorization",
+            )
+            event = build_security_event(access, dec)
+            audit_log.record(event)
+>       raise HTTPException(status_code=status_code, detail=detail)
+E       fastapi.exceptions.HTTPException: 403: SCOPE_DENIED
+
+modules/listing/application/intake_authorization.py:190: HTTPException
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /tmp/pantheon-worker-worktrees/pantheon/odp-operator-read-authorization-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/security/test_operator_network_read_scope.py::test_selected_zone_read_admits_combined_scope_and_keeps_record_projection[X-Brand-Ids-brandId-brand-a]
+FAILED tests/security/test_operator_network_read_scope.py::test_selected_zone_read_admits_combined_scope_and_keeps_record_projection[X-Region-Ids-regionId-north]
+FAILED tests/security/test_operator_network_read_scope.py::test_selected_zone_read_admits_combined_scope_and_keeps_record_projection[X-Store-Ids-storeId-store-a]
+FAILED tests/security/test_operator_network_read_scope.py::test_selected_zone_read_admits_combined_scope_and_keeps_record_projection[X-Assigned-Area-Ids-assignedAreaId-area-a]
+FAILED tests/security/test_operator_network_read_scope.py::test_selected_zone_read_admits_restricted_nonviewer_without_new_projection
+FAILED tests/security/test_operator_read_authorization.py::test_collection_reads_check_supplied_filters_but_creates_need_complete_scope
+6 failed, 30 deselected, 1 warning in 25.97s
+exit=1
