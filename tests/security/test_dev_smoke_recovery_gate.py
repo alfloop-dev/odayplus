@@ -202,6 +202,70 @@ def test_gate_quarantine_before_remaining_owned_cleanup(foreground_gate: Any, fa
         assert driver._failure_receipt()["original_incident_session_cleanup"] == "unknown"
 
 
+@pytest.mark.parametrize("case", ["logout_500", "logout_200_without_ok", "logout_200_without_clear",
+                                  "revocation_200", "revocation_500", "revocation_lost", "replay_api_200",
+                                  "replay_api_lost"])
+def test_invalid_logout_ack_or_failed_revocation_stops_before_any_further_login(
+        foreground_gate: Any, monkeypatch: Any, tmp_path: Any, case: str) -> None:
+    """Actual canonical evaluator, synthetic HTTP only; reviewer P2 regression."""
+    import json
+
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.release import recover_dev_smoke as r
+    from shared.identity.dev_smoke_recovery import RecoveryRefused
+    with foreground_gate() as (driver, actions, owner, budget, p, calls, sessions, original, target, events):
+        roundtrip = r._ForegroundGateHTTPSClient._roundtrip
+        fault_at: list[int] = []
+
+        def faulty(client, method, path, *, authenticated, body, headers):
+            response = roundtrip(client, method, path, authenticated=authenticated, body=body, headers=headers)
+            if fault_at or client._api or budget._active[0] != "gate":
+                return response
+            logged_out = any(state["acknowledged"] for state in driver._cookies.values())
+            if case.startswith("logout_") and (method, path) == ("POST", "/auth/logout"):
+                fault_at.append(len(calls) - 1)
+                if case == "logout_500":
+                    return gate.HttpResponse(500, {})
+                if case == "logout_200_without_ok":
+                    return gate.HttpResponse(200, {}, cookies={"__Host-oday_web_session": ""})
+                return gate.HttpResponse(200, {"ok": True})
+            if case.startswith("revocation_") and (method, path) == ("GET", "/auth/session") and logged_out:
+                fault_at.append(len(calls) - 1)
+                if case == "revocation_lost":
+                    raise RecoveryRefused("RECOVERY_GATE_TRANSPORT_STOPPED")
+                return gate.HttpResponse(int(case.rsplit("_", 1)[1]), {"subject": "odp-dev-smoke"})
+            if case.startswith("replay_api_") and (method, path) == ("GET", "/api/v1/operator/users") and logged_out:
+                fault_at.append(len(calls) - 1)
+                if case == "replay_api_lost":
+                    raise RecoveryRefused("RECOVERY_GATE_TRANSPORT_STOPPED")
+                return gate.HttpResponse(200, {"users": []})
+            return response
+        monkeypatch.setattr(r._ForegroundGateHTTPSClient, "_roundtrip", faulty)
+        with pytest.raises(r.RecoveryActionRefused):
+            driver.execute(actions)
+        assert len(fault_at) == 1
+        quarantine = next(i for i, call in enumerate(calls) if call[2] == "quarantine")
+        # STOP immediately: no gate transport (and certainly no login) between
+        # the failed proof and the new-root quarantine.
+        assert calls[fault_at[0] + 1:quarantine] == []
+        assert not any(call[1:3] == ("POST", "/login") for call in calls[fault_at[0] + 1:])
+        assert sum(call[1:3] == ("POST", "/auth/logout") for call in calls) == 1  # no retry
+        assert sum(call[2] == "quarantine" for call in calls) == 1
+        receipt = driver._failure_receipt()
+        assert receipt["quarantine"] == "completed" and receipt["own_session_cleanup"] == "unknown"
+        assert receipt["original_incident_session_cleanup"] == "unknown"
+        assert budget._stopped and owner._closed
+        records = [json.loads(path.read_text())
+                   for path in sorted((tmp_path / p["execution_id"]).glob("*.json"))]
+        logout = [rec for rec in records if rec["operation"] == "gate-session-logout" and rec["stage"] == "terminal"]
+        assert len(logout) == 1
+        assert logout[0]["outcome"] == ("unknown" if case.startswith("logout_") else "completed")
+        assert not any(rec["operation"] in {"gate-form-login", "gate-invalid-form-login"} for rec in records)
+        before = deepcopy(calls)
+        driver.stop_and_cleanup(actions)  # once-only; never re-run
+        assert calls == before
+
+
 @pytest.mark.parametrize("field,value", [("bearer_token", ""), ("api_transport_token", ""),
     ("release_profile", "full"), ("expected_deployment", "staging"), ("expected_sha", "c" * 40),
     ("expected_manifest_digest", ""), ("external_provider_mode", "live"), ("allow_http", True),

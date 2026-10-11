@@ -141,6 +141,50 @@ approval or F11 claim. Exploratory focused runs are not final receipts; declared
 exact-head receipts are produced by `task_verification.py` on the clean repair
 head before `task_finalize.sh`.
 
+## Third-review repair after rejected d751a0124 (2026-10-11, owner Antigravity2)
+
+Rejected PR1459 head d751a0124509 and its CI38163739530/receipts are preserved,
+not reset or amended; the repair is a new commit on the same task branch. Base
+remains origin/dev359e480a46df. Both findings concerned session uncertainty
+AFTER a logout request; the original-issuer bounds repair is untouched.
+
+- [P2] native consumer did not latch failed post-logout revocation reads.
+  `_ObservedWeb.request` now treats every non-logout request bearing an owned
+  cookie whose single logout was already attempted as revocation/replay proof:
+  `/auth/session` must be a clean 401; principal and protected admin API replay
+  (`/api/v1/operator/users`) must be a clean 401/403. A timeout/lost reply, 200,
+  5xx or other status latches UNKNOWN at that read, so the canonical evaluator's
+  following negative and successful HTML-form logins are refused locally, and a
+  later 401 in final cleanup cannot clear it (`cleanup_owned_sessions` returns
+  False). Logout remains at-most-once per owned cookie; no account-wide revoke.
+  New real-evaluator regression (`test_real_evaluator_failed_post_logout_
+  revocation_latches_before_form_logins`) covers session timeout/still-200/500
+  and replay-API 200/timeout, plus a clean-denial control that does NOT latch.
+- [P2] foreground same-pair gate recorded invalid logout replies as completed.
+  `ForegroundSamePairGate._request` now raises on any logout reply other than
+  200 + `ok:true` + cleared `__Host-oday_web_session` (HTTP500, missing ok,
+  missing clear), and on any failed/lost/non-denied post-logout read with that
+  cookie (session 200/500/lost, protected replay 200). The logout terminal
+  receipt is then UNKNOWN (not completed), the driver stops, and `execute()`
+  enters the existing once-only new-root quarantine followed by known-session
+  cleanup; the evaluator's two form login POSTs never reach transport. New
+  real-evaluator regression (`test_invalid_logout_ack_or_failed_revocation_
+  stops_before_any_further_login`) covers all five reviewer cases plus lost
+  revocation read and protected-replay 200/lost, asserting zero gate transport
+  between the failed proof and quarantine, one logout, quarantine completed,
+  own-session cleanup UNKNOWN (a later failed/lost replay clears an earlier
+  session401 `verified` mark), original incident cleanup UNKNOWN and no
+  form-login receipts.
+
+Reviewer probes were read (not rerun) as the defect specification. Diagnostic
+only: the new regressions copied onto a detached checkout of d751a0124 exited1
+with 12 of 14 cases failing (all five consumer failure cases and seven gate
+cases); the clean-denial control and lost session read (already a transport
+stop) passed. No live
+credential/account/session/secret/cloud effect, deployment, custody approval or
+F11 claim. Prior quarantine/bindingNULL, failed/rejected history and operational
+HOLD are preserved. Declared exact-head receipts follow on the clean repair head.
+
 ## Scope
 
 - New internal shared recovery plan/root/capability and PostgreSQL tests, not a

@@ -384,7 +384,8 @@ class _UncertaintyLatch:
     """One-way per-consumer latch shared by the API and Web observers.
 
     Set on the FIRST uncertain session effect (lost/malformed login reply,
-    unacknowledged/lost logout, duplicate logout, owned-inventory overflow).
+    unacknowledged/lost logout, duplicate logout, owned-inventory overflow, or
+    a failed/lost/non-denied post-logout revocation read for an owned cookie).
     Never cleared: a later 401/200 cannot prove the earlier effect's outcome.
     """
     def __init__(self) -> None:
@@ -493,6 +494,14 @@ class _ObservedWeb:
                     and response.cookies.get("__Host-oday_web_session") == "")
                 if not state["logout_acknowledged"]:
                     self._unknown()
+            elif state is not None and state["logout_attempted"]:
+                # Post-logout ORIGINAL-cookie revocation/replay proof (session,
+                # principal, protected admin API). Anything but a clean denial is
+                # failed/ambiguous revocation: latch NOW, before the evaluator's
+                # negative/form logins, and keep UNKNOWN despite any later 401.
+                denied = {401} if path == "/auth/session" else {401, 403}
+                if response.failed or response.status not in denied:
+                    self._unknown()
             if method == "GET" and path == "/api/v1/operator/users/audit-trail" and response.status == 200:
                 events = response.payload.get("events", [])
                 for event in events:
@@ -503,7 +512,9 @@ class _ObservedWeb:
                         self.ack_times.append(_aware(event["timestamp"]))
             return response
         except Exception:
-            if method == "POST" and (path == "/login" or (path == "/auth/logout" and state is not None)):
+            # Lost login, lost own logout, or lost/timed-out post-logout
+            # revocation read for an owned cookie: all UNKNOWN, never retried.
+            if (method == "POST" and path == "/login") or (state is not None and state["logout_attempted"]):
                 self._unknown()
             return gate.HttpResponse(status=0, error="native consumer bounded request refused")
 

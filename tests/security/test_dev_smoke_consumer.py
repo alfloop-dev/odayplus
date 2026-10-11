@@ -254,6 +254,75 @@ def test_uncertain_session_effect_latches_before_any_later_login_transport(uncer
     assert all(path != "/login" for _, path, _ in cleanup)
 
 
+@pytest.mark.parametrize("failure", ["none", "session-timeout", "session-still-200", "session-500",
+                                     "replay-api-200", "replay-api-timeout"])
+def test_real_evaluator_failed_post_logout_revocation_latches_before_form_logins(monkeypatch, failure: str) -> None:
+    """Actual canonical evaluator over synthetic HTTP only (no socket/credential)."""
+    from tests.e2e import test_live_e2e_gate_dev_admin as f
+
+    monkeypatch.setattr(f.base, "WEB_URL", c.WEB_ORIGIN)
+    target = "GET /auth/session" if failure.startswith("session-") else "GET /api/v1/operator/users"
+
+    class Web(f.AdminWeb):
+        failure_index: int | None = None
+
+        def request(self, method, path, **kwargs):
+            if (failure != "none" and self.logged_out and self.failure_index is None
+                    and f"{method} {path}" == target):
+                self.failure_index = len(self.headers_seen)
+                self.headers_seen.append((f"{method} {path}", dict(kwargs.get("headers") or {})))
+                if failure.endswith("timeout"):
+                    raise TimeoutError("offline post-logout revocation read lost")
+                if failure.endswith("500"):
+                    return c.gate.HttpResponse(500, {})
+                return c.gate.HttpResponse(200, {"subject": f.USERNAME, "users": []})
+            return super().request(method, path, **kwargs)
+
+    client = Web(f.web_routes())
+
+    def form_login(body, headers):
+        if body.get("username") == f.USERNAME and body.get("password") == f.PASSWORD:
+            client.logged_out = False
+            return c.gate.HttpResponse(303, location=c.WEB_ORIGIN + "/operator?view=admin",
+                                       cookies={f.SESSION_COOKIE: f.FRESH_SESSION_VALUE})
+        return c.gate.HttpResponse(303, location=c.WEB_ORIGIN
+                                   + "/login?error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin")
+    client.routes["form POST /login"] = form_login
+    now = time.monotonic()
+    observed = c._ObservedWeb(client, execution_id="offline", deadline=now + 30, cleanup_deadline=now + 35)
+    latched_at: list[int] = []
+    original_unknown = observed._unknown
+
+    def recording_unknown() -> None:
+        latched_at.append(len(client.headers_seen))
+        original_unknown()
+    monkeypatch.setattr(observed, "_unknown", recording_unknown)
+    clock = f.base.FakeClock()
+    checks, report = c.gate.evaluate_gate(f.dev_admin_config(), http=f.base.FakeHttp(f.api_routes()),
+        worker_driver=c.gate.ScheduledWorkerDriver(), correlation_id=f.base.CORRELATION_ID,
+        now=f.base.NOW, web_http=observed, monotonic=clock.monotonic, sleep=clock.sleep)
+    sent = [path for path, _ in client.headers_seen]
+    if failure == "none":
+        # Control: a clean denial never latches; canonical form journey proceeds.
+        assert not observed.uncertainty_latched and sent.count("POST /login") >= 2
+        assert observed.cleanup_owned_sessions() is True
+        return
+    after = sent[client.failure_index + 1:]
+    assert latched_at and latched_at[0] == client.failure_index + 1  # latched AT the failed read
+    assert observed.uncertainty_latched
+    assert "POST /login" not in after, "no negative/form login after failed revocation"
+    assert report["ok"] is False
+    before_cleanup = len(client.headers_seen)
+    # Final cleanup may still read with the ORIGINAL cookie (and get 401), but
+    # that later 401 cannot erase the latched UNKNOWN.
+    assert observed.cleanup_owned_sessions() is False
+    cleanup = [path for path, _ in client.headers_seen[before_cleanup:]]
+    assert all(p in {"GET /auth/session", "GET /api/v1/auth/principal", "POST /auth/logout"} for p in cleanup)
+    every = [path for path, _ in client.headers_seen]
+    assert every.count("POST /auth/logout") == 1  # at-most-once owned logout; no account-wide revoke
+    assert "POST /login" not in every[client.failure_index + 1:]
+
+
 @pytest.fixture(scope="module")
 def offline_signing_key():
     # Ephemeral isolated fixture, never an operational JWT key or persisted key.

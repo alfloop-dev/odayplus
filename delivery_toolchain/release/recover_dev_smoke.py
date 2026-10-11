@@ -2425,10 +2425,25 @@ class ForegroundSamePairGate:
             status = result.status
             if login and any(result.cookies.values()) and operation.startswith("gate-invalid-"):
                 raise ValueError  # unexpected diagnostic login owns a session, never authorizes more probes
-            if logout and status == 200 and not result.failed and result.payload.get("ok") is True:
-                self._cookies[cookie]["acknowledged"] = result.cookies.get("__Host-oday_web_session", "missing") == ""
-            if not client._api and method == "GET" and path == "/auth/session" and cookie in self._cookies:
-                if self._cookies[cookie]["acknowledged"] and status == 401 and not result.failed:
+            if logout:
+                acknowledged = (status == 200 and not result.failed and result.payload.get("ok") is True
+                                and result.cookies.get("__Host-oday_web_session", "missing") == "")
+                self._cookies[cookie]["acknowledged"] = acknowledged
+                if not acknowledged:
+                    # Complete-but-invalid logout reply is NOT a completed cleanup:
+                    # terminal UNKNOWN receipt, stop before any further login.
+                    raise ValueError
+            elif not client._api and cookie in self._cookies and self._cookies[cookie]["attempted"]:
+                # Post-logout revocation/replay proof with the SAME cookie. Any
+                # failed/non-denied read stops NOW (quarantine then once-only
+                # cleanup); the evaluator's later form logins never reach transport.
+                denied = {401} if path == "/auth/session" else {401, 403}
+                if (result.failed or status not in denied or method != "GET"
+                        or not self._cookies[cookie]["acknowledged"]):
+                    # Earlier session401 cannot outweigh a later live replay.
+                    self._cookies[cookie]["verified"] = False
+                    raise ValueError
+                if path == "/auth/session":
                     self._cookies[cookie]["verified"] = True
             if operation:
                 elapsed, remaining = self._budget._time()
@@ -2438,6 +2453,8 @@ class ForegroundSamePairGate:
         except Exception:
             if login and started:
                 self._unknown_login = True
+            if not client._api and cookie in self._cookies and self._cookies[cookie]["attempted"]:
+                self._cookies[cookie]["verified"] = False  # lost/failed revocation proof
             if operation and started:
                 try:
                     elapsed, remaining = self._budget._time()

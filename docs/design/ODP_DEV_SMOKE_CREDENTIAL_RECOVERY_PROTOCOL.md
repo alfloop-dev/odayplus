@@ -523,6 +523,13 @@ original-cookie session/principal revocation reads. No later login can create a
 new privileged session after an unknown prior effect; the final result stays
 UNKNOWN, with no retry or account-wide revocation.
 
+A failed post-logout revocation proof is itself such an effect. Once an owned
+cookie's single logout has been attempted, every later non-logout request with
+that cookie is revocation/replay proof: `/auth/session` must be a clean401 and
+principal or protected admin API replay a clean401/403. A lost/timed-out read,
+200, 5xx or any other status latches UNKNOWN at that read, BEFORE the evaluator's
+negative/form logins, and a later401 during final cleanup cannot clear it.
+
 Native credential-step bounds reserve preflight180 + gate300 + cleanup60 seconds
 in one monotonic540 envelope (NOT measured production ceilings). Signal-bound
 HTTP refuses late work; cleanup gets a separate reserved absolute window, not a
@@ -562,6 +569,15 @@ cleanup phase. Missing login response/quarantine/logout remains UNKNOWN, never
 blanket revocation or recovery resume. The old interrupted original-admin session
 remains UNKNOWN. Successful same-pair gate does NOT prove decrypted GitHub binding
 or full/F11 acceptance and still leaves `fresh_consumer` pending.
+
+The adapter STOPS immediately, inside the request, on a complete but invalid
+logout reply (anything but200 + `ok:true` + cleared session cookie, e.g. HTTP500,
+missing ok or missing clear) and on any failed/lost/non-denied post-logout read
+with that cookie (session not401; protected replay not401/403). The logout's
+terminal receipt is then UNKNOWN, not completed; `execute()` quarantines the new
+root once and runs once-only known-session cleanup. The evaluator's subsequent
+negative/form logins never reach transport, so no new session follows an
+unproven cleanup.
 
 This incremental adapter is NOT the full preflight-to-fresh-job coordinator.
 The next increment must compose fresh source/admission rechecks and a separately
