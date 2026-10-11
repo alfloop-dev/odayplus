@@ -907,7 +907,7 @@ class ForegroundOwnedWebSessions:
                 cookie = self._cookies[role]
                 if not cookie:
                     continue
-                def perform():
+                def perform(cookie=cookie):
                     result = self._request("logout", cookie=cookie)
                     if result.payload.get("ok") is not True:
                         raise ValueError

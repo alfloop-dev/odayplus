@@ -1616,9 +1616,10 @@ def test_real_github_tls_absolute_deadline_with_dribble(tls_recovery_server: Any
 @pytest.fixture
 def owned_sessions(tmp_path: Path, monkeypatch: Any):
     from contextlib import contextmanager
+
+    from delivery_toolchain.release import recover_dev_smoke as r
     from shared.identity.dev_smoke_journal import PRESERVED_ACCOUNT_ID
     from shared.identity.dev_smoke_recovery import TARGET_ACCOUNT_ID, TENANT_ID
-    from delivery_toolchain.release import recover_dev_smoke as r
 
     @contextmanager
     def setup(failure=""):
@@ -1650,7 +1651,7 @@ def owned_sessions(tmp_path: Path, monkeypatch: Any):
                     "roles": (["operations_manager", "platform_admin"] if failure == "roles" else
                               ["auditor", "platform_admin"] if role == "original" else ["platform_admin"])})
             if operation == "logout":
-                if failure == "logout":
+                if failure == "logout" or (failure == "target_logout" and role == "target"):
                     raise r.RecoveryHTTPRefused(outcome="unknown", http_status=503)
                 return r.RecoveryHTTPResult(200, {"ok": True})
             return r.RecoveryHTTPResult(401, {"error": {"code": "wrong" if failure == "revoked" else "WEB_SESSION_REQUIRED"}})
@@ -1726,6 +1727,43 @@ def test_owned_session_uncertainty_no_retry_or_blanket_cleanup(owned_sessions: A
         assert all(c[1] in {"", "offline-original-cookie"} for c in calls)
 
 
+def test_owned_cleanup_failure_still_attempts_only_other_known_session_once(owned_sessions: Any) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with owned_sessions("target_logout") as (owner, budget, clock, receipts, p, calls, original, target):
+        budget.begin("preflight")
+        owner.login("original")
+        budget.finish(outcome="completed")
+        for phase in ("reserve", "issue", "rotate"):
+            budget.begin(phase)
+            budget.finish(outcome="completed")
+        budget.begin("reconcile")
+        owner.login("target")
+        budget.finish(outcome="completed")
+        budget.begin("quarantine")
+        budget.finish(outcome="completed")
+        with pytest.raises(r.RecoveryActionRefused):
+            owner.cleanup()
+        assert [(c[0], c[1]) for c in calls[-3:]] == [("logout", "offline-target-cookie"),
+                    ("logout", "offline-original-cookie"), ("revoked", "offline-original-cookie")]
+        assert owner._cookies == {"original": "", "target": ""}
+
+
+def test_original_memory_pid_close_and_invalid_shape_never_echo(monkeypatch: Any) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    for value in (None, 123, "", "OFFLINE-PRIVATE-MARKER" * 100):
+        with pytest.raises(RecoveryRefused) as caught:
+            r.OriginalPasswordMemory(value)
+        assert "OFFLINE-PRIVATE-MARKER" not in str(caught.value)
+    original = r.OriginalPasswordMemory("OFFLINE-PRIVATE-MARKER")
+    assert "OFFLINE-PRIVATE-MARKER" not in repr(original)
+    monkeypatch.setattr(r.os, "getpid", lambda: original._pid + 1)
+    with pytest.raises(RecoveryRefused, match="CUSTODY_LOST"):
+        _ = original.password
+    original.close()
+    with pytest.raises(RecoveryRefused, match="CUSTODY_LOST"):
+        _ = original.password
+
+
 @pytest.mark.parametrize("failure", ["start", "terminal", "fork", "custody", "deadline"])
 def test_owned_session_receipt_custody_deadline_fail_stop(owned_sessions: Any, monkeypatch: Any, failure: str) -> None:
     from delivery_toolchain.release import recover_dev_smoke as r
@@ -1757,6 +1795,7 @@ def test_real_owned_login_https_csrf_cookie_validation_and_one_attempt(tls_recov
                                                                        bad_cookie: bool) -> None:
     import json
     import time
+
     from delivery_toolchain.release import recover_dev_smoke as r
     extra = (b"Set-Cookie: __Host-oday_web_session=offline-cookie; Path=/; HttpOnly; SameSite=Lax" +
              (b"; Domain=localhost" if bad_cookie else b"; Secure") + b"\r\n")
@@ -1785,6 +1824,7 @@ def test_real_owned_login_https_csrf_cookie_validation_and_one_attempt(tls_recov
 def test_real_owned_login_lost_body_retains_only_new_valid_cookie(tls_recovery_server: Any) -> None:
     import pickle
     import time
+
     from delivery_toolchain.release import recover_dev_smoke as r
     reply = (b"HTTP/1.1 200 fixture\r\nSet-Cookie: __Host-oday_web_session=offline-cookie; Path=/; Secure; HttpOnly; SameSite=Lax\r\n"
              b"Content-Length: 500\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n\r\n{\"ok\":")
