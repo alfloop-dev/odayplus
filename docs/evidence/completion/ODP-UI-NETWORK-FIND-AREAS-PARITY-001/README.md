@@ -38,6 +38,29 @@ Whole merge-vs-old-HEAD whitespace check reported imported historical approved
 logs/code; preserve those byte-for-byte, not erase failure evidence. Final
 clean-head/source-vs-current-base proofs remain separate and required.
 
+### Actual 2e3 source receipts and independent CI finding (Pi)
+
+2e3 exact source:48 targeted cases, typecheck, lint, production build, boundaries
+and diff all exit0; fresh built artifact `/operator`275.1kB/300.0,
+`/intake/[intakeId]`265.0kB/300.0. Four local-fixture Package10 browser cases
+passed in98.475s at isolated owned ports37143/38143, no retries/server reuse.
+Canonical driver first refused never-run lint/build because its coarse Web
+selection fingerprint matched typecheck: exit1 preserved, not credited.
+Existing-policy explicit truthful reasons ran ONLY unset lint/build, then budget
+against actual new build. Prior296.5kB stale existing-build receipt not credited.
+
+Hosted CI38135000394/node114456985057 genuinely failed six full production
+Console composition cases (68files/766cases passed, not whole success): the old
+header ARIA/English six-KPI assertions no longer matched Package10's four KPIs.
+Direct Pi followup preserves exact production read-denial/correlation/GET-only,
+no-zero/no-grant/no-fixture and authorized-row assertions with the current labels.
+Omitted whole-zone/confidence KPIs remain withheld, with pure state/gate proof,
+never numeric zero. Also repair count-source selection: if dedicated reviews
+read is refused, known authorized projected reviews in the scoped snapshot must
+not be erased. Correct pending-review display source/state pair, no role widening
+or denial retry. All original production composition cases now exit0 preliminary;
+new exact final-head proofs/normal hosted CI/independent review still required.
+
 ## Historical original source evidence (unchanged)
 
 Recorded 2026-10-09 by Claude2. Base `origin/dev` 963090d6f. Design reference:

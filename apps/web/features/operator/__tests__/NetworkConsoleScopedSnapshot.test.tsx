@@ -13,6 +13,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole } from "../OperatorConsole";
+import { resolveNetworkCountState } from "../NetworkFindAreasWorkspace";
 
 const nav = vi.hoisted(() => ({ search: "ws=network" }));
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
@@ -227,9 +228,9 @@ describe("Network Find Areas in the production Operator Console composition", ()
       }
     }
 
-    const state = screen.getByLabelText("Network Find Areas state");
-    expect(state).toHaveTextContent("2 HeatZones");
-    expect(state).toHaveTextContent("1 listings");
+    const state = screen.getByLabelText("展店與店網摘要");
+    expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("Scoped Zone Two");
+    expect(state).toHaveTextContent("1 今日新物件");
     expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();
     expect(screen.queryByText("fixture data")).toBeNull();
   });
@@ -239,13 +240,15 @@ describe("Network Find Areas in the production Operator Console composition", ()
 
     const { unmount } = render(<OperatorConsole searchParams={{ ws: "network" }} />);
 
-    const state = await screen.findByLabelText("Network Find Areas state");
-    await waitFor(() => expect(state).toHaveTextContent("1 listings"), { timeout: 5000 });
-    expect(state).toHaveTextContent("— HeatZones（未授權）");
-    expect(state).not.toHaveTextContent("0 HeatZones");
-    expect(state).toHaveTextContent("— avg confidence（未授權）");
-    expect(within(state).getByText("HeatZones", { exact: false })).toHaveAttribute("data-count-state", "withheld");
-    expect(within(state).getByText("listings", { exact: false })).toHaveAttribute("data-count-state", "known");
+    const state = await screen.findByLabelText("展店與店網摘要");
+    await waitFor(() => expect(state).toHaveTextContent("1 今日新物件"), { timeout: 5000 });
+    // Package10 omits whole-zone/average-confidence KPIs, never turns their
+    // withheld disposition into zero; the visible Find Areas gate still names it.
+    expect(state).not.toHaveTextContent(/HeatZones|avg confidence/);
+    expect(resolveNetworkCountState("ready", null, false, true)).toEqual({
+      known: false, label: "未授權", reason: "withheld",
+    });
+    expect(within(state).getByText("今日新物件", { exact: false })).toHaveAttribute("data-count-state", "known");
     // Find Areas reports the missing aggregate without suppressing authorized rows.
     await waitFor(() =>
       expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty"),
@@ -286,13 +289,15 @@ describe("Network Find Areas in the production Operator Console composition", ()
       nav.search = `ws=network&tab=${tab}`;
       render(<OperatorConsole searchParams={{ ws: "network", tab }} />);
 
-      const state = await screen.findByLabelText("Network Find Areas state");
-      await waitFor(() => expect(state).toHaveTextContent("1 candidates"), { timeout: 5000 });
-      expect(state).toHaveTextContent("1 listings");
-      expect(state).toHaveTextContent("1 reviews");
-      expect(state).toHaveTextContent("— HeatZones（未授權）");
-      expect(state).toHaveTextContent("— avg confidence（未授權）");
-      for (const label of ["listings", "candidates", "reviews"]) {
+      const state = await screen.findByLabelText("展店與店網摘要");
+      await waitFor(() => expect(state).toHaveTextContent("1 進行中候選"), { timeout: 5000 });
+      expect(state).toHaveTextContent("1 今日新物件");
+      expect(state).toHaveTextContent("1 待審 Review");
+      expect(state).not.toHaveTextContent(/HeatZones|avg confidence/);
+      expect(resolveNetworkCountState("ready", null, false, true)).toEqual({
+        known: false, label: "未授權", reason: "withheld",
+      });
+      for (const label of ["今日新物件", "進行中候選", "待審 Review"]) {
         expect(within(state).getByText(label, { exact: false })).toHaveAttribute("data-count-state", "known");
       }
       await waitFor(() =>
@@ -338,12 +343,12 @@ describe("Network Find Areas in the production Operator Console composition", ()
     expect(gate).not.toHaveTextContent("瀏覽器無法連到營運資料服務");
     expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-listings-403");
 
-    const state = screen.getByLabelText("Network Find Areas state");
-    for (const label of ["HeatZones", "listings", "candidates", "reviews"]) {
+    const state = screen.getByLabelText("展店與店網摘要");
+    for (const label of ["今日新物件", "進行中候選", "待審 Review"]) {
       expect(state).toHaveTextContent(`— ${label}（未授權）`);
       expect(state).not.toHaveTextContent(`0 ${label}`);
     }
-    await waitFor(() => expect(state).toHaveTextContent("0 rebalances"));
+    await waitFor(() => expect(state).toHaveTextContent("0 重配候選"));
     // The denial is presented as received: no write, no grant request and no
     // retry into broader domain reads than the console already makes.
     for (const [, init] of vi.mocked(fetch).mock.calls) {
@@ -369,16 +374,16 @@ describe("Network Find Areas in the production Operator Console composition", ()
 
     render(<OperatorConsole searchParams={{ ws: "network" }} />);
 
-    const state = await screen.findByLabelText("Network Find Areas state", {}, { timeout: 5000 });
+    const state = await screen.findByLabelText("展店與店網摘要", {}, { timeout: 5000 });
     await waitFor(() =>
       expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty"),
       { timeout: 5000 },
     );
-    expect(state).toHaveTextContent("0 listings");
-    expect(state).toHaveTextContent("0 HeatZones");
-    expect(state).toHaveTextContent("0 candidates");
-    expect(state).toHaveTextContent("0 reviews");
-    for (const label of ["HeatZones", "listings", "candidates", "reviews"]) {
+    expect(state).toHaveTextContent("0 今日新物件");
+    expect(state).toHaveTextContent("0 進行中候選");
+    expect(state).toHaveTextContent("0 待審 Review");
+    expect(state).not.toHaveTextContent(/HeatZones|avg confidence/);
+    for (const label of ["今日新物件", "進行中候選", "待審 Review"]) {
       expect(within(state).getByText(label, { exact: false })).toHaveAttribute("data-count-state", "known");
     }
     expect(state).not.toHaveTextContent("未授權");

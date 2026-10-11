@@ -1495,8 +1495,11 @@ export function NetworkFindAreasWorkspace({
     !fixturesAllowed && networkLoadState === "error" ? networkLoadFailure : null;
   const snapshotCountState = resolveNetworkCountState(networkLoadState, networkLoadFailure, fixturesAllowed);
   // Package10 uses four workflow KPIs, not unauthorized HeatZone aggregates.
-  // Each independent read must keep its own denial/unknown count semantics.
-  const reviewCountState = resolveNetworkCountState(reviewsLoadState, reviewsLoadFailure, fixturesAllowed);
+  // Match the count to its actual source: a refused dedicated reviews read
+  // cannot erase known authorized reviews in the scoped network snapshot.
+  const reviewCountState = reviewsSnapshot !== null
+    ? resolveNetworkCountState(reviewsLoadState, reviewsLoadFailure, fixturesAllowed)
+    : snapshotCountState;
   const rebalanceCountState = resolveNetworkCountState(rebalanceLoadState, rebalanceLoadFailure, fixturesAllowed);
 
   const listingRadarPanel = (
