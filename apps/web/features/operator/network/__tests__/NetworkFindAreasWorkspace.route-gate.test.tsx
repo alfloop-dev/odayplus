@@ -29,7 +29,9 @@ vi.mock("../ListingRadarPanel", () => ({
   },
 }));
 
-vi.mock("../ReviewPanel", () => ({
+vi.mock("../ReviewPanel", async (importOriginal) => ({
+  // The workspace counts through the real queue selector; only the panel is stubbed.
+  resolveEffectiveReviews: (await importOriginal<typeof import("../ReviewPanel")>()).resolveEffectiveReviews,
   ReviewPanel: ({ canDecide, reviews, onDecide }: ComponentProps<typeof import("../ReviewPanel").ReviewPanel>) => (
     <div data-testid="review-authority" data-can-decide={String(canDecide)}>
       {canDecide && reviews[0] ? (

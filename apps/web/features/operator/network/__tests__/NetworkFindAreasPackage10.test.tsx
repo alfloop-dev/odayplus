@@ -1,11 +1,12 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiBinding } from "../../../../src/lib/api/binding";
 import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
 import type { Candidate, OperatorHeatZone } from "../../types";
 import * as fixtures from "../../fixtures";
 import { ExpansionStepper } from "../ExpansionStepper";
+import type { ReviewItem } from "../networkReviewTypes";
 
 // Package 10 Find Areas content parity (ODP-UI-NETWORK-FIND-AREAS-PARITY-001).
 // The map needs WebGL, so it is stubbed; its props are captured instead.
@@ -298,6 +299,74 @@ describe("Network Find Areas — Package 10 content", () => {
     fireEvent.click(screen.getByTestId("network-tab-3"));
     expect(lastPushedParams().get("tab")).toBe("score");
     expect(lastPushedParams().has("zone")).toBe(false);
+  });
+
+  // Fixture mode with the real ReviewPanel: the header chip, the tab badge and
+  // the listed queue must come from one effective source. Only the dedicated
+  // reviews read answers; every other read stays pending.
+  function stubReviewsRead(body: unknown) {
+    const fetchMock = vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/api/v1/operator/network-reviews")
+        ? Promise.resolve({
+            headers: new Headers({ "Content-Type": "application/json" }),
+            json: async () => body,
+            ok: true,
+            status: 200,
+          } as unknown as Response)
+        : new Promise<Response>(() => undefined),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  function apiReview(id: string): ReviewItem {
+    return {
+      brokerContact: "—", cannibalization: "—", candidateId: `CS-${id}`, candidateTitle: `API ${id}`,
+      compareText: "—", datasetSnapshotId: "—", decision: null, dueAt: "", eventChips: [], fieldVisit: "—",
+      history: [], id, m12P50: "—", modelVersion: "SiteScore v2.3", notes: "—", payback: "—",
+      recommendation: "GO", rentReasonableness: "—", requestedBy: "展店經理", reviewerRole: "審核角色",
+      risk: "", score: 80, sourceListingId: "—", status: "pending", statusLabel: "待審核",
+      submittedAt: "2026-10-11", zoneLabel: "信義區",
+    };
+  }
+
+  function reviewHeaderChip() {
+    return within(screen.getByTestId("network-header-stats")).getAllByRole("listitem")[2];
+  }
+
+  it("keeps the fixture queue, badge and header count aligned after an empty reviews response", async () => {
+    const fetchMock = stubReviewsRead({ source: "api", reviews: [] });
+    renderFindAreas();
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/network-reviews"))).toBe(true),
+    );
+    // Let the read resolve and the empty snapshot be applied.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(screen.getByTestId("network-tab-count-5")).toHaveTextContent("1");
+    expect(reviewHeaderChip()).toHaveTextContent(/^1\s*待審 Review$/);
+
+    fireEvent.click(screen.getByTestId("network-tab-5"));
+    const panel = screen.getByTestId("network-panel-review");
+    const cards = within(screen.getByTestId("review-queue")).getAllByTestId(/^review-card-/);
+    expect(cards.map((card) => card.getAttribute("data-testid"))).toContain("review-card-RV-701");
+    expect(panel).toHaveTextContent("1 待審核");
+    expect(screen.getByTestId("network-tab-count-5")).toHaveTextContent("1");
+  });
+
+  it("switches count, badge and queue together to a nonempty reviews response", async () => {
+    stubReviewsRead({ source: "api", reviews: [apiReview("RV-API-1"), apiReview("RV-API-2")] });
+    renderFindAreas();
+    await waitFor(() => expect(screen.getByTestId("network-tab-count-5")).toHaveTextContent("2"));
+    expect(reviewHeaderChip()).toHaveTextContent(/^2\s*待審 Review$/);
+
+    fireEvent.click(screen.getByTestId("network-tab-5"));
+    const queue = screen.getByTestId("review-queue");
+    expect(within(queue).getAllByTestId(/^review-card-/)).toHaveLength(2);
+    expect(within(queue).queryByTestId("review-card-RV-701")).toBeNull();
+    expect(screen.getByTestId("network-panel-review")).toHaveTextContent("2 待審核");
   });
 });
 

@@ -41,7 +41,7 @@ import { canMergeListing } from "./network/listingPermissions";
 import { CandidatePanel } from "./network/CandidatePanel";
 import { SiteScorePanel } from "./network/SiteScorePanel";
 import { ComparePanel } from "./network/ComparePanel";
-import { ReviewPanel } from "./network/ReviewPanel";
+import { ReviewPanel, resolveEffectiveReviews } from "./network/ReviewPanel";
 import { NetworkShell } from "./network/NetworkShell";
 import { FindAreasPanel } from "./network/FindAreasPanel";
 import { canPerform as canPerformIntake } from "./network/intake/intakePermissions";
@@ -1248,10 +1248,23 @@ export function NetworkFindAreasWorkspace({
 
   const selectedZone = viewModel.selectedZone;
   const isSelectedTracked = selectedZone ? trackedSet.has(selectedZone.id) : false;
-  // The Review tab renders the reviews snapshot when it has one, so its badge
-  // and the header chip count the same queue.
-  const pendingReviewCount = reviewsSnapshot !== null
-    ? reviewsSnapshot.reviews.filter((review) => review.status === "pending").length
+  // One effective review source feeds the header chip, the tab badge and the
+  // Review panel. Fallback rows exist only in fixture mode, where the panel
+  // lists them whenever the dedicated read has no rows (null or an empty
+  // response), so the count follows the listed queue there. In production an
+  // authorized dedicated read (empty included) is authoritative; only a refused
+  // or failed read keeps the projected scoped-snapshot count.
+  const reviewFallbackRows = useMemo(
+    () => (fixturesAllowed ? viewModel.reviewQueue : []),
+    [fixturesAllowed, viewModel.reviewQueue],
+  );
+  const dedicatedReviews = useMemo(() => reviewsSnapshot?.reviews ?? [], [reviewsSnapshot]);
+  const displayedReviews = useMemo(
+    () => resolveEffectiveReviews(dedicatedReviews, reviewFallbackRows),
+    [dedicatedReviews, reviewFallbackRows],
+  );
+  const pendingReviewCount = reviewsSnapshot !== null || fixturesAllowed
+    ? displayedReviews.filter((review) => review.status === "pending").length
     : viewModel.totals.pendingReviews;
   const tabCounts = [
     null,
@@ -1632,8 +1645,8 @@ export function NetworkFindAreasWorkspace({
           />
         ) : activeTab === 5 ? (
           <ReviewPanel
-            reviews={reviewsSnapshot?.reviews ?? []}
-            fallbackRows={fixturesAllowed ? viewModel.reviewQueue : []}
+            reviews={dedicatedReviews}
+            fallbackRows={reviewFallbackRows}
             canDecide={reviewIdentity.canDecide}
             submitting={reviewSubmitting}
             decideError={reviewError}

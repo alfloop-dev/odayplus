@@ -102,6 +102,31 @@ fixtures missing reviewerRoleIds. Correct the fixture shape, not assertions;
 use installed tools and a genuine same-source Git clone with required evidence
 ancestry/dependencies for the unchanged full acceptance selection.
 
+### Fixture-mode empty Review source repair (Antigravity2, 2026-10-11)
+
+Codex2's PR1439/b998 P3 (local/demo fixture mode only): after a successful
+`network-reviews` `{source:"api",reviews:[]}` the header chip and Review tab
+badge counted the empty snapshot (0, badge hidden) while `ReviewPanel` still
+listed the fixture fallback queue. Ownership moved from Pi to Antigravity2.
+
+Fix: one effective source. `ReviewPanel` exports `resolveEffectiveReviews`
+(dedicated rows when present, else fallback rows); the workspace memoizes the
+dedicated rows and the fixture-only fallback rows once, passes the same arrays
+to the panel, and counts pending items of the same resolved list whenever a
+dedicated snapshot exists or fixtures are allowed. Production is unchanged:
+fallback rows are always empty there, so an authorized empty read stays an
+authoritative zero, and a refused/failed read (snapshot null) still uses the
+projected scoped-snapshot count with its own count state.
+
+Coverage uses the real `ReviewPanel` in fixture mode
+(`NetworkFindAreasPackage10.test.tsx`): an empty dedicated response keeps
+badge 1, header `1 待審 Review`, queue card `RV-701` and `1 待審核`; a nonempty
+response with two pending API reviews switches all three to 2 and drops the
+fixture card. The route-gate stub of `ReviewPanel` passes the real selector
+through. Against the pre-fix workspace (b998) the empty-response case fails on
+the missing `network-tab-count-5` badge; with the fix the focused selection is
+4 files / 61 tests passed. Declared receipts are recorded at the new exact head.
+
 ## Historical original source evidence (unchanged)
 
 Recorded 2026-10-09 by Claude2. Base `origin/dev` 963090d6f. Design reference:
