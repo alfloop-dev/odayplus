@@ -9,12 +9,12 @@ from uuid import uuid4
 import pytest
 
 from shared.identity.dev_smoke_recovery import (
+    _FIXED_PLAN,
     OLD_EXECUTION_ID,
+    RecoveryBundleLineage,
+    RecoveryCapability,
     RecoveryRefused,
     RecoveryReservation,
-    RecoveryCapability,
-    RecoveryBundleLineage,
-    _FIXED_PLAN,
     validate_recovery_plan,
 )
 
@@ -125,8 +125,13 @@ def recovery_consumer_inputs() -> tuple[dict[str, Any], list[dict[str, Any]], di
     """Synthetic consumer contracts only; NOT a binding producer/live receipt."""
     from shared.identity import dev_smoke_recovery as r
     from shared.identity.dev_smoke_journal import (
-        AUTHORIZATION_ID as old_authorization, PRESERVED_ACCOUNT_ID, TENANT_ID,
-        CREDENTIAL_BUNDLE_SECRET_NAME, ProvisioningJournal,
+        AUTHORIZATION_ID as old_authorization,
+    )
+    from shared.identity.dev_smoke_journal import (
+        CREDENTIAL_BUNDLE_SECRET_NAME,
+        PRESERVED_ACCOUNT_ID,
+        TENANT_ID,
+        ProvisioningJournal,
     )
     from shared.identity.invitation_service import _scope
     now = datetime(2026, 10, 11, 5, tzinfo=UTC)
@@ -201,7 +206,11 @@ def recovery_consumer_inputs() -> tuple[dict[str, Any], list[dict[str, Any]], di
 
 def test_recovery_schema2_standing_bundle_requires_complete_separate_lineage() -> None:
     import json
-    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, credential_bundle_acknowledged
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        credential_bundle_acknowledged,
+        read_dev_credential_bundle,
+    )
     raw, events, target = recovery_consumer_inputs()
     bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
     assert bundle.schema_version == 2 and bundle.password == raw["password"]
@@ -216,7 +225,11 @@ def test_recovery_schema2_standing_bundle_requires_complete_separate_lineage() -
 @pytest.mark.parametrize("missing", range(9))
 def test_recovery_lineage_missing_any_required_event_refuses(missing: int) -> None:
     import json
-    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, credential_bundle_acknowledged
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        credential_bundle_acknowledged,
+        read_dev_credential_bundle,
+    )
     raw, events, target = recovery_consumer_inputs()
     bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
     events.pop(missing)
@@ -231,7 +244,11 @@ def test_recovery_lineage_missing_any_required_event_refuses(missing: int) -> No
 ])
 def test_recovery_lineage_event_envelope_corruption_refuses(index: int, field: str, value: Any) -> None:
     import json
-    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, credential_bundle_acknowledged
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        credential_bundle_acknowledged,
+        read_dev_credential_bundle,
+    )
     raw, events, target = recovery_consumer_inputs()
     bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
     events[index][field] = value
@@ -247,7 +264,11 @@ def test_recovery_lineage_event_envelope_corruption_refuses(index: int, field: s
 ])
 def test_recovery_lineage_metadata_corruption_refuses(index: int, field: str, value: Any) -> None:
     import json
-    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, credential_bundle_acknowledged
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        credential_bundle_acknowledged,
+        read_dev_credential_bundle,
+    )
     raw, events, target = recovery_consumer_inputs()
     bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
     # Unchanged old reserved/quarantine share the expected old execution by definition.
@@ -268,7 +289,11 @@ def test_recovery_lineage_metadata_corruption_refuses(index: int, field: str, va
 ])
 def test_recovery_bundle_never_falls_back_or_downgrades(change: Any) -> None:
     import json
-    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, ProvisioningRefused
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
     raw, _, _ = recovery_consumer_inputs()
     raw.update(change)
     with pytest.raises(ProvisioningRefused, match="^PROVISIONING_CREDENTIAL_BUNDLE_INVALID$"):
@@ -278,7 +303,11 @@ def test_recovery_bundle_never_falls_back_or_downgrades(change: Any) -> None:
 @pytest.mark.parametrize("field", list(RecoveryBundleLineage.__dataclass_fields__))
 def test_recovery_bundle_all_lineage_fields_required(field: str) -> None:
     import json
-    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, ProvisioningRefused
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
     raw, _, _ = recovery_consumer_inputs()
     raw["recovery_lineage"].pop(field)
     with pytest.raises(ProvisioningRefused):
@@ -291,7 +320,11 @@ def test_recovery_bundle_all_lineage_fields_required(field: str) -> None:
 def test_recovery_proof_rejects_uncertainty_replay_expiry_and_cross_lineage(failure: str) -> None:
     import json
     from copy import deepcopy
-    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, credential_bundle_acknowledged
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        credential_bundle_acknowledged,
+        read_dev_credential_bundle,
+    )
     from shared.identity.dev_smoke_journal import DevSmokeBindingJournal
     raw, events, target = recovery_consumer_inputs()
     bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
@@ -332,7 +365,11 @@ def test_recovery_proof_rejects_uncertainty_replay_expiry_and_cross_lineage(fail
 @pytest.mark.parametrize("nested", [False, True])
 def test_recovery_bundle_duplicate_keys_fail_static_without_plaintext_echo(nested: bool) -> None:
     import json
-    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle, ProvisioningRefused
+
+    from delivery_toolchain.release.provision_dev_smoke import (
+        ProvisioningRefused,
+        read_dev_credential_bundle,
+    )
     raw, _, _ = recovery_consumer_inputs()
     serialized = json.dumps(raw)
     key = "plan_digest" if nested else "password"
@@ -346,6 +383,7 @@ def test_recovery_bundle_duplicate_keys_fail_static_without_plaintext_echo(neste
 # or genuine writer-exclusion/native fresh-consumer proof.
 def foreground_budget(tmp_path: Path, monkeypatch: Any, *, total: float = 2400):
     from types import SimpleNamespace
+
     from delivery_toolchain.release import recover_dev_smoke as r
     clock = SimpleNamespace(value=100.0)
     monkeypatch.setattr(r, "time", SimpleNamespace(monotonic=lambda: clock.value))
@@ -372,6 +410,7 @@ def advance_to(budget: Any, phase: str) -> None:
 def test_parent_custody_unique_repr_pickle_fork_and_close(monkeypatch: Any) -> None:
     import pickle
     from copy import deepcopy
+
     from delivery_toolchain.release import recover_dev_smoke as r
     from shared.identity.password_policy import PasswordPolicy
     first, second = r.ParentMemoryCustody(), r.ParentMemoryCustody()
@@ -596,6 +635,7 @@ def observer_child(tmp_path: Path, program: str, *, seconds: float = 5) -> bytes
     """Real NON-SECRET test child; no cloud/database/credential transport."""
     import sys
     import time
+
     from delivery_toolchain.release.recover_dev_smoke import _bounded_observer_child
     return _bounded_observer_child((sys.executable, "-c", program), cwd=tmp_path,
                                    deadline=time.monotonic() + seconds)
@@ -626,7 +666,7 @@ print("safe-terminal")
 
 
 def test_real_observer_timeout_reaps_original_handle_without_losing_parent_custody(tmp_path: Path) -> None:
-    from delivery_toolchain.release.recover_dev_smoke import ParentMemoryCustody, ObserverRefused
+    from delivery_toolchain.release.recover_dev_smoke import ObserverRefused, ParentMemoryCustody
     custody = ParentMemoryCustody()
     password = custody.password
     custody.attach_capability("t" * 43)
@@ -660,6 +700,7 @@ def test_real_observer_nonzero_original_terminal_is_not_pass(tmp_path: Path) -> 
 
 def test_observer_wait_receipt_loss_is_unknown_not_success(tmp_path: Path, monkeypatch: Any) -> None:
     import subprocess
+
     from delivery_toolchain.release.recover_dev_smoke import ObserverRefused
     original = subprocess.Popen.wait
     def lost_receipt(self: Any, *args: Any, **kwargs: Any) -> int:
@@ -674,6 +715,7 @@ def test_observer_wait_receipt_loss_is_unknown_not_success(tmp_path: Path, monke
 
 def test_observer_group_cancellation_even_if_original_exited_zero(tmp_path: Path) -> None:
     import time
+
     from delivery_toolchain.release.recover_dev_smoke import ObserverRefused
     # Descendant retains pipes after parent exit. Finite observation of a test
     # marker supplements group cancellation; it is NOT a grandchild wait receipt.
@@ -704,7 +746,11 @@ def isolated_checkout(tmp_path: Path) -> tuple[Path, str, str]:
 @pytest.mark.parametrize("drift", ["none", "tracked", "untracked", "sha", "tree", "fsmonitor"])
 def test_checkout_observer_fresh_fulltree_no_cached_pass(isolated_checkout: Any, drift: str) -> None:
     import time
-    from delivery_toolchain.release.recover_dev_smoke import TrustedCheckoutObserver, ObserverRefused
+
+    from delivery_toolchain.release.recover_dev_smoke import (
+        ObserverRefused,
+        TrustedCheckoutObserver,
+    )
     checkout, sha, tree = isolated_checkout
     observer = TrustedCheckoutObserver(checkout, release_sha=sha, reviewed_tree=tree)
     receipt = observer.observe(deadline=time.monotonic() + 5)
@@ -731,6 +777,7 @@ def test_checkout_observer_fresh_fulltree_no_cached_pass(isolated_checkout: Any,
 
 def test_checkout_head_drift_during_read_refuses(isolated_checkout: Any, monkeypatch: Any) -> None:
     import time
+
     from delivery_toolchain.release import recover_dev_smoke as r
     checkout, sha, tree = isolated_checkout
     original = r._bounded_observer_child
@@ -757,6 +804,7 @@ def tls_recovery_server(tmp_path: Path):
     import time
     from contextlib import contextmanager
     from datetime import timedelta
+
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -844,7 +892,11 @@ def test_real_https_once_same_cookie_fixed_route_no_dns_env_or_redirect(tls_reco
     import pickle
     import socket
     import time
-    from delivery_toolchain.release.recover_dev_smoke import RecoveryHTTPSAttempt, RecoveryHTTPRefused
+
+    from delivery_toolchain.release.recover_dev_smoke import (
+        RecoveryHTTPRefused,
+        RecoveryHTTPSAttempt,
+    )
     monkeypatch.setenv("HTTPS_PROXY", "http://not-a-proxy.invalid")
     def forbidden(*args, **kwargs):
         raise AssertionError("DNS forbidden inside absolute phase")
@@ -876,7 +928,11 @@ def test_real_https_once_same_cookie_fixed_route_no_dns_env_or_redirect(tls_reco
                                       "truncated_chunk", "cache", "header_cap"])
 def test_real_https_unknown_post_never_reconstructs_commit_or_retries(tls_recovery_server: Any, failure: str) -> None:
     import time
-    from delivery_toolchain.release.recover_dev_smoke import RecoveryHTTPSAttempt, RecoveryHTTPRefused
+
+    from delivery_toolchain.release.recover_dev_smoke import (
+        RecoveryHTTPRefused,
+        RecoveryHTTPSAttempt,
+    )
     replies = {
         "lost": b"", "redirect": recovery_http_reply(status=302, extra=b"Location: https://elsewhere.invalid\r\n"),
         "204": recovery_http_reply(status=204), "500": recovery_http_reply(status=500),
@@ -905,7 +961,11 @@ def test_real_https_unknown_post_never_reconstructs_commit_or_retries(tls_recove
 @pytest.mark.parametrize("phase", ["headers", "handshake"])
 def test_real_https_absolute_deadline_cannot_refresh_with_dribble(tls_recovery_server: Any, phase: str) -> None:
     import time
-    from delivery_toolchain.release.recover_dev_smoke import RecoveryHTTPSAttempt, RecoveryHTTPRefused
+
+    from delivery_toolchain.release.recover_dev_smoke import (
+        RecoveryHTTPRefused,
+        RecoveryHTTPSAttempt,
+    )
     with tls_recovery_server(recovery_http_reply(), dribble=phase == "headers",
                              handshake_pause=0.7 if phase == "handshake" else 0) as (origin, ca, _):
         attempt = RecoveryHTTPSAttempt(origin=origin, address="127.0.0.1", ca_pem=ca)
@@ -919,7 +979,11 @@ def test_real_https_absolute_deadline_cannot_refresh_with_dribble(tls_recovery_s
 
 def test_real_https_certificate_hostname_verified_before_any_request(tls_recovery_server: Any) -> None:
     import time
-    from delivery_toolchain.release.recover_dev_smoke import RecoveryHTTPSAttempt, RecoveryHTTPRefused
+
+    from delivery_toolchain.release.recover_dev_smoke import (
+        RecoveryHTTPRefused,
+        RecoveryHTTPSAttempt,
+    )
     with tls_recovery_server(recovery_http_reply()) as (origin, ca, observed):
         attempt = RecoveryHTTPSAttempt(origin=origin.replace("localhost", "wrong.invalid"), address="127.0.0.1", ca_pem=ca)
         with pytest.raises(RecoveryHTTPRefused) as caught:
@@ -932,7 +996,11 @@ def test_real_https_certificate_hostname_verified_before_any_request(tls_recover
 def test_https_bad_input_poisons_attempt_without_socket_or_echo(monkeypatch: Any, bad: str) -> None:
     import socket
     import time
-    from delivery_toolchain.release.recover_dev_smoke import RecoveryHTTPSAttempt, RecoveryHTTPRefused
+
+    from delivery_toolchain.release.recover_dev_smoke import (
+        RecoveryHTTPRefused,
+        RecoveryHTTPSAttempt,
+    )
     attempt = RecoveryHTTPSAttempt(origin="https://offline.invalid", address="127.0.0.1")
     calls = []
     def forbidden(*args, **kwargs):
