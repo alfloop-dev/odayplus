@@ -417,6 +417,56 @@ independent Codex2 review, ordinary deployment/current admission and fresh exact
 reviewed foreground plan remain required before effects. Original interrupted
 admin-session cleanup remains UNKNOWN.
 
+## Foreground primitives checkpoint (2026-10-11, not an executor/submission)
+
+Clean source anchor `4b3c65dd31ad6836d001cebe5a342a0bd5d71d59` adds
+`delivery_toolchain/release/recover_dev_smoke.py`: creating-process random-password/
+once-attached-capability custody, an exclusive NEW non-secret execution receipt
+directory and one absolute<=2400s fail-stop phase budget. The budget caps by plan
+expiry and reserves downstream full gate, fresh consumer, cleanup and quarantine
+ceilings before phases. Starts and terminals are fsynced; persistence uncertainty,
+phase replay/skip, timeout, nonzero terminal exit and missing/non201 PUT status
+cannot continue the normal sequence. Best-effort custody release is NOT proven
+zeroization. Existing original-account custody is not provided by these primitives.
+
+This increment has **no executable coordinator, HTTP call, secret writer, child
+runner/cancellation, source/admission approval service or CLI**. Tests simulate
+elapsed time/statuses. Their memory retention across a simulated timeout is not
+actual child-handle cancellation proof.201 classification is still not an
+authenticated remote response or exclusion/one-PUT proof. The receipt directory
+is only a local uncertainty barrier, not external writer exclusion. Actual
+source/admission/release/principal/provenance observers and official operations
+must still be composed with enforced absolute cancellation BEFORE effects.
+
+Original receipts at this clean anchor are retained in receipts/, including the
+failed attempt and its explicit identical-selection PATH correction:
+
+| Measurement at4b3c65dd31ad | Receipt | Exit | Duration |
+| --- | --- | --- | --- |
+| security recovery pytest `-q`, initial missing uv PATH | 9c5e3afe4f12d093 | 127 | 0.001s |
+| identical security selection after evidence-documented PATH correction | 0e1acce9b9be9601 | 0 | 9.237s |
+| declared `git diff --check` | 2d3ff7f62ea907f6 | 0 | 0.016s |
+| exact declared six-file pytest `-q` | cfbea2662b0c1fca | 0 | 630.391s |
+| declared code-boundary checker | a87270a13a00ca55 | 0 | 11.440s |
+| declared `pnpm --dir apps/web typecheck` | 41bc97c8ab7fc3d3 | 127 | 0.001s |
+
+The original full-suite receipt displays one skip, NOT actual Web-store PG proof.
+No count-only rerun, grep wait or inferred completion was used. pnpm remains
+missing: Web typecheck/lint/build/300kB verification is NOT complete or waived.
+No host search, dependency installation or frozen-lock rewrite was performed.
+Remote dev readback remains e995aa26032542160a177d421ad13157dd6db058.
+
+The evidence checkpoint has a DIFFERENT SHA; source-anchor receipts are not
+transferred to that head. Task remains in_progress, not review-ready/no PR.
+NEXT: trusted foreground coordinator/official API and actual single-attempt
+response adapters with absolute cancellation/original terminal handles, fresh
+source/admission/Web+API/account/provenance observations, measured bounds and
+cleanup/quarantine. Genuine external-writer exclusion and independently reviewed
+native fresh-consumer custody remain precise execution blockers. Independent
+Codex2 review, normal deployment/current admission and exact reviewed foreground
+plan remain mandatory. Old execution/quarantine/NULL binding and interrupted
+original-admin session uncertainty are unchanged. No live effects performed.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
