@@ -241,7 +241,7 @@ def test_actual_gate_tls_fixed_origin_bounded_framing_no_forwarding(tls_recovery
         monkeypatch.setattr(socket, "getaddrinfo", no_dns)
         monkeypatch.setenv("HTTPS_PROXY", "http://not-a-proxy.invalid")
         owner = SimpleNamespace(_config=SimpleNamespace(web_url=origin), _correlation="corr-offline",
-                    _budget=SimpleNamespace(call_deadline=time.monotonic() + (0.15 if bad == "dribble" else 2)),
+                    _budget=SimpleNamespace(_active=("gate",), call_deadline=time.monotonic() + (0.15 if bad == "dribble" else 2)),
                     _bytes=0, _retain_cookies=retained.append)
         client = r._ForegroundGateHTTPSClient(owner, api=False, origin=origin, address="127.0.0.1", ca_pem=ca)
         kwargs = dict(authenticated=False, body={}, headers={"origin": origin})
@@ -293,3 +293,20 @@ def test_gate_receipt_loss_and_absolute_timer_never_resume(foreground_gate: Any,
         assert len([c for c in sessions if c[0] == "logout"]) == 2
         if failure == "start_receipt":
             assert not any(c[3] == "gate" for c in calls)
+
+
+def test_exhausted_gate_quota_preserves_separate_known_own_cleanup(foreground_gate: Any) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    from tests.e2e import test_live_e2e_gate_dev_admin as f
+    with foreground_gate() as (driver, actions, owner, budget, p, calls, sessions, original, target, events):
+        # Synthetic previously owned diagnostic session, not a live login proof.
+        driver._retain_cookies({"__Host-oday_web_session": f.SESSION_VALUE})
+        driver._requests = 256
+        driver._bytes = 4194304
+        with pytest.raises(r.RecoveryActionRefused):
+            driver.execute(actions)
+        assert not any(c[3] == "gate" for c in calls)
+        assert driver._failure_receipt()["quarantine"] == "completed"
+        assert driver._failure_receipt()["own_session_cleanup"] == "completed"
+        assert sum(c[2] == "/auth/logout" for c in calls) == 1
+        assert len([c for c in sessions if c[0] == "logout"]) == 2

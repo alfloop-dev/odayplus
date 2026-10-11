@@ -477,6 +477,8 @@ identifiers/lineage through the strict decoder; no bootstrap/initial-password
 fallback, supplied passing report, gcloud worker trigger or credential child.
 Pinned numeric TLS enforces hostname/CA verification, absolute phase deadlines,
 bounded response/request totals, no DNS/proxy/retry/redirect credential forwarding.
+Gate body/request limits are4MiB/256, with a separate bounded512KiB/16 cleanup
+reserve; exhausted gate I/O cannot bar the known-cookie cleanup lane.
 Application bearer and API transport identity are separate mandatory foreground
 memory inputs. Empty application bearer remains a canonical refusal (the native
 consumer lane must address this separately; no config-guard relaxation).

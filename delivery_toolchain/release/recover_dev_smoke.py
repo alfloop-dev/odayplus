@@ -2281,7 +2281,8 @@ class _ForegroundGateHTTPSClient:
                 raise ValueError
             clear = response.read(limit + 1)
             owner._bytes += len(clear)
-            if (len(clear) > limit or owner._bytes > 4194304
+            byte_limit = 524288 if owner._budget._active[0] == "cleanup" else 4194304
+            if (len(clear) > limit or owner._bytes > byte_limit
                     or (lengths and len(clear) != int(lengths[0])) or response.read(1)):
                 raise ValueError
             payload = {}
@@ -2397,8 +2398,8 @@ class ForegroundSamePairGate:
         logout = not client._api and method == "POST" and path == "/auth/logout"
         operation, started, status = "", False, None
         try:
-            if os.getpid() != self._pid or self._requests >= 256 or (self._stopped and not (
-                    self._budget._active is not None and self._budget._active[0] == "cleanup")):
+            cleanup = self._budget._active is not None and self._budget._active[0] == "cleanup"
+            if os.getpid() != self._pid or self._requests >= (16 if cleanup else 256) or (self._stopped and not cleanup):
                 raise ValueError
             self._requests += 1
             if login:
@@ -2547,6 +2548,9 @@ class ForegroundSamePairGate:
     def _cleanup_known_sessions(self) -> bool:
         if self._budget._active is None or self._budget._active[0] != "cleanup":
             return False
+        # Reserve separate bounded cleanup I/O as well as time. Exhausted gate
+        # totals may not prevent the once-only known-cookie cleanup lane.
+        self._requests = self._bytes = 0
         failed = self._unknown_login
         for cookie, state in self._cookies.items():
             if state["attempted"]:
