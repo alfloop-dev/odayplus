@@ -727,6 +727,53 @@ termination and measured production bounds are not claimed. This incremental
 implementation still requires the complete gate/fresh-consumer/uncertainty
 coordinator, final exact-head verification and independent review before effects.
 
+## Concrete preflight-to-HOLD coordinator (unapproved; no effect path)
+
+`ForegroundRecoveryPreflight.observe_and_hold` now composes the actual typed
+checkout, remote whole-tree/review/latest-CI, current ordinary admission, owned
+original Web session/account/release/provenance and pinned secret-metadata
+observers. The canonical same-pair gate's REAL config is validated at construction,
+before any login. The independently pinned checkout/tree/source/custodian must
+match; the checkout must be the actual source used by admission's fixed canonical
+validator child. No arbitrary observer callbacks, passing baseline/receipt,
+exclusion boolean or supplied gate report is accepted.
+
+One durable preflight start and allowlisted observer/login/account sub-operation
+starts precede each call. All observers share the SAME absolute preflight deadline.
+Checkout/source/current-admission are reread after account and absent-bundle
+observations; changed deployment run/attempt refuses even at the same SHA. Raw
+source/history/account/key/token data never enters receipts. A failed or lost
+phase/observer terminal cannot authorize later effects. Original child status is
+retained when available, not invented from output. These are offline adapter
+bounds, not production measurements or hard-real-time guarantees.
+
+**The effect path is deliberately absent.** Even complete observations return
+`preflight-held`, permanently stop the budget, and clean only the fresh original
+session once under the reserved cleanup phase. There is no reserve, capability,
+rotation, intent, PUT, ACK, gate invocation or fresh-job dispatch. No new root is
+created, so no fake quarantine receipt is claimed. Unknown login/cleanup/receipt
+remains UNKNOWN; old incident original-session cleanup remains UNKNOWN. Owned
+custody/observer instances are closed and cannot resume this execution. Reference
+release is not zeroization. This diagnostic boundary is not permission to invoke
+it live in a background worker.
+
+The hold specifically exposes missing genuine external writer exclusion, native
+application-credential implementation, approval of the native custody amendment,
+measured production reserves and the reviewed operational plan. Matching source,
+absent metadata and a process-local receipt barrier supply NONE of these. The
+native e46 source still leaves canonical application's bearer empty; its mocked
+consumer tests are not actual full-gate/consumption proof. Foreground-exclusive
+native files remain unmodified by this increment. A future reviewed effect
+coordinator and actual fresh-job boundary must resolve those gates BEFORE
+rotation, not add an `approved=true` escape or dispatch from this diagnostic.
+
+Offline composition tests use synthetic GitHub/Web metadata with real canonical
+source/admission selection, strict account/provenance validation, phase receipts
+and owned cleanup. Local checkout/manifest child transport is explicitly mocked
+in this composition fixture; its actual bounded child/canonical predicates have
+separate existing regressions. No fixture is live consent/admission/exclusion,
+GitHub decrypted-value evidence or a completed recovery.
+
 ## Concrete execution blockers: custody and writer exclusion
 
 GitHub secret PUT has no conditional create-only operation. Fresh absence,

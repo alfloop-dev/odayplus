@@ -139,7 +139,9 @@ class ExclusivePhaseReceipts:
             if (operation not in {"", "original-login", "target-login", "original-logout", "target-logout",
                                  "original-observe", "target-observe",
                                  "gate-json-login", "gate-form-login", "gate-invalid-json-login",
-                                 "gate-invalid-form-login", "gate-session-logout"}
+                                 "gate-invalid-form-login", "gate-session-logout",
+                                 "preflight-checkout", "preflight-source", "preflight-admission",
+                                 "preflight-secret-metadata"}
                     or self._poisoned or self._fd is None or phase not in _CEILINGS
                     or stage not in {"start", "terminal"}
                     or outcome not in ({"pending"} if stage == "start" else _OUTCOMES)
@@ -2568,3 +2570,155 @@ class ForegroundSamePairGate:
             except Exception:
                 failed = True
         return not failed
+
+
+class ForegroundRecoveryPreflight:
+    """Concrete bounded preflight-to-HOLD composition; NEVER effect authority.
+
+    Uses the actual typed observers, owned Web session and canonical gate config,
+    not callbacks, caller baselines, exclusion booleans or supplied pass receipts.
+    Ownership of these instances/custody transfers on successful construction.
+    Even successful observations MUST stop before reservation/issuance/rotation:
+    genuine external writer exclusion is not implemented by this repository.
+    Native app-credential/custody viability, measured production bounds and the
+    exact operational plan are also separate blockers. No execution/resume API.
+
+    Only the fresh original session created here is cleaned, once, within the
+    aggregate reserved cleanup phase. There is no new root to quarantine. A lost
+    login/cleanup/receipt remains UNKNOWN; the old incident is never changed.
+    This is trusted-foreground source, not a worker/live invocation permission.
+    """
+
+    def __init__(self, plan: dict, *, checkout: TrustedCheckoutObserver,
+                 source: TrustedGitHubSourceObserver, admission: TrustedGitHubAdmissionObserver,
+                 secret: RecoveryGitHubSecretAttempt, gate: ForegroundSamePairGate) -> None:
+        try:
+            if (type(plan) is not dict or type(checkout) is not TrustedCheckoutObserver
+                    or type(source) is not TrustedGitHubSourceObserver
+                    or type(admission) is not TrustedGitHubAdmissionObserver
+                    or type(secret) is not RecoveryGitHubSecretAttempt
+                    or type(gate) is not ForegroundSamePairGate or gate._plan != plan
+                    or gate._used or gate._stopped or gate._sessions._attempted
+                    or gate._budget._used or gate._budget._active is not None or gate._budget._stopped
+                    or source._stopped or admission._stopped or secret._prepare_used or secret._put_used
+                    or checkout._sha != plan["release_sha"] or source._sha != checkout._sha
+                    or source._tree != checkout._tree or secret._login.casefold() != plan["custodian"].casefold()
+                    # Admission's fixed canonical-validator child uses THIS
+                    # checkout; a separately verified path cannot vouch for it.
+                    or checkout._checkout.resolve() != Path(__file__).resolve().parents[2]):
+                raise ValueError
+            digest = validate_recovery_plan(plan, release_sha=plan["release_sha"],
+                    manifest_digest=plan["manifest_digest"], now=datetime.now(UTC))
+            if digest != gate._budget._receipts._digest:
+                raise ValueError
+            _ = gate._sessions._original.password
+            _ = gate._sessions._target.password
+        except Exception:
+            raise RecoveryRefused("RECOVERY_PREFLIGHT_CONFIG_INVALID") from None
+        self._pid, self._used = os.getpid(), False
+        self._plan, self._checkout, self._source = dict(plan), checkout, source
+        self._admission, self._secret, self._gate = admission, secret, gate
+        self._sessions, self._budget = gate._sessions, gate._budget
+
+    def __repr__(self) -> str:
+        return "ForegroundRecoveryPreflight(<redacted>)"
+
+    def __reduce_ex__(self, protocol: int):
+        raise RecoveryRefused("RECOVERY_CUSTODY_SERIALIZATION_REFUSED")
+
+    def _observe(self, operation: str) -> dict:
+        """Fixed observer dispatch with durable starts; no injected callbacks."""
+        started = False
+        try:
+            elapsed, remaining = self._budget._time()
+            self._budget._receipts.append(phase="preflight", operation=operation, stage="start",
+                                         outcome="pending", elapsed=elapsed, remaining=remaining)
+            started = True
+            deadline = self._budget.call_deadline
+            if operation == "preflight-checkout":
+                result = self._checkout.observe(deadline=deadline)
+            elif operation == "preflight-source":
+                result = self._source.observe(release_sha=self._plan["release_sha"], deadline=deadline)
+            elif operation == "preflight-admission":
+                result = self._admission.observe(release_sha=self._plan["release_sha"],
+                        manifest_digest=self._plan["manifest_digest"], deadline=deadline)
+            elif operation == "preflight-secret-metadata":
+                result = self._secret.prepare(deadline=deadline)
+            else:
+                raise ValueError
+            _http_remaining(self._budget.call_deadline)
+            elapsed, remaining = self._budget._time()
+            self._budget._receipts.append(phase="preflight", operation=operation, stage="terminal",
+                                         outcome="completed", elapsed=elapsed, remaining=remaining)
+            return result  # identifiers only; NOT authority or cached pass
+        except Exception as exc:
+            if started:
+                try:
+                    elapsed, remaining = self._budget._time()
+                    self._budget._receipts.append(phase="preflight", operation=operation, stage="terminal",
+                        outcome=exc.outcome if isinstance(exc, ObserverRefused) else "unknown",
+                        exit_code=exc.exit_code if isinstance(exc, ObserverRefused) else None,
+                        elapsed=elapsed, remaining=remaining)
+                except Exception:
+                    pass  # receipt loss is never a pass or continuation input
+            raise RecoveryRefused("RECOVERY_PREFLIGHT_OBSERVATION_STOPPED") from None
+
+    def observe_and_hold(self) -> dict:
+        """One fresh read sequence and own cleanup; NO reserve, capability or PUT.
+
+        Source/current admission are read both before and after account/absence
+        observations. A successful cached first read cannot excuse later drift.
+        Nothing turns an absent bundle or matching source into writer exclusion.
+        """
+        if self._used or os.getpid() != self._pid:
+            raise RecoveryRefused("RECOVERY_PREFLIGHT_ALREADY_STOPPED")
+        self._used = True  # even a failed phase start may never be replayed
+        preflight, cleanup = "unknown", "unknown"
+        try:
+            self._budget.begin("preflight")
+            self._observe("preflight-checkout")
+            self._observe("preflight-source")
+            admission_before = self._observe("preflight-admission")
+            self._sessions.login("original")
+            self._sessions.observe_accounts(self._plan)
+            self._observe("preflight-secret-metadata")
+            self._observe("preflight-checkout")
+            self._observe("preflight-source")
+            admission_after = self._observe("preflight-admission")
+            if admission_after != admission_before:
+                raise ValueError  # even a same-SHA replacement needs a fresh plan
+            preflight = self._budget.finish(outcome="completed")
+        except Exception:
+            if self._budget._active is not None:
+                try:
+                    preflight = self._budget.finish(outcome="unknown")
+                except Exception:
+                    pass
+        finally:
+            # Unconditional effect barrier: there is deliberately no caller-
+            # supplied exclusion/approval/bounds switch to release it.
+            self._budget._stopped = True
+            self._gate._stopped = True
+            try:
+                self._sessions.cleanup(gate_sessions=self._gate)
+                cleanup = "completed"
+            except Exception:
+                pass
+            finally:
+                self._sessions.close()
+                self._sessions._original.close()
+                self._sessions._target.close()
+                for observer in (self._source, self._admission, self._secret):
+                    try:
+                        observer.close()
+                    except Exception:
+                        pass
+        return {"stage": "preflight-held", "execution_id": self._plan["execution_id"],
+                "preflight": preflight, "own_session_cleanup": cleanup,
+                "blocking_gaps": ["external-writer-exclusion-unavailable",
+                                  "native-application-credential-unimplemented",
+                                  "native-custody-amendment-unapproved",
+                                  "production-bounds-unmeasured", "operational-plan-unreviewed"],
+                "execution_authorized": False, "credential_binding_verified": False,
+                "full_product_acceptance": False, "secret_values_redacted": True,
+                "original_incident_session_cleanup": "unknown"}

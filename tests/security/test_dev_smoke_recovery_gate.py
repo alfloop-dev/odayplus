@@ -310,3 +310,176 @@ def test_exhausted_gate_quota_preserves_separate_known_own_cleanup(foreground_ga
         assert driver._failure_receipt()["own_session_cleanup"] == "completed"
         assert sum(c[2] == "/auth/logout" for c in calls) == 1
         assert len([c for c in sessions if c[0] == "logout"]) == 2
+
+
+@pytest.fixture
+def preflight(owned_sessions: Any, monkeypatch: Any):
+    """Actual composition with synthetic Web/GitHub records; NO live authority.
+
+    The local checkout/manifest child is mocked here; its actual original-handle
+    cancellation and canonical validation have separate existing regressions.
+    Remote source/admission selectors, strict account observation, phase receipts
+    and session ownership are the actual implementation, not supplied pass flags.
+    """
+    from contextlib import contextmanager
+    from pathlib import Path
+
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.release import recover_dev_smoke as r
+    from tests.e2e import test_live_e2e_gate_dev_admin as f
+
+    @contextmanager
+    def setup(failure=""):
+        from contextlib import ExitStack, contextmanager
+        with ExitStack() as stack:
+            source = stack.enter_context(contextmanager(shared_tests.bounded_remote_source.__wrapped__)())
+            admission = stack.enter_context(contextmanager(shared_tests.bounded_remote_admission.__wrapped__)(monkeypatch))
+            store_setup = shared_tests.recovery_secret_store.__wrapped__(monkeypatch)
+            store, key, metadata_calls = stack.enter_context(store_setup(fault="exists" if failure == "metadata" else ""))
+            owner, budget, clock, receipts, p, session_calls, original, target = stack.enter_context(
+                owned_sessions(failure if failure in {"body_lost", "login_lost", "logout"} else ""))
+            calls = []
+            payloads = shared_tests.account_observer_payloads(p)
+            if failure == "account":
+                payloads["old-journal"]["binding"] = {"stage": "binding-intent"}
+            shared_tests.install_account_observer(monkeypatch, payloads, calls)
+            checkout = r.TrustedCheckoutObserver(Path(r.__file__).resolve().parents[2],
+                                                release_sha=SHA, reviewed_tree="e" * 40)
+            config = gate.GateConfig(api_url=f.base.API_URL, web_url=owner._origin, expected_sha=SHA,
+                expected_manifest_digest=MANIFEST, expected_deployment="dev", release_profile="dev-admin",
+                bearer_token="OFFLINE-APP-BEARER", api_transport_token="OFFLINE-API-TRANSPORT",
+                operator_role="platform_admin", required_provider_ids=(), external_provider_mode="disabled",
+                dev_admin_denied_role="cs-lead", worker_deadline_seconds=1, poll_interval_seconds=0.01)
+            driver = r.ForegroundSamePairGate(p, sessions=owner, gate_config=config, api_address="127.0.0.1")
+            source_observe, admission_observe = source.observer.observe, admission.observer.observe
+            counts = {"checkout": 0, "source": 0, "admission": 0}
+            def checkout_observe(self, *, deadline):
+                counts["checkout"] += 1
+                calls.append(("checkout", deadline))
+                if failure == "checkout":
+                    raise r.ObserverRefused(outcome="refused", exit_code=7)
+                return {"release_sha": SHA, "reviewed_tree": "e" * 40}
+            def source_observed(*, release_sha, deadline):
+                counts["source"] += 1
+                calls.append(("source", deadline))
+                if failure == "source" or (failure == "source_recheck" and counts["source"] == 2):
+                    raise RuntimeError("OFFLINE-PRIVATE-MARKER")
+                return source_observe(release_sha=release_sha, deadline=deadline)
+            def admission_observed(**kwargs):
+                counts["admission"] += 1
+                calls.append(("admission", kwargs["deadline"]))
+                if failure == "admission_recheck" and counts["admission"] == 2:
+                    admission.docs["actions/runs/90/attempts/1/jobs?per_page=100"]["jobs"][0]["steps"][-1]["conclusion"] = "failure"
+                result = admission_observe(**kwargs)
+                if failure == "admission_replaced" and counts["admission"] == 2:
+                    result["run_id"] = 91
+                return result
+            def manifest_observed(self, manifest, *, release_sha, manifest_digest):
+                assert release_sha == SHA and manifest_digest == MANIFEST
+                assert self._deadline == budget.call_deadline
+            monkeypatch.setattr(r.TrustedCheckoutObserver, "observe", checkout_observe)
+            monkeypatch.setattr(source.observer, "observe", source_observed)
+            monkeypatch.setattr(admission.observer, "observe", admission_observed)
+            monkeypatch.setattr(r.TrustedGitHubAdmissionObserver, "_validate_manifest", manifest_observed)
+            def forbidden_effect(*args, **kwargs):
+                raise AssertionError("preflight must NEVER construct/execute recovery or gate/PUT")
+            monkeypatch.setattr(r.ForegroundOwnedWebSessions, "recovery_actions", forbidden_effect)
+            monkeypatch.setattr(r.RecoveryHTTPSAttempt, "execute", forbidden_effect)
+            monkeypatch.setattr(r.RecoveryGitHubSecretAttempt, "put", forbidden_effect)
+            monkeypatch.setattr(r.ForegroundSamePairGate, "execute", forbidden_effect)
+            coordinator = r.ForegroundRecoveryPreflight(p, checkout=checkout, source=source.observer,
+                admission=admission.observer, secret=store, gate=driver)
+            yield coordinator, owner, budget, p, calls, session_calls, metadata_calls, original, target, counts
+    return setup
+
+
+def test_actual_preflight_fresh_observers_hold_before_every_recovery_effect(preflight: Any, tmp_path: Any) -> None:
+    import json
+    import pickle
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with preflight() as (coordinator, owner, budget, p, calls, session_calls, metadata, original, target, counts):
+        secrets = (original.password, target.password, "offline-original-cookie", "offline-gh-token", "OFFLINE-PRIVATE-TOKEN")
+        receipt = coordinator.observe_and_hold()
+        assert receipt["stage"] == "preflight-held" and receipt["preflight"] == "completed"
+        assert receipt["own_session_cleanup"] == "completed"
+        assert receipt["original_incident_session_cleanup"] == "unknown"
+        assert "external-writer-exclusion-unavailable" in receipt["blocking_gaps"]
+        assert receipt["execution_authorized"] is receipt["credential_binding_verified"] is False
+        assert counts == {"checkout": 2, "source": 2, "admission": 2}
+        assert len({call[1] for call in calls}) == 1  # all observers inherit ONE absolute clock
+        assert [c[0] for c in session_calls] == ["login", "session", "principal", "logout", "revoked"]
+        assert all(c[0] == "GET" for c in metadata) and len(metadata) == 4
+        records = [json.loads(path.read_text()) for path in sorted((tmp_path / p["execution_id"]).glob("*.json"))]
+        assert {record["phase"] for record in records} == {"preflight", "cleanup"}
+        assert len([v for v in records if v["operation"] == "preflight-source"]) == 4
+        text = json.dumps(records) + json.dumps(receipt) + repr(coordinator)
+        assert not any(value in text for value in secrets)
+        assert budget._stopped and owner._closed and original._closed and target._closed
+        with pytest.raises(r.RecoveryRefused):
+            budget.begin("reserve")
+        with pytest.raises(r.RecoveryRefused):
+            coordinator.observe_and_hold()
+        with pytest.raises(r.RecoveryRefused):
+            pickle.dumps(coordinator)
+
+
+@pytest.mark.parametrize("failure", ["checkout", "source", "body_lost", "login_lost", "account",
+    "metadata", "source_recheck", "admission_recheck", "admission_replaced", "logout"])
+def test_preflight_uncertainty_never_reserves_or_replays(preflight: Any, failure: str) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with preflight(failure) as (coordinator, owner, budget, p, calls, session_calls, metadata, original, target, counts):
+        receipt = coordinator.observe_and_hold()
+        assert receipt["preflight"] == ("completed" if failure == "logout" else "unknown")
+        assert receipt["own_session_cleanup"] == ("unknown" if failure in {"body_lost", "login_lost", "logout"} else "completed")
+        assert "OFFLINE-PRIVATE-MARKER" not in repr(receipt)
+        assert not budget._used & {"reserve", "issue", "rotate", "intent", "put", "ack", "gate", "fresh_consumer", "quarantine"}
+        assert budget._stopped and owner._closed and original._closed and target._closed
+        assert len([c for c in session_calls if c[0] == "login"]) <= 1
+        assert len([c for c in session_calls if c[0] == "logout"]) <= 1
+        before = deepcopy(calls), deepcopy(session_calls), deepcopy(metadata)
+        with pytest.raises(r.RecoveryRefused):
+            coordinator.observe_and_hold()
+        assert before == (calls, session_calls, metadata)
+
+
+@pytest.mark.parametrize("failure", ["start", "terminal", "observer_terminal"])
+def test_preflight_receipt_loss_no_effect_or_fake_completion(preflight: Any, monkeypatch: Any, failure: str) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with preflight() as (coordinator, owner, budget, p, calls, session_calls, metadata, original, target, counts):
+        append = r.ExclusivePhaseReceipts.append
+        def fail(self, **kwargs):
+            if kwargs["phase"] == "preflight" and (
+                    (failure == "observer_terminal" and kwargs.get("operation") == "preflight-source" and kwargs["stage"] == "terminal")
+                    or (failure != "observer_terminal" and not kwargs.get("operation") and kwargs["stage"] == failure)):
+                self._poisoned = True
+                raise OSError("OFFLINE-PRIVATE-MARKER")
+            return append(self, **kwargs)
+        monkeypatch.setattr(r.ExclusivePhaseReceipts, "append", fail)
+        receipt = coordinator.observe_and_hold()
+        assert receipt["preflight"] == receipt["own_session_cleanup"] == "unknown"
+        assert not budget._used & {"reserve", "rotate", "put"}
+        assert not any(c[0] == "logout" for c in session_calls)  # no effect without durable start
+        if failure == "start":
+            assert not calls and not session_calls and not metadata
+
+
+@pytest.mark.parametrize("pin", ["callback", "wrong_tree", "wrong_checkout", "wrong_custodian", "already_used"])
+def test_preflight_constructor_no_callbacks_or_unmatched_pins(preflight: Any, pin: str) -> None:
+    from pathlib import Path
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with preflight() as (coordinator, owner, budget, p, calls, session_calls, metadata, original, target, counts):
+        if pin == "wrong_tree":
+            coordinator._checkout._tree = "c" * 40
+        elif pin == "wrong_checkout":
+            coordinator._checkout._checkout = Path("/tmp/not-the-candidate")
+        elif pin == "wrong_custodian":
+            coordinator._secret._login = "another-owner"
+        elif pin == "already_used":
+            budget._used.add("preflight")
+        with pytest.raises(r.RecoveryRefused, match="PREFLIGHT_CONFIG_INVALID"):
+            r.ForegroundRecoveryPreflight(p, checkout=coordinator._checkout,
+                source=(lambda: True) if pin == "callback" else coordinator._source,
+                admission=coordinator._admission, secret=coordinator._secret, gate=coordinator._gate)
+        assert not calls and not session_calls and not metadata
