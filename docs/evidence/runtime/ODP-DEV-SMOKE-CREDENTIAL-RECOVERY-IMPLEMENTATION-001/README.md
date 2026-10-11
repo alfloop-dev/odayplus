@@ -467,6 +467,65 @@ Codex2 review, normal deployment/current admission and exact reviewed foreground
 plan remain mandatory. Old execution/quarantine/NULL binding and interrupted
 original-admin session uncertainty are unchanged. No live effects performed.
 
+## Bounded local checkout observer checkpoint (2026-10-11, NOT full preflight)
+
+Source anchors `3ae1c4811805b57530a2cd383e00c1f44dea9d51` and test correction
+`cf6d18d2e8389187872bb78871bfeaa101ae45e2` add an actual NON-SECRET read-only
+Git checkout observer and an absolute active-phase deadline accessor. Fixed Git
+reads revalidate candidate HEAD, independently pinned ENTIRE reviewed tree,
+tracked/untracked/submodule status and unchanged HEAD. No cached pass, raw path/
+output receipt, shell, fsmonitor, automatic maintenance, inherited env/stdin/FDs.
+This checks LOCAL source consistency only, NOT remote review/latest CI, serving
+Web/API identity, normal current admission or execution authority.
+
+The exec adapter caps combined stdout/stderr64KiB, shares one absolute phase
+deadline across commands, and reserves2s INSIDE it for group SIGKILL and ORIGINAL
+Popen wait. Timeout, output overflow, failed exit or missing completion refuse;
+parent exit0 while a descendant holds a pipe does not pass. No log-grep waiting,
+PID-name inference, retry or deadline extension. Actual isolated subprocess tests
+prove original exit-9 on timeout and parent object retention, env/FD/stdin
+exclusion, nonzero exit7, missing wait receipt UNKNOWN, and bounded output/group
+cancellation. Finite descendant-marker absence is supplementary, NOT a descendant
+terminal receipt. Exec can transiently fork; these tests do NOT prove OS custody
+isolation/zeroization or cancellation of unkillable/stalled process creation.
+Missing original terminal receipt remains UNKNOWN and blocks continuation.
+
+Initial security run at3ae1 failed on the new test's incorrect indexing of the
+existing SimpleNamespace fake clock. The failed receipt is retained unchanged;
+only the test was fixed in cf6d. The identical security selection passed at that
+NEW clean head (not a relabelled old-head pass). All measured commands use original
+terminal exits and durations from the shared verification policy. uv's existing
+standard user bin was explicitly included in the verification environment; no
+host-wide tool search, installation or frozen-lock change occurred.
+
+| Exact-head measurement | Receipt | Exit | Duration |
+| --- | --- | --- | --- |
+| security recovery pytest `-q` at3ae1 (clock-test failure) | 5499be9382277c66 | 1 | 22.279s |
+| same security selection at clean cf6d | 735ddb6d87674a34 | 0 | 12.143s |
+| declared `git diff --check` at clean cf6d | 97c4b4f9683517b1 | 0 | 0.028s |
+| declared code-boundary checker at clean cf6d | b78748fc32e341ce | 0 | 12.539s |
+| declared `pnpm --dir apps/web typecheck` at clean cf6d (tool missing) | 79222827f2b1b031 | 127 | 0.001s |
+| exact declared six-file pytest `-q` at clean cf6d | b422afd6b4bf4927 | 0 | 638.999s |
+
+Original JSON receipts are retained in receipts/. The full-suite displayed skip
+is NOT actual Web-store PG proof. pnpm typecheck did NOT run; final Web typecheck/
+lint/build/300kB verification remains unmet, not waived. No count-only rerun,
+grep-based completion inference or receipt transfer to a new SHA was performed.
+Latest fetched origin/dev remains e995aa26032542160a177d421ad13157dd6db058.
+
+This evidence commit has a DIFFERENT SHA. Task remains in_progress, NOT ready for
+review/no PR: full trusted foreground coordinator, same-session official HTTP
+adapters, current full-tree source/CI/admission/Web+API/account/provenance preflight,
+actual response/PUT201 classification and enforced credential-transport deadlines
+still need composition. The local observer cannot finish the full preflight phase
+alone. Genuine external writer exclusion and reviewed native fresh-job custody
+remain concrete effect blockers. Next source increment must compose these fresh
+observers/official transport without passing booleans, fallback or automatic resume,
+and retain adequate full-gate/consumer/cleanup/quarantine reserves before effects.
+Independent Codex2 security review, normal deployment/current admission and an
+exact reviewed foreground execution plan remain mandatory. No live effects; old
+quarantine/NULL binding and interrupted original-admin session uncertainty unchanged.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
