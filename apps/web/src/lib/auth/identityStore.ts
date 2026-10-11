@@ -228,15 +228,35 @@ export class PostgresIdentityStore implements IdentityStore {
       throw new Error("CREDENTIAL_REVISION_REQUIRED");
     }
     const pool = await this.pool();
-    const result = await pool.query(
-      `UPDATE identity.password_credentials
-       SET phc_hash = $2, must_change = false, last_rotated_at = now(), updated_at = now()
-       WHERE account_id = $1 AND credential_revision = $3::bigint
-       RETURNING credential_revision::text`,
-      [accountId, newHash, expectedRevision],
-    );
-    if (result.rowCount !== 1) throw new Error("CREDENTIAL_REVISION_CHANGED");
-    return result.rows[0].credential_revision;
+    const client = await pool.connect();
+    try {
+      // A separate READ COMMITTED revocation statement sees old sessions that
+      // committed while CAS waited for their credential SHARE lock. A single
+      // data-modifying CTE would retain its earlier snapshot and can miss them.
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      const result = await client.query(
+        `UPDATE identity.password_credentials
+         SET phc_hash = $2, must_change = false, last_rotated_at = now(), updated_at = now()
+         WHERE account_id = $1 AND credential_revision = $3::bigint
+         RETURNING credential_revision::text`,
+        [accountId, newHash, expectedRevision],
+      );
+      if (result.rowCount !== 1) throw new Error("CREDENTIAL_REVISION_CHANGED");
+      await client.query(
+        `UPDATE identity.sessions SET revoked_at = now(), revoked_reason = $2
+         WHERE account_id = $1 AND revoked_at IS NULL`,
+        [accountId, "password_change"],
+      );
+      await client.query("COMMIT");
+      // Password and ONLY this account's old-session revocation are atomic.
+      // Replacement-session mint/INSERT failure cannot leave old cookies active.
+      return result.rows[0].credential_revision;
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch { /* Outcome may be unknown. No retry. */ }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async dummyVerify(): Promise<void> {

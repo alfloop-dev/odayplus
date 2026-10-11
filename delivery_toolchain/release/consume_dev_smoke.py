@@ -51,6 +51,10 @@ WIF_PROVIDER = "projects/767864276141/locations/global/workloadIdentityPools/git
 # //iam.googleapis.com resource or its HTTPS form, not the bare projects/... id.
 WIF_AUDIENCE = f"https://iam.googleapis.com/{WIF_PROVIDER}"
 GOOGLE_SERVICE_ACCOUNT = "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
+# Existing protected-dev application identity/audience, independently observed.
+# Application JWT audience is NOT the Cloud Run transport origin above.
+SMOKE_SERVICE_ACCOUNT = "oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com"
+APPLICATION_AUDIENCE = "https://oday-api-767864276141.asia-east1.run.app"
 SECRET_INPUTS = ("ODP_DEV_ADMIN_CREDENTIAL_BUNDLE", "GH_TOKEN",
                  "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL")
 LEGACY_INPUTS = (
@@ -296,8 +300,7 @@ def _native_gate_identity(inputs: NativeInputs, environment: dict[str, str]) -> 
         audience = environment.get("ODP_AUTH_AUDIENCES", "").split(",")[0]
         # No arbitrary project/URL/header injection or fallback to the deployer
         # token. Missing ordinary config refuses BEFORE federation/network.
-        if (not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]@odayplus-runtime-20260825\.iam\.gserviceaccount\.com", smoke_account)
-                or smoke_account == GOOGLE_SERVICE_ACCOUNT or audience != API_ORIGIN):
+        if (smoke_account != SMOKE_SERVICE_ACCOUNT or audience != APPLICATION_AUDIENCE):
             raise ConsumerRefused()
         with httpx.Client(timeout=15, follow_redirects=False, trust_env=False) as client:
             subject = _runner_jwt(client, inputs, audience=WIF_AUDIENCE)
@@ -309,7 +312,8 @@ def _native_gate_identity(inputs: NativeInputs, environment: dict[str, str]) -> 
                 "scope": "https://www.googleapis.com/auth/cloud-platform",
             })
             access = sts["access_token"]
-            if (type(access) is not str or not access or sts.get("token_type") != "Bearer"
+            if (type(access) is not str or not access or len(access) > 16_384
+                    or any(ch in access for ch in "\r\n") or sts.get("token_type") != "Bearer"
                     or type(sts.get("expires_in")) is not int or sts["expires_in"] <= 0):
                 raise ConsumerRefused()
             _mask(access)
@@ -318,12 +322,28 @@ def _native_gate_identity(inputs: NativeInputs, environment: dict[str, str]) -> 
                 method="POST", headers={"Authorization": f"Bearer {access}"},
                 json_payload={"audience": API_ORIGIN, "includeEmail": True})
             token = result["token"]
-            if type(token) is not str or not token or len(token) > 16_384:
+            if (type(token) is not str or not token or len(token) > 16_384
+                    or any(ch in token for ch in "\r\n")):
                 raise ConsumerRefused()
             _mask(token)
+            # STS access is the federated principal. Existing WIUser permits
+            # impersonating deployer; ONLY deployer has TokenCreator on smoke.
+            # No new IAM/trust/resource or credential file/environment/child.
+            delegated = _bounded_json(client,
+                f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{GOOGLE_SERVICE_ACCOUNT}:generateAccessToken",
+                method="POST", headers={"Authorization": f"Bearer {access}"},
+                json_payload={"scope": ["https://www.googleapis.com/auth/cloud-platform"], "lifetime": "600s"})
+            delegated_access = delegated["accessToken"]
+            now = datetime.now(UTC)
+            expiry = _aware(delegated["expireTime"])
+            if (type(delegated_access) is not str or not delegated_access or len(delegated_access) > 16_384
+                    or any(ch in delegated_access for ch in "\r\n")
+                    or not 60 < (expiry - now).total_seconds() <= 630):
+                raise ConsumerRefused()
+            _mask(delegated_access)
             application = _bounded_json(client,
                 f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{smoke_account}:generateIdToken",
-                method="POST", headers={"Authorization": f"Bearer {access}"},
+                method="POST", headers={"Authorization": f"Bearer {delegated_access}"},
                 json_payload={"audience": audience, "includeEmail": True})["token"]
             if (type(application) is not str or not application or len(application) > 16_384
                     or any(ch in application for ch in "\r\n")):

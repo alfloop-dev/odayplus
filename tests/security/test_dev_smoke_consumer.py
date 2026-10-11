@@ -446,15 +446,20 @@ def test_native_oidc_documents_have_real_stream_bounds(body, status, mime):
 
 @pytest.mark.parametrize("failure", [None, "provider", "sa", "sts", "iam", "oidc-host",
     "missing-smoke", "other-project", "deployer-as-smoke", "audience", "application-denied", "application-empty",
-    "application-header", "application-oversized"])
+    "application-header", "application-oversized", "same-project-other-smoke", "transport-audience",
+    "delegation-denied", "delegation-empty", "delegation-header", "delegation-expired", "delegation-overlong"])
 def test_existing_google_wif_is_memory_only_and_exact_identity(monkeypatch, failure):
     from urllib.parse import parse_qs
 
     import httpx
     inputs = c.take_native_inputs(raw_inputs(), masker=lambda _: None)
-    smoke = "offline-smoke@odayplus-runtime-20260825.iam.gserviceaccount.com"
+    smoke = c.SMOKE_SERVICE_ACCOUNT
+    # Actual observed protected-dev values, NOT a synthetic same-origin audience.
+    assert smoke == "oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com"
+    assert c.APPLICATION_AUDIENCE == "https://oday-api-767864276141.asia-east1.run.app"
+    assert c.APPLICATION_AUDIENCE != c.API_ORIGIN
     env = {"GOOGLE_WIF_PROVIDER": c.WIF_PROVIDER, "GOOGLE_SERVICE_ACCOUNT": c.GOOGLE_SERVICE_ACCOUNT,
-           "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT": smoke, "ODP_AUTH_AUDIENCES": c.API_ORIGIN + ",other-audience"}
+           "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT": smoke, "ODP_AUTH_AUDIENCES": c.APPLICATION_AUDIENCE}
     calls = []
     if failure == "provider":
         env["GOOGLE_WIF_PROVIDER"] = "projects/other/provider"
@@ -469,7 +474,11 @@ def test_existing_google_wif_is_memory_only_and_exact_identity(monkeypatch, fail
     if failure == "deployer-as-smoke":
         env["ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT"] = c.GOOGLE_SERVICE_ACCOUNT
     if failure == "audience":
-        env["ODP_AUTH_AUDIENCES"] = "https://untrusted.invalid," + c.API_ORIGIN
+        env["ODP_AUTH_AUDIENCES"] = "https://untrusted.invalid," + c.APPLICATION_AUDIENCE
+    if failure == "transport-audience":
+        env["ODP_AUTH_AUDIENCES"] = c.API_ORIGIN
+    if failure == "same-project-other-smoke":
+        env["ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT"] = "other-smoke@odayplus-runtime-20260825.iam.gserviceaccount.com"
 
     def responder(request):
         calls.append(str(request.url).split("?")[0])
@@ -485,10 +494,20 @@ def test_existing_google_wif_is_memory_only_and_exact_identity(monkeypatch, fail
             if failure == "sts":
                 return httpx.Response(403, json={"error": "synthetic denied"})
             return httpx.Response(200, json={"access_token": "offline-federated-token", "token_type": "Bearer", "expires_in": 300})
-        assert request.headers["Authorization"] == "Bearer offline-federated-token"
-        assert json.loads(request.content) == {"audience": c.API_ORIGIN, "includeEmail": True}
         if str(request.url) == f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{c.GOOGLE_SERVICE_ACCOUNT}:generateIdToken":
+            assert request.headers["Authorization"] == "Bearer offline-federated-token"
+            assert json.loads(request.content) == {"audience": c.API_ORIGIN, "includeEmail": True}
             return httpx.Response(403 if failure == "iam" else 200, json={"token": "offline-generated-invoker"})
+        if str(request.url) == f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{c.GOOGLE_SERVICE_ACCOUNT}:generateAccessToken":
+            assert request.headers["Authorization"] == "Bearer offline-federated-token"
+            assert json.loads(request.content) == {"scope": ["https://www.googleapis.com/auth/cloud-platform"], "lifetime": "600s"}
+            expiry = datetime.now(UTC) + timedelta(seconds={"delegation-expired": -1, "delegation-overlong": 3600}.get(failure, 600))
+            value = {"delegation-empty": "", "delegation-header": "private\r\nmarker"}.get(failure, "offline-deployer-access-token")
+            return httpx.Response(403 if failure == "delegation-denied" else 200,
+                json={"accessToken": value, "expireTime": expiry.isoformat()})
+        # Real smoke policy accepts ONLY deployer, never the federated principal.
+        assert request.headers["Authorization"] == "Bearer offline-deployer-access-token"
+        assert json.loads(request.content) == {"audience": c.APPLICATION_AUDIENCE, "includeEmail": True}
         assert str(request.url) == f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{smoke}:generateIdToken"
         application = {"application-empty": "", "application-header": "private\r\nmarker",
                        "application-oversized": "x" * 16_385}.get(failure, "offline-generated-application")
@@ -500,11 +519,11 @@ def test_existing_google_wif_is_memory_only_and_exact_identity(monkeypatch, fail
     if failure:
         with pytest.raises(c.ConsumerRefused):
             c._native_gate_identity(inputs, env)
-        if failure in {"provider", "sa", "oidc-host", "missing-smoke", "other-project", "deployer-as-smoke", "audience"}:
+        if failure in {"provider", "sa", "oidc-host", "missing-smoke", "other-project", "deployer-as-smoke", "audience", "same-project-other-smoke", "transport-audience"}:
             assert not calls
     else:
         assert c._native_gate_identity(inputs, env) == ("offline-generated-invoker", "offline-generated-application")
-        assert len(calls) == 4
+        assert len(calls) == 5
     assert not set(c.SECRET_INPUTS + c.LEGACY_INPUTS) & set(env)
 
 

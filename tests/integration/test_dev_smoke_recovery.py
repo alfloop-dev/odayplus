@@ -1178,6 +1178,8 @@ def test_actual_web_postgres_stores_refuse_old_verified_revision_after_rotation(
     root, cap = issue(s)
     assert consume(s, root, cap)["status"] == "rotated"
     assert s.capabilities._credential_revisions() == ("1", "3")
+    protected_sessions = _q(s, "SELECT row_to_json(t)::text FROM identity.sessions t WHERE account_id = %s ORDER BY session_id", (PRESERVED_ACCOUNT_ID,))
+    protected_credential = _q(s, "SELECT row_to_json(t)::text FROM identity.password_credentials t WHERE account_id = %s", (PRESERVED_ACCOUNT_ID,))
     result = subprocess.run(
         [str(binary), "run", "src/lib/auth/__tests__/identityStore.test.ts"],
         cwd=root_path / "apps/web", env={**os.environ, "NODE_ENV": "test",
@@ -1185,4 +1187,8 @@ def test_actual_web_postgres_stores_refuse_old_verified_revision_after_rotation(
         timeout=60, capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert s.capabilities._credential_revisions() == ("1", "4")
+    # Production mounted lost INSERT reply, actual rollback and late-commit
+    # session race exercise normal self-password change, not live recovery.
+    assert s.capabilities._credential_revisions() == ("1", "6")
+    assert _q(s, "SELECT row_to_json(t)::text FROM identity.sessions t WHERE account_id = %s ORDER BY session_id", (PRESERVED_ACCOUNT_ID,)) == protected_sessions
+    assert _q(s, "SELECT row_to_json(t)::text FROM identity.password_credentials t WHERE account_id = %s", (PRESERVED_ACCOUNT_ID,)) == protected_credential

@@ -394,6 +394,8 @@ describe("password policy & change route", () => {
       revoked_reason: null as string | null, rotated_from: null as string | null,
     }]));
     const identityQuery = vi.fn(async (sql: string, params: string[]) => {
+      if (sql.startsWith("BEGIN") || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
+      if (sql.startsWith("UPDATE identity.sessions")) return sessionQuery(sql, params);
       if (sql.startsWith("SELECT account_id, tenant_id")) return { rows: [{ account_id: "account-1",
         tenant_id: "tenant-1", username: "operator", email: "operator@example.invalid", status: "active" }] };
       if (sql.startsWith("SELECT account_id, phc_hash")) return { rows: [{ account_id: "account-1",
@@ -427,7 +429,8 @@ describe("password policy & change route", () => {
     });
     const identity = new PostgresIdentityStore();
     const sessions = new PostgresSessionStore();
-    Object.assign(identity, { _pool: { query: identityQuery } });
+    Object.assign(identity, { _pool: { query: identityQuery,
+      connect: async () => ({ query: identityQuery, release: vi.fn() }) } });
     Object.assign(sessions, { _pool: { query: sessionQuery } });
     vi.spyOn(identity, "verifyPassword").mockResolvedValue({ valid: true, newHash: null });
     vi.spyOn(identity, "hashPassword").mockResolvedValue("offline-new-phc");

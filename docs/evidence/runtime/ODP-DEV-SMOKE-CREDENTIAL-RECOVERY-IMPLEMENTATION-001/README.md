@@ -1240,7 +1240,39 @@ gates. After complete source composition, final exact-head declared/full/Web
 budget receipts and task_finalize real PR are mandatory. This is meaningful
 pushed source progress, NOT a ready/awaiting-review or completed-recovery claim.
 
-## Native application identity source checkpoint (2026-10-11)
+## New actual-config/self-password safety source repair (2026-10-11)
+
+After canonical review-readiness hold, worker143659-e78567fd actually terminated
+superseded/exit143.9bbe4817925308cf45be19873df79e646f35cec8 has EIGHT completed
+PASS receipts; remaining six selections unsettled, not credited. This was SOURCE
+verification, no live password/capability interruption. Prior a40012PASS+2prefix
+127 and6f69913PASS+1merged-fixture failure remain original historical evidence.
+Foreground canonical Pi task_start validated existing allocation, no running
+recovery writer, and takes sole source work under the hold; no impersonation,
+owner reset, provider fallback or overlapping source edits.
+
+Actual protected-dev non-secret variables and TWO existing exact-SA policies
+revealed new defects despite previous mocks: application audience767864276141 is
+not transport2l6; smoke TokenCreator binds deployer ONLY. Source now pins EXACT
+actual smokeSA/application audience and uses existing in-memory federatedSTS ->
+600s deployer generateAccessToken -> smoke generateIdToken chain; transport ID
+uses deployer WIUser directly. No new IAM/vars/keys/roles/principal-map or live
+minting; wrong same-project SA/transport-as-application audience fail before HTTP.
+Denied/malformed/header/expired/overlong delegation stops with no fallback/retry.
+
+Production self-password CAS+old-session revocation now atomic READ COMMITTED,
+with separate revocation statement after lock-wait, not stale one-CTE snapshot.
+Replacement/mint/seal failure never emits cookie, and once-only newly owned SID
+cleanup covers lost INSERT reply. Added REAL isolated PG production-store/mounted
+lost reply, revocation rollback and late INSERT COMMIT/actual lock-witness cases;
+original17 fixture credential/session rows preserved. No operational password/
+session effects. New exact-head14-command proof is REQUIRED, not yet established;
+explicit `env NODE_ENV=production` executable declarations repair production
+build/budget invocation, no frozen-dependency or300.0kB budget waiver. Source CI/
+independent Codex/new head review still required, then normal release. Native
+custody/external-writer/precise plan/bounds/effects HOLD remains separate.
+
+## Native application identity source checkpoint (2026-10-11, historical)
 
 Anchors `925c2174ac59`, `1f4625cd64f6`, `7f111d5079cf` resolve the
 previous empty native application bearer WITHOUT relaxing canonical config.
@@ -1252,7 +1284,9 @@ memory-only WIF/STS/IAM code generates application and transport tokens separate
 supplies the actual API client/config, and validates ALL canonical config checks
 before evaluator/login. No account, principal map, permission or IAM grant changes.
 
-A same-project non-deployer smoke SA and fixed API first audience are mandatory;
+The historical checkpoint required same-project non-deployer SA/fixed API first
+audience; actual config later disproved its transport-origin assumption and
+direct-federated smoke request, repaired above. New exact actual pins mandatory;
 missing/drifted config refuses before federation. Negative mocked transport covers
 denied/empty/header-injected/oversized application responses and no retry/fallback.
 Exact current values, existing impersonation and least-privilege application RBAC

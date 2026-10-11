@@ -852,11 +852,16 @@ recovery or F11 self-approval are authorized.
 The consumer now reproduces the existing `origin/dev` Runtime Release application
 identity selection (`deploy_cloud_run_waji.sh`): protected-dev
 `vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT` and the first `vars.ODP_AUTH_AUDIENCES`
-audience. It requires an existing same-project smoke SA (not the deployer SA) and
-the fixed API origin audience; missing/mismatched configuration refuses before
-federation. The same in-memory STS access token requests TWO IAM-generated ID
-tokens: existing deployer/API transport identity and existing smoke application
-identity, both with `includeEmail=true`. The latter is supplied to GateConfig
+audience. Actual protected-dev metadata independently observed2026-10-11 requires
+EXACT `oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com`
+and APPLICATION audience `https://oday-api-767864276141.asia-east1.run.app`, NOT
+transport origin `https://oday-api-2l6wuyl67q-de.a.run.app`. Missing/drifted config
+refuses before federation. Existing deployer WIUser permits federated STS access
+to mint deployer transport ID token and600s deployer access token IN MEMORY;
+ONLY that impersonated deployer access calls smoke generateIdToken with application
+audience. Existing smoke TokenCreator binds deployer, not federated principal.
+Two ID tokens use `includeEmail=true`; no grants/vars/principal-map widening.
+The application token is supplied to GateConfig
 and the actual API client, never to env/argv/files. All canonical config checks
 must pass before evaluator/login. There is no empty-bearer waiver, caller JWT,
 legacy credential fallback, key/signature creation, grant installation or role
@@ -868,7 +873,25 @@ independently reviewed operational plan must reconcile their exact values with
 the currently admitted deployment, existing impersonation permission, and actual
 least-privilege application principal mapping. If existing grants cannot mint
 these identities, HOLD; do not add IAM or map the recovered human target to
-business roles. No such configuration/grant was read or exercised by this worker.
+business roles. Original worker source checkpoint read no live config; later
+foreground read ONLY non-secret protected-dev variables and exact two existing SA
+IAM policies. Those actual5-original proofs are retained in
+`support/handoffs/dev-smoke-credential-recovery-20261011/native-existing-config-20261011/`.
+They prove configuration and binding selection, NOT permission to mint/dispatch,
+writer exclusion, native custody or operational approval. No token was generated.
+
+### Normal self-password failure safety (source, not recovery execution)
+
+Production `changePassword` CAS and ONLY that account's old-session revocation
+commit in one explicit READ COMMITTED transaction. Separate revocation statement
+AFTER credential-row lock/CAS sees an old-session INSERT committed while CAS
+waited; a single CTE's earlier snapshot would miss it. Revocation SQL failure
+rolls back both. Return the committed revision only after COMMIT, then guarded
+replacement insertion. Mint/INSERT/lost INSERT reply/seal failure returns503/no
+cookie and once-only cleanup of newly server-owned SID, no account-wide retry/
+compensation. Isolated actual PG production adapters/mounted route exercise late
+commit lock witness, rollback, lost replacement reply/owned cleanup, and preserve
+original account credential/session rows. These are no live credential effects.
 
 The offline regression now invokes the REAL complete canonical evaluator with
 synthetic HTTP/lineage and mocked source/admission/identity observers, in addition
