@@ -106,8 +106,8 @@ def recovery(identity_stack: Any) -> Any:
                 "tenant_id": TENANT_ID, "stage": stage, "execution_authorized": False,
                 "secret_values_redacted": True,
             }))
-    s.principal = s.boundary.authenticate(Credentials.from_headers(
-        _sign_in(s, PRESERVED_ACCOUNT_ID, TENANT_ID))).principal
+    s.headers = _sign_in(s, PRESERVED_ACCOUNT_ID, TENANT_ID)
+    s.principal = s.boundary.authenticate(Credentials.from_headers(s.headers)).principal
     _sign_in(s, TARGET_ACCOUNT_ID, TENANT_ID)
     s.recovery = RecoveryJournal(engine=s.engine, audit_log=s.audit, environment="dev",
         release_profile="dev-admin", release_sha=SHA, manifest_digest=MANIFEST)
@@ -115,6 +115,123 @@ def recovery(identity_stack: Any) -> Any:
         release_profile="dev-admin", release_sha=SHA, manifest_digest=MANIFEST)
     s.plan = plan()
     return s
+
+
+@pytest.fixture
+def recovery_runtime(recovery: Any, monkeypatch: Any) -> Any:
+    for key, value in {"ODP_DEPLOY_ENV": "dev", "ODP_RELEASE_PROFILE": "dev-admin",
+                       "ODAY_RELEASE_SHA": SHA, "ODP_RELEASE_MANIFEST_DIGEST": MANIFEST}.items():
+        monkeypatch.setenv(key, value)
+    return recovery
+
+
+RECOVERY_PATH = "/api/v1/operator/users/dev-smoke-recovery"
+
+
+def test_mounted_recovery_rotates_existing_pair_and_projects_safe_lineage(recovery_runtime: Any) -> None:
+    s = recovery_runtime
+    old = old_events(s)
+    before = snapshot(s)
+    assert s.client.get(RECOVERY_PATH, headers=s.headers).json()["reservation"] is None
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json={"action": "reserve", "plan": s.plan})
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    root = response.json()["reservation"]
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json={"action": "issue", "reservation": root})
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    cap = response.json()
+    password = "Mounted-Recovery-Password-9821!"
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json={
+        "action": "consume", "reservation": root, "capability_id": cap["capability_id"],
+        "token": cap["token"], "password": password,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "rotated"
+    assert response.headers["cache-control"] == "no-store"
+    assert cap["token"] not in response.text and password not in response.text
+    assert old_events(s) == old
+    after = snapshot(s)
+    for table in ("accounts", "account_roles", "account_scopes", "invitations"):
+        assert after[table] == before[table]
+    projected = s.client.get("/api/v1/operator/users/audit-trail", headers=s.headers,
+                             params={"subject_id": TARGET_ACCOUNT_ID})
+    assert projected.status_code == 200
+    events = [e for e in projected.json()["events"] if e["event_type"].startswith("identity.dev_smoke.")]
+    assert len(events) == 3
+    assert all(e["metadata"]["target_account_id"] == TARGET_ACCOUNT_ID for e in events)
+    assert cap["token"] not in projected.text and password not in projected.text
+    assert "token_hash" not in projected.text and "phc_hash" not in projected.text
+    assert s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("body", [
+    b'{"action":"issue","token":"private-input"}', b'{"action":"reserve","action":"issue"}',
+    b'{"action":[]}', b'{"password":"private-input"', b'[]', b'{"action":"consume"}',
+])
+def test_mounted_recovery_strict_body_does_not_echo_or_mutate(recovery_runtime: Any, body: bytes) -> None:
+    s = recovery_runtime
+    before = snapshot(s)
+    response = s.client.post(RECOVERY_PATH, headers={**s.headers, "content-type": "application/json"}, content=body)
+    assert response.status_code == 422
+    assert response.headers["cache-control"] == "no-store"
+    assert "private-input" not in response.text
+    assert snapshot(s) == before
+    assert s.audit.list_events(correlation_id=RecoveryJournal._CORRELATION) == []
+
+
+@pytest.mark.parametrize("mode", ["auditor", "target", "unauthenticated", "revoked", "must_change"])
+def test_mounted_role_session_denial_precedes_malformed_dto_and_domain(recovery_runtime: Any, monkeypatch: Any, mode: str) -> None:
+    s = recovery_runtime
+    headers = s.headers
+    if mode == "auditor":
+        s.engine.execute("DELETE FROM identity.account_roles WHERE account_id = ? AND role = 'platform_admin'", (PRESERVED_ACCOUNT_ID,))
+    elif mode == "target":
+        headers = _sign_in(s, TARGET_ACCOUNT_ID, TENANT_ID)
+    elif mode == "unauthenticated":
+        headers = {"x-subject-id": PRESERVED_ACCOUNT_ID, "x-tenant-id": TENANT_ID, "x-roles": "platform_admin"}
+    elif mode == "revoked":
+        s.engine.execute("UPDATE identity.sessions SET revoked_at = now() WHERE account_id = ?", (PRESERVED_ACCOUNT_ID,))
+    else:
+        s.engine.execute("UPDATE identity.password_credentials SET must_change = true WHERE account_id = ?", (PRESERVED_ACCOUNT_ID,))
+    before = snapshot(s)
+    calls = []
+    for name in ("reserve", "issue", "consume", "quarantine", "inspect"):
+        monkeypatch.setattr(RecoveryCapabilityService, name, lambda *a, **kw: calls.append((a, kw)))
+    response = s.client.post(RECOVERY_PATH, headers={**headers, "content-type": "application/json"}, content=b'{"password":"private-input"')
+    assert response.status_code in {401, 403}
+    assert "private-input" not in response.text
+    assert calls == [] and snapshot(s) == before
+    assert s.audit.list_events(correlation_id=RecoveryJournal._CORRELATION) == []
+
+
+def test_mounted_recovery_limits_query_body_runtime_and_quarantine(recovery_runtime: Any, monkeypatch: Any) -> None:
+    s = recovery_runtime
+    for method in ("get", "post"):
+        response = getattr(s.client, method)(RECOVERY_PATH + "?token=private-query", headers=s.headers)
+        assert response.status_code == 422 and "private-query" not in response.text
+    response = s.client.post(RECOVERY_PATH, headers={**s.headers, "content-type": "application/json"}, content=b' ' * 8193)
+    assert response.status_code == 413 and response.headers["cache-control"] == "no-store"
+    monkeypatch.setenv("ODP_DEPLOY_ENV", "prod")
+    assert s.client.post(RECOVERY_PATH, headers=s.headers, json={"action": "reserve", "plan": s.plan}).status_code == 409
+    monkeypatch.setenv("ODP_DEPLOY_ENV", "dev")
+    root = s.client.post(RECOVERY_PATH, headers=s.headers, json={"action": "reserve", "plan": s.plan}).json()["reservation"]
+    response = s.client.post(RECOVERY_PATH, headers=s.headers, json={"action": "quarantine", "reservation": root})
+    assert response.status_code == 200
+    assert response.json()["reservation"]["stage"] == "recovery-required"
+    assert s.client.post(RECOVERY_PATH, headers=s.headers, json={"action": "issue", "reservation": root}).status_code == 409
+
+
+def test_recovery_audit_projection_omits_extended_credential_metadata(recovery_runtime: Any) -> None:
+    s = recovery_runtime
+    s.recovery.reserve(s.principal, s.plan)
+    root = s.audit.list_events(correlation_id=RecoveryJournal._CORRELATION)[0]
+    s.audit.record(AuditEvent(event_type=root.event_type, actor=root.actor, action=root.action,
+        resource=root.resource, correlation_id=root.correlation_id, outcome="success",
+        metadata={**root.metadata, "token": "private-injected-marker"}))
+    response = s.client.get("/api/v1/operator/users/audit-trail", headers=s.headers)
+    assert response.status_code == 200 and "private-injected-marker" not in response.text
+    assert len([e for e in response.json()["events"] if e["event_type"] == root.event_type]) == 1
 
 
 def snapshot(s: Any) -> dict[str, Any]:

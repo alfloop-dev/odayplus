@@ -2311,6 +2311,7 @@ export const API_PATHS = {
   "/api/v1/operator/users": ["GET", "POST"],
   "/api/v1/operator/users/audit-trail": ["GET"],
   "/api/v1/operator/users/dev-smoke-journal": ["GET", "POST"],
+  "/api/v1/operator/users/dev-smoke-recovery": ["GET", "POST"],
   "/api/v1/operator/users/invitations": ["POST"],
   "/api/v1/operator/users/invitations/{invitation_id}/revoke": ["POST"],
   "/api/v1/operator/users/roles": ["GET"],

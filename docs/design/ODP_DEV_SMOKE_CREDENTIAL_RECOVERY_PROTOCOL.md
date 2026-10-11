@@ -11,8 +11,10 @@ unchanged. No live effects have been performed by this task.
 
 ## Implemented domain increment
 
-`shared/identity/dev_smoke_recovery.py` owns an **unmounted internal** recovery
-root and `RecoveryCapabilityService`, not a mounted password-reset endpoint. It provides:
+`shared/identity/dev_smoke_recovery.py` owns the recovery root and
+`RecoveryCapabilityService`. The later transport increment mounts these through
+`/api/v1/operator/users/dev-smoke-recovery`; it is not a generic password-reset
+endpoint or an executable foreground protocol. The domain provides:
 
 - Strict non-secret exact-account/tenant/incident plan, canonical digest, distinct
   nonzero execution UUID, server-owned SHA/manifest binding and DB-time expiry
@@ -61,8 +63,8 @@ root and `RecoveryCapabilityService`, not a mounted password-reset endpoint. It 
   credential drift and preserved old history. These are not deployed/live proof.
 
 The runtime constructor's dev/profile/tuple arguments must eventually come
-from server configuration, never a request plan. There is still no API/BFF,
-no foreground executor or bundle-provenance integration. No store/receipt alone
+from server configuration, never a request plan. There is still no foreground
+executor or bundle-provenance integration. No store/receipt alone
 supplies human/source/admission/exclusion authority. Tests use isolated PostgreSQL
 fixtures with incident IDs as inputs, not fabricated live recovery receipts.
 
@@ -114,6 +116,42 @@ permission to execute. Legacy serving writers without revision remain fail-close
 for the recovered target; ordinary deployment must compose all adapters and the
 migration before any recovery. No blanket session denial is the final design.
 
+## Mounted transport increment (unapproved source, no effects)
+
+The existing composed users router now mounts authenticated GET inspection and
+one bounded POST action union: reserve, issue, consume, quarantine. There is no
+caller target/tenant/actor substitution, anonymous path, reset or resume. The
+existing user-update permission dependency executes BEFORE request parsing;
+fixed original claims, durable identity provider and every domain call's persisted
+session/identity checks remain mandatory. Constructor tuple comes only from server
+environment. No new main.py mounting or alternate engine is introduced. The
+consume adapter has no enclosing transaction that could undo its abuse budget.
+
+POST accepts <=8192 streamed bytes of application/json, rejects duplicate keys
+at any nesting depth, extra fields, malformed bodies and query parameters without
+input echo. Tokens/password DTO fields have repr disabled. GET also rejects query
+transport. All responses, including dependency refusals and unavailable persistence,
+are no-store/static-code only. Issuance returns the private bearer only once after
+commit; subsequent inspection cannot retrieve it. OpenAPI is generated from the
+composed app with inline bounded action schemas and no dangling DTO references.
+
+The mounted Web catch-all applies same-origin CSRF to this exact route BEFORE
+proxy, body or service-token-provider work, enforces GET/POST and bounded JSON
+transport, and rejects query token transport. It then uses the EXISTING durable
+Web-session/Bearer + service IAM proxy, not caller actor/tenant headers or a new
+authentication scheme. No redirects/retries or credential logging are added.
+Recovery audit events are projected only with their exact safe root/capability
+metadata allowlists; unexpected credential-bearing extensions are omitted so
+lineage fails closed. Target-filtered audit now includes target_account_id lineage.
+No capability hash, password/PHC or cookie is projected.
+
+Isolated PG mounted tests cover real permission/session denials before malformed
+DTO/domain work, same-account rotation, old-history preservation, no-store,
+redaction, duplicate keys, runtime refusal, body bounds and quarantine. BFF unit
+tests exercise the actual mounted handler's CSRF/body/query boundary; existing
+proxy tests retain the durable session/IAM/header boundary. These are source tests,
+not deployed recovery, ACK or fresh-consumer evidence.
+
 ## Required subsequent increments (not implemented)
 
 1. Independent review of migration/capability/session-fence domain increments;
@@ -121,9 +159,9 @@ migration before any recovery. No blanket session denial is the final design.
    source composition including Web verified-revision/CAS and real PG/route tests.
    Complete transport failure tests including lost reply after committed rotation
    (never automatic resume).
-2. Official bounded authenticated API/BFF mounting with CSRF/service transport,
-   permission-before-malformed-DTO denial, generated OpenAPI/client/inventory and
-   audit projection. Root inspection alone is not a supported recovery API.
+2. Independently review and verify the complete mounted API/BFF and safe audit
+   composition with production identity/session/IAM configuration and generated
+   OpenAPI/client/inventory. This transport increment is not deployed or approved.
 3. Strict NEW versioned recovery envelope and canonical full-gate lineage proof,
    connecting immutable old invitation/quarantine/binding NULL to new root,
    capability issue/rotation/intent/real PUT ACK. Keep schema-1 AUTH001 behavior

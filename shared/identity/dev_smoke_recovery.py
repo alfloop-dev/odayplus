@@ -1,8 +1,8 @@
 """Internal append-only root for the separately authorized dev-smoke recovery.
 
-Incremental domain layer ONLY: not mounted, not a foreground executor, and not
-permission for credential/secret effects. Hash-only capability/atomic rotation
-are internal domain operations; transport/gate integration remains incomplete.
+Mounted through the authenticated operator users router, not a foreground
+executor or permission for credential/secret effects. Hash-only capability and
+atomic rotation belong here; foreground/gate integration remains incomplete.
 No reset/resume/re-reservation exists. The old creation journal stays immutable.
 """
 from __future__ import annotations
@@ -364,7 +364,7 @@ class RecoveryCapability:
 
 
 class RecoveryCapabilityService(RecoveryJournal):
-    """Unmounted internal single-account rotation; never a generic reset API.
+    """Authenticated single-account rotation; never a generic reset API.
 
     One issuance and at most five consume submissions for this authorization.
     Persist only independent capability SHA-256 in dedicated credential storage.
@@ -377,6 +377,11 @@ class RecoveryCapabilityService(RecoveryJournal):
     _CAP_TYPE = "identity.dev_smoke.recovery_capability"
     _TOKEN = re.compile(r"[A-Za-z0-9_-]{43}\Z")
     _TABLE = "identity.dev_smoke_recovery_capabilities"
+    _CAP_KEYS = _PLAN_KEYS | {
+        "plan_digest", "root_event_id", "issuer_session_id", "capability_id",
+        "capability_expires_at", "stage", "issue_event_id", "revoked_target_sessions",
+        "execution_authorized", "credential_binding_verified", "secret_values_redacted",
+    }
 
     def _top_level(self) -> None:
         # PostgresEngine nests by joining the existing transaction. A caller
