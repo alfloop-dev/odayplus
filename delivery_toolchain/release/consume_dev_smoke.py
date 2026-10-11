@@ -47,6 +47,9 @@ REQUIRED_CHECKS = (
 NATIVE_AUDIENCE = "odayplus.dev-smoke.native-consumer.v1"
 OIDC_ISSUER = "https://token.actions.githubusercontent.com"
 WIF_PROVIDER = "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus"
+# Existing provider allowedAudiences is empty: Google requires the canonical
+# //iam.googleapis.com resource or its HTTPS form, not the bare projects/... id.
+WIF_AUDIENCE = f"https://iam.googleapis.com/{WIF_PROVIDER}"
 GOOGLE_SERVICE_ACCOUNT = "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
 SECRET_INPUTS = ("ODP_DEV_ADMIN_CREDENTIAL_BUNDLE", "GH_TOKEN",
                  "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL")
@@ -282,7 +285,7 @@ def _native_transport_identity(inputs: NativeInputs, environment: dict[str, str]
                 or environment.get("GOOGLE_SERVICE_ACCOUNT") != GOOGLE_SERVICE_ACCOUNT):
             raise ConsumerRefused()
         with httpx.Client(timeout=15, follow_redirects=False, trust_env=False) as client:
-            subject = _runner_jwt(client, inputs, audience=WIF_PROVIDER)
+            subject = _runner_jwt(client, inputs, audience=WIF_AUDIENCE)
             sts = _bounded_json(client, "https://sts.googleapis.com/v1/token", method="POST", json_payload={
                 "audience": f"//iam.googleapis.com/{WIF_PROVIDER}",
                 "grantType": "urn:ietf:params:oauth:grant-type:token-exchange",

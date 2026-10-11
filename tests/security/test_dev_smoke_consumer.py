@@ -379,7 +379,8 @@ def test_existing_google_wif_is_memory_only_and_exact_identity(monkeypatch, fail
     def responder(request):
         calls.append(str(request.url).split("?")[0])
         if request.url.host == "pipelines.actions.githubusercontent.com":
-            assert parse_qs(request.url.query.decode())["audience"] == [c.WIF_PROVIDER]
+            assert parse_qs(request.url.query.decode())["audience"] == [c.WIF_AUDIENCE]
+            assert c.WIF_AUDIENCE == "https://iam.googleapis.com/" + c.WIF_PROVIDER
             assert request.headers["Authorization"] == "Bearer offline-native-oidc-request-token"
             return httpx.Response(200, json={"value": "offline-subject-jwt"})
         if request.url.host == "sts.googleapis.com":
