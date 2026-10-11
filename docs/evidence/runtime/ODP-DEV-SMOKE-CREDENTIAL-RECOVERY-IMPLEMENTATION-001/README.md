@@ -41,9 +41,13 @@ isolated bundled server; no live account/DB credential was supplied.
 The subsequent inventory/evidence checkpoint changes **no tested source** but
 has a different Git head: these are previous-anchor receipts, not exact final-head
 verification or review readiness. Inventory now includes the three added Python
-files; boundary verification must be remeasured at the clean new anchor. Web
-verification remains explicitly unproven, not waived because this increment
-has no Web diff. The whole task is NOT ready for formal review/finalization.
+files. At clean inventory anchor `68e793e7d7f0`, the exact declared boundary
+command was remeasured using the existing shared verification receipt policy
+(single-command adapter in worker scratch, not a new task/status writer):
+`1fe5df74d5746247`, exit0, 11.995s, 1224 files. Its JSON is retained here.
+This later evidence-only commit does not transfer prior-head receipts onto its
+own SHA. Web verification remains explicitly unproven, not waived because this
+increment has no Web diff. The whole task is NOT ready for formal review/finalization.
 
 ## Live effect status
 
