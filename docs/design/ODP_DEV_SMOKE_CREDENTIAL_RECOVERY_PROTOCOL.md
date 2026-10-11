@@ -549,6 +549,38 @@ native ingress approval and independently reviewed final operational plan remain
 required before effects. No worker received a live password/cookie or called a
 live account, session, secret or cloud service.
 
+## Fresh Web account/provenance observer increment (unapproved; NOT complete preflight)
+
+The session owner now performs five fixed one-shot HTTPS GETs over its retained
+original cookie: actual Web+API own release identity, complete user inventory,
+complete tenant audit, old journal, and new recovery inspection. The before-state
+is kept only in parent memory; callers cannot supply a baseline or a passing
+receipt. Reconciliation requires the same owner/budget/custody/actions/plan and
+successful same-pair target login. It checks original/target identity, exact
+active roles/scope/source, invitation issue/accept, immutable old quarantine and
+NULL binding, absence of any prior recovery before effects, and exact new
+root/issue/rotation after rotation. All public selected fields of ALL accounts
+must remain unchanged, not just the target. Server binding still separately
+fences private credential revisions/times; public snapshots cannot prove passwords
+or all pre-existing session preservation. Historical original-session cleanup
+stays UNKNOWN.
+
+Both observations have durable sub-operation starts/terminals. Any malformed,
+missing, duplicated, drifted, pending/quarantined or over-limit evidence stops
+normal progression; a later GET cannot resume an unknown rotation. Reads share
+one active absolute deadline and the existing16KiB JSON/64KiB total HTTP bound,
+no query filtering, pagination, retries or cached pass. A history too large for
+that bound is a concrete preflight blocker requiring reviewed bounded inventory
+support, not permission to truncate/filter away old provenance. No raw inventory,
+audit metadata, email, cookie or credential is persisted in phase receipts.
+
+This completes only the account/release-identity portion of preflight and
+reconciliation. Remote independently pinned whole-tree review/latest CI and
+current ordinary admission observers, measured production ceilings, full gate,
+quarantine-before-cleanup and fresh-job orchestration remain uncomposed. The
+observer does NOT authorize reserve/rotate/PUT and is not a complete foreground
+entrypoint. Offline fixtures and loopback TLS tests are not live evidence.
+
 ## Required subsequent increments (not implemented)
 
 1. Independent review of migration/capability/session-fence domain increments;

@@ -135,7 +135,8 @@ class ExclusivePhaseReceipts:
                remaining: float, event_id: str = "", exit_code: int | None = None,
                http_status: int | None = None, operation: str = "") -> None:
         try:
-            if (operation not in {"", "original-login", "target-login", "original-logout", "target-logout"}
+            if (operation not in {"", "original-login", "target-login", "original-logout", "target-logout",
+                                 "original-observe", "target-observe"}
                     or self._poisoned or self._fd is None or phase not in _CEILINGS
                     or stage not in {"start", "terminal"}
                     or outcome not in ({"pending"} if stage == "start" else _OUTCOMES)
@@ -698,6 +699,202 @@ class RecoveryHTTPSAttempt:
                         pass  # no cleanup exception/body may escape redaction
 
 
+class RecoveryObservationHTTPSAttempt(RecoveryHTTPSAttempt):
+    """One fixed read-only Web/BFF observation; bounded, no pagination/retry.
+
+    Complete bounded user/tenant-audit inventories only. Over-limit history is
+    a pre-effect blocker, not permission to filter away provenance/uncertainty.
+    Uses the same no-store/duplicate-key/TLS/absolute deadline transport.
+    """
+
+    def observe(self, operation: str, *, cookie: str, deadline: float) -> RecoveryHTTPResult:
+        paths = {
+            "release": "/api/v1/platform/release-identity",
+            "users": "/api/v1/operator/users",
+            "audit": "/api/v1/operator/users/audit-trail",
+            "old-journal": "/api/v1/operator/users/dev-smoke-journal",
+            "recovery": self.PATH,
+        }
+        if operation not in paths:
+            self._used = True
+            raise RecoveryHTTPRefused(outcome="refused", http_status=None)
+        return self._execute_request(method="GET", cookie=cookie, deadline=deadline,
+                                     body=None, path=paths[operation], statuses={200})
+
+
+def _validate_account_observations(payloads: dict, *, plan: dict, actions) -> tuple[dict, dict]:
+    """Private predicate over freshly authenticated observations, NOT receipts.
+
+    Never exports account/audit contents or credentials. Server domain checks
+    private credential preservation; public snapshot equality cannot prove it.
+    """
+    from shared.identity import dev_smoke_recovery as domain
+    from shared.identity.dev_smoke_journal import (
+        PRESERVED_ACCOUNT_ID, DevSmokeBindingJournal, ProvisioningJournal, _DIGEST, _SHA,
+    )
+    from shared.identity.invitation_provenance import invitation_provenance
+
+    identity = payloads["release"]
+    expected = {
+        "release_sha": plan["release_sha"], "web_release_sha": plan["release_sha"],
+        "manifest_digest": plan["manifest_digest"], "web_manifest_digest": plan["manifest_digest"],
+        "release_profile": "dev-admin", "web_release_profile": "dev-admin",
+    }
+    if identity.get("release_profile_valid") is not True or any(identity.get(k) != v for k, v in expected.items()):
+        raise ValueError
+
+    def inventory(operation: str, key: str) -> list:
+        payload = payloads[operation]
+        records = payload.get(key)
+        if (set(payload) != {key, "count", "correlation_id"} or type(records) is not list
+                or any(type(r) is not dict for r in records) or type(payload["count"]) is not int
+                or payload["count"] != len(records)):
+            raise ValueError
+        return records
+
+    users, events = inventory("users", "users"), inventory("audit", "events")
+    if (any(not _uuid(r.get("subject_id")) for r in users)
+            or len({r["subject_id"] for r in users}) != len(users)
+            or any(not _uuid(e.get("event_id")) for e in events)
+            or len({e["event_id"] for e in events}) != len(events)):
+        raise ValueError
+    by_id = {r["subject_id"]: r for r in users}
+    original, target = by_id[PRESERVED_ACCOUNT_ID], by_id[TARGET_ACCOUNT_ID]
+    fixed_scope = {"tenant_id": TENANT_ID, "clearance": "CONFIDENTIAL", **{
+        axis: [] for axis in ("brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids", "modules")
+    }}
+    for record, username, roles in ((original, "ajoe734", ["auditor", "platform_admin"]),
+                                    (target, "odp-dev-smoke", ["platform_admin"])):
+        if (record.get("username") != username or record.get("status") != "active"
+                or record.get("roles") != roles or record.get("scope") != fixed_scope
+                or record.get("attributes", {}).get("identity_source") != "identity.accounts"
+                or type(record.get("email")) is not str or not record["email"]
+                or type(record.get("name")) is not str or not record["name"]):
+            raise ValueError
+    if invitation_provenance(target, events) != {
+        "invitation_id": domain.INVITATION_ID, "issue_event_id": domain.ISSUE_EVENT_ID,
+        "accept_event_id": domain.ACCEPT_EVENT_ID, "issuer_account_id": PRESERVED_ACCOUNT_ID,
+    }:
+        raise ValueError
+
+    def group(kind, correlation, actor, action, keys, stages):
+        found = [e for e in events if e.get("event_type") == kind or e.get("correlation_id") == correlation]
+        found.sort(key=lambda e: datetime.fromisoformat(e["timestamp"]))
+        if len(found) != len(stages):
+            raise ValueError
+        for event, stage in zip(found, stages, strict=True):
+            meta = event["metadata"]
+            at = datetime.fromisoformat(event["timestamp"])
+            if (event.get("event_type") != kind or event.get("correlation_id") != correlation
+                    or event.get("resource") != correlation or event.get("actor") != actor
+                    or event.get("action") != action or event.get("outcome") != "success"
+                    or at.tzinfo is None or at.utcoffset() is None or at > datetime.now(UTC)
+                    or type(meta) is not dict or set(meta) != keys or meta["stage"] != stage
+                    or meta["tenant_id"] != TENANT_ID or meta["execution_authorized"] is not False
+                    or meta["secret_values_redacted"] is not True):
+                raise ValueError
+        return found
+
+    old = group(ProvisioningJournal._TYPE, ProvisioningJournal._CORRELATION, ProvisioningJournal._ACTOR,
+                "DEV_SMOKE_RESERVATION", ProvisioningJournal._KEYS, ["reserved", "recovery-required"])
+    base = old[0]["metadata"]
+    if (old[1]["event_id"] != domain.OLD_QUARANTINE_EVENT_ID
+            or base["authorization_id"] != ProvisioningJournal._CORRELATION.split(":", 1)[1]
+            or base["execution_id"] != domain.OLD_EXECUTION_ID or base["plan_digest"] != domain.OLD_PLAN_DIGEST
+            or not _SHA.fullmatch(base["release_sha"]) or not _DIGEST.fullmatch(base["manifest_digest"])
+            or old[1]["metadata"] != {**base, "stage": "recovery-required"}
+            or any(e.get("event_type") == DevSmokeBindingJournal._TYPE
+                   or e.get("correlation_id") == DevSmokeBindingJournal._CORRELATION for e in events)):
+        raise ValueError
+    journal = payloads["old-journal"]
+    root = journal.get("reservation")
+    if (set(journal) != {"reservation", "binding", "execution_authorized", "secret_values_redacted"}
+            or journal["binding"] is not None or journal["execution_authorized"] is not False
+            or journal["secret_values_redacted"] is not True
+            or root != {"execution_id": domain.OLD_EXECUTION_ID, "plan_digest": domain.OLD_PLAN_DIGEST,
+                        "event_id": domain.OLD_QUARANTINE_EVENT_ID, "stage": "recovery-required",
+                        "authorization_id": base["authorization_id"], "execution_authorized": False,
+                        "secret_values_redacted": True}
+            or root["execution_authorized"] is not False or root["secret_values_redacted"] is not True):
+        raise ValueError
+    historical = [old[0], next(e for e in events if e["event_id"] == domain.ISSUE_EVENT_ID),
+                  next(e for e in events if e["event_id"] == domain.ACCEPT_EVENT_ID), old[1]]
+    historical_times = [datetime.fromisoformat(e["timestamp"]) for e in historical]
+    if not all(a <= b for a, b in zip(historical_times, historical_times[1:])):
+        raise ValueError
+    current = payloads["recovery"]
+    if (set(current) != {"reservation", "binding", "execution_authorized", "secret_values_redacted"}
+            or current["binding"] is not None or current["execution_authorized"] is not False
+            or current["secret_values_redacted"] is not True):
+        raise ValueError
+    if actions is None:
+        if current["reservation"] is not None or any(
+            e.get("event_type") in {domain.RecoveryJournal._TYPE, domain.RecoveryCapabilityService._CAP_TYPE,
+                                   domain.RECOVERY_BINDING_TYPE}
+            or e.get("correlation_id") in {domain.RecoveryJournal._CORRELATION,
+                domain.RecoveryCapabilityService._CAP_CORRELATION, domain.RECOVERY_BINDING_CORRELATION} for e in events
+        ):
+            raise ValueError  # ANY prior pending/unknown execution bars a fresh one
+    else:
+        if current["reservation"] != actions._root:
+            raise ValueError
+        roots = group(domain.RecoveryJournal._TYPE, domain.RecoveryJournal._CORRELATION,
+                PRESERVED_ACCOUNT_ID, domain.RecoveryJournal._ACTION, domain.RecoveryJournal._KEYS, ["reserved"])
+        meta = roots[0]["metadata"]
+        if (roots[0]["event_id"] != actions._root["event_id"] or meta["plan_digest"] != actions._digest
+                or any(meta[k] != v for k, v in plan.items()) or not _uuid(meta["issuer_session_id"])
+                or meta["credential_binding_verified"] is not False):
+            raise ValueError
+        import re
+        if (validate_recovery_plan(plan, release_sha=plan["release_sha"], manifest_digest=plan["manifest_digest"],
+                now=datetime.fromisoformat(roots[0]["timestamp"])) != actions._digest
+                or any(type(meta[k]) is not str or not _DIGEST.fullmatch(meta[k])
+                       for k in ("original_identity_digest", "target_identity_digest"))
+                or any(type(meta[k]) is not str or not re.fullmatch(r"[1-9][0-9]{0,18}", meta[k])
+                       for k in ("original_credential_revision", "target_credential_revision"))
+                or any(datetime.fromisoformat(meta[k]).tzinfo is None for k in (
+                    "original_credential_updated_at", "target_credential_updated_at"))):
+            raise ValueError
+        caps = group(domain.RecoveryCapabilityService._CAP_TYPE, domain.RecoveryCapabilityService._CAP_CORRELATION,
+                PRESERVED_ACCOUNT_ID, "DEV_SMOKE_RECOVERY_CAPABILITY", domain.RecoveryCapabilityService._CAP_KEYS,
+                ["issued", "rotated"])
+        issued, rotated = caps
+        expires = datetime.fromisoformat(issued["metadata"]["capability_expires_at"])
+        issue_time = datetime.fromisoformat(issued["timestamp"])
+        count = rotated["metadata"]["revoked_target_sessions"]
+        cap_base = {**plan, "plan_digest": actions._digest, "root_event_id": roots[0]["event_id"],
+                    "issuer_session_id": meta["issuer_session_id"], "capability_id": actions._capability_id,
+                    "capability_expires_at": issued["metadata"]["capability_expires_at"], "issue_event_id": "",
+                    "revoked_target_sessions": 0, "stage": "issued", "execution_authorized": False,
+                    "credential_binding_verified": False, "secret_values_redacted": True}
+        if (issued["event_id"] != actions._issue_event_id or rotated["event_id"] != actions._rotation_event_id
+                or issued["metadata"] != cap_base or issued["metadata"]["credential_binding_verified"] is not False
+                or type(issued["metadata"]["revoked_target_sessions"]) is not int
+                or rotated["metadata"] != {**cap_base, "stage": "rotated", "issue_event_id": issued["event_id"],
+                                          "revoked_target_sessions": count}
+                or rotated["metadata"]["credential_binding_verified"] is not False
+                or type(count) is not int or not 0 <= count < 2**63
+                or not 0 < (expires - issue_time).total_seconds() <= 600
+                or not datetime.fromisoformat(rotated["timestamp"]) < expires <= datetime.fromisoformat(plan["expires_at"])
+                or any(e.get("event_type") == domain.RECOVERY_BINDING_TYPE
+                       or e.get("correlation_id") == domain.RECOVERY_BINDING_CORRELATION for e in events)):
+            raise ValueError
+        ordered = [old[0], next(e for e in events if e["event_id"] == domain.ISSUE_EVENT_ID),
+                   next(e for e in events if e["event_id"] == domain.ACCEPT_EVENT_ID), old[1], roots[0], *caps]
+        times = [datetime.fromisoformat(e["timestamp"]) for e in ordered]
+        if not all(a <= b for a, b in zip(times, times[1:])):
+            raise ValueError
+    # Keep safe public identity facts in parent memory ONLY; never serialize the
+    # returned private snapshot. Compare ALL accounts, not only the target.
+    keys = ("subject_id", "username", "email", "name", "roles", "scope", "status", "updated_by", "attributes")
+    snapshot = {sid: {key: record[key] for key in keys} for sid, record in by_id.items()}
+    return snapshot, {"stage": "account-preflight-observed" if actions is None else "rotation-reconciled",
+        "execution_id": plan["execution_id"], "release_sha": plan["release_sha"],
+        "manifest_digest": plan["manifest_digest"], "old_quarantine_event_id": domain.OLD_QUARANTINE_EVENT_ID,
+        "original_incident_session_cleanup": "unknown", "execution_authorized": False,
+        "credential_binding_verified": False, "secret_values_redacted": True}
+
+
 class OriginalPasswordMemory:
     """Already-approved foreground memory input, NOT custody approval/ingress.
 
@@ -793,6 +990,8 @@ class ForegroundOwnedWebSessions:
         self._attempted: set[str] = set()
         self._stopped = self._closed = self._actions_created = False
         self._unknown_login = False
+        self._baseline = None
+        self._observation_plan = None
 
     def __repr__(self) -> str:
         return "ForegroundOwnedWebSessions(<redacted>)"
@@ -846,7 +1045,7 @@ class ForegroundOwnedWebSessions:
                             outcome=outcome, elapsed=elapsed, remaining=remaining, http_status=status)
                 except Exception:
                     outcome = "unknown"
-            if action == "login" and self._budget._active is not None:
+            if action in {"login", "observe"} and self._budget._active is not None:
                 try:
                     self._budget.finish(outcome="unknown", http_status=status)
                 except Exception:
@@ -883,6 +1082,46 @@ class ForegroundOwnedWebSessions:
 
         self._operation(role, "login", perform)
         self._verified.add(role)  # never usable BEFORE durable terminal
+
+    def observe_accounts(self, plan: dict[str, str], *, actions=None) -> dict:
+        """Fresh public preservation/lineage reads; NOT source/admission authority.
+
+        Preflight owns the before-state, reconciliation compares it after the
+        SAME-pair target login. All reads use the retained original session. No
+        caller baseline, cookies, passing receipt or unknown-effect resume.
+        Domain binding separately fences non-public credential revisions/times.
+        """
+        from copy import deepcopy
+        role = "original" if actions is None else "target"
+        safe = {}
+        baseline = None
+
+        def perform():
+            nonlocal safe, baseline
+            if ("original" not in self._verified or (role == "target" and "target" not in self._verified)
+                    or (role == "original" and self._baseline is not None)
+                    or (role == "target" and (self._baseline is None or plan != self._observation_plan
+                        or type(actions) is not SameSessionRecoveryActions or actions._stopped
+                        or actions._cookie != self._cookies["original"] or actions._plan != plan
+                        or actions._budget is not self._budget or actions._custody is not self._target
+                        or not actions._rotation_event_id))):
+                raise ValueError
+            validate_recovery_plan(plan, release_sha=plan.get("release_sha"),
+                    manifest_digest=plan.get("manifest_digest"), now=datetime.now(UTC))
+            payloads = {}
+            for operation in ("release", "users", "audit", "old-journal", "recovery"):
+                attempt = RecoveryObservationHTTPSAttempt(origin=self._origin, address=self._address, ca_pem=self._ca)
+                payloads[operation] = attempt.observe(operation, cookie=self._cookies["original"],
+                                                deadline=self._budget.call_deadline).payload
+            baseline, safe = _validate_account_observations(payloads, plan=plan, actions=actions)
+            if role == "target" and baseline != self._baseline:
+                raise ValueError
+            return 200
+
+        self._operation(role, "observe", perform)
+        if role == "original":
+            self._baseline, self._observation_plan = deepcopy(baseline), deepcopy(plan)
+        return safe  # only after durable terminal; never includes inventory/audit
 
     def recovery_actions(self, plan: dict[str, str]):
         # Primitive composition only, not proof that full preflight was performed.

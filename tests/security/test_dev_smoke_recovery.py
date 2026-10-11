@@ -1838,3 +1838,200 @@ def test_real_owned_login_lost_body_retains_only_new_valid_cookie(tls_recovery_s
         with pytest.raises(RecoveryRefused, match="SERIALIZATION_REFUSED"):
             pickle.dumps(caught.value)
     assert len(observed) == 1
+
+
+def account_observer_payloads(p: dict, actions=None) -> dict:
+    """Synthetic safe readbacks; NOT real account/source/admission evidence."""
+    from copy import deepcopy
+    from shared.identity import dev_smoke_recovery as d
+    bundle, events, target = recovery_consumer_inputs()
+    now = datetime.now(UTC)
+    fixture_now = datetime(2026, 10, 11, 5, tzinfo=UTC)
+    for event in events:
+        event["timestamp"] = (datetime.fromisoformat(event["timestamp"]) + now - fixture_now - timedelta(seconds=60)).isoformat()
+    events[1]["metadata"]["expires_at"] = (now + timedelta(hours=1)).isoformat()
+    original = deepcopy(target)
+    original.update(subject_id=p["actor_account_id"], username="ajoe734", roles=["auditor", "platform_admin"],
+                    email="original@offline.invalid", name="Original", updated_by=None)
+    target.update(email="target@offline.invalid", name="Target")
+    old_root = {"execution_id": d.OLD_EXECUTION_ID, "plan_digest": d.OLD_PLAN_DIGEST,
+        "event_id": d.OLD_QUARANTINE_EVENT_ID, "stage": "recovery-required",
+        "authorization_id": events[0]["metadata"]["authorization_id"], "execution_authorized": False,
+        "secret_values_redacted": True}
+    if actions is not None:
+        for event in events[4:7]:
+            event["metadata"].update(p, plan_digest=actions._digest)
+        events[4]["event_id"] = actions._root["event_id"]
+        for event in events[5:7]:
+            event["metadata"].update(root_event_id=actions._root["event_id"], capability_id=actions._capability_id,
+                capability_expires_at=(now + timedelta(seconds=540)).isoformat())
+        events[5]["event_id"], events[6]["event_id"] = actions._issue_event_id, actions._rotation_event_id
+        events[6]["metadata"]["issue_event_id"] = actions._issue_event_id
+    events = events[:4 if actions is None else 7]
+    return {
+        "release": {"release_sha": p["release_sha"], "web_release_sha": p["release_sha"],
+            "manifest_digest": p["manifest_digest"], "web_manifest_digest": p["manifest_digest"],
+            "release_profile": "dev-admin", "web_release_profile": "dev-admin", "release_profile_valid": True},
+        "users": {"users": [original, target], "count": 2, "correlation_id": "offline"},
+        "audit": {"events": events, "count": len(events), "correlation_id": "offline"},
+        "old-journal": {"reservation": old_root, "binding": None,
+                        "execution_authorized": False, "secret_values_redacted": True},
+        "recovery": {"reservation": None if actions is None else dict(actions._root), "binding": None,
+                     "execution_authorized": False, "secret_values_redacted": True},
+    }
+
+
+def install_account_observer(monkeypatch: Any, payloads: dict, calls: list) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    def observe(self, operation, *, cookie, deadline):
+        assert cookie == "offline-original-cookie"
+        calls.append((operation, deadline))
+        return r.RecoveryHTTPResult(200, payloads[operation])
+    monkeypatch.setattr(r.RecoveryObservationHTTPSAttempt, "observe", observe)
+
+
+def test_account_preflight_reconciliation_same_owner_and_memory_baseline(owned_sessions: Any,
+                                                                       monkeypatch: Any, tmp_path: Path) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with owned_sessions() as (owner, budget, clock, receipts, p, calls, original, target):
+        reads = []
+        payloads = account_observer_payloads(p)
+        install_account_observer(monkeypatch, payloads, reads)
+        budget.begin("preflight")
+        owner.login("original")
+        safe = owner.observe_accounts(p)
+        assert safe["stage"] == "account-preflight-observed"
+        budget.finish(outcome="completed")
+        actions = owner.recovery_actions(p)
+        actions._root = RecoveryReservation(p["execution_id"], actions._digest, str(uuid4()), "reserved").to_receipt()
+        actions._capability_id, actions._issue_event_id, actions._rotation_event_id = [str(uuid4()) for _ in range(3)]
+        for phase in ("reserve", "issue", "rotate"):
+            budget.begin(phase)
+            budget.finish(outcome="completed")  # synthetic, no server effect/proof
+        budget.begin("reconcile")
+        owner.login("target")
+        payloads.update(account_observer_payloads(p, actions))
+        safe = owner.observe_accounts(p, actions=actions)
+        assert safe["stage"] == "rotation-reconciled"
+        budget.finish(outcome="completed")
+        assert [v[0] for v in reads] == ["release", "users", "audit", "old-journal", "recovery"] * 2
+        assert len({v[1] for v in reads[:5]}) == len({v[1] for v in reads[5:]}) == 1
+        assert all(secret not in repr(safe) + repr(owner) for secret in (original.password, target.password))
+        text = "".join(f.read_text() for f in (tmp_path / p["execution_id"]).glob("*.json"))
+        assert "original@offline.invalid" not in text and "offline-original-cookie" not in text
+        assert '"operation":"original-observe"' in text and '"operation":"target-observe"' in text
+
+
+@pytest.mark.parametrize("drift", ["web", "digest", "tenant", "roles", "status", "count", "duplicate",
+    "quarantine", "old_binding", "accept", "bootstrap", "pending", "malformed", "audit_count"])
+def test_account_observation_drift_stops_before_reservation(owned_sessions: Any, monkeypatch: Any, drift: str) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with owned_sessions() as (owner, budget, clock, receipts, p, calls, original, target):
+        payloads = account_observer_payloads(p)
+        records, events = payloads["users"]["users"], payloads["audit"]["events"]
+        if drift == "web":
+            payloads["release"]["web_release_sha"] = "b" * 40
+        elif drift == "digest":
+            payloads["release"]["web_manifest_digest"] = ""
+        elif drift == "tenant":
+            records[1]["scope"]["tenant_id"] = str(uuid4())
+        elif drift == "roles":
+            records[0]["roles"] = ["operations_manager", "platform_admin"]
+        elif drift == "status":
+            records[1]["status"] = "disabled"
+        elif drift == "count":
+            payloads["users"]["count"] = True
+        elif drift == "duplicate":
+            events.append(events[0])
+            payloads["audit"]["count"] += 1
+        elif drift == "quarantine":
+            payloads["old-journal"]["reservation"]["event_id"] = str(uuid4())
+        elif drift == "old_binding":
+            payloads["old-journal"]["binding"] = {"stage": "binding-acknowledged"}
+        elif drift == "accept":
+            events[2]["actor"] = p["actor_account_id"]
+        elif drift == "bootstrap":
+            events.append({"event_id": str(uuid4()), "event_type": "identity.account.bootstrap",
+                           "metadata": {"account_id": p["target_account_id"]}})
+            payloads["audit"]["count"] += 1
+        elif drift == "pending":
+            payloads["recovery"]["reservation"] = {"stage": "reserved"}
+        elif drift == "audit_count":
+            payloads["audit"]["count"] += 1
+        else:
+            payloads["old-journal"] = {"PRIVATE-MARKER": True}
+        install_account_observer(monkeypatch, payloads, [])
+        budget.begin("preflight")
+        owner.login("original")
+        with pytest.raises(r.RecoveryActionRefused) as caught:
+            owner.observe_accounts(p)
+        assert "PRIVATE-MARKER" not in str(caught.value)
+        assert budget._stopped and owner._baseline is None
+        with pytest.raises(RecoveryRefused):
+            owner.recovery_actions(p)
+        assert all(v[0] not in {"logout"} for v in calls)
+        # Preflight failed with no root; only its known OWN original cookie is cleaned.
+        assert owner.cleanup()["own_session_cleanup"] == "completed"
+
+
+@pytest.mark.parametrize("drift", ["original", "target", "other", "rotation", "session", "quarantine", "unknown"])
+def test_rotation_reconciliation_never_resumes_or_ignores_preservation(owned_sessions: Any,
+                                                                      monkeypatch: Any, drift: str) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with owned_sessions() as (owner, budget, clock, receipts, p, calls, original, target):
+        payloads = account_observer_payloads(p)
+        reads = []
+        install_account_observer(monkeypatch, payloads, reads)
+        budget.begin("preflight")
+        owner.login("original")
+        owner.observe_accounts(p)
+        budget.finish(outcome="completed")
+        actions = owner.recovery_actions(p)
+        actions._root = RecoveryReservation(p["execution_id"], actions._digest, str(uuid4()), "reserved").to_receipt()
+        actions._capability_id, actions._issue_event_id, actions._rotation_event_id = [str(uuid4()) for _ in range(3)]
+        for phase in ("reserve", "issue", "rotate"):
+            budget.begin(phase)
+            budget.finish(outcome="completed")
+        budget.begin("reconcile")
+        owner.login("target")
+        payloads.update(account_observer_payloads(p, actions))
+        if drift in {"original", "target"}:
+            payloads["users"]["users"][0 if drift == "original" else 1]["email"] = "changed@offline.invalid"
+        elif drift == "other":
+            from copy import deepcopy
+            other = deepcopy(payloads["users"]["users"][0])
+            other["subject_id"] = str(uuid4())
+            payloads["users"]["users"].append(other)
+            payloads["users"]["count"] += 1
+        elif drift == "rotation":
+            payloads["audit"]["events"][6]["event_id"] = str(uuid4())
+        elif drift == "session":
+            payloads["audit"]["events"][6]["metadata"]["issuer_session_id"] = str(uuid4())
+        elif drift == "quarantine":
+            payloads["recovery"]["reservation"]["stage"] = "recovery-required"
+        else:
+            actions._stopped = True
+        with pytest.raises(r.RecoveryActionRefused):
+            owner.observe_accounts(p, actions=actions)
+        assert budget._stopped
+        with pytest.raises(r.RecoveryActionRefused):
+            actions.binding_intent()
+        if drift == "unknown":
+            assert len(reads) == 5  # no GET can turn an unknown rotation into continuation
+
+
+@pytest.mark.parametrize("operation,path", [
+    ("release", "/api/v1/platform/release-identity"), ("users", "/api/v1/operator/users"),
+    ("audit", "/api/v1/operator/users/audit-trail"), ("old-journal", "/api/v1/operator/users/dev-smoke-journal"),
+    ("recovery", "/api/v1/operator/users/dev-smoke-recovery"),
+])
+def test_real_observation_https_fixed_read_routes_no_retry(tls_recovery_server: Any, operation: str, path: str) -> None:
+    import time
+    from delivery_toolchain.release import recover_dev_smoke as r
+    with tls_recovery_server(recovery_http_reply()) as (origin, ca, observed):
+        attempt = r.RecoveryObservationHTTPSAttempt(origin=origin, address="127.0.0.1", ca_pem=ca)
+        assert attempt.observe(operation, cookie="offline-own-cookie", deadline=time.monotonic() + 3).http_status == 200
+        with pytest.raises(r.RecoveryHTTPRefused):
+            attempt.observe(operation, cookie="offline-own-cookie", deadline=time.monotonic() + 3)
+    assert len(observed) == 1 and observed[0].startswith(f"GET {path} HTTP/1.1\r\n".encode())
+    assert b"Cookie: __Host-oday_web_session=offline-own-cookie\r\n" in observed[0]
