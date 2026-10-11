@@ -694,6 +694,67 @@ Native env-to-memory ingress is still an UNAPPROVED custody amendment. The worke
 must not execute recovery; final composition, independent Codex2 review, ordinary
 deployment and the exact foreground operational plan are still mandatory.
 
+## Owned Web sessions increment (2026-10-11; source only, not final submission)
+
+Anchors `31fda6a6b475` / `1b96fd08d019` / `2c9792d9d3c0` add already-approved
+foreground original-password memory custody, fixed bounded Web login/session/
+principal/logout requests, durable per-login/logout sub-operation receipts and
+ownership of only the two fresh sessions created by this instance. One original
+login, one same-pair target login, no caller cookies or session-list/revoke sweep.
+Actions compose with the retained SAME original cookie once, only after session/
+principal validation and durable terminal persistence. This is not full preflight
+or permission to reserve/rotate. Target roles remain pureadmin; original roles
+are the actual auditor+platform_admin, never restored operations_manager.
+
+A validated login cookie survives a lost/malformed body for cleanup ONLY; an
+unrecoverable reply/cookie leaves that fresh session's cleanup UNKNOWN. Any
+session/PID/custody/receipt/deadline/role/tenant uncertainty stops progression.
+Known own cookies each get at most one logout200 and original-cookie session401;
+a failed target logout still attempts only the other known own original session.
+No retries, compensating account-wide revocation, serialization, child handoff
+or zeroization claim. Caller must orchestrate new-root quarantine BEFORE cleanup.
+Historical interrupted original-admin cleanup remains UNKNOWN even on successful
+own cleanup. No live original credential/cookie was received by the worker.
+
+Fresh `git fetch origin dev` retained canonical `e995aa26032542160a177d421ad13157dd6db058`;
+Web login/session/logout/cookie contracts were read from origin/dev, not inferred
+from supervisor/local status snapshots. No branch sync or frozen source edit.
+The source passes full declared six-file offline regression and consumer tests
+at clean `2c9792d9d3c00acea2f20d393be4030888ee6c1e`. Original receipt-policy JSON
+(including initial fixture-import and Ruff failures) is preserved in `receipts/`:
+
+| Clean measured head | Command/selection (exact command in JSON) | Receipt ID | Exit | Seconds |
+| --- | --- | --- | --- | --- |
+|31fda6a6b475|security recovery pytest, failed new fixture imports|ed705656243b1e5c|1|19.322|
+|1b96fd08d019|security recovery pytest, corrected imports|e98a636ca22c6c79|0|17.043|
+|1b96fd08d019|two-file Ruff, imports/logout closure binding|88b917e7e8cda6f9|1|0.167|
+|2c9792d9d3c0|two-file frozen `python -m ruff check`|33f300ed7a303929|0|0.122|
+|2c9792d9d3c0|`git diff --check`|6550e5bd47a005d5|0|0.021|
+|2c9792d9d3c0|declared frozen code-boundary check|6c97c3821ec3c235|0|10.753|
+|2c9792d9d3c0|declared six-file recovery/invitation/journal/decoder/full-gate/workflow pytest|284692691cfff4e1|0|684.135|
+|2c9792d9d3c0|declared consumer security/workflow pytest|fa25d0d43cf0fb2b|0|8.215|
+
+Tests use only offline fixtures and ephemeral loopback TLS, not runtime evidence.
+The fixture corrections and closure/import fixes are new meaningful heads, not
+reruns of settled same-head selections. Completion is the original tool exit,
+never a passed-summary grep/process-name wait. PATH uses documented user-bin;
+both full pytest selections used allowed `NODE_ENV=test`. One production Web-store
+PG case still skips because the frozen Node environment is absent; NOT credited.
+No test-count-only rerun, final-head Web typecheck/lint/budget claim, or reassignment
+of previous4c0/158d/8c7 receipts. This subsequent evidence-only commit changes SHA;
+these receipts are for the exact listed anchors, not final review readiness.
+
+NEXT: compose actual independently pinned source/latest review-CI/current admitted
+release, matching actual Web+API tuple and fresh original/target preservation +
+old quarantineNULL/invitation provenance readbacks with this session owner; then
+full same-pair gate, quarantine-before-cleanup and normally authorized fresh-job
+orchestration. Declare final exact-head regression/Web verification and use
+`task_finalize.sh` for real PR submission to Codex2 only after source is complete.
+External writer exclusion, measured production reserves, UNAPPROVED native
+custody amendment, independent security review, normal deployment and exact
+foreground operational plan remain effects blockers. This is incremental source
+progress, not a ready/awaiting-review or completed-recovery claim.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
