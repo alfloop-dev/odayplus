@@ -1320,6 +1320,26 @@ This is source CI repair, NOT live recovery/native consumption or independent
 security/custody approval. The external-writer boundary and operational plan
 remain unmet; the composed preflight still unconditionally HOLDs before effects.
 
+## Full-CI migration composition repair (2026-10-11, foreground Pi)
+
+Genuine ba0328 CI38142383164 completed FAILURE13:40:55: eight component jobs
+passed, including security/node/db/contract/e2e. Actual full xdist product tests
+finished1failed/8422passed/23skipped/16subtests in1465.73s. The only failure was
+the migration-plan contract's exact revision list still ending0022, despite
+this source's required0023 and0024; both prior SAST/collection defects passed.
+The earlier900s watch timeout is still not this terminal CI failure.
+
+Same legitimate owner used a new canonical source hold/declared file scope;
+no concurrent recovery writer, task_start validated existing allocation.
+Repair preserves the EXACT revision-list assertion and adds0023/0024 plus real
+normal migration-plan SQL-asset/hash reachability for both, actual parent chain
+0022->0023->0024, and invokes the actual downgrade with mocked SQL execution to
+require ONLY SELECT1 preservation. No migration asset, downgrade implementation,
+manifest policy, data/DDL, runtime role or old history is weakened or executed.
+Original ba0328 failure remains. The updated mandatory two-worker migration
+contract plus all seven previous checks must run at the NEW clean repair head
+before resubmission; no previous source/CI receipt is transferred.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret
