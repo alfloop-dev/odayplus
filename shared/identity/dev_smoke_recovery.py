@@ -390,7 +390,7 @@ class RecoveryCapabilityService(RecoveryJournal):
         if getattr(self._engine._local, "connection", None) is not None:
             raise RecoveryRefused("RECOVERY_OUTERMOST_TRANSACTION_REQUIRED")
 
-    def _active(self, principal: Principal, reservation: RecoveryReservation) -> AuditEvent:
+    def _root(self, principal: Principal, reservation: RecoveryReservation) -> AuditEvent:
         sid = self._actor(principal)
         self._lock()
         events = self._events()
@@ -403,6 +403,11 @@ class RecoveryCapabilityService(RecoveryJournal):
                 or m["manifest_digest"] != self._manifest_digest
                 or self._identity._now() >= datetime.fromisoformat(m["expires_at"])):
             raise RecoveryRefused("RECOVERY_EXECUTION_DRIFT")
+        return root
+
+    def _active(self, principal: Principal, reservation: RecoveryReservation) -> AuditEvent:
+        root = self._root(principal, reservation)
+        m = root.metadata
         # Lock credential updates before the baseline read; self-password-change
         # writers need not share the tenant advisory lock. No PHC enters audit.
         self._engine.query_one(
@@ -421,9 +426,8 @@ class RecoveryCapabilityService(RecoveryJournal):
     def _cap_events(self) -> list[AuditEvent]:
         return self._audit.list_events(correlation_id=self._CAP_CORRELATION)
 
-    def _record_cap(self, root: AuditEvent, *, capability_id: str, expires: datetime,
-                    stage: str, now: datetime, issue_event_id: str = "",
-                    revoked_count: int = 0) -> AuditEvent:
+    def _cap_metadata(self, root: AuditEvent, *, capability_id: str, expires: datetime,
+                      stage: str, issue_event_id: str = "", revoked_count: int = 0) -> dict[str, Any]:
         # Only fixed safe lineage and counts; no token/hash/PHC/password.
         metadata = {k: root.metadata[k] for k in _PLAN_KEYS}
         metadata.update({
@@ -434,11 +438,17 @@ class RecoveryCapabilityService(RecoveryJournal):
             "revoked_target_sessions": revoked_count, "execution_authorized": False,
             "credential_binding_verified": False, "secret_values_redacted": True,
         })
+        return metadata
+
+    def _record_cap(self, root: AuditEvent, *, capability_id: str, expires: datetime,
+                    stage: str, now: datetime, issue_event_id: str = "",
+                    revoked_count: int = 0) -> AuditEvent:
         return self._audit.record(AuditEvent(
             event_type=self._CAP_TYPE, actor=PRESERVED_ACCOUNT_ID,
             action="DEV_SMOKE_RECOVERY_CAPABILITY", resource=self._CAP_CORRELATION,
             correlation_id=self._CAP_CORRELATION, outcome="success", occurred_at=now,
-            metadata=metadata,
+            metadata=self._cap_metadata(root, capability_id=capability_id, expires=expires,
+                stage=stage, issue_event_id=issue_event_id, revoked_count=revoked_count),
         ))
 
     def issue(self, principal: Principal, reservation: RecoveryReservation, *,
@@ -593,8 +603,9 @@ class RecoveryCapabilityService(RecoveryJournal):
             raise RecoveryRefused("RECOVERY_CAPABILITY_UNAVAILABLE") from None
 
 
-# Strict consumer contract only. The foreground/server binding producer is a
-# separate required increment; these constants are not an implemented writer.
+# Safe producer/consumer contract. The ledger records an authenticated original
+# admin's ACK declaration, not independently authenticated GitHub response proof.
+# A reviewed trusted foreground single-attempt PUT boundary is still required.
 RECOVERY_BINDING_CORRELATION = f"dev-smoke-recovery-binding:{AUTHORIZATION_ID}"
 RECOVERY_BINDING_TYPE = "release.dev_smoke.recovery_binding"
 RECOVERY_BINDING_ACTION = "DEV_SMOKE_RECOVERY_BINDING"
@@ -603,6 +614,168 @@ RECOVERY_BINDING_KEYS = _PLAN_KEYS | {
     "capability_issue_event_id", "rotation_event_id", "secret_name", "stage",
     "put_status", "execution_authorized", "credential_binding_verified", "secret_values_redacted",
 }
+
+
+class RecoveryBindingJournal(RecoveryCapabilityService):
+    """Append-only same-engine post-rotation intent/ACK, never a secret writer.
+
+    ACK is an authenticated original-admin declaration of an actual 201. The
+    server cannot authenticate a GitHub response from an integer in a request;
+    only a reviewed trusted foreground transport may submit that declaration.
+    These internal methods are intentionally NOT mounted yet. They supply no
+    custodian/source/admission/external-writer-exclusion or live-binding proof.
+    Root quarantine is the only failure transition, including after ACK.
+    """
+
+    def _binding_events(self) -> list[AuditEvent]:
+        events = self._audit.list_events(correlation_id=RECOVERY_BINDING_CORRELATION)
+        if len(events) > 2:
+            raise RecoveryRefused("RECOVERY_BINDING_INVALID")
+        for index, event in enumerate(events):
+            m = event.metadata
+            if (event.event_type != RECOVERY_BINDING_TYPE or event.actor != PRESERVED_ACCOUNT_ID
+                    or event.action != RECOVERY_BINDING_ACTION or event.resource != RECOVERY_BINDING_CORRELATION
+                    or event.outcome != "success" or set(m) != RECOVERY_BINDING_KEYS
+                    or any(m[k] != v for k, v in _FIXED_PLAN.items())
+                    or m["stage"] != ("binding-intent" if index == 0 else "binding-acknowledged")
+                    or type(m["put_status"]) is not int or m["put_status"] != (0 if index == 0 else 201)
+                    or m["execution_authorized"] is not False or m["credential_binding_verified"] is not False
+                    or m["secret_values_redacted"] is not True
+                    or (index and {k: v for k, v in m.items() if k not in {"stage", "put_status"}} != {
+                        k: v for k, v in events[0].metadata.items() if k not in {"stage", "put_status"}})):
+                raise RecoveryRefused("RECOVERY_BINDING_INVALID")
+        return events
+
+    def _post_rotation(self, principal: Principal, reservation: RecoveryReservation) -> dict[str, Any]:
+        from .dev_smoke_journal import CREDENTIAL_BUNDLE_SECRET_NAME
+
+        root = self._root(principal, reservation)
+        m = root.metadata
+        # No bearer/hash/PHC is read for binding. Hold account/credential/session
+        # SHARE locks until append commits; self-change/logout writers must wait.
+        original, target = self._account(PRESERVED_ACCOUNT_ID), self._account(TARGET_ACCOUNT_ID)
+        row = self._engine.query_one(
+            f"SELECT capability_id, execution_id, plan_digest, root_event_id, issue_event_id, "
+            "tenant_id, target_account_id, issuer_account_id, issuer_session_id, issued_at, expires_at, "
+            "consumed_at, rotation_event_id, original_credential_updated_at, target_credential_updated_at, "
+            f"original_credential_revision, target_credential_revision FROM {self._TABLE} "
+            "WHERE authorization_id = ? FOR SHARE", (AUTHORIZATION_ID,),
+        )
+        if (row is None or row["consumed_at"] is None or row["rotation_event_id"] is None
+                or row["execution_id"] != reservation.execution_id or row["plan_digest"] != reservation.plan_digest
+                or row["root_event_id"] != root.event_id or row["issuer_session_id"] != m["issuer_session_id"]
+                or row["tenant_id"] != TENANT_ID or row["target_account_id"] != TARGET_ACCOUNT_ID
+                or row["issuer_account_id"] != PRESERVED_ACCOUNT_ID
+                or row["original_credential_updated_at"] != m["original_credential_updated_at"]
+                or row["target_credential_updated_at"] != m["target_credential_updated_at"]
+                or str(row["original_credential_revision"]) != m["original_credential_revision"]
+                or str(row["target_credential_revision"]) != m["target_credential_revision"]):
+            raise RecoveryRefused("RECOVERY_ROTATION_UNVERIFIED")
+        original_time, _ = self._credential_times()
+        original_revision, target_revision = self._credential_revisions()
+        rotated = self._engine.query_one(
+            "SELECT last_rotated_at FROM identity.password_credentials WHERE account_id = ? FOR SHARE",
+            (TARGET_ACCOUNT_ID,),
+        )
+        if (_digest(original) != m["original_identity_digest"] or _digest(target) != m["target_identity_digest"]
+                or original_time != m["original_credential_updated_at"]
+                or original_revision != m["original_credential_revision"]
+                or int(target_revision) != int(m["target_credential_revision"]) + 1
+                or rotated["last_rotated_at"] != row["consumed_at"]):
+            raise RecoveryRefused("RECOVERY_IDENTITY_DRIFT")
+        self._old_lineage(target)
+        events = self._cap_events()
+        if len(events) != 2:
+            raise RecoveryRefused("RECOVERY_ROTATION_UNVERIFIED")
+        issued, rotation = events
+        expires = datetime.fromisoformat(row["expires_at"])
+        count = rotation.metadata.get("revoked_target_sessions")
+        if (type(count) is not int or count < 0
+                or not root.occurred_at <= issued.occurred_at <= rotation.occurred_at < expires
+                or expires > min(issued.occurred_at + timedelta(seconds=600), datetime.fromisoformat(m["expires_at"]))):
+            raise RecoveryRefused("RECOVERY_ROTATION_UNVERIFIED")
+        for event, stage, event_id, at, issue_id, revoked in (
+            (issued, "issued", row["issue_event_id"], row["issued_at"], "", 0),
+            (rotation, "rotated", row["rotation_event_id"], row["consumed_at"], row["issue_event_id"], count),
+        ):
+            if (event.event_id != event_id or event.occurred_at.isoformat() != at
+                    or event.event_type != self._CAP_TYPE or event.actor != PRESERVED_ACCOUNT_ID
+                    or event.action != "DEV_SMOKE_RECOVERY_CAPABILITY" or event.resource != self._CAP_CORRELATION
+                    or event.outcome != "success" or event.metadata != self._cap_metadata(
+                        root, capability_id=row["capability_id"], expires=expires, stage=stage,
+                        issue_event_id=issue_id, revoked_count=revoked)):
+                raise RecoveryRefused("RECOVERY_ROTATION_UNVERIFIED")
+        # A live local-password session at the rotated revision proves a fresh
+        # credential-authenticated login occurred, not caller-supplied pair proof.
+        # No target session is revoked/updated/created by this ledger.
+        if self._engine.query_one(
+            "SELECT session_id FROM identity.sessions WHERE account_id = ? "
+            "AND provider = 'local_password' AND verified_credential_revision = ? "
+            "AND revoked_at IS NULL AND created_at >= ? "
+            "AND idle_expires_at > clock_timestamp() AND absolute_expires_at > clock_timestamp() "
+            "ORDER BY session_id LIMIT 1 FOR SHARE", (TARGET_ACCOUNT_ID, target_revision, row["consumed_at"]),
+        ) is None:
+            raise RecoveryRefused("RECOVERY_FRESH_TARGET_SESSION_REQUIRED")
+        return {**{k: m[k] for k in _PLAN_KEYS}, "plan_digest": m["plan_digest"],
+                "root_event_id": root.event_id, "issuer_session_id": m["issuer_session_id"],
+                "capability_id": row["capability_id"], "capability_issue_event_id": row["issue_event_id"],
+                "rotation_event_id": row["rotation_event_id"], "secret_name": CREDENTIAL_BUNDLE_SECRET_NAME,
+                "execution_authorized": False, "credential_binding_verified": False, "secret_values_redacted": True}
+
+    @staticmethod
+    def _binding_receipt(event: AuditEvent) -> dict[str, Any]:
+        return {**event.metadata, "audit_event_id": event.event_id}
+
+    def binding_inspect(self, principal: Principal) -> dict[str, Any] | None:
+        """Readback never supplies authority to repeat an intent or unknown PUT."""
+        self._top_level()
+        try:
+            with self._engine.lock:
+                self._actor(principal)
+                self._lock()
+                events = self._binding_events()
+                return self._binding_receipt(events[-1]) if events else None
+        except RecoveryRefused:
+            raise
+        except Exception:
+            raise RecoveryRefused("RECOVERY_BINDING_UNAVAILABLE") from None
+
+    def _binding_append(self, principal: Principal, reservation: RecoveryReservation, *,
+                        stage: str, intent_event_id: str = "", put_status: int = 0) -> dict[str, Any]:
+        self._top_level()
+        try:
+            with self._engine.lock:
+                metadata = self._post_rotation(principal, reservation)
+                events = self._binding_events()
+                if stage == "binding-intent":
+                    if events:
+                        raise RecoveryRefused("RECOVERY_BINDING_ALREADY_ATTEMPTED")
+                elif (len(events) != 1 or events[0].event_id != intent_event_id
+                        or events[0].metadata != {**metadata, "stage": "binding-intent", "put_status": 0}
+                        or type(put_status) is not int or put_status != 201):
+                    raise RecoveryRefused("RECOVERY_BINDING_ACK_REFUSED")
+                now = self._identity._now()
+                if now >= datetime.fromisoformat(metadata["expires_at"]):
+                    raise RecoveryRefused("RECOVERY_EXECUTION_DRIFT")
+                event = self._audit.record(AuditEvent(
+                    event_type=RECOVERY_BINDING_TYPE, actor=PRESERVED_ACCOUNT_ID, action=RECOVERY_BINDING_ACTION,
+                    resource=RECOVERY_BINDING_CORRELATION, correlation_id=RECOVERY_BINDING_CORRELATION,
+                    outcome="success", occurred_at=now, metadata={**metadata, "stage": stage, "put_status": put_status},
+                ))
+            return self._binding_receipt(event)  # only after actual PG commit
+        except RecoveryRefused:
+            raise
+        except Exception:
+            raise RecoveryRefused("RECOVERY_BINDING_UNAVAILABLE") from None
+
+    def binding_intent(self, principal: Principal, reservation: RecoveryReservation) -> dict[str, Any]:
+        return self._binding_append(principal, reservation, stage="binding-intent")
+
+    def binding_acknowledge(self, principal: Principal, reservation: RecoveryReservation, *,
+                            intent_event_id: str, put_status: int) -> dict[str, Any]:
+        """Trusted foreground declaration only, NOT remote receipt authentication."""
+        return self._binding_append(principal, reservation, stage="binding-acknowledged",
+                                    intent_event_id=intent_event_id, put_status=put_status)
 
 
 @dataclass(frozen=True)

@@ -35,6 +35,11 @@ from shared.identity.dev_smoke_recovery import (
     TARGET_ACCOUNT_ID,
     RecoveryJournal,
     RecoveryCapabilityService,
+    RecoveryBindingJournal,
+    RECOVERY_BINDING_CORRELATION,
+    RECOVERY_BINDING_KEYS,
+    recovery_bundle_lineage,
+    recovery_bundle_acknowledged,
     RecoveryRefused,
 )
 from shared.identity.invitation_service import _scope
@@ -100,7 +105,7 @@ def recovery(identity_stack: Any) -> Any:
         s.audit.record(AuditEvent(event_id=event_id, event_type=ProvisioningJournal._TYPE,
             actor=ProvisioningJournal._ACTOR, action="DEV_SMOKE_RESERVATION",
             resource=ProvisioningJournal._CORRELATION, correlation_id=ProvisioningJournal._CORRELATION,
-            outcome="success", occurred_at=now + timedelta(seconds=2), metadata={
+            outcome="success", occurred_at=now + timedelta(seconds=-1 if stage == "reserved" else 2), metadata={
                 "authorization_id": CREATION_AUTHORIZATION_ID, "execution_id": OLD_EXECUTION_ID,
                 "plan_digest": OLD_PLAN_DIGEST, "release_sha": SHA, "manifest_digest": MANIFEST,
                 "tenant_id": TENANT_ID, "stage": stage, "execution_authorized": False,
@@ -112,6 +117,8 @@ def recovery(identity_stack: Any) -> Any:
     s.recovery = RecoveryJournal(engine=s.engine, audit_log=s.audit, environment="dev",
         release_profile="dev-admin", release_sha=SHA, manifest_digest=MANIFEST)
     s.capabilities = RecoveryCapabilityService(engine=s.engine, audit_log=s.audit, environment="dev",
+        release_profile="dev-admin", release_sha=SHA, manifest_digest=MANIFEST)
+    s.binding = RecoveryBindingJournal(engine=s.engine, audit_log=s.audit, environment="dev",
         release_profile="dev-admin", release_sha=SHA, manifest_digest=MANIFEST)
     s.plan = plan()
     return s
@@ -771,6 +778,192 @@ def test_credential_revision_advances_even_when_transaction_timestamps_collide(r
         assert (first["credential_revision"], second["credential_revision"]) == (2, 3)
         s.engine.execute("UPDATE identity.password_credentials SET credential_revision = 100 WHERE account_id = ?", (TARGET_ACCOUNT_ID,))
         assert s.capabilities._credential_revisions() == ("1", "3")
+
+
+def binding_ready(s: Any) -> tuple[Any, Any]:
+    root, cap = issue(s)
+    consume(s, root, cap)
+    insert_fenced_session(s.engine, "2")
+    return root, cap
+
+
+def binding_proven(s: Any, root: Any, cap: Any, intent: dict[str, Any]) -> bool:
+    lineage = recovery_bundle_lineage({
+        "plan_digest": root.plan_digest, "root_event_id": root.event_id,
+        "capability_id": cap.capability_id, "capability_issue_event_id": cap.audit_event_id,
+        "rotation_event_id": s.capabilities._cap_events()[-1].event_id,
+        "binding_intent_event_id": intent["audit_event_id"], "old_execution_id": OLD_EXECUTION_ID,
+        "old_plan_digest": OLD_PLAN_DIGEST, "old_quarantine_event_id": OLD_QUARANTINE_EVENT_ID,
+        "invitation_id": INVITATION_ID, "issue_event_id": ISSUE_EVENT_ID, "accept_event_id": ACCEPT_EVENT_ID,
+    })
+    # Use the actual mounted, allowlisted authenticated audit/user readbacks,
+    # not manually minted ACK fixtures or an arbitrary passing receipt.
+    events = s.client.get("/api/v1/operator/users/audit-trail", headers=s.headers).json()["events"]
+    target = s.client.get(f"/api/v1/operator/users/{TARGET_ACCOUNT_ID}", headers=s.headers).json()
+    return recovery_bundle_acknowledged(execution_id=root.execution_id, lineage=lineage,
+                                        events=events, target_account=target)
+
+
+def test_binding_pg_producer_roundtrip_strict_gate_predicate_and_preservation(recovery: Any) -> None:
+    s = recovery
+    root, cap = binding_ready(s)
+    before, old = snapshot(s), old_events(s)
+    assert s.binding.binding_inspect(s.principal) is None
+    intent = s.binding.binding_intent(s.principal, root)
+    assert intent["stage"] == "binding-intent" and intent["put_status"] == 0
+    assert not binding_proven(s, root, cap, intent)
+    ack = s.binding.binding_acknowledge(s.principal, root, intent_event_id=intent["audit_event_id"], put_status=201)
+    assert ack["stage"] == "binding-acknowledged" and ack["put_status"] == 201
+    assert ack["credential_binding_verified"] is False
+    assert set(ack) == RECOVERY_BINDING_KEYS | {"audit_event_id"}
+    assert s.binding.binding_inspect(s.principal) == ack
+    assert binding_proven(s, root, cap, intent)
+    assert snapshot(s) == before and old_events(s) == old
+    assert cap.token not in json.dumps(ack) and PASSWORD not in json.dumps(ack)
+    assert "token_hash" not in json.dumps(ack) and "phc_hash" not in json.dumps(ack)
+    for action in (lambda: s.binding.binding_intent(s.principal, root),
+                   lambda: s.binding.binding_acknowledge(s.principal, root, intent_event_id=intent["audit_event_id"], put_status=201)):
+        with pytest.raises(RecoveryRefused):
+            action()
+    # A committed ACK does not allow recovery of an unknown PUT or gate failure.
+    # New root quarantine invalidates lineage, preserving both ledger histories.
+    s.recovery.quarantine(s.principal, root)
+    assert not binding_proven(s, root, cap, intent)
+    assert s.binding.binding_inspect(s.principal) == ack
+    assert snapshot(s) == before and old_events(s) == old
+    assert s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("operation", ["intent", "ack"])
+@pytest.mark.parametrize("drift", ["target_password", "original_password", "target_role", "target_scope", "original_name",
+                                  "revoked_original", "fresh_original", "revoked_target", "source", "expired", "quarantine"])
+def test_binding_revalidates_postrotation_preservation_session_plan_source(recovery: Any, operation: str, drift: str) -> None:
+    s = recovery
+    root, _cap = binding_ready(s)
+    intent = s.binding.binding_intent(s.principal, root) if operation == "ack" else None
+    if drift in {"target_password", "original_password"}:
+        account = TARGET_ACCOUNT_ID if drift == "target_password" else PRESERVED_ACCOUNT_ID
+        s.engine.execute("UPDATE identity.password_credentials SET phc_hash = 'offline-drift' WHERE account_id = ?", (account,))
+    elif drift == "target_role":
+        s.engine.execute("INSERT INTO identity.account_roles (account_id, role, granted_by) VALUES (?, 'auditor', 'test')", (TARGET_ACCOUNT_ID,))
+    elif drift == "target_scope":
+        s.engine.execute("UPDATE identity.account_scopes SET clearance = 'PUBLIC' WHERE account_id = ?", (TARGET_ACCOUNT_ID,))
+    elif drift == "original_name":
+        s.engine.execute("UPDATE identity.accounts SET display_name = 'offline-drift' WHERE account_id = ?", (PRESERVED_ACCOUNT_ID,))
+    elif drift in {"revoked_original", "revoked_target"}:
+        account = TARGET_ACCOUNT_ID if drift == "revoked_target" else PRESERVED_ACCOUNT_ID
+        s.engine.execute("UPDATE identity.sessions SET revoked_at = now() WHERE account_id = ?", (account,))
+    elif drift == "fresh_original":
+        s.principal = s.boundary.authenticate(Credentials.from_headers(_sign_in(s, PRESERVED_ACCOUNT_ID, TENANT_ID))).principal
+    elif drift == "source":
+        s.binding._release_sha = "d" * 40
+    elif drift == "expired":
+        s.binding._identity._now = lambda: datetime.fromisoformat(s.plan["expires_at"]) + timedelta(seconds=1)
+    else:
+        s.recovery.quarantine(s.principal, root)
+    before, old = snapshot(s), old_events(s)
+    with pytest.raises(RecoveryRefused):
+        if operation == "intent":
+            s.binding.binding_intent(s.principal, root)
+        else:
+            s.binding.binding_acknowledge(s.principal, root, intent_event_id=intent["audit_event_id"], put_status=201)
+    assert snapshot(s) == before and old_events(s) == old
+    assert len(s.audit.list_events(correlation_id=RECOVERY_BINDING_CORRELATION)) == (1 if intent else 0)
+
+
+@pytest.mark.parametrize("status", [204, 200, 500, True, "201", None])
+def test_binding_non201_uncertain_reply_cannot_ack_or_restart(recovery: Any, status: Any) -> None:
+    s = recovery
+    root, cap = binding_ready(s)
+    intent = s.binding.binding_intent(s.principal, root)
+    with pytest.raises(RecoveryRefused, match="RECOVERY_BINDING_ACK_REFUSED"):
+        s.binding.binding_acknowledge(s.principal, root, intent_event_id=intent["audit_event_id"], put_status=status)
+    with pytest.raises(RecoveryRefused, match="RECOVERY_BINDING_ALREADY_ATTEMPTED"):
+        s.binding.binding_intent(s.principal, root)
+    assert not binding_proven(s, root, cap, intent)
+    s.recovery.quarantine(s.principal, root)
+    with pytest.raises(RecoveryRefused):
+        s.binding.binding_acknowledge(s.principal, root, intent_event_id=intent["audit_event_id"], put_status=201)
+    assert [e.metadata["stage"] for e in s.audit.list_events(correlation_id=RECOVERY_BINDING_CORRELATION)] == ["binding-intent"]
+
+
+def test_binding_requires_committed_rotation_and_fresh_credential_revision_session(recovery: Any) -> None:
+    s = recovery
+    root, cap = issue(s)
+    with pytest.raises(RecoveryRefused, match="RECOVERY_ROTATION_UNVERIFIED"):
+        s.binding.binding_intent(s.principal, root)
+    consume(s, root, cap)
+    with pytest.raises(RecoveryRefused, match="RECOVERY_FRESH_TARGET_SESSION_REQUIRED"):
+        s.binding.binding_intent(s.principal, root)
+    insert_fenced_session(s.engine, "2")
+    with pytest.raises(RecoveryRefused, match="RECOVERY_BINDING_ACK_REFUSED"):
+        s.binding.binding_acknowledge(s.principal, root, intent_event_id=str(uuid4()), put_status=201)
+    intent = s.binding.binding_intent(s.principal, root)
+    with pytest.raises(RecoveryRefused, match="RECOVERY_BINDING_ACK_REFUSED"):
+        s.binding.binding_acknowledge(s.principal, root, intent_event_id=str(uuid4()), put_status=201)
+    with s.engine.lock:
+        with pytest.raises(RecoveryRefused, match="RECOVERY_OUTERMOST_TRANSACTION_REQUIRED"):
+            s.binding.binding_acknowledge(s.principal, root, intent_event_id=intent["audit_event_id"], put_status=201)
+
+
+@pytest.mark.parametrize("operation", ["intent", "ack"])
+@pytest.mark.parametrize("failure", ["audit", "commit"])
+def test_binding_audit_or_real_pg_commit_failure_never_returns_success(recovery: Any, monkeypatch: Any, operation: str, failure: str) -> None:
+    s = recovery
+    root, cap = binding_ready(s)
+    intent = s.binding.binding_intent(s.principal, root) if operation == "ack" else None
+    before, old = snapshot(s), old_events(s)
+    if failure == "audit":
+        monkeypatch.setattr(s.audit, "record", lambda _e: (_ for _ in ()).throw(RuntimeError("private-value")))
+    else:
+        with s.db.connect(autocommit=True) as conn:
+            conn.execute("""
+                CREATE FUNCTION odp_runtime.refuse_binding_commit() RETURNS trigger AS $$
+                BEGIN RAISE EXCEPTION 'private-commit-value'; END;
+                $$ LANGUAGE plpgsql;
+                CREATE CONSTRAINT TRIGGER binding_commit_failure
+                AFTER INSERT ON odp_runtime.durable_audit_events
+                DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+                EXECUTE FUNCTION odp_runtime.refuse_binding_commit();
+            """)
+    with pytest.raises(RecoveryRefused, match="^RECOVERY_BINDING_UNAVAILABLE$"):
+        if operation == "intent":
+            s.binding.binding_intent(s.principal, root)
+        else:
+            s.binding.binding_acknowledge(s.principal, root, intent_event_id=intent["audit_event_id"], put_status=201)
+    assert snapshot(s) == before and old_events(s) == old
+    assert len(s.audit.list_events(correlation_id=RECOVERY_BINDING_CORRELATION)) == (1 if intent else 0)
+    if intent:
+        assert not binding_proven(s, root, cap, intent)
+    assert s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("operation", ["intent", "ack"])
+def test_binding_two_pg_pools_cannot_duplicate_intent_or_ack(recovery: Any, operation: str) -> None:
+    s = recovery
+    root, _cap = binding_ready(s)
+    intent = s.binding.binding_intent(s.principal, root) if operation == "ack" else None
+    engine = PostgresEngine(s.db.url(), bootstrap=False, validate_schema=False)
+    try:
+        other = RecoveryBindingJournal(engine=engine, audit_log=DurableAuditLog(engine), environment="dev",
+            release_profile="dev-admin", release_sha=SHA, manifest_digest=MANIFEST)
+
+        def append(service: Any) -> str:
+            try:
+                if operation == "intent":
+                    service.binding_intent(s.principal, root)
+                else:
+                    service.binding_acknowledge(s.principal, root, intent_event_id=intent["audit_event_id"], put_status=201)
+                return "success"
+            except RecoveryRefused:
+                return "refused"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            assert sorted(pool.map(append, (s.binding, other))) == ["refused", "success"]
+        assert len(s.audit.list_events(correlation_id=RECOVERY_BINDING_CORRELATION)) == (2 if intent else 1)
+        assert s.audit.verify_chain().ok
+    finally:
+        engine.close()
 
 
 def test_actual_web_postgres_stores_refuse_old_verified_revision_after_rotation(recovery: Any) -> None:

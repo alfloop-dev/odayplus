@@ -64,8 +64,8 @@ endpoint or an executable foreground protocol. The domain provides:
 
 The runtime constructor's dev/profile/tuple arguments must eventually come
 from server configuration, never a request plan. There is still no foreground
-executor. The consumer-only bundle-provenance increment below cannot stage a
-binding. No store/receipt alone
+executor. The internal binding ledger described below cannot PUT a secret or
+establish a live binding. No store/receipt alone
 supplies human/source/admission/exclusion authority. Tests use isolated PostgreSQL
 fixtures with incident IDs as inputs, not fabricated live recovery receipts.
 
@@ -183,12 +183,39 @@ negative-role probes, all existing transport/runtime checks and own-session
 cleanup remain required. Offline mocked full-gate tests do not establish a live
 fresh consumer or F11 acceptance.
 
-The new binding event metadata and safe audit projection are a **consumer
-contract only**: no server binding-intent/ACK producer or foreground writer has
-been implemented yet. Consequently deployed audit cannot currently satisfy this
-new contract. This is a deliberate fail-closed intermediate layer, not a claim
-of supported end-to-end execution. The next increment must implement the
-append-only producer and authentic real201-before-ACK boundary under review.
+## Internal binding ledger increment (unapproved; NOT mounted or executable)
+
+`RecoveryBindingJournal` now produces the exact safe intent/ACK schema in the
+same-engine PG audit transaction. It revalidates the original execution-owned
+session, unquarantined root, source tuple, execution expiry and old quarantine/
+NULL binding/invitation history on each append. Original identity/credential
+revision/timestamp must remain unchanged; target identity remains exact, target
+revision is exactly the reserved revision +1, and last_rotated_at matches the
+committed capability consumption. The dedicated capability row and signed issue/
+rotation events must match root/plan/session/IDs/timestamps. No bearer/hash/PHC is
+queried for binding. Account/credential SHARE locks fence changes until commit.
+
+A live persisted local-password target session at the rotated verified revision
+and created after consumption is required before intent AND ACK. This proves a
+fresh password authentication occurred under the existing revision fence, not
+that an arbitrary caller-supplied credential pair matches or that a consumer ran.
+Intent is once-only across PG pools. ACK requires its exact event ID and integer
+201;204/unknown/malformed declarations fail. Neither intent nor ACK writes any
+identity/session/invitation/old journal. Failed audit or deferred PG commit returns
+no success. Root quarantine remains the one-way uncertainty transition, including
+after ACK; it invalidates the consumer predicate without editing binding history.
+Inspection provides no retry/continuation permission.
+
+**Important trust boundary:** the ledger is internal and not mounted on HTTP yet.
+A201 integer is an authenticated original-admin declaration, NOT an independently
+authenticated GitHub response receipt. The server cannot distinguish a fabricated
+201 from a real201 using that field. A reviewed trusted foreground single-attempt
+transport must own actual response classification and submit ACK only after real
+201, with no readback-based reconstruction after uncertainty. This increment
+intentionally does NOT claim that unimplemented boundary, any PUT/exclusion,
+deployment, live binding or fresh-consumer proof. Isolated tests feed a synthetic
+201 declaration through the real PG producer and actual mounted safe audit/user
+projection into the strict consumer predicate; they are not live response proof.
 
 ## Required subsequent increments (not implemented)
 
@@ -200,10 +227,10 @@ append-only producer and authentic real201-before-ACK boundary under review.
 2. Independently review and verify the complete mounted API/BFF and safe audit
    composition with production identity/session/IAM configuration and generated
    OpenAPI/client/inventory. This transport increment is not deployed or approved.
-3. Complete the consumer increment with actual same-engine server-side binding
-   intent/ACK producer, after rotation and preservation reconciliation, safe
-   projection and real201 transport receipt; test actual PG-produced full lineage.
-   Consumer shape tests do not substitute for that producer. Keep schema1
+3. Complete the internal binding ledger with reviewed authenticated mounting and
+   trusted foreground actual201 response classification, including no resume after
+   lost reply/failed ACK. Real PG-produced full-lineage tests now exist; synthetic
+   status declarations are NOT proof of remote response authenticity. Keep schema1
    behavior/quarantine rejection unchanged. No missing-ID bypass or fallback.
 4. Trusted foreground parent memory custody and new finite entrypoint: absolute
    <=2400s, <=1h plan window, bounded non-secret observers, measured ceilings and
