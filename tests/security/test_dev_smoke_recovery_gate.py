@@ -268,7 +268,9 @@ def test_invalid_logout_ack_or_failed_revocation_stops_before_any_further_login(
 
 @pytest.mark.parametrize("case", [
     "invalid_json_500", "invalid_json_401_with_cookie", "invalid_json_401_wrong_code",
-    "invalid_form_500", "invalid_form_303_wrong_location",
+    "invalid_form_500", "invalid_form_303_wrong_location", "invalid_form_303_missing_returnto",
+    "invalid_form_303_wrong_returnto", "invalid_form_303_extra_query", "invalid_form_303_blank_extra_query",
+    "invalid_form_303_fragment", "invalid_form_303_duplicate_error",
     "positive_json_200_missing_cookie", "positive_json_500_missing_cookie", "positive_json_500_with_cookie",
     "positive_json_200_ok_false_with_cookie", "positive_form_500_with_cookie", "positive_form_303_missing_cookie",
     "positive_form_303_error_location_with_cookie"])
@@ -316,6 +318,18 @@ def test_every_ambiguous_gate_login_reply_latches_unknown_before_further_transpo
                 return gate.HttpResponse(401, {"error": {"code": "SOMETHING_ELSE"}})
             if case == "invalid_form_303_wrong_location":
                 return gate.HttpResponse(303, location=owner._origin + "/operator?view=admin")
+            # Reviewer round-5 P2: the COMPLETE canonical query (error + exact
+            # returnTo) is required; error alone is a malformed diagnostic reply.
+            failure_query = {
+                "invalid_form_303_missing_returnto": "error=AUTH_INVALID_CREDENTIALS",
+                "invalid_form_303_wrong_returnto": "error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dbusiness",
+                "invalid_form_303_extra_query": "error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin&next=x",
+                "invalid_form_303_blank_extra_query": "error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin&next=",
+                "invalid_form_303_fragment": "error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin#x",
+                "invalid_form_303_duplicate_error": "error=AUTH_INVALID_CREDENTIALS&error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin",
+            }.get(case)
+            if failure_query is not None:
+                return gate.HttpResponse(303, location=owner._origin + "/login?" + failure_query)
             if case == "positive_json_200_missing_cookie":
                 return gate.HttpResponse(200, {"ok": True, "subject": "odp-dev-smoke"})
             if case == "positive_json_200_ok_false_with_cookie":
@@ -378,7 +392,8 @@ def test_gate_prevalidates_config_without_io(foreground_gate: Any, field: str, v
         assert not calls and "OFFLINE-PRIVATE-MARKER" not in repr(caught.value)
 
 
-@pytest.mark.parametrize("bad", ["none", "duplicate", "truncated", "redirect", "dribble", "insecure_cookie"])
+@pytest.mark.parametrize("bad", ["none", "duplicate", "truncated", "redirect", "dribble", "insecure_cookie",
+                                 "duplicate_session_cookie"])
 def test_actual_gate_tls_fixed_origin_bounded_framing_no_forwarding(tls_recovery_server: Any,
         monkeypatch: Any, bad: str) -> None:
     import socket
@@ -391,6 +406,10 @@ def test_actual_gate_tls_fixed_origin_bounded_framing_no_forwarding(tls_recovery
     extra = b"Location: https://other.invalid/secret\r\n" if bad == "redirect" else b""
     if bad == "insecure_cookie":
         extra = b"Set-Cookie: __Host-oday_web_session=offline-cookie; Path=/; SameSite=Lax\r\n"
+    if bad == "duplicate_session_cookie":
+        # Two raw session fields: the canonical name->value map would collapse them.
+        extra = (b"Set-Cookie: __Host-oday_web_session=offline-cookie-a; Path=/; Secure; HttpOnly; SameSite=Lax\r\n"
+                 b"Set-Cookie: __Host-oday_web_session=offline-cookie-b; Path=/; Secure; HttpOnly; SameSite=Lax\r\n")
     reply = shared_tests.recovery_http_reply(body, status=303 if bad == "redirect" else 200, extra=extra)
     if bad == "truncated":
         reply = reply[:-3]
@@ -402,10 +421,10 @@ def test_actual_gate_tls_fixed_origin_bounded_framing_no_forwarding(tls_recovery
         monkeypatch.setenv("HTTPS_PROXY", "http://not-a-proxy.invalid")
         owner = SimpleNamespace(_config=SimpleNamespace(web_url=origin), _correlation="corr-offline",
                     _budget=SimpleNamespace(_active=("gate",), call_deadline=time.monotonic() + (0.15 if bad == "dribble" else 2)),
-                    _bytes=0, _retain_cookies=retained.append)
+                    _bytes=0, _retain_cookies=retained.append, _cookies={}, _unknown_login=False)
         client = r._ForegroundGateHTTPSClient(owner, api=False, origin=origin, address="127.0.0.1", ca_pem=ca)
         kwargs = dict(authenticated=False, body={}, headers={"origin": origin})
-        if bad in {"duplicate", "truncated", "dribble", "insecure_cookie"}:
+        if bad in {"duplicate", "truncated", "dribble", "insecure_cookie", "duplicate_session_cookie"}:
             with pytest.raises(RecoveryRefused) as caught:
                 client._roundtrip("POST", "/login", **kwargs)
             assert "offline-cookie" not in repr(caught.value)
@@ -417,6 +436,12 @@ def test_actual_gate_tls_fixed_origin_bounded_framing_no_forwarding(tls_recovery
         assert b"authorization:" not in header.lower() and request_body == b"{}"
         if bad == "insecure_cookie":
             assert retained == [{"__Host-oday_web_session": "offline-cookie"}]  # cleanup only
+        if bad == "duplicate_session_cookie":
+            # EVERY raw value retained for once-only cleanup, then UNKNOWN stop.
+            assert retained == [{"__Host-oday_web_session": "offline-cookie-a"},
+                                {"__Host-oday_web_session": "offline-cookie-b"}]
+            assert owner._unknown_login is True
+            assert "offline-cookie" not in repr(caught.value)
 
 
 @pytest.mark.parametrize("failure", ["start_receipt", "terminal_receipt", "absolute_timer"])

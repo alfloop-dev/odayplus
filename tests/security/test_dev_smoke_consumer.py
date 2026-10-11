@@ -192,10 +192,13 @@ def test_cleanup_uses_reserved_absolute_deadline_not_refreshed_work_budget() -> 
 
 
 _COOKIE = "__Host-oday_web_session"
+_USER = "offline-admin"
+_LOGIN = {"username": _USER, "password": "offline-synthetic", "returnTo": "/operator?view=admin"}
 
 
 @pytest.mark.parametrize("uncertain", ["lost-login", "malformed-login-ok-false", "malformed-login-500-cookie",
-                                       "login-bad-cookie", "lost-logout", "logout-500", "logout-uncleared"])
+                                       "login-bad-cookie", "login-wrong-subject", "lost-logout", "logout-500",
+                                       "logout-uncleared"])
 def test_uncertain_session_effect_latches_before_any_later_login_transport(uncertain: str) -> None:
     sent: list[tuple[str, str, str]] = []
 
@@ -207,12 +210,14 @@ def test_uncertain_session_effect_latches_before_any_later_login_transport(uncer
                 if uncertain == "lost-login":
                     raise TimeoutError("offline lost reply after possible commit")
                 if uncertain == "malformed-login-ok-false":
-                    return c.gate.HttpResponse(200, {"ok": False}, cookies={_COOKIE: "owned-a"})
+                    return c.gate.HttpResponse(200, {"ok": False, "subject": _USER}, cookies={_COOKIE: "owned-a"})
                 if uncertain == "malformed-login-500-cookie":
                     return c.gate.HttpResponse(500, {}, cookies={_COOKIE: "owned-a"})
                 if uncertain == "login-bad-cookie":
-                    return c.gate.HttpResponse(200, {"ok": True}, cookies={_COOKIE: "bad;cookie"})
-                return c.gate.HttpResponse(200, {"ok": True}, cookies={_COOKIE: "owned-a"})
+                    return c.gate.HttpResponse(200, {"ok": True, "subject": _USER}, cookies={_COOKIE: "bad;cookie"})
+                if uncertain == "login-wrong-subject":
+                    return c.gate.HttpResponse(200, {"ok": True, "subject": "other"}, cookies={_COOKIE: "owned-a"})
+                return c.gate.HttpResponse(200, {"ok": True, "subject": _USER}, cookies={_COOKIE: "owned-a"})
             if path == "/auth/logout":
                 if uncertain == "lost-logout":
                     raise TimeoutError("offline lost logout reply")
@@ -233,7 +238,7 @@ def test_uncertain_session_effect_latches_before_any_later_login_transport(uncer
     web = c._ObservedWeb(Client(), execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6, latch=latch)
     api = c._ObservedWeb(Api(), execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6, latch=latch)
     owned = {"cookie": f"{_COOKIE}=owned-a"}
-    web.request("POST", "/login", headers={})
+    web.request("POST", "/login", body=dict(_LOGIN), headers={})
     if uncertain in {"lost-logout", "logout-500", "logout-uncleared"}:
         assert not web.uncertainty_latched
         assert api.request("GET", "/api/v1/operator/users").status == 200  # unlatched work continues
@@ -398,7 +403,7 @@ def test_ambiguous_cookie_header_latches_locally_and_keeps_single_cleanup(header
         def request(self, method, path, **kwargs):
             sent.append((method, path, (kwargs.get("headers") or {}).get("cookie", "")))
             if path == "/login":
-                return c.gate.HttpResponse(200, {"ok": True}, cookies={_COOKIE: "owned-a"})
+                return c.gate.HttpResponse(200, {"ok": True, "subject": _USER}, cookies={_COOKIE: "owned-a"})
             if path == "/auth/logout":
                 return c.gate.HttpResponse(200, {"ok": True}, cookies={_COOKIE: ""})
             return c.gate.HttpResponse(401, {})
@@ -408,7 +413,7 @@ def test_ambiguous_cookie_header_latches_locally_and_keeps_single_cleanup(header
     assert c._session_cookie("") == ("", False)
     now = time.monotonic()
     web = c._ObservedWeb(Client(), execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6)
-    web.request("POST", "/login", headers={})
+    web.request("POST", "/login", body=dict(_LOGIN), headers={})
     assert not web.uncertainty_latched
     before = list(sent)
     for method, path in (("POST", "/auth/logout"), ("GET", "/auth/session"), ("GET", "/api/v1/operator/users")):
@@ -419,6 +424,157 @@ def test_ambiguous_cookie_header_latches_locally_and_keeps_single_cleanup(header
     assert [(m, p) for m, p, _ in sent[len(before):]] == [
         ("POST", "/auth/logout"), ("GET", "/auth/session"), ("GET", "/api/v1/auth/principal")]
     assert all(cookie == f"{_COOKIE}=owned-a" for _, _, cookie in sent[len(before):])
+
+
+_RAW_SESSION = b"Set-Cookie: __Host-oday_web_session=%s; Path=/; Secure; HttpOnly; SameSite=Lax\r\n"
+
+
+@pytest.mark.parametrize("kind", ["two-sessions", "session-then-deletion", "malformed-field",
+                                  "logout-duplicate", "control"])
+def test_native_urllib_raw_set_cookie_multiplicity_latches_and_owns_every_session(monkeypatch, kind: str) -> None:
+    """Reviewer round-5 P2: real stdlib header parser + canonical UrllibHttpClient.
+
+    The canonical name->value view collapses duplicate Set-Cookie names. The
+    native consumer must decide custody from the RAW multiplicity: every
+    distinct safely-known session value is owned for one bounded logout, and
+    the latch is set at the reply before any further transport. Synthetic
+    replies only; sockets/DNS are forbidden.
+    """
+    import http.client
+    import io
+    import socket
+    import urllib.request
+    from urllib.parse import urlsplit
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("NETWORK_FORBIDDEN")
+    for name in ("create_connection", "getaddrinfo"):
+        monkeypatch.setattr(socket, name, forbidden)
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    login_headers = {
+        "two-sessions": _RAW_SESSION % b"synthetic-first" + _RAW_SESSION % b"synthetic-second",
+        "session-then-deletion": _RAW_SESSION % b"synthetic-first" + _RAW_SESSION % b"",
+        "malformed-field": b"Set-Cookie: synthetic-garbage\r\n" + _RAW_SESSION % b"synthetic-first",
+    }.get(kind, _RAW_SESSION % b"synthetic-first")
+    active = {"synthetic-first"} | ({"synthetic-second"} if kind == "two-sessions" else set())
+    sent: list[tuple[str, str, str]] = []
+
+    class Reply:
+        def __init__(self, status: int, raw_headers: bytes, body: bytes) -> None:
+            self.status = status
+            self.headers = http.client.parse_headers(io.BytesIO(raw_headers + b"\r\n"))
+            self._body = body
+
+        def read(self) -> bytes:
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class Opener:
+        def open(self, request, timeout):
+            path = urlsplit(request.full_url).path
+            cookie = request.get_header("Cookie", "")
+            sent.append((request.get_method(), path, cookie))
+            value = cookie.partition("=")[2]
+            json_type = b"Content-Type: application/json\r\n"
+            if path == "/login":
+                return Reply(200, json_type + login_headers, json.dumps({"ok": True, "subject": _USER}).encode())
+            if path == "/auth/logout":
+                active.discard(value)
+                cleared = _RAW_SESSION % b""
+                if kind == "logout-duplicate":
+                    # Last-wins view shows a clean deletion; raw shows a new session.
+                    cleared = _RAW_SESSION % b"synthetic-reissued" + cleared
+                return Reply(200, json_type + cleared, b'{"ok":true}')
+            if path in {"/auth/session", "/api/v1/auth/principal"}:
+                return Reply(200 if value in active else 401, json_type, b"{}")
+            return Reply(200, json_type, b'{"users":[]}')
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: Opener())
+    client = c.gate.UrllibHttpClient(c.WEB_ORIGIN, timeout=5, bearer_token="", operator_role="",
+                                     operator_subject="", operator_tenant="", correlation_id="corr-offline")
+    now = time.monotonic()
+    observed = c._ObservedWeb(client, execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6)
+    reply = observed.request("POST", "/login", authenticated=False, body=dict(_LOGIN),
+                             headers={"origin": c.WEB_ORIGIN}, follow_redirects=False)
+    assert len(reply.cookies) <= 1  # the canonical view IS lossy; custody must not trust it
+    if kind in {"control", "logout-duplicate"}:
+        assert not observed.uncertainty_latched and list(observed._owned) == ["synthetic-first"]
+        logout = observed.request("POST", "/auth/logout", authenticated=False, follow_redirects=False,
+                                  headers={"cookie": f"{_COOKIE}=synthetic-first", "origin": c.WEB_ORIGIN})
+        assert logout.cookies == {_COOKIE: ""}  # lossy view looks acknowledged
+        if kind == "control":
+            assert not observed.uncertainty_latched
+            assert observed.cleanup_owned_sessions() is True
+            return
+        assert observed.uncertainty_latched  # raw duplicate on logout reply: UNKNOWN
+        before = len(sent)
+        assert observed.request("GET", "/api/v1/operator/users", authenticated=False).status == 0
+        assert len(sent) == before
+        assert observed.cleanup_owned_sessions() is False
+        assert [p for m, p, _ in sent].count("/auth/logout") == 1  # never retried
+        return
+    assert observed.uncertainty_latched  # latched AT the login reply
+    expected = ["synthetic-first", "synthetic-second"] if kind == "two-sessions" else ["synthetic-first"]
+    assert list(observed._owned) == expected  # every safely-known raw value owned
+    before = len(sent)
+    for method, path in (("GET", "/api/v1/operator/users"), ("POST", "/login")):
+        assert observed.request(method, path, authenticated=False, body=dict(_LOGIN),
+                                headers={"origin": c.WEB_ORIGIN}).status == 0
+    assert len(sent) == before, "no normal work or later login after ambiguous custody"
+    assert observed.cleanup_owned_sessions() is False  # UNKNOWN preserved
+    logouts = [cookie for method, path, cookie in sent if path == "/auth/logout"]
+    assert logouts == [f"{_COOKIE}={value}" for value in expected]  # each exactly once
+    assert not active  # no synthetic issued session left unaccounted
+    assert all(path in {"/auth/logout", "/auth/session", "/api/v1/auth/principal"}
+               for _, path, _ in sent[before:])
+
+
+@pytest.mark.parametrize("query", [
+    "error=AUTH_INVALID_CREDENTIALS",
+    "error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dbusiness",
+    "error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin&next=x",
+    "error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin&next=",
+    "error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin#x",
+], ids=["missing-returnto", "wrong-returnto", "extra-query", "blank-extra-query", "fragment"])
+def test_real_evaluator_noncanonical_form_failure_latches_before_positive_form_login(monkeypatch, query: str) -> None:
+    """Native consumer mirrors the COMPLETE canonical diagnostic form predicate."""
+    import socket
+
+    from tests.e2e import test_live_e2e_gate_dev_admin as f
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("NETWORK_FORBIDDEN")
+    for name in ("create_connection", "getaddrinfo"):
+        monkeypatch.setattr(socket, name, forbidden)
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(f.base, "WEB_URL", c.WEB_ORIGIN)
+    client = f.AdminWeb(f.web_routes())
+    diagnostic: list[int] = []
+
+    def form_login(body, headers):
+        if body.get("username") == f.USERNAME and body.get("password") == f.PASSWORD:
+            client.logged_out = False
+            return c.gate.HttpResponse(303, location=c.WEB_ORIGIN + "/operator?view=admin",
+                                       cookies={f.SESSION_COOKIE: f.FRESH_SESSION_VALUE})
+        diagnostic.append(len(client.headers_seen))
+        return c.gate.HttpResponse(303, location=c.WEB_ORIGIN + "/login?" + query)
+    client.routes["form POST /login"] = form_login
+    now = time.monotonic()
+    observed = c._ObservedWeb(client, execution_id="offline", deadline=now + 30, cleanup_deadline=now + 35)
+    clock = f.base.FakeClock()
+    checks, report = c.gate.evaluate_gate(f.dev_admin_config(), http=f.base.FakeHttp(f.api_routes()),
+        worker_driver=c.gate.ScheduledWorkerDriver(), correlation_id=f.base.CORRELATION_ID,
+        now=f.base.NOW, web_http=observed, monotonic=clock.monotonic, sleep=clock.sleep)
+    assert diagnostic and observed.uncertainty_latched
+    after = [path for path, _ in client.headers_seen[diagnostic[0]:]]
+    assert after == [], "no positive form login or session/page read after malformed diagnostic reply"
+    assert report["ok"] is False
+    assert observed.cleanup_owned_sessions() is False  # UNKNOWN never reported as completed
 
 
 @pytest.fixture(scope="module")
@@ -485,7 +641,8 @@ def test_plain_env_flags_or_unsigned_jwt_are_not_native_proof(offline_signing_ke
 
 @pytest.mark.parametrize("failure", [None, "oidc", "source", "admission", "gate", "canonical",
     "canonical-users", "canonical-audit", "canonical-ack", "canonical-principal",
-    "canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown"])
+    "canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown",
+    "canonical-duplicate-cookie"])
 def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatch, failure):
     # Entirely MOCKED authority/runtime; no network/live receipt. Proves wiring.
     import httpx
@@ -589,7 +746,30 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                                        cookies={f.SESSION_COOKIE: f.FRESH_SESSION_VALUE})
             return f.base.response(303, location=c.WEB_ORIGIN + "/login?error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin")
         routes["form POST /login"] = form_login
-        web = f.AdminWeb(routes)
+        web_class = f.AdminWeb
+        if failure == "canonical-duplicate-cookie":
+            import http.client
+            import io
+
+            class DuplicateWeb(f.AdminWeb):
+                """Reviewer round-5 P2 composition: the FIRST successful login
+                reply carries two raw session Set-Cookie fields, decoded by the
+                REAL stdlib header parser and canonical _to_response."""
+                duplicated = False
+
+                def request(self, method, path, **kwargs):
+                    response = super().request(method, path, **kwargs)
+                    if (method == "POST" and path == "/login" and not self.duplicated
+                            and response.cookies.get(f.SESSION_COOKIE)):
+                        self.duplicated = True
+                        raw = (f"Set-Cookie: {f.SESSION_COOKIE}=synthetic-extra-issued-session; Path=/; Secure; HttpOnly\r\n"
+                               f"Set-Cookie: {f.SESSION_COOKIE}={response.cookies[f.SESSION_COOKIE]}; Path=/; Secure; HttpOnly\r\n"
+                               "\r\n").encode()
+                        return c.gate._to_response(response.status, http.client.parse_headers(io.BytesIO(raw)),
+                                                   json.dumps(response.payload).encode())
+                    return response
+            web_class = DuplicateWeb
+        web = web_class(routes)
         def api_client(*args, **kwargs):
             assert kwargs["bearer_token"] == api._bearer_token
             assert kwargs["transport_token"] == "offline-generated-invoker"
@@ -623,7 +803,13 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                                for path, headers in web.headers_seen)
                     assert any(path == "GET /api/v1/auth/principal" and headers.get("cookie") == cookie
                                for path, headers in web.headers_seen)
-            uncertain = {"canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown"}
+            uncertain = {"canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown",
+                         "canonical-duplicate-cookie"}
+            owned_cookies = {f"{f.SESSION_COOKIE}={f.SESSION_VALUE}"}
+            if failure == "canonical-duplicate-cookie":
+                extra = f"{f.SESSION_COOKIE}=synthetic-extra-issued-session"
+                owned_cookies.add(extra)
+                assert sorted(cookies) == sorted(owned_cookies)  # BOTH raw sessions logged out once
             if failure in uncertain:
                 # Latch at the FIRST uncertain effect: afterwards only bounded
                 # owned-cookie cleanup reads/unattempted logout reach transport.
@@ -633,7 +819,7 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                 after = web.headers_seen[latch_at + 1:]
                 assert all(path in {"GET /auth/session", "GET /api/v1/auth/principal", "POST /auth/logout"}
                            for path, _ in after), [path for path, _ in after]
-                assert all(headers.get("cookie") == f"{f.SESSION_COOKIE}={f.SESSION_VALUE}" for _, headers in after)
+                assert all(headers.get("cookie") in owned_cookies for _, headers in after)
                 assert "POST /login" not in [path for path, _ in after]
                 assert refused.value.cleanup_state == "unknown"
         else:

@@ -460,6 +460,12 @@ class HttpResponse:
     # name -> value of every ``Set-Cookie`` on the response. An empty value is
     # a deletion. Cookies are only ever sent back explicitly by the caller.
     cookies: dict[str, str] = field(default_factory=dict)
+    # Every raw ``Set-Cookie`` as (name, value) in received order, captured
+    # BEFORE ``cookies`` above collapses duplicate names (last wins). A field
+    # without ``=`` or with an empty name is kept as ("", "") so malformed
+    # multiplicity stays visible. ``None`` means the response was constructed
+    # in-process, not parsed from raw headers. Memory-only; never in repr.
+    set_cookie_pairs: tuple[tuple[str, str], ...] | None = field(default=None, repr=False, compare=False)
 
     @property
     def failed(self) -> bool:
@@ -663,22 +669,27 @@ def _to_response(status: int, headers: Any, raw: bytes) -> HttpResponse:
             decoded = None
         if isinstance(decoded, dict):
             payload = decoded
+    pairs = _set_cookie_pairs(headers)
     return HttpResponse(
-        status=status, payload=payload, location=location, cookies=_set_cookies(headers)
+        status=status, payload=payload, location=location,
+        cookies={name: value for name, value in pairs if name}, set_cookie_pairs=pairs,
     )
 
 
-def _set_cookies(headers: Any) -> dict[str, str]:
+def _set_cookie_pairs(headers: Any) -> tuple[tuple[str, str], ...]:
     try:
         values = headers.get_all("set-cookie") or []
     except AttributeError:  # pragma: no cover - non-standard header container
         values = []
-    cookies: dict[str, str] = {}
+    pairs: list[tuple[str, str]] = []
     for value in values:
         name, sep, rest = str(value).split(";", 1)[0].partition("=")
-        if sep and name.strip():
-            cookies[name.strip()] = rest.strip()
-    return cookies
+        pairs.append((name.strip(), rest.strip()) if sep and name.strip() else ("", ""))
+    return tuple(pairs)
+
+
+def _set_cookies(headers: Any) -> dict[str, str]:
+    return {name: value for name, value in _set_cookie_pairs(headers) if name}
 
 
 class CloudRunWorkerDriver:

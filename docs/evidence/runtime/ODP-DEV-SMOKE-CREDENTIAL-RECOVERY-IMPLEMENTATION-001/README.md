@@ -1556,6 +1556,45 @@ Original ba0328 failure remains. The updated mandatory two-worker migration
 contract plus all seven previous checks must run at the NEW clean repair head
 before resubmission; no previous source/CI receipt is transferred.
 
+## Round-5 response-boundary repair after be2f564c rejection (2026-10-11, Antigravity2)
+
+Independent Codex review rejected submitted `be2f564c7fb6` with two P2 findings;
+the rejected head, its CI and receipts, and the reviewer's three novel probes
+(duplicate-cookie parser, composed canonical-consumer false success, invalid
+form returnTo) remain historical evidence and are not rewritten.
+
+1. Native consumer duplicate `Set-Cookie`: the canonical parser now also keeps
+   ordered raw (name, value) fields in memory (`repr=False`, `compare=False`);
+   the canonical name->value map and every canonical check are unchanged. The
+   consumer decides custody from raw multiplicity on EVERY reply: duplicate,
+   malformed or drifted cookie views latch sticky UNKNOWN at that reply; every
+   distinct safely-known issued session value is owned for exactly one bounded
+   logout plus revocation reads; logout ACK requires exactly one raw deletion.
+   Consumer login replies now match the canonical channel predicates (JSON
+   200 ok/subject, JSON401 AUTH_INVALID_CREDENTIALS, form same-origin303 exact
+   `/operator?view=admin`, form diagnostic exact error+returnTo query).
+2. Foreground diagnostic form login: the predicate is the COMPLETE canonical
+   query (strict parse, blank values kept): exactly error plus returnTo
+   `/operator?view=admin`, no fragment. Missing/wrong returnTo, extra or blank
+   params, duplicate error or fragment raise UNKNOWN before a completed receipt
+   or further transport. The foreground raw transport, which already refused
+   multiple login `Set-Cookie` fields, now retains each distinct safely-known
+   raw session value for once-only cleanup before that stop.
+
+New offline regressions (sockets/DNS forbidden): real stdlib header parser plus
+actual canonical `UrllibHttpClient`/`_to_response` for two sessions, session
+plus deletion, malformed field, duplicate on logout reply and a clean control;
+the actual consume()+canonical evaluator composition with a raw duplicate first
+login (refused, cleanup UNKNOWN, both sessions logged out once); actual
+evaluator noncanonical diagnostic form replies for the native consumer; six new
+foreground returnTo/query cases; and an actual TLS raw-transport duplicate
+session case. No live credential/account/session/secret/cloud effect.
+
+This is a NEW head: no earlier receipt or CI transfers. All declared commands
+must produce exact-head receipts and required CI must pass before resubmission
+via `task_finalize.sh`. Operational HOLD, old quarantine/binding NULL and
+original interrupted-session cleanup UNKNOWN are unchanged.
+
 ## Live effect status
 
 No live account/credential/session effect, live database/cloud access, secret

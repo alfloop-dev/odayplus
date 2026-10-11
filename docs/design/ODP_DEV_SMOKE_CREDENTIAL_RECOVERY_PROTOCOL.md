@@ -540,6 +540,27 @@ cookie is likewise malformed: the session cookie is owned for cleanup but the
 latch is set at that reply. The owned cookie's single logout then happens only
 in bounded cleanup, with a single-pair header; no later login reaches transport.
 
+Response custody is decided from RAW `Set-Cookie` multiplicity, never from the
+canonical name->value map alone (that map collapses duplicate names, last wins).
+The canonical parser additionally exposes the ordered raw (name, value) fields
+in memory (never repr/persisted); canonical checks are unchanged. On ANY reply,
+a duplicate name, a malformed field or a normalized map that disagrees with the
+raw fields latches UNKNOWN at that reply. For a login reply, EVERY distinct
+safely-known issued session value is owned first, so each receives exactly one
+bounded logout plus revocation reads; an unusable value stays unaccounted and
+therefore UNKNOWN. A logout acknowledgement requires exactly one raw session
+deletion and no other non-empty cookie. Login replies must also match the
+canonical evaluator's exact predicate for their channel: JSON positive200
+ok/subject equal to the submitted username, JSON diagnostic401
+AUTH_INVALID_CREDENTIALS, form positive same-origin303 `/operator?view=admin`,
+and form diagnostic same-origin303 `/login` whose strictly parsed query is
+EXACTLY `error=AUTH_INVALID_CREDENTIALS` plus `returnTo=/operator?view=admin`
+(no missing/wrong returnTo, extra or blank parameter, duplicate or fragment).
+The foreground gate applies the same complete diagnostic form predicate, and
+its raw transport, which already refuses multiple login `Set-Cookie` fields,
+now retains every distinct safely-known raw session value for once-only cleanup
+before stopping UNKNOWN.
+
 Native credential-step bounds reserve preflight180 + gate300 + cleanup60 seconds
 in one monotonic540 envelope (NOT measured production ceilings). Signal-bound
 HTTP refuses late work; cleanup gets a separate reserved absolute window, not a

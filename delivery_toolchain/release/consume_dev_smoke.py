@@ -413,6 +413,77 @@ def _session_cookie(header: Any) -> tuple[str, bool]:
     return value, False
 
 
+_SESSION_COOKIE = "__Host-oday_web_session"
+_FORM_RETURN_TO = "/operator?view=admin"
+
+
+def _valid_cookie_value(value: Any) -> bool:
+    return (type(value) is str and 0 < len(value) <= 8192
+            and not any(ch in value for ch in ";,\r\n\t "))
+
+
+def _response_cookie_pairs(response: Any) -> tuple[tuple[tuple[str, str], ...], bool]:
+    """Return (raw Set-Cookie pairs, ambiguous) BEFORE lossy name->value use.
+
+    The canonical native parser collapses duplicate names into one dict entry
+    (last wins), so ``response.cookies`` alone cannot prove how many sessions
+    a reply issued. Duplicate or malformed raw fields, or a normalized view
+    that does not equal the raw pairs, are ambiguous custody. A response
+    constructed in-process (no raw pairs) is a dict that cannot carry
+    duplicates; it is used as-is.
+    """
+    cookies = getattr(response, "cookies", None)
+    if type(cookies) is not dict:
+        return (), True
+    pairs = getattr(response, "set_cookie_pairs", None)
+    if pairs is None:
+        return tuple(cookies.items()), False
+    if type(pairs) is not tuple or not all(
+            type(pair) is tuple and len(pair) == 2 and all(type(part) is str for part in pair) for pair in pairs):
+        return (), True
+    names = [name for name, _ in pairs]
+    ambiguous = (any(not name for name in names) or len(names) != len(set(names))
+                 or {name: value for name, value in pairs if name} != cookies)
+    return pairs, ambiguous
+
+
+def _login_reply_canonical(response: Any, kwargs: dict[str, Any], *, issued: bool) -> bool:
+    """The canonical evaluator's exact predicate for this login reply.
+
+    Positive (session issued) and diagnostic (no session) JSON/form replies
+    must match check_live_e2e_gate's own success predicates, including exact
+    same-origin redirect path/query and the diagnostic returnTo. Anything else
+    is a malformed login reply: UNKNOWN before any further transport.
+    """
+    from urllib.parse import parse_qs, urlsplit
+
+    try:
+        if response.failed:
+            return False
+        body = kwargs.get("body")
+        headers = kwargs.get("headers") or {}
+        form = headers.get("content-type") == "application/x-www-form-urlencoded"
+        origin = gate._origin(WEB_ORIGIN)
+        if issued and not form:
+            return (response.status == 200 and response.payload.get("ok") is True
+                    and type(body) is dict and type(body.get("username")) is str and body["username"] != ""
+                    and response.payload.get("subject") == body["username"])
+        if not form:
+            return response.status == 401 and gate._payload_mentions(response, "AUTH_INVALID_CREDENTIALS")
+        if response.status != 303 or type(response.location) is not str or gate._origin(response.location) != origin:
+            return False
+        location = urlsplit(response.location)
+        if location.fragment:
+            return False
+        if issued:
+            return location.path == "/operator" and location.query == "view=admin"
+        return (location.path == "/login" and type(body) is dict and body.get("returnTo") == _FORM_RETURN_TO
+                and parse_qs(location.query, keep_blank_values=True, strict_parsing=True)
+                == {"error": ["AUTH_INVALID_CREDENTIALS"], "returnTo": [_FORM_RETURN_TO]})
+    except Exception:
+        return False
+
+
 class _ObservedWeb:
     """Memory-only owned cookies plus safe ACK times; no account-wide cleanup.
 
@@ -494,31 +565,39 @@ class _ObservedWeb:
         try:
             with _absolute_deadline(limit):
                 response = self.client.request(method, path, **kwargs)
+            pairs, ambiguous = _response_cookie_pairs(response)
+            if ambiguous:
+                # Raw duplicate/malformed Set-Cookie (or a drifted normalized
+                # view) on ANY reply: custody is unprovable. Latch NOW; owned
+                # cookies (below, for login) keep only bounded cleanup.
+                self._unknown()
             if method == "POST" and path == "/login":
-                issued = response.cookies.get("__Host-oday_web_session", "")
-                extra = any(value for name, value in response.cookies.items()
-                            if name != "__Host-oday_web_session")
-                if isinstance(issued, str) and issued and len(issued) <= 8192 and not any(ch in issued for ch in ";,\r\n\t "):
-                    if len(self._owned) >= 4 or issued in self._owned:
+                issued: list[str] = []
+                unsafe = False
+                for name, value in pairs:
+                    if name == _SESSION_COOKIE and value:
+                        if _valid_cookie_value(value):
+                            if value not in issued:
+                                issued.append(value)
+                        else:
+                            unsafe = True  # unusable for logout: unaccounted session
+                    elif value:
+                        unsafe = True  # any other cookie alongside a login reply
+                # Own EVERY distinct safely-known issued value, even from an
+                # ambiguous reply, so each gets its single bounded logout.
+                for value in issued:
+                    if len(self._owned) >= 4 or value in self._owned:
                         self._unknown()
                     else:
-                        self._owned[issued] = {"logout_attempted": False, "logout_acknowledged": False}
-                    # A cookie with anything but an unambiguous success reply (or
-                    # alongside ANY other cookie) is a malformed login: owned for
-                    # cleanup, but latched before the evaluator continues.
-                    if extra or response.failed or not (
-                            (response.status == 200 and response.payload.get("ok") is True)
-                            or (response.status == 303 and response.location
-                                and "error=" not in response.location)):
-                        self._unknown()
-                elif response.failed or response.status not in {401, 303} or any(response.cookies.values()):
-                    self._unknown()
-                elif response.status == 303 and "error=AUTH_INVALID_CREDENTIALS" not in response.location:
+                        self._owned[value] = {"logout_attempted": False, "logout_acknowledged": False}
+                if (ambiguous or unsafe or len(issued) > 1
+                        or not _login_reply_canonical(response, kwargs, issued=bool(issued))):
                     self._unknown()
             if method == "POST" and path == "/auth/logout" and state is not None:
-                state["logout_acknowledged"] = (not response.failed and response.status == 200
+                state["logout_acknowledged"] = (not ambiguous and not response.failed and response.status == 200
                     and response.payload.get("ok") is True
-                    and response.cookies.get("__Host-oday_web_session") == "")
+                    and [value for name, value in pairs if name == _SESSION_COOKIE] == [""]
+                    and not any(value for name, value in pairs if name != _SESSION_COOKIE))
                 if not state["logout_acknowledged"]:
                     self._unknown()
             elif state is not None and state["logout_attempted"]:

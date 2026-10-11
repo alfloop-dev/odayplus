@@ -2256,8 +2256,21 @@ class _ForegroundGateHTTPSClient:
             response = connection.getresponse()
             # Retain a bounded newly issued own cookie BEFORE body decoding.
             # An ambiguous/malformed login remains UNKNOWN, never a login retry.
-            cookies = gate._set_cookies(response.headers)
+            pairs = gate._set_cookie_pairs(response.headers)
+            cookies = {name: value for name, value in pairs if name}
             if not self._api and path == "/login":
+                if len(pairs) > 1:
+                    # Multiple raw Set-Cookie fields: the name->value view is
+                    # lossy. Retain EVERY distinct safely-known session value for
+                    # once-only bounded cleanup, then stop as UNKNOWN.
+                    for name, value in pairs:
+                        if name == "__Host-oday_web_session" and value and value not in owner._cookies:
+                            try:
+                                owner._retain_cookies({name: value})
+                            except ValueError:
+                                pass
+                    owner._unknown_login = True
+                    raise ValueError
                 owner._retain_cookies(cookies)
                 if cookies:
                     from http.cookies import SimpleCookie
@@ -2422,10 +2435,14 @@ class ForegroundSamePairGate:
                 return (result.status == 401 and not cookies
                         and gate._payload_mentions(result, "AUTH_INVALID_CREDENTIALS"))
             if operation == "gate-invalid-form-login":
+                # Canonical check_live_e2e_gate predicate is the COMPLETE query:
+                # exactly error + the evaluator's returnTo. Missing/wrong returnTo,
+                # extra (even blank) params or a fragment are malformed: UNKNOWN.
                 failure = urlsplit(result.location)
                 return (result.status == 303 and not cookies and gate._origin(result.location) == origin
-                        and failure.path == "/login"
-                        and parse_qs(failure.query).get("error") == ["AUTH_INVALID_CREDENTIALS"])
+                        and failure.path == "/login" and not failure.fragment
+                        and parse_qs(failure.query, keep_blank_values=True, strict_parsing=True)
+                        == {"error": ["AUTH_INVALID_CREDENTIALS"], "returnTo": ["/operator?view=admin"]})
         except Exception:
             return False
         return False
