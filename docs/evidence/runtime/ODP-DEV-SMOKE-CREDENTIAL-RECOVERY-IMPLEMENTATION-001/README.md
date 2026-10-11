@@ -321,13 +321,48 @@ Retained initial failures at clean6530:
 
 The follow-up source also validates ledger plan/ID/timestamps before safe
 inspection, rejects boolean issue counts, and adds committed-receipt-loss/new
-quarantine and old/new-lineage drift cases. New-head measurement is pending.
-These failure receipts are not final verification at the follow-up SHA.
+quarantine and old/new-lineage drift cases. Fixed clean head6b4bd4ac5664
+was measured once per selection, from each original tool completion/exit:
+
+| Measurement at6b4bd4ac5664 | Receipt | Exit | Duration |
+| --- | --- | --- | --- |
+| focused integration `-k binding -q` | c356b44cf4aad311 | 0 | 76.581s |
+| exact declared six-file pytest `-q` | 24c5174780f3635d | 0 | 625.882s |
+| declared code-boundary checker | 58482b28365e2761 | 0 | 13.344s |
+| declared `git diff --check` | bebf296c82fa82cf | 0 | 0.035s |
+| declared `pnpm --dir apps/web typecheck` | 39ae3487c2e3511a | 127 | 0.001s |
+
+The full-suite output displays one skip; it is NOT actual Web-store PG proof.
+The typecheck did NOT run: `pnpm` absent from PATH. A single bounded diagnostic
+found cached `corepack pnpm`9.15.9 (network disabled), but both repository-declared
+Node test and Web typecheck binaries are absent in this dependency environment. No host
+filesystem scan, dependency/lock rewrite, install or test rerun for counting was
+performed. Web typecheck/lint/build and300kB budget remain unverified blockers.
+
+Isolated PG cases include exact safe audit consumer roundtrip, before/after-ACK
+preservation/session/source/expiry drift, old-binding/new-lineage drift, no201/
+wrong-intent/replay/nested-transaction refusal, two-pool intent/ACK races, audit
+and real deferred-commit rollback, and committed reply loss followed by new-root
+quarantine. There is still NO real HTTP PUT/response-authenticity proof, mounted
+binding mutation action, foreground executor or fresh consumer. Test faults are
+scoped to binding correlation so the actual authenticated readback can still run.
+
+Latest origin/dev readback remains e995aa26032542160a177d421ad13157dd6db058.
+This evidence-only checkpoint will have a DIFFERENT head from measured6b4bd4;
+these are incremental receipts, NOT final exact-head approval/CI or review-ready
+source. Task stays in_progress/no PR. NEXT: authenticated bounded binding API
+integration (same engine, no caller actor/tenant), then trusted foreground parent
+memory custody with absolute<=2400 deadline/allowlisted phase receipts and actual
+single-attempt transport classification. ACK integer alone cannot authenticate
+GitHub201. Hold all effects until genuine writer exclusion, independently reviewed
+native fresh-consumer custody, complete Web/final clean-head verification,
+independent Codex2 security review and ordinary deployment/current admission.
+Original interrupted-admin cleanup remains UNKNOWN.
 
 ## Live effect status
 
-No account/credential/session effect, database/cloud access, secret intent/PUT/ACK,
-new bundle gate or fresh-job consumer was executed. Old execution remains
+No live account/credential/session effect, live database/cloud access, secret
+intent/PUT/ACK, new bundle gate or fresh-job consumer was executed. Old execution remains
 quarantined/binding NULL. Original interrupted-session cleanup remains UNKNOWN.
 Implementation/source CI/independent security review/normal deployment and fresh
 reviewed foreground execution preflight remain separate unmet prerequisites.
