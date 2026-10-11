@@ -164,6 +164,73 @@ transport. Genuine external writer exclusion and native no-env fresh consumer
 remain concrete execution blockers, not waived by these source tests. No live
 rotation, binding intent/PUT/ACK or new-bundle gate/consumer was performed.
 
+## Mounted API/BFF increment (2026-10-11, not final submission)
+
+Pushed anchors `537520fec7f7`, `9b5dfbdc318a`, `9fc63a673c26` add the existing
+composed users-router dev-smoke recovery surface: reserve/issue/consume/quarantine
+and inspection, original-admin verified permission/session boundary, bounded
+strict duplicate-key-free bodies, static no-store errors including dependency
+denials, exact runtime tuple and no outer consume transaction. No main.py edit
+or alternate identity provider is needed: origin/dev operator/main readbacks
+show the same durable users router already mounted. The old AUTH001 endpoints,
+journal, invitation history and old binding NULL are unchanged.
+
+The Web catch-all enforces same-origin CSRF BEFORE upstream/provider/body work,
+GET/POST only, no query credential transport and <=8192 JSON bytes through a
+bounded tee preserving the original durable cookie reference. Existing proxy
+owns durable session/Bearer, service IAM, stripped caller identity, no retries
+and manual redirect handling. New audit types have exact safe metadata
+allowlists and target-account filtering; corrupt extended credential metadata is
+omitted, making lineage unavailable rather than leaking it. Composed OpenAPI and
+generated client digest are regenerated; no dangling local DTO references.
+
+Tests use the REAL user-permission/session boundary and isolated PostgreSQL,
+not a permission override: mounted same-account rotation, old history/identity
+preservation, pure target/original denials before malformed DTO/domain work,
+no-store, body/query/runtime/duplicate-key refusal, quarantine and safe projection.
+The BFF handler tests plus unchanged production proxy tests cover CSRF/body/
+query refusal before upstream, cookie/body preservation and existing IAM/session
+forwarding. This is isolated source proof, not live account or deployed proof.
+
+Original receipt JSON is retained including failures (no test-count reruns):
+
+| Clean head | Measurement | Receipt/result | Duration |
+| --- | --- | --- | --- |
+| 537520fec | two recovery security/integration pytest files | abcd837735927b75 exit1: old identity.account prefix excluded new audit types | 103.559s |
+| 9b5dfbdc | identical pytest selection after explicit audit inclusion | 591b8e9a771e240a exit0 | 95.271s |
+| 9b5dfbdc | two-file mounted BFF + existing proxy Vitest via npm | 86589ced2d497abc exit1: temporary app dependency link omitted Next | 3.412s |
+| 9b5dfbdc | npm Web typecheck | 69b3500b248cabe0 exit2: same missing app-specific Next dependency | 34.594s |
+| 9b5dfbdc | identical Vitest after corrected dependency link with explicit retry reason | 29e1009198be684f exit1: happy-dom cookie fixture | 2.708s |
+| 9fc63a67 | identical Vitest after cookie fixture/bounded-tee correction | 9c813711d05d6fc3 exit0 | 3.136s |
+| 9fc63a67 | npm Web typecheck | 32b48325a8d4dc79 exit0 | 46.652s |
+| 9fc63a67 | declared boundary checker | b5980b3046cb1ebb exit0 | 20.902s |
+| 9fc63a67 | existing OpenAPI check_drift.py | 6f84533f97a24f7c exit0 | 35.329s |
+| 9fc63a67 | git diff --check | 83da322fddffd56b exit0 | 0.030s |
+| 9fc63a67 | npm Web lint | 7e9d37217460246e exit0 | 6.545s |
+
+These were run through the existing shared receipt policy in task scratch.
+The policy conflates workspace npm typecheck/lint selections; lint's initial
+request was refused without running, then its FIRST measurement used an explicit
+reason to distinguish the command. No typecheck was rerun solely for counting.
+Commands/exits/durations/selections remain in original receipts. Corrected uv
+PATH uses its prior documented standard location. pnpm is absent in this run,
+so the existing npm workspace scripts provide incremental Web diagnostics,
+**not satisfaction of the final declared pnpm command**. Frozen-lock existing
+invitation-worktree dependencies were temporarily linked separately at root and
+apps/web; root package-lock SHA256 still matches bb287c16...edf9e2. Links removed
+before yielding; no install, lockfile rewrite or broad host search occurred.
+
+The evidence checkpoint has a DIFFERENT SHA from measurements. No prior receipt
+is transferred to its head; no full declared suite/build/300kB budget or final
+verification claim. Task remains in_progress, NOT review-ready/no PR yet. Next:
+strict versioned recovery bundle/full-gate proof linking immutable old quarantine
+and invitation to new root/issue/rotation/intent/real ACK, then finite trusted
+foreground memory custody/deadline/phase receipts/single-attempt transport. Genuine
+external writer exclusion/native no-env fresh consumer remain precise execution
+blockers. Independent review, normal deployment and fresh measured foreground
+preflight remain mandatory. No live rotation, session revocation or PUT/ACK/gate
+consumer was performed; original interrupted-session uncertainty is unchanged.
+
 ## Live effect status
 
 No account/credential/session effect, database/cloud access, secret intent/PUT/ACK,

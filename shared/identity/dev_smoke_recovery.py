@@ -117,8 +117,8 @@ class RecoveryJournal:
 
     The caller supplies an already authenticated principal from the canonical
     boundary; this component revalidates persisted ORIGINAL account/tenant/session
-    on every call. A plan is NOT authenticated authorization. Before eventual
-    mounting, the trusted foreground must separately pin the real user receipt,
+    on every call. A plan is NOT authenticated authorization. The trusted
+    foreground must separately pin the real user receipt,
     exact reviewed execution plan, source/CI/admission and custodian. Runtime
     tuple arguments come from server configuration, never request body/headers.
     """
