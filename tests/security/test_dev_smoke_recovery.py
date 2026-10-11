@@ -577,7 +577,7 @@ def test_adapter_deadline_is_absolute_and_stopped_cleanup_remains_bounded(tmp_pa
             _ = budget.call_deadline
         budget.begin("preflight")
         deadline = budget.call_deadline
-        clock[0] += 5
+        clock.value += 5
         assert budget.call_deadline == deadline
         budget.finish(outcome="unknown")
         with pytest.raises(RecoveryRefused):
