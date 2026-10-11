@@ -539,6 +539,119 @@ def test_revalidation_after_hashing_refuses_expired_session_without_rotation(rec
     assert len(s.capabilities._cap_events()) == 1
 
 
+_BLOCKERS = {
+    # Concurrent unchanged writer holding the exact row the final transaction
+    # needs AFTER `_actor` validated the original session.
+    "target_credential": (
+        "SELECT account_id FROM identity.password_credentials WHERE account_id = %s FOR UPDATE",
+        "SELECT account_id FROM identity.password_credentials WHERE account_id = ? FOR UPDATE",
+    ),
+    "target_session": (
+        "SELECT session_id FROM identity.sessions WHERE account_id = %s FOR UPDATE",
+        "UPDATE identity.sessions SET revoked_at = ?, revoked_reason = 'dev-smoke-recovery' "
+        "WHERE account_id = ? AND revoked_at IS NULL",
+    ),
+}
+
+
+def _expire_original_during_lock_wait(s: Any, monkeypatch: Any, blocker: str, run: Any,
+                                      arm: Any) -> Any:
+    """Real PG: hold `blocker`, let the original session lapse by DB time, release.
+
+    `arm(start)` installs a hook that shortens the ORIGINAL idle expiry and takes
+    the lock; `start` is the single bounded intentional wait. No passed-polling.
+    """
+    from threading import Event
+    from time import sleep
+    hold_sql, marker_sql = _BLOCKERS[blocker]
+    held, waiting = Event(), Event()
+    lock_conn = s.db.connect(autocommit=False)
+    real_query, real_execute = s.engine.query_one, s.engine.execute
+
+    def start() -> None:
+        s.engine.execute(
+            "UPDATE identity.sessions SET idle_expires_at = clock_timestamp() + interval '2 seconds' "
+            "WHERE session_id = ?", (s.principal.attributes["sid"],))
+        lock_conn.execute(hold_sql, (TARGET_ACCOUNT_ID,))
+        held.set()
+
+    def marked(real: Any) -> Any:
+        def call(sql: str, params: Any = ()) -> Any:
+            if held.is_set() and sql == marker_sql:
+                waiting.set()  # `_actor` session check already returned successfully
+            return real(sql, params)
+        return call
+
+    arm(start)
+    monkeypatch.setattr(s.engine, "query_one", marked(real_query))
+    monkeypatch.setattr(s.engine, "execute", marked(real_execute))
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(run)
+            try:
+                assert waiting.wait(10), "blocking statement was never attempted"
+                sleep(2.2)  # single bounded wait past the DB-time idle expiry
+                with s.db.connect(autocommit=True) as observer:
+                    assert observer.execute(
+                        "SELECT idle_expires_at < clock_timestamp() FROM identity.sessions WHERE session_id = %s",
+                        (s.principal.attributes["sid"],)).fetchone()[0] is True
+                assert not future.done(), "operation did not block behind the held row"
+            finally:
+                lock_conn.rollback()  # unchanged holder releases; nothing it did persists
+            with pytest.raises(RecoveryRefused) as refused:
+                future.result(timeout=15)
+            return refused.value.code
+    finally:
+        lock_conn.close()
+
+
+@pytest.mark.parametrize("blocker", ["target_credential", "target_session"])
+def test_original_session_natural_expiry_during_final_lock_wait_rolls_back_rotation(
+        recovery: Any, monkeypatch: Any, blocker: str) -> None:
+    from shared.identity.credential_service import CredentialService
+    s = recovery
+    root, cap = issue(s)
+    before, old = snapshot(s), old_events(s)
+    real_hash = CredentialService.hash_password
+
+    def arm(start: Any) -> None:
+        def hashing(service: Any, password: str) -> str:
+            phc = real_hash(service, password)
+            start()  # between the pre-hash and final transactions
+            return phc
+        monkeypatch.setattr(CredentialService, "hash_password", hashing)
+
+    code = _expire_original_during_lock_wait(s, monkeypatch, blocker, lambda: consume(s, root, cap), arm)
+    assert code == "RECOVERY_ORIGINAL_ADMIN_REQUIRED"
+    after = snapshot(s)
+    # Only the deliberately shortened ORIGINAL idle expiry differs.
+    for table in ("accounts", "account_roles", "account_scopes", "password_credentials", "invitations"):
+        assert after[table] == before[table]
+    assert _q(s, "SELECT revoked_at FROM identity.sessions WHERE account_id = %s", (TARGET_ACCOUNT_ID,)) == [(None,)]
+    assert s.engine.query_one("SELECT consumed_at, rotation_event_id FROM identity.dev_smoke_recovery_capabilities") == {
+        "consumed_at": None, "rotation_event_id": None}
+    assert [e.metadata["stage"] for e in s.capabilities._cap_events()] == ["issued"]
+    assert _q(s, "SELECT attempt_count FROM identity.dev_smoke_recovery_budget") == [(1,)]
+    assert old_events(s) == old
+    assert s.audit.verify_chain().ok
+
+
+def test_original_session_natural_expiry_during_issue_lock_wait_issues_nothing(
+        recovery: Any, monkeypatch: Any) -> None:
+    s = recovery
+    root = s.recovery.reserve(s.principal, s.plan)
+    starts: list[Any] = []
+    code = _expire_original_during_lock_wait(
+        s, monkeypatch, "target_credential",
+        lambda: (starts[0](), s.capabilities.issue(s.principal, root))[1],
+        starts.append,
+    )
+    assert code == "RECOVERY_ORIGINAL_ADMIN_REQUIRED"
+    assert s.engine.query("SELECT * FROM identity.dev_smoke_recovery_capabilities") == []
+    assert s.capabilities._cap_events() == []
+    assert s.audit.verify_chain().ok
+
+
 @pytest.mark.parametrize("operation", ["issue", "consume"])
 def test_two_pg_pools_single_capability_and_single_rotation(recovery: Any, operation: str) -> None:
     s = recovery

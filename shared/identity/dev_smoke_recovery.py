@@ -208,6 +208,32 @@ class RecoveryJournal:
         # Always after the shared tenant administration lock acquired by _actor.
         self._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (self._CORRELATION,))
 
+    def _final_bounds(self, sid: str, execution_expires_at: str,
+                      capability_expires_at: str | None = None) -> None:
+        """Re-read authoritative DB-time bounds as the LAST statement before commit.
+
+        `_actor` checks the issuer session BEFORE later blocking work (target
+        credential FOR UPDATE, capability row, target session/audit writes). Its
+        FOR SHARE lock prevents explicit revocation, NOT natural idle/absolute
+        expiry while this transaction waits. One clock_timestamp() instant is
+        compared against the persisted ORIGINAL session and the execution/
+        capability expiry; any lapse raises inside the transaction so every
+        credential/session/capability/audit write rolls back atomically.
+        """
+        row = self._engine.query_one(
+            "WITH t AS (SELECT clock_timestamp() AS now) SELECT t.now AS now FROM t "
+            "JOIN identity.sessions s ON s.session_id = ? AND s.account_id = ? "
+            "AND s.revoked_at IS NULL AND s.idle_expires_at > t.now AND s.absolute_expires_at > t.now",
+            (sid, PRESERVED_ACCOUNT_ID),
+        )
+        if row is None:
+            raise RecoveryRefused("RECOVERY_ORIGINAL_ADMIN_REQUIRED")
+        now = datetime.fromisoformat(row["now"])
+        if now >= datetime.fromisoformat(execution_expires_at):
+            raise RecoveryRefused("RECOVERY_EXECUTION_DRIFT")
+        if capability_expires_at is not None and now >= datetime.fromisoformat(capability_expires_at):
+            raise RecoveryRefused("RECOVERY_CAPABILITY_UNAVAILABLE")
+
     def _events(self) -> list[AuditEvent]:
         events = self._audit.list_events(correlation_id=self._CORRELATION)
         if len(events) > 2:
@@ -304,6 +330,7 @@ class RecoveryJournal:
                         "credential_binding_verified": False, "secret_values_redacted": True,
                     },
                 ))
+                self._final_bounds(sid, plan["expires_at"])
             return self._receipt(event)  # only after transaction commit
         except RecoveryRefused:
             raise
@@ -486,6 +513,8 @@ class RecoveryCapabilityService(RecoveryJournal):
                      hashlib.sha256(token.encode("ascii")).hexdigest(), now, expires,
                      original_time, target_time, original_revision, target_revision),
                 )
+                self._final_bounds(root.metadata["issuer_session_id"], root.metadata["expires_at"],
+                                   expires.isoformat())
             return RecoveryCapability(cap_id, reservation.execution_id, expires.isoformat(), event.event_id, token)
         except RecoveryRefused:
             raise
@@ -592,6 +621,9 @@ class RecoveryCapabilityService(RecoveryJournal):
                     "UPDATE identity.dev_smoke_recovery_capabilities SET consumed_at = ?, rotation_event_id = ? "
                     "WHERE authorization_id = ?", (now, event.event_id, AUTHORIZATION_ID),
                 )
+                # Target-session/audit/capability writes above may also wait.
+                self._final_bounds(root.metadata["issuer_session_id"], root.metadata["expires_at"],
+                                   row["expires_at"])
             return {"status": "rotated", "account_id": TARGET_ACCOUNT_ID, "tenant_id": TENANT_ID,
                     "execution_id": reservation.execution_id, "capability_id": capability_id,
                     "issue_event_id": row["issue_event_id"], "rotation_event_id": event.event_id,
@@ -771,6 +803,7 @@ class RecoveryBindingJournal(RecoveryCapabilityService):
                     resource=RECOVERY_BINDING_CORRELATION, correlation_id=RECOVERY_BINDING_CORRELATION,
                     outcome="success", occurred_at=now, metadata={**metadata, "stage": stage, "put_status": put_status},
                 ))
+                self._final_bounds(metadata["issuer_session_id"], metadata["expires_at"])
             return self._binding_receipt(event)  # only after actual PG commit
         except RecoveryRefused:
             raise
