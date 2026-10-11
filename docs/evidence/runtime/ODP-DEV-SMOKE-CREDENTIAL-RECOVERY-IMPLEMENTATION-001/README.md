@@ -64,6 +64,14 @@ Its first Web build/budget argv spelling (`NODE_ENV=production` as executable)
 exited127; correcting to bare declared pnpm with inherited production env yielded
 exit0 build/budget. Those failure receipts and shared-selection duplicate refusals
 remain recorded, not relabelled. Canonical task notes name exact final receipts.
+Composed6f6997b's six-file regression failed (receipt5839c0a0fcc20db2): the newly
+merged actual invitation Web-login/rotation fixture applied only the pre-revision
+schema, so production store login correctly returned503. The fixture now applies
+tracked expand-only000029/000030 migrations alongside000012. No production fence
+is disabled or mocked away. Its isolated real mounted login/password/API test
+then exited0; that diagnostic is not a final immutable-head receipt. All14 final
+commands must run again after this fixture composition repair; prior failures
+and13 passing selections are retained unchanged, not inherited.
 Anchor90560f073 returns the self-password-change CAS's committed revision and
 forwards it to production replacement-session insertion. Mounted production-store
 SQL adapter regression verifies successful password change, no caller revision,
