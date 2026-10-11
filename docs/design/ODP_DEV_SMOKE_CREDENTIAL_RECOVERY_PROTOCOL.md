@@ -581,6 +581,41 @@ quarantine-before-cleanup and fresh-job orchestration remain uncomposed. The
 observer does NOT authorize reserve/rotate/PUT and is not a complete foreground
 entrypoint. Offline fixtures and loopback TLS tests are not live evidence.
 
+## Bounded remote source observer increment (unapproved; NOT complete preflight)
+
+`TrustedGitHubSourceObserver` reuses the existing canonical merged-PR, full
+reviewed/candidate Git-tree equality, latest task-review-gate writer and latest
+required reviewed+candidate CI/check predicates. The foreground independently
+pins candidate, reviewed head AND entire reviewed tree plus writer/workflow/app/
+required-check roots, never from plan flags or a passing receipt. Both remote
+commit trees must match that independent tree, not merely each other. Every
+observation rereads all evidence; any uncertainty permanently stops the instance.
+A later successful GET cannot restore execution authority.
+
+Only fixed GitHub source GET paths are allowed. Token stays in parent memory;
+no gh/credential child, environment/proxy, retries or redirects. HTTPS retains
+normal CA/hostname verification. A main-thread signal guard and per-request
+remaining allowance share ONE absolute phase deadline, never a fresh timeout
+per endpoint. Complete JSON bodies are bounded64KiB; duplicate keys/nonfinite
+numbers, compressed responses, next-page links and incomplete list counts fail
+closed. If evidence exceeds the bound, hold before effects rather than truncate
+or select an older passing review/run. Another runtime's active timer is never
+replaced. PID/pickle/close fencing and static errors keep tokens/raw evidence out
+of receipts. Receipt includes only the pinned source identifiers and false
+authority/binding flags; coordinator must still persist actual phase starts and
+terminals. Signal/OS-stuck calls are NOT hard-real-time termination guarantees
+or measured production bounds: missing/late completion remains refusal.
+
+Offline mocked canonical records and real timer/dribble tests cover full-tree
+pinning, latest pending/failed review/CI supersession, skipped/wrong-app checks,
+incomplete/duplicate/oversized evidence, malformed JSON, redaction, timer ownership
+and no continuation. These are NOT independent live review/CI, operational
+custody approval or recovery evidence. Current ordinary admission history still
+needs a bounded read adapter without credential-bearing children; source approval
+alone cannot admit deployment. Full gate/fresh-job/quarantine-before-own-cleanup
+coordinator, genuine writer exclusion, measured bounds and exact final-plan/
+native-ingress security approval remain BEFORE-effect blockers.
+
 ## Required subsequent increments (not implemented)
 
 1. Independent review of migration/capability/session-fence domain increments;

@@ -2037,3 +2037,181 @@ def test_real_observation_https_fixed_read_routes_no_retry(tls_recovery_server: 
             attempt.observe(operation, cookie="offline-own-cookie", deadline=time.monotonic() + 3)
     assert len(observed) == 1 and observed[0][0].startswith(f"GET {path} HTTP/1.1\r\n".encode())
     assert b"Cookie: __Host-oday_web_session=offline-own-cookie" in observed[0][0]
+
+
+@pytest.fixture
+def bounded_remote_source():
+    """Synthetic GitHub records only; no remote authentication/approval claimed."""
+    import json
+
+    import httpx
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+    from tests.integration.test_dev_smoke_provisioning import _offline_source_approval
+    evidence = _offline_source_approval(plan())
+    evidence.observer.close()
+    evidence.headers, evidence.raw, evidence.slow = {}, None, False
+    observer = r.TrustedGitHubSourceObserver(token="OFFLINE-PRIVATE-TOKEN", pull_number=123,
+        reviewed_head=evidence.head, release_sha=SHA, reviewed_tree="e" * 40,
+        review_writer_login="canonical-writer", review_writer_id=789, workflow_id=456,
+        checks_app_id=42, required_checks=("orchestrator", "product"))
+    evidence.observer = observer
+    observer._client.close()
+
+    def request(req):
+        assert req.method == "GET" and req.headers["authorization"] == "Bearer OFFLINE-PRIVATE-TOKEN"
+        path = str(req.url).removeprefix("https://api.github.com/repos/alfloop-dev/odayplus")
+        evidence.calls.append(path)
+        clear = evidence.raw if evidence.raw is not None else json.dumps(evidence.docs[path]).encode()
+        if evidence.slow:
+            import time
+            class Slow(httpx.SyncByteStream):
+                def __iter__(self):
+                    for byte in clear:
+                        time.sleep(0.02)
+                        yield bytes([byte])
+            stream = Slow()
+        else:
+            stream = httpx.ByteStream(clear)
+        return httpx.Response(evidence.status, stream=stream,
+                              headers={"Content-Type": "application/json", **evidence.headers})
+
+    observer._client = httpx.Client(base_url="https://api.github.com", transport=httpx.MockTransport(request),
+        headers={"Authorization": "Bearer OFFLINE-PRIVATE-TOKEN"}, trust_env=False, follow_redirects=False)
+    try:
+        yield evidence
+    finally:
+        observer.close()
+
+
+def test_bounded_remote_source_fulltree_latest_ci_fresh_no_credentials_in_receipt(bounded_remote_source: Any) -> None:
+    import pickle
+    import time
+    evidence = bounded_remote_source
+    observer = evidence.observer
+    receipt = observer.observe(release_sha=SHA, deadline=time.monotonic() + 2)
+    assert receipt == {"stage": "remote-source-observed", "release_sha": SHA, "reviewed_head": evidence.head,
+                       "reviewed_tree": "e" * 40, "execution_authorized": False,
+                       "credential_binding_verified": False, "secret_values_redacted": True}
+    assert "OFFLINE-PRIVATE-TOKEN" not in repr(observer) + repr(receipt)
+    with pytest.raises(RecoveryRefused, match="SERIALIZATION_REFUSED"):
+        pickle.dumps(observer)
+    assert len(evidence.calls) == 8
+    evidence.docs["/pulls/123"]["merged"] = False
+    with pytest.raises(RecoveryRefused, match="^RECOVERY_SOURCE_APPROVAL_UNVERIFIED$"):
+        observer.observe(release_sha=SHA, deadline=time.monotonic() + 2)
+    calls = len(evidence.calls)
+    evidence.docs["/pulls/123"]["merged"] = True  # later commit truth cannot resume
+    with pytest.raises(RecoveryRefused):
+        observer.observe(release_sha=SHA, deadline=time.monotonic() + 2)
+    assert len(evidence.calls) == calls
+
+
+@pytest.mark.parametrize("fault", ["equal_unpinned_trees", "candidate_tree", "latest_review",
+    "review_writer", "candidate_ci_pending", "head_ci_failed", "check_skipped", "check_app",
+    "incomplete_runs", "duplicate_checks", "future_check", "status", "redirect", "pagination",
+    "unquoted_pagination", "oversize", "duplicate_json", "nan", "content_type", "encoding"])
+def test_bounded_remote_source_uncertainty_never_grants_authority(bounded_remote_source: Any, fault: str) -> None:
+    import time
+    from copy import deepcopy
+    e = bounded_remote_source
+    docs, head = e.docs, e.head
+    runs = docs[f"/actions/workflows/456/runs?head_sha={SHA}&per_page=100"]
+    checks = docs["/check-suites/101/check-runs?filter=latest&per_page=100"]
+    review = docs[f"/commits/{head}/statuses?per_page=100"]
+    if fault == "equal_unpinned_trees":
+        for sha in (head, SHA):
+            docs[f"/git/commits/{sha}"]["tree"]["sha"] = "f" * 40
+    elif fault == "candidate_tree":
+        docs[f"/git/commits/{SHA}"]["tree"]["sha"] = "f" * 40
+    elif fault == "latest_review":
+        latest = deepcopy(review[0])
+        latest.update(state="pending", created_at=datetime.now(UTC).isoformat())
+        review.append(latest)
+    elif fault == "review_writer":
+        review[0]["creator"]["id"] += 1
+    elif fault == "candidate_ci_pending":
+        latest = deepcopy(runs["workflow_runs"][0])
+        latest.update(id=9999, status="queued", conclusion=None)
+        runs["workflow_runs"].append(latest)
+        runs["total_count"] = 2
+    elif fault == "head_ci_failed":
+        docs[f"/actions/workflows/456/runs?head_sha={head}&per_page=100"]["workflow_runs"][0]["conclusion"] = "failure"
+    elif fault == "check_skipped":
+        checks["check_runs"][0]["conclusion"] = "skipped"
+    elif fault == "check_app":
+        checks["check_runs"][0]["app"]["id"] += 1
+    elif fault == "incomplete_runs":
+        runs["total_count"] = 2
+    elif fault == "duplicate_checks":
+        checks["check_runs"].append(deepcopy(checks["check_runs"][0]))
+        checks["total_count"] += 1
+    elif fault == "future_check":
+        checks["check_runs"][0]["completed_at"] = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
+    elif fault in {"status", "redirect"}:
+        e.status = 403 if fault == "status" else 302
+    elif fault in {"pagination", "unquoted_pagination"}:
+        rel = '"next"' if fault == "pagination" else "next"
+        e.headers["Link"] = f'<https://api.github.com/anything>; rel={rel}'
+    elif fault == "oversize":
+        e.raw = b"x" * 65537
+    elif fault == "duplicate_json":
+        e.raw = b'{"nested":{"OFFLINE-PRIVATE-MARKER":1,"OFFLINE-PRIVATE-MARKER":2}}'
+    elif fault == "nan":
+        e.raw = b'{"OFFLINE-PRIVATE-MARKER":NaN}'
+    elif fault == "content_type":
+        e.headers["Content-Type"] = "text/html"
+    else:
+        e.headers["Content-Encoding"] = "gzip"
+    with pytest.raises(RecoveryRefused) as caught:
+        e.observer.observe(release_sha=SHA, deadline=time.monotonic() + 2)
+    assert str(caught.value) == "RECOVERY_SOURCE_APPROVAL_UNVERIFIED"
+    assert "OFFLINE-PRIVATE" not in repr(caught.value)
+    assert e.observer._stopped
+
+
+def test_bounded_remote_source_real_deadline_restores_timer_no_continuation(bounded_remote_source: Any) -> None:
+    import signal
+    import time
+    e = bounded_remote_source
+    e.slow = True
+    original = signal.getsignal(signal.SIGALRM)
+    started = time.monotonic()
+    with pytest.raises(RecoveryRefused, match="SOURCE_APPROVAL_UNVERIFIED"):
+        e.observer.observe(release_sha=SHA, deadline=started + 0.12)
+    assert time.monotonic() - started < 0.5
+    assert signal.getsignal(signal.SIGALRM) == original
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+    assert e.observer._stopped and len(e.calls) == 1
+
+
+def test_bounded_remote_source_does_not_replace_existing_runtime_timer(bounded_remote_source: Any) -> None:
+    import signal
+    import time
+    original = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, lambda *_: None)
+    signal.setitimer(signal.ITIMER_REAL, 5)
+    try:
+        with pytest.raises(RecoveryRefused):
+            bounded_remote_source.observer.observe(release_sha=SHA, deadline=time.monotonic() + 1)
+        assert not bounded_remote_source.calls
+        assert 0 < signal.getitimer(signal.ITIMER_REAL)[0] <= 5
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, original)
+
+
+@pytest.mark.parametrize("fault", ["sha", "deadline", "fork", "closed"])
+def test_bounded_remote_source_input_fence_precedes_network(bounded_remote_source: Any, fault: str, monkeypatch: Any) -> None:
+    import time
+
+    from delivery_toolchain.release import recover_dev_smoke as r
+    e = bounded_remote_source
+    if fault == "fork":
+        monkeypatch.setattr(r.os, "getpid", lambda: e.observer._pid + 1)
+    elif fault == "closed":
+        e.observer.close()
+    with pytest.raises(RecoveryRefused):
+        e.observer.observe(release_sha="f" * 40 if fault == "sha" else SHA,
+                           deadline=float("nan") if fault == "deadline" else time.monotonic() + 2)
+    assert not e.calls

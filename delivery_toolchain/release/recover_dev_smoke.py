@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
+from delivery_toolchain.release.provision_dev_smoke import GitHubSourceApprovalObserver
 from shared.identity.dev_smoke_recovery import (
     AUTHORIZATION_ID,
     TARGET_ACCOUNT_ID,
@@ -443,6 +444,153 @@ class TrustedCheckoutObserver:
             "reviewed_tree": tree, "execution_authorized": False,
             "credential_binding_verified": False, "secret_values_redacted": True,
         }
+
+
+def _absolute_observer_deadline(deadline: float):
+    """Parent-memory, main-thread deadline guard; no credential-bearing child.
+
+    A missed deadline/OS-stuck call is refusal, not hard-real-time cancellation
+    proof. Never replace another runtime's timer or extend the absolute budget.
+    """
+    import signal
+    import threading
+    from contextlib import contextmanager
+
+    @contextmanager
+    def guard():
+        if (threading.current_thread() is not threading.main_thread()
+                or not hasattr(signal, "setitimer") or signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0)):
+            raise RecoveryRefused("RECOVERY_SOURCE_DEADLINE_UNAVAILABLE")
+        remaining = _http_remaining(deadline)
+        previous = signal.getsignal(signal.SIGALRM)
+
+        def expired(_signum, _frame):
+            raise RecoveryRefused("RECOVERY_SOURCE_DEADLINE_EXCEEDED")
+
+        signal.signal(signal.SIGALRM, expired)
+        signal.setitimer(signal.ITIMER_REAL, remaining)
+        try:
+            yield
+            _http_remaining(deadline)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous)
+
+    return guard()
+
+
+class TrustedGitHubSourceObserver(GitHubSourceApprovalObserver):
+    """Fresh canonical whole-tree/review/latest reviewed+candidate CI predicates.
+
+    Independently pinned trust roots ONLY, never plan flags/receipts. Reuses the
+    existing source observer's PR/merge/review-writer/latest-run/check predicates,
+    replacing ONLY its read transport with bounded parent-memory HTTPS and one
+    absolute phase deadline. No gh/subprocess, env/proxy, retry or redirects.
+    Independently pinned full tree must match both remote commits, not just each
+    other. Any uncertainty poisons this observer; later GET cannot resume it.
+
+    This is source evidence, NOT current admission, writer exclusion, custody
+    approval, actual serving identity or execution authority. Main-thread signal
+    support and OS custody controls remain prerequisites; no production bounds
+    or hard-real-time termination are claimed. Coordinator must persist starts
+    and terminal classifications and reobserve before effects.
+    """
+
+    def __init__(self, *, token: str, pull_number: int, reviewed_head: str,
+                 release_sha: str, reviewed_tree: str, review_writer_login: str,
+                 review_writer_id: int, workflow_id: int, checks_app_id: int,
+                 required_checks: tuple[str, ...]) -> None:
+        import httpx
+
+        from shared.identity.dev_smoke_journal import _SHA
+        self._pid, self._stopped, self._deadline = os.getpid(), True, None
+        try:
+            if (type(token) is not str or not 0 < len(token) <= 8192
+                    or any(ord(c) <= 32 or ord(c) >= 127 for c in token)
+                    or any(type(v) is not str or not _SHA.fullmatch(v) for v in (release_sha, reviewed_tree))):
+                raise ValueError
+            super().__init__(token=token, pull_number=pull_number, reviewed_head=reviewed_head,
+                review_writer_login=review_writer_login, review_writer_id=review_writer_id,
+                workflow_id=workflow_id, checks_app_id=checks_app_id, required_checks=required_checks)
+            headers = dict(self._client.headers)
+            self._client.close()
+            headers["Accept-Encoding"] = "identity"
+            self._client = httpx.Client(base_url="https://api.github.com", headers=headers,
+                timeout=20, follow_redirects=False, trust_env=False)
+            self._sha, self._tree, self._stopped = release_sha, reviewed_tree, False
+        except Exception:
+            raise RecoveryRefused("RECOVERY_SOURCE_CONFIG_INVALID") from None
+
+    def __repr__(self) -> str:
+        return "TrustedGitHubSourceObserver(<redacted>)"
+
+    def __reduce_ex__(self, protocol: int):
+        raise RecoveryRefused("RECOVERY_SOURCE_SERIALIZATION_REFUSED")
+
+    def _get(self, path: str):
+        import re
+
+        from shared.identity.dev_smoke_journal import REPOSITORY
+        # All routes are canonical source reads. No public arbitrary-path API,
+        # secret endpoint, write, injected callback or list pagination fallback.
+        fixed = {f"pulls/{self._pull}", f"commits/{self._head}/statuses?per_page=100"}
+        for sha in {self._sha, self._head}:
+            fixed.update({f"git/commits/{sha}",
+                          f"actions/workflows/{self._workflow}/runs?head_sha={sha}&per_page=100"})
+        if (self._deadline is None or self._stopped or os.getpid() != self._pid
+                or (path not in fixed and not re.fullmatch(
+                    r"check-suites/[1-9][0-9]*/check-runs\?filter=latest&per_page=100", path))):
+            raise ValueError
+        remaining = _http_remaining(self._deadline)
+        with self._client.stream("GET", f"/repos/{REPOSITORY}/{path}", timeout=min(20, remaining)) as response:
+            if (response.status_code != 200 or "next" in response.links
+                    or response.headers.get("content-type", "").split(";", 1)[0] != "application/json"
+                    or response.headers.get("content-encoding", "identity") != "identity"):
+                raise ValueError
+            clear = bytearray()
+            for chunk in response.iter_raw():
+                _http_remaining(self._deadline)
+                if len(clear) + len(chunk) > 65536:
+                    raise ValueError
+                clear.extend(chunk)
+
+            def unique(pairs):
+                result = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ValueError
+                    result[key] = value
+                return result
+
+            value = json.loads(clear, object_pairs_hook=unique,
+                parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+            _http_remaining(self._deadline)
+            if path.startswith("git/commits/") and value.get("tree", {}).get("sha") != self._tree:
+                raise ValueError
+            return value
+
+    def observe(self, *, release_sha: str, deadline: float) -> dict:
+        try:
+            if (self._stopped or self._deadline is not None or os.getpid() != self._pid
+                    or release_sha != self._sha or type(deadline) not in (int, float)
+                    or not math.isfinite(deadline) or not 0 < deadline - time.monotonic() <= 2400):
+                raise ValueError
+            self._deadline = deadline
+            with _absolute_observer_deadline(deadline):
+                super().observe(release_sha=release_sha, now=datetime.now(UTC))
+            return {"stage": "remote-source-observed", "release_sha": self._sha,
+                    "reviewed_head": self._head, "reviewed_tree": self._tree,
+                    "execution_authorized": False, "credential_binding_verified": False,
+                    "secret_values_redacted": True}
+        except Exception:
+            self._stopped = True
+            raise RecoveryRefused("RECOVERY_SOURCE_APPROVAL_UNVERIFIED") from None
+        finally:
+            self._deadline = None
+
+    def close(self) -> None:
+        self._stopped = True
+        super().close()
 
 
 class RecoveryHTTPRefused(RecoveryRefused):
