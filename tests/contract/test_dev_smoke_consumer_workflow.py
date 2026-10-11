@@ -61,6 +61,9 @@ def test_existing_native_wif_does_not_materialize_new_credential_file_or_use_for
     assert 'ODP_API_INVOKER_TOKEN' not in consumer['env']
     assert consumer['env']['GOOGLE_SERVICE_ACCOUNT'] == '${{ vars.GCP_SERVICE_ACCOUNT }}'
     assert consumer['env']['GOOGLE_WIF_PROVIDER'] == '${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}'
+    assert consumer['env']['ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT'] == '${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}'
+    assert consumer['env']['ODP_AUTH_AUDIENCES'] == '${{ vars.ODP_AUTH_AUDIENCES }}'
+    assert 'ODP_OPERATOR_SMOKE_BEARER_TOKEN' not in consumer['env']
     source = Path('delivery_toolchain/release/consume_dev_smoke.py').read_text()
     assert 'https://sts.googleapis.com/v1/token' in source
     assert 'https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/' in source

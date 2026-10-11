@@ -74,6 +74,7 @@ class NativeInputs:
     oidc_request_token: str = field(repr=False)
     oidc_request_url: str = field(repr=False)
     invoker_token: str = field(default="", repr=False)
+    application_token: str = field(default="", repr=False)
 
     def __reduce__(self) -> Any:
         raise ConsumerRefused()
@@ -276,13 +277,26 @@ def _native_oidc(inputs: NativeInputs, environment: dict[str, str]) -> None:
         raise ConsumerRefused() from None
 
 
-def _native_transport_identity(inputs: NativeInputs, environment: dict[str, str]) -> str:
-    """Existing WIF/SA via in-memory HTTPS only; no gcloud/key/output file/env."""
+def _native_gate_identity(inputs: NativeInputs, environment: dict[str, str]) -> tuple[str, str]:
+    """Existing deploy identities via memory-only HTTPS; never grants IAM/roles.
+
+    The protected dev variables select the SAME smoke SA and first application
+    audience as deploy_cloud_run_waji.sh. These non-secret configuration inputs
+    require fresh reconciliation in the independently reviewed execution plan;
+    matching syntax is not evidence of an existing impersonation/RBAC grant.
+    """
     import httpx
 
     try:
         if (environment.get("GOOGLE_WIF_PROVIDER") != WIF_PROVIDER
                 or environment.get("GOOGLE_SERVICE_ACCOUNT") != GOOGLE_SERVICE_ACCOUNT):
+            raise ConsumerRefused()
+        smoke_account = environment.get("ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT", "")
+        audience = environment.get("ODP_AUTH_AUDIENCES", "").split(",")[0]
+        # No arbitrary project/URL/header injection or fallback to the deployer
+        # token. Missing ordinary config refuses BEFORE federation/network.
+        if (not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]@odayplus-runtime-20260825\.iam\.gserviceaccount\.com", smoke_account)
+                or smoke_account == GOOGLE_SERVICE_ACCOUNT or audience != API_ORIGIN):
             raise ConsumerRefused()
         with httpx.Client(timeout=15, follow_redirects=False, trust_env=False) as client:
             subject = _runner_jwt(client, inputs, audience=WIF_AUDIENCE)
@@ -306,7 +320,15 @@ def _native_transport_identity(inputs: NativeInputs, environment: dict[str, str]
             if type(token) is not str or not token or len(token) > 16_384:
                 raise ConsumerRefused()
             _mask(token)
-            return token
+            application = _bounded_json(client,
+                f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{smoke_account}:generateIdToken",
+                method="POST", headers={"Authorization": f"Bearer {access}"},
+                json_payload={"audience": audience, "includeEmail": True})["token"]
+            if (type(application) is not str or not application or len(application) > 16_384
+                    or any(ch in application for ch in "\r\n")):
+                raise ConsumerRefused()
+            _mask(application)
+            return token, application
     except Exception:
         raise ConsumerRefused() from None
 
@@ -461,10 +483,10 @@ def consume(*, inputs: NativeInputs, environment: dict[str, str], sha: str, dige
                 observer.close()
             _current_admission(sha=sha, digest=digest, inputs=inputs,
                                environment=environment, deadline=started + 180)
-            inputs.invoker_token = _native_transport_identity(inputs, environment)
+            inputs.invoker_token, inputs.application_token = _native_gate_identity(inputs, environment)
         correlation = f"corr-native-consumer-{run_id}"
         config = gate.GateConfig(
-            api_url=API_ORIGIN, expected_sha=sha, bearer_token="", operator_role="platform_admin",
+            api_url=API_ORIGIN, expected_sha=sha, bearer_token=inputs.application_token, operator_role="platform_admin",
             web_url=WEB_ORIGIN, expected_deployment="dev", api_transport_token=inputs.invoker_token,
             required_provider_ids=(), external_provider_mode="disabled", release_profile="dev-admin",
             expected_manifest_digest=digest, dev_admin_username=inputs.bundle.username,
@@ -474,7 +496,9 @@ def consume(*, inputs: NativeInputs, environment: dict[str, str], sha: str, dige
             dev_admin_bundle_schema_version=2, dev_admin_bundle_recovery_lineage=inputs.bundle.recovery_lineage,
             dev_admin_denied_role="cs-lead", timeout=15,
         )
-        api = _ObservedWeb(gate.UrllibHttpClient(API_ORIGIN, timeout=15, bearer_token="", operator_role="platform_admin",
+        if not all(check.ok is True for check in gate.validate_config(config)):
+            raise ConsumerRefused()
+        api = _ObservedWeb(gate.UrllibHttpClient(API_ORIGIN, timeout=15, bearer_token=inputs.application_token, operator_role="platform_admin",
             operator_subject="live-e2e-gate", operator_tenant="", correlation_id=correlation,
             transport_token=inputs.invoker_token), execution_id=inputs.bundle.execution_id,
             deadline=started + 480, cleanup_deadline=started + 540)

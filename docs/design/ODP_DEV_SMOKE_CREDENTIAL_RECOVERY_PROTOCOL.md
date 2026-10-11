@@ -480,8 +480,8 @@ bounded response/request totals, no DNS/proxy/retry/redirect credential forwardi
 Gate body/request limits are4MiB/256, with a separate bounded512KiB/16 cleanup
 reserve; exhausted gate I/O cannot bar the known-cookie cleanup lane.
 Application bearer and API transport identity are separate mandatory foreground
-memory inputs. Empty application bearer remains a canonical refusal (the native
-consumer lane must address this separately; no config-guard relaxation).
+memory inputs. Empty application bearer remains a canonical refusal; the native
+consumer increment below supplies it without config-guard relaxation.
 
 The canonical evaluator has an optional in-process cleanup barrier, default absent
 for existing callers. It can only STOP on already failed checks before normal or
@@ -761,9 +761,9 @@ The hold specifically exposes missing genuine external writer exclusion, native
 application-credential implementation, approval of the native custody amendment,
 measured production reserves and the reviewed operational plan. Matching source,
 absent metadata and a process-local receipt barrier supply NONE of these. The
-native e46 source still leaves canonical application's bearer empty; its mocked
-consumer tests are not actual full-gate/consumption proof. Foreground-exclusive
-native files remain unmodified by this increment. A future reviewed effect
+native e46 source at this historical checkpoint left canonical application's
+bearer empty; its mocked consumer tests were not full-gate/consumption proof.
+The subsequent native identity increment below addresses that source gap only. A future reviewed effect
 coordinator and actual fresh-job boundary must resolve those gates BEFORE
 rotation, not add an `approved=true` escape or dispatch from this diagnostic.
 
@@ -801,3 +801,35 @@ Target session revocation will never prove cleanup of the interrupted ORIGINAL
 admin session; that historical uncertainty remains explicit. No business/data/
 model effects, source activation, role widening, IAM changes, SQL/bootstrap
 recovery or F11 self-approval are authorized.
+
+## Native application identity increment (source only; unapproved)
+
+The consumer now reproduces the existing `origin/dev` Runtime Release application
+identity selection (`deploy_cloud_run_waji.sh`): protected-dev
+`vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT` and the first `vars.ODP_AUTH_AUDIENCES`
+audience. It requires an existing same-project smoke SA (not the deployer SA) and
+the fixed API origin audience; missing/mismatched configuration refuses before
+federation. The same in-memory STS access token requests TWO IAM-generated ID
+tokens: existing deployer/API transport identity and existing smoke application
+identity, both with `includeEmail=true`. The latter is supplied to GateConfig
+and the actual API client, never to env/argv/files. All canonical config checks
+must pass before evaluator/login. There is no empty-bearer waiver, caller JWT,
+legacy credential fallback, key/signature creation, grant installation or role
+change. A denied/empty/malformed token response stops without retry.
+
+These repository variables are trusted native deployment configuration, NOT
+proof of current IAM grants or principal-map roles. Before effects, the final
+independently reviewed operational plan must reconcile their exact values with
+the currently admitted deployment, existing impersonation permission, and actual
+least-privilege application principal mapping. If existing grants cannot mint
+these identities, HOLD; do not add IAM or map the recovered human target to
+business roles. No such configuration/grant was read or exercised by this worker.
+
+The offline regression now invokes the REAL complete canonical evaluator with
+synthetic HTTP/lineage and mocked source/admission/identity observers, in addition
+to negative bounded IAM transport tests. This proves source composition past the
+previous `config:operator_credential` failure, NOT live native custody, actual
+fresh-job consumption, measured timing or deployment admission. Independent
+native-ingress review, writer exclusion, final operational-plan review and
+finite production measurements remain BEFORE-effects blockers. The diagnostic
+preflight remains an unconditional HOLD; no effect/fresh-job dispatch was added.

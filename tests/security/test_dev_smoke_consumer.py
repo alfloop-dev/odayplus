@@ -56,7 +56,7 @@ def test_native_pair_is_individually_masked_and_removed_before_any_child() -> No
     assert inputs.bundle.schema_version == 2
     assert masks == [inputs.bundle.username, inputs.bundle.password, inputs.github_token,
                      inputs.oidc_request_token, inputs.oidc_request_url]
-    assert not inputs.invoker_token
+    assert not inputs.invoker_token and not inputs.application_token
     assert not set(c.SECRET_INPUTS + c.LEGACY_INPUTS) & set(env)
     assert inputs.bundle.password not in repr(inputs)
     with pytest.raises(c.ConsumerRefused):
@@ -253,7 +253,7 @@ def test_plain_env_flags_or_unsigned_jwt_are_not_native_proof(offline_signing_ke
         c.verify_native_oidc(token, jwks, native_environment(), now=datetime.now(UTC))
 
 
-@pytest.mark.parametrize("failure", [None, "oidc", "source", "admission", "gate"])
+@pytest.mark.parametrize("failure", [None, "oidc", "source", "admission", "gate", "canonical"])
 def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatch, failure):
     # Entirely MOCKED authority/runtime; no network/live receipt. Proves wiring.
     import httpx
@@ -297,6 +297,10 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
     def mocked_gate(config, **kwargs):
         observe("gate")
         assert config.dev_admin_bundle_schema_version == 2
+        assert all(check.ok for check in c.gate.validate_config(config))
+        assert config.bearer_token == "offline-generated-application"
+        assert config.api_transport_token == "offline-generated-invoker"
+        assert kwargs["http"].client._bearer_token == config.bearer_token
         assert config.dev_admin_password == inputs.bundle.password
         assert not config.bootstrap_admin_password and not config.dev_admin_initial_password
         # Mimic actual audit observation; NOT an authenticated/live receipt.
@@ -307,16 +311,43 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
     monkeypatch.setattr(c, "_native_oidc", lambda *args: observe("oidc"))
     monkeypatch.setattr(c, "NativeSourceApprovalObserver", Source)
     monkeypatch.setattr(c, "_current_admission", lambda **kwargs: observe("admission"))
-    monkeypatch.setattr(c, "_native_transport_identity", lambda *args: "offline-generated-invoker")
-    monkeypatch.setattr(c.gate, "evaluate_gate", mocked_gate)
-    if failure:
+    monkeypatch.setattr(c, "_native_gate_identity", lambda *args: ("offline-generated-invoker", "offline-generated-application"))
+    if failure == "canonical":
+        # REAL canonical evaluator, synthetic HTTP and authority only. This
+        # catches config:operator_credential without a passing-report mock.
+        from tests.e2e import test_live_e2e_gate_dev_admin as f
+        raw, events, user = recovery_consumer_inputs()
+        for module, name, value in ((f, "USERNAME", inputs.bundle.username),
+                (f, "PASSWORD", inputs.bundle.password), (f, "ADMIN_ACCOUNT_ID", inputs.bundle.account_id),
+                (f, "ADMIN_TENANT_ID", inputs.bundle.tenant_id), (f.base, "WEB_URL", c.WEB_ORIGIN),
+                (f.base, "API_URL", c.API_ORIGIN), (f.base, "EXPECTED_SHA", SHA),
+                (f.base, "CORRELATION_ID", "corr-native-consumer-123")):
+            monkeypatch.setattr(module, name, value)
+        api = f.base.FakeHttp(f.api_routes())
+        api._bearer_token = "offline-generated-application"
+        web = f.AdminWeb(f.web_routes(**{
+            "GET /api/v1/operator/users [session]": f.base.response(200, {"users": [user]}),
+            "GET /api/v1/operator/users/audit-trail [session]": f.base.response(200, {"events": events}),
+            "GET /api/v1/auth/principal [session]": f.base.response(200, {
+                "account_id": raw["account_id"], "tenant_id": raw["tenant_id"], "roles": ["platform_admin"]}),
+        }))
+        def api_client(*args, **kwargs):
+            assert kwargs["bearer_token"] == api._bearer_token
+            assert kwargs["transport_token"] == "offline-generated-invoker"
+            return api
+        monkeypatch.setattr(c.gate, "UrllibHttpClient", api_client)
+        monkeypatch.setattr(c.gate, "_web_client", lambda *args: web)
+    else:
+        monkeypatch.setattr(c.gate, "evaluate_gate", mocked_gate)
+    if failure and failure != "canonical":
         with pytest.raises(c.ConsumerRefused):
             c.consume(inputs=inputs, environment=env, sha=SHA, digest=DIGEST, pull_number=1, reviewed_head=SHA)
         assert calls[-1] == failure
     else:
         result = c.consume(inputs=inputs, environment=env, sha=SHA, digest=DIGEST, pull_number=1, reviewed_head=SHA)
         assert result["gate_passed"] is True and result["full_product_acceptance"] is False
-        assert calls == ["oidc", "source", "admission", "gate"]
+        assert calls == (["oidc", "source", "admission"] if failure == "canonical" else
+                         ["oidc", "source", "admission", "gate"])
     assert "GH_TOKEN" not in env
 
 
@@ -361,13 +392,17 @@ def test_native_oidc_documents_have_real_stream_bounds(body, status, mime):
                 c._bounded_json(client, "https://offline.invalid")
 
 
-@pytest.mark.parametrize("failure", [None, "provider", "sa", "sts", "iam", "oidc-host"])
+@pytest.mark.parametrize("failure", [None, "provider", "sa", "sts", "iam", "oidc-host",
+    "missing-smoke", "other-project", "deployer-as-smoke", "audience", "application-denied", "application-empty",
+    "application-header", "application-oversized"])
 def test_existing_google_wif_is_memory_only_and_exact_identity(monkeypatch, failure):
     from urllib.parse import parse_qs
 
     import httpx
     inputs = c.take_native_inputs(raw_inputs(), masker=lambda _: None)
-    env = {"GOOGLE_WIF_PROVIDER": c.WIF_PROVIDER, "GOOGLE_SERVICE_ACCOUNT": c.GOOGLE_SERVICE_ACCOUNT}
+    smoke = "offline-smoke@odayplus-runtime-20260825.iam.gserviceaccount.com"
+    env = {"GOOGLE_WIF_PROVIDER": c.WIF_PROVIDER, "GOOGLE_SERVICE_ACCOUNT": c.GOOGLE_SERVICE_ACCOUNT,
+           "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT": smoke, "ODP_AUTH_AUDIENCES": c.API_ORIGIN + ",other-audience"}
     calls = []
     if failure == "provider":
         env["GOOGLE_WIF_PROVIDER"] = "projects/other/provider"
@@ -375,6 +410,14 @@ def test_existing_google_wif_is_memory_only_and_exact_identity(monkeypatch, fail
         env["GOOGLE_SERVICE_ACCOUNT"] = "other@other.iam.gserviceaccount.com"
     if failure == "oidc-host":
         inputs.oidc_request_url = "https://untrusted.invalid/oidc"
+    if failure == "missing-smoke":
+        env.pop("ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT")
+    if failure == "other-project":
+        env["ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT"] = "offline-smoke@other.iam.gserviceaccount.com"
+    if failure == "deployer-as-smoke":
+        env["ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT"] = c.GOOGLE_SERVICE_ACCOUNT
+    if failure == "audience":
+        env["ODP_AUTH_AUDIENCES"] = "https://untrusted.invalid," + c.API_ORIGIN
 
     def responder(request):
         calls.append(str(request.url).split("?")[0])
@@ -390,22 +433,26 @@ def test_existing_google_wif_is_memory_only_and_exact_identity(monkeypatch, fail
             if failure == "sts":
                 return httpx.Response(403, json={"error": "synthetic denied"})
             return httpx.Response(200, json={"access_token": "offline-federated-token", "token_type": "Bearer", "expires_in": 300})
-        assert str(request.url) == f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{c.GOOGLE_SERVICE_ACCOUNT}:generateIdToken"
         assert request.headers["Authorization"] == "Bearer offline-federated-token"
         assert json.loads(request.content) == {"audience": c.API_ORIGIN, "includeEmail": True}
-        return httpx.Response(403 if failure == "iam" else 200, json={"token": "offline-generated-invoker"})
+        if str(request.url) == f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{c.GOOGLE_SERVICE_ACCOUNT}:generateIdToken":
+            return httpx.Response(403 if failure == "iam" else 200, json={"token": "offline-generated-invoker"})
+        assert str(request.url) == f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{smoke}:generateIdToken"
+        application = {"application-empty": "", "application-header": "private\r\nmarker",
+                       "application-oversized": "x" * 16_385}.get(failure, "offline-generated-application")
+        return httpx.Response(403 if failure == "application-denied" else 200, json={"token": application})
 
     real_client = httpx.Client
     monkeypatch.setattr(httpx, "Client", lambda **kwargs: real_client(transport=httpx.MockTransport(responder), **kwargs))
     monkeypatch.setattr(c, "_mask", lambda _: None)
     if failure:
         with pytest.raises(c.ConsumerRefused):
-            c._native_transport_identity(inputs, env)
-        if failure in {"provider", "sa", "oidc-host"}:
+            c._native_gate_identity(inputs, env)
+        if failure in {"provider", "sa", "oidc-host", "missing-smoke", "other-project", "deployer-as-smoke", "audience"}:
             assert not calls
     else:
-        assert c._native_transport_identity(inputs, env) == "offline-generated-invoker"
-        assert len(calls) == 3
+        assert c._native_gate_identity(inputs, env) == ("offline-generated-invoker", "offline-generated-application")
+        assert len(calls) == 4
     assert not set(c.SECRET_INPUTS + c.LEGACY_INPUTS) & set(env)
 
 
