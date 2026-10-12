@@ -208,6 +208,8 @@ else:
         require_durable_commands: bool | None = None,
         production_optimizer: PriceOpsProductionOptimizer | None = None,
         runtime_mode: str | None = None,
+        store_repository: Any = None,
+        brand_repository: Any = None,
     ) -> APIRouter:
         from apps.api.app.routes._common import runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
@@ -238,6 +240,13 @@ else:
             composition_error = exc
             service = None
 
+        if production_required and (
+            not callable(getattr(store_repository, "get_store", None))
+            or not callable(getattr(brand_repository, "get_brand", None))
+        ):
+            composition_error = ProductionExecutionConfigurationError(
+                "PriceOps production requires canonical store and brand repositories"
+            )
         require_runtime_binding = runtime_binding_guard(composition_error)
 
         router = APIRouter(
@@ -282,7 +291,7 @@ else:
                         },
                     )
                 return str(value)
-            if durable_commands_required:
+            if durable_commands_required or production_required:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail={
@@ -292,33 +301,66 @@ else:
                 )
             return "__local__"
 
-        def items_in_scope(items: Any, principal: Any) -> bool:
+        def canonical_store(item: Any, expected_tenant: str | None) -> Any:
+            if store_repository is None and brand_repository is None and not production_required:
+                return None
+            try:
+                store = store_repository.get_store(item.store_id)
+                if store is None or not store.is_current or store.tenant_id != expected_tenant:
+                    return None
+                brand = brand_repository.get_brand(store.brand_id)
+                if brand is None or brand.tenant_id != expected_tenant:
+                    return None
+                return store
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail={
+                    "code": "PRICEOPS_STORE_BINDING_UNAVAILABLE",
+                    "message": "Canonical pricing ownership is unavailable",
+                }) from exc
+
+        def items_in_scope(items: Any, principal: Any, expected_tenant: str | None) -> bool:
             scope = principal.scope
-            return (
+            if not (
                 scope.permits_module("priceops")
                 and scope.permits_classification(DataClassification.CONFIDENTIAL)
                 and scope.permits_assigned_area(None)
                 and scope.permits_heat_zone(None)
-            ) and all(
-                scope.permits_store(item.store_id)
-                and scope.permits_brand(item.brand_id)
-                # Region-restricted callers need a canonical region binding.
-                and scope.permits_region(None)
-                for item in items
-            )
+            ):
+                return False
+            for item in items:
+                store = canonical_store(item, expected_tenant)
+                canonical_required = store_repository is not None or brand_repository is not None or production_required
+                if canonical_required and (
+                    store is None or item.brand_id != store.brand_id
+                ):
+                    return False
+                brand_id = store.brand_id if store is not None else item.brand_id
+                region_id = (store.region_code or None) if store is not None else None
+                if not (scope.permits_store(item.store_id)
+                        and scope.permits_brand(brand_id)
+                        and scope.permits_region(region_id)):
+                    return False
+            return True
 
         def plan_in_scope(plan: Any, principal: Any) -> bool:
             scope = principal.scope
             if scope.tenant_id and plan.tenant_id != scope.tenant_id:
                 return False
-            if durable_commands_required and not scope.tenant_id:
+            if (durable_commands_required or production_required) and not scope.tenant_id:
                 return False
-            return items_in_scope(plan.items, principal)
+            return items_in_scope(plan.items, principal, plan.tenant_id)
 
         def require_proposal_scope(body: PriceOpsPlanPayload, request: Request) -> None:
             principal = request.state.operator_principal
             tenant_id(request, body.tenant_id)
-            if not items_in_scope(body.items, principal):
+            if store_repository is not None or brand_repository is not None or production_required:
+                for item in body.items:
+                    store = canonical_store(item, body.tenant_id)
+                    if store is None or (item.brand_id and item.brand_id != store.brand_id):
+                        raise HTTPException(status_code=403, detail="pricing proposal ownership mismatch")
+                    # Persist the actual master-data brand, not a client claim.
+                    item.brand_id = store.brand_id
+            if not items_in_scope(body.items, principal, body.tenant_id):
                 raise HTTPException(status_code=403, detail="pricing proposal outside caller scope")
             if body.plan_id is not None:
                 existing = service.repository.get_plan(body.plan_id)
@@ -340,6 +382,16 @@ else:
                 return principal
 
             return dependency
+
+        def require_independent_approval(plan_id: str, decision: str, request: Request) -> None:
+            blockers = service.approval_actor_blockers(
+                plan_id, request.state.operator_principal.subject_id, decision=decision,
+            )
+            if blockers:
+                raise HTTPException(status_code=403, detail={
+                    "code": "PRICEOPS_APPROVAL_SEPARATION_REQUIRED",
+                    "message": "; ".join(blockers),
+                })
 
         @router.post("/plans", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_plan_permission(Action.CREATE))])
         def create_plan(
@@ -366,6 +418,7 @@ else:
                         correlation_id=request.state.correlation_id,
                         plan_id=body.plan_id,
                         created_at=_parse_time(body.created_at),
+                        created_by=request.state.operator_principal.subject_id,
                     )
                 except PlanAlreadyExistsError as exc:
                     raise HTTPException(status_code=409, detail="plan id already exists") from exc
@@ -412,6 +465,7 @@ else:
                             correlation_id=request.state.correlation_id,
                             items=[_item_from_payload(item) for item in plan.items],
                             plan_id=plan.plan_id,
+                            created_by=request.state.operator_principal.subject_id,
                             exploration_gate_id=plan.exploration_gate_id,
                             exploration_algorithm=plan.exploration_algorithm,
                             exploration_seed=plan.exploration_seed,
@@ -551,6 +605,10 @@ else:
                 "simulate": rbac_allows(principal, "priceops", Action.EXECUTE),
                 "writeback": rbac_allows(principal, "priceops", Action.APPROVE),
             }
+            actor_blockers = service.approval_actor_blockers(plan_id, principal.subject_id)
+            payload["approval_actor_blockers"] = actor_blockers
+            payload["created_by"] = getattr(service.repository.get_plan(plan_id), "created_by", None)
+            payload["is_approvable"] = payload["is_approvable"] and not actor_blockers
             payload["actor_id"] = principal.subject_id
             payload["policy_version"] = PRICEOPS_POLICY_VERSION
             payload["solver_version"] = service.repository.get_optimization(plan_id).solver_version
@@ -614,6 +672,7 @@ else:
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
+            require_independent_approval(plan_id, body.decision, request)
             return _run(
                 lambda: service.writeback_decision(
                     plan_id,
@@ -696,6 +755,7 @@ else:
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
+            require_independent_approval(plan_id, body.decision, request)
             return _run(
                 lambda: service.approve(
                     plan_id,

@@ -26,7 +26,7 @@ from tests.integration.test_priceops_command_authority import proposal
 HEADERS = {"x-subject-id": "durable-pricer", "x-roles": "pricing_manager", "x-tenant-id": "tenant-a", "x-correlation-id": "corr-durable-command"}
 
 
-def http_context(engine):
+def http_context(engine, *, store_repository=None, brand_repository=None):
     repository = DurablePriceOpsRepository(SqliteDocumentStore(engine))
     audit = DurableAuditLog(engine)
     app = FastAPI()
@@ -38,6 +38,8 @@ def http_context(engine):
         return await call_next(request)
 
     app.include_router(create_priceops_router(repository=repository, audit_log=audit,
+                                             store_repository=store_repository,
+                                             brand_repository=brand_repository,
                                              job_queue=DurableJobQueue(engine),
                                              require_durable_commands=True, runtime_mode="poc"))
     return TestClient(app, headers=HEADERS), repository, audit
@@ -59,8 +61,8 @@ def database(request, tmp_path):
     yield open_engine, env
 
 
-def seed(client):
-    created = client.post("/priceops/plans", headers={"Idempotency-Key": "durable-create"}, json=proposal("durable-plan"))
+def seed(client, *, plan_proposal=None):
+    created = client.post("/priceops/plans", headers={"Idempotency-Key": "durable-create"}, json=plan_proposal or proposal("durable-plan"))
     assert created.status_code == 201, created.text
     for suffix in ("simulate", "optimize"):
         response = client.post(f"/priceops/plans/durable-plan/{suffix}", json={"reason": "synthetic pricing preparation"})
@@ -177,5 +179,65 @@ def test_sqlite_bootstrap_rolls_back_and_restores_connection_settings(tmp_path, 
         assert reopened.query_one("SELECT value FROM bootstrap_probe")["value"] == "original"
         assert reopened.query_one("PRAGMA foreign_keys")["foreign_keys"] == 1
         assert reopened.query_one("PRAGMA busy_timeout")["timeout"] == 5000
+    finally:
+        reopened.close()
+
+
+
+def test_canonical_ownership_and_creator_survive_reopen(database, request):
+    from dataclasses import replace
+
+    from shared.domain.models import AddressLocation, Brand, Store, Tenant
+    from shared.infrastructure.persistence.repositories import (
+        DurableAddressLocationRepository,
+        DurableBrandRepository,
+        DurableStoreRepository,
+        DurableTenantRepository,
+    )
+
+    open_engine, env = database
+    if env["PRICEOPS_TEST_BACKEND"] == "postgresql":
+        from tests.integration.test_postgresql_persistence import _provision_canonical_schema
+        _provision_canonical_schema(request.getfixturevalue("intake_blank_db"))
+    tenant_id = "11111111-1111-4111-8111-111111111111"
+    brand_id = "22222222-2222-4222-8222-222222222222"
+    store_id = "33333333-3333-4333-8333-333333333333"
+    address_id = "44444444-4444-4444-8444-444444444444"
+    new_brand_id = "55555555-5555-4555-8555-555555555555"
+    engine = open_engine()
+    DurableTenantRepository(engine).save_tenant(Tenant(tenant_id=tenant_id, tenant_name="Synthetic pricing tenant"))
+    stores = DurableStoreRepository(engine)
+    brands = DurableBrandRepository(engine)
+    brands.save_brand(Brand(brand_id=brand_id, tenant_id=tenant_id, brand_code="synthetic-pricing", brand_name="Synthetic brand"))
+    DurableAddressLocationRepository(engine).save_address(AddressLocation(address_id=address_id, tenant_id=tenant_id, raw_address="Synthetic address", normalized_address="Synthetic address"))
+    stores.save_store(Store(store_id=store_id, tenant_id=tenant_id, brand_id=brand_id, address_id=address_id, store_name="Synthetic store", region_code="north"))
+    client, repository, audit = http_context(engine, store_repository=stores, brand_repository=brands)
+    client.headers.update({"x-tenant-id": tenant_id})
+    plan_proposal = proposal("durable-plan", store_id=store_id, brand_id=brand_id)
+    plan_proposal["tenant_id"] = tenant_id
+    seed(client, plan_proposal=plan_proposal)
+    assert repository.get_plan("durable-plan").created_by == "durable-pricer"
+    assert client.post("/priceops/plans/durable-plan/submit", json={"reason": "independent review"}).status_code == 200
+    engine.close()
+    reopened = open_engine()
+    try:
+        stores = DurableStoreRepository(reopened)
+        brands = DurableBrandRepository(reopened)
+        client, repository, audit = http_context(reopened, store_repository=stores, brand_repository=brands)
+        client.headers.update({"x-tenant-id": tenant_id})
+        own = client.get("/priceops/plans/durable-plan/comparison").json()
+        assert own["created_by"] == "durable-pricer" and own["is_approvable"] is False
+        body = {"actor_id": "forged-independent-reviewer", "decision": "approved", "reason": "authored independent approval"}
+        assert client.post("/priceops/plans/durable-plan/approve", json=body).status_code == 403
+        assert repository.list_approvals("durable-plan") == []
+        reviewer = {"x-subject-id": "independent-durable-pricer", "Idempotency-Key": "independent-sql-approval"}
+        allowed = client.post("/priceops/plans/durable-plan/approve", headers=reviewer, json=body)
+        assert allowed.status_code == 200, allowed.text
+        assert repository.list_approvals("durable-plan")[0].actor_id == "independent-durable-pricer"
+        brands.save_brand(Brand(brand_id=new_brand_id, tenant_id=tenant_id, brand_code="new-synthetic-brand", brand_name="New synthetic brand"))
+        stores.save_store(replace(stores.get_store(store_id), brand_id=new_brand_id))
+        assert client.get("/priceops/plans/durable-plan").status_code == 404
+        assert client.post("/priceops/plans/durable-plan/approve", headers=reviewer, json=body).status_code == 404
+        assert len(repository.list_approvals("durable-plan")) == 1
     finally:
         reopened.close()

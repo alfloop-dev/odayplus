@@ -97,12 +97,18 @@ export function PriceOpsWorkbench({ recommendation: rec, segmentName }: { recomm
       </div>
       <div className={g.priceDecisionControls}><h5>決策回寫 (Idempotent Decision Writeback)</h5>
         <div className={g.priceWorkbenchInputs}>
-          <label>決策 <select value={decision} onChange={event => { setDecision(event.target.value as PriceDecision); setRecord(null); }}>
+          <label>決策 <select aria-label="決策" value={decision} onChange={event => { setDecision(event.target.value as PriceDecision); setRecord(null); }}>
             <option value="approved">核准最佳化情境 (Approved)</option><option value="rejected">退回情境 (Rejected)</option><option value="scenario_selected">選擇特定情境 (Scenario Selected)</option>
           </select></label>
           <label>決策原因 <input value={reason} onChange={event => { setReason(event.target.value); setRecord(null); }} placeholder="輸入決策原因..." /></label>
           <button type="button" data-testid="priceops-writeback-btn" disabled={!canWrite} onClick={() => void writeback()} className={g.segDraftBtn}>寫回決策 (Writeback)</button>
         </div>
+        {decision === "approved" && comparison?.approval_actor_blockers?.length ?
+          <p role="status">核准受限：{comparison.approval_actor_blockers.map(reason =>
+            reason === "plan creator cannot approve their own pricing plan"
+              ? "建立者不能核准自己的調價計畫，請交由獨立核准者處理。"
+              : "無法確認獨立核准條件，暫時不允許核准。"
+          ).join("；")}</p> : null}
         {decision === "approved" && comparison?.plan_status !== "pending_approval" ? <p>計畫須先完成送審，才能核准；選擇情境不代表核准或套用價格。</p> : null}
       </div>
     </fieldset>

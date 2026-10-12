@@ -11,14 +11,17 @@ const comparison = { plan_id: "plan-a", plan_status: "pending_approval", is_feas
   actor_id: "verified-pricer", policy_version: "actual-policy", solver_version: "actual-solver", command_permissions: { simulate: true, writeback: true },
   items: [{ item_id: "item-a", current_price: 80, candidate_price: 85, baseline_simulation: sim(80), candidate_simulation: sim(85), constraint_status: "PASS", expected_gross_margin_change: 17 }] };
 function reply(value: unknown) { return { ok: true, json: async () => value }; }
-function setup(options: { deny?: boolean; mismatch?: string; uncertainOnce?: boolean; pauseWrite?: boolean } = {}) {
+function setup(options: { deny?: boolean; mismatch?: string; uncertainOnce?: boolean; pauseWrite?: boolean; ownPlan?: boolean; malformedBlockers?: boolean } = {}) {
   const requests: { url: string; init: RequestInit; body: Record<string, unknown> }[] = [];
   let release: (() => void) | undefined;
   let writes = 0;
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
     const body = init.body ? JSON.parse(init.body as string) : {};
     requests.push({ url, init, body });
-    if (url.endsWith("/comparison")) return reply({ ...comparison, command_permissions: options.deny ? { simulate: false, writeback: false } : comparison.command_permissions });
+    if (url.endsWith("/comparison")) return reply({ ...comparison,
+      ...(options.ownPlan ? { created_by: "verified-pricer", is_approvable: false, approval_actor_blockers: ["plan creator cannot approve their own pricing plan"] } : {}),
+      ...(options.malformedBlockers ? { approval_actor_blockers: "malformed" } : {}),
+      command_permissions: options.deny ? { simulate: false, writeback: false } : comparison.command_permissions });
     const headers = init.headers as Record<string, string>;
     if (url.endsWith("/simulate-scenario")) return reply({ scenario_id: "retained-scenario", plan_id: "plan-a", is_feasible: true,
       items: [{ item_id: "item-a", candidate_price: body.candidate_prices["item-a"], baseline_simulation: sim(80), candidate_simulation: sim(body.candidate_prices["item-a"]), expected_gross_margin_change: 17, is_feasible: true }],
@@ -79,6 +82,22 @@ describe("PriceOps real command acknowledgments", () => {
     fireEvent.click(screen.getByTestId("priceops-writeback-btn"));
     await screen.findByText(/尚未確認決策寫回/); expect(screen.queryByTestId("priceops-audit-status")).not.toBeInTheDocument();
     view.unmount();
+  });
+  it("shows independent-review guidance and prevents own-plan approval without preventing scenario selection", async () => {
+    const { requests } = setup({ ownPlan: true }); await prepare();
+    fireEvent.change(screen.getByLabelText("決策"), { target: { value: "approved" } });
+    expect(screen.getByTestId("priceops-writeback-btn")).toBeDisabled();
+    expect(screen.getByTestId("priceops-scenario-workbench")).toHaveTextContent("建立者不能核准自己的調價計畫");
+    fireEvent.click(screen.getByTestId("priceops-writeback-btn"));
+    expect(requests.filter(row => row.url.endsWith("decision-writeback"))).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("決策"), { target: { value: "scenario_selected" } });
+    expect(screen.getByTestId("priceops-writeback-btn")).toBeEnabled();
+  });
+  it("refuses malformed approval-context data instead of rendering an enabled approval", async () => {
+    setup({ malformedBlockers: true });
+    await screen.findByText(/定價計畫或模擬資料未取得/);
+    expect(screen.getByTestId("priceops-writeback-btn")).toBeDisabled();
+    expect(screen.getByTestId("priceops-simulate-btn")).toBeDisabled();
   });
   it("renders a read-only account without enabled business commands", async () => {
     const { requests } = setup({ deny: true });

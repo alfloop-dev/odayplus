@@ -9,3 +9,6 @@ This project reproduced the failure with its frozen CVXPY 1.9.2 / highspy 1.15.1
 CVXPY's optional GLOP/PDLP interfaces report that OR-Tools 9.15 is outside their supported range. The production NetPlan executor uses OR-Tools CP-SAT and PriceOps retains CVXPY/HiGHS; this profile does not claim CVXPY GLOP/PDLP support. Do not suppress native-load errors or rely on a preferred import order. Any solver dependency upgrade must repeat both-order execution and the production business-model tests before changing the prepared profile.
 
 This is implementation and synthetic verification evidence. Production model/source/PIT admission, independent review, the release-authority register and live runtime acceptance are separate requirements and remain mandatory. No production dependency deployment or release approval is performed by this preparation.
+
+
+The former runtime test that required both same-process orders to fail was stale after correcting the dependency profile. It now requires real successful solver statuses/objectives in both orders. The default process-isolation, crash, timeout and cleanup tests remain mandatory; this is not a change to the runtime isolation policy.

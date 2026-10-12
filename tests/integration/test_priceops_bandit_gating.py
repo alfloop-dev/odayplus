@@ -446,7 +446,7 @@ def test_production_required_with_exploration() -> None:
     # 1. Without source snapshot lineage, production optimization must fail closed
     item_no_lineage = _make_item()
     plan_no_lineage = prod_service.create_plan(
-        tenant_id=TENANT_ID, items=[item_no_lineage], correlation_id="corr-p1"
+        tenant_id=TENANT_ID, items=[item_no_lineage], correlation_id="corr-p1", created_by="synthetic-producer"
     )
     prod_service.simulate(plan_no_lineage.plan_id)
     with pytest.raises(PriceOpsProductionExecutionError, match="lineage"):
@@ -477,7 +477,7 @@ def test_production_required_with_exploration() -> None:
         source_snapshot_ids=("snap-lineage-001",),
     )
     plan_with_lineage = prod_service.create_plan(
-        tenant_id=TENANT_ID, items=[item_with_lineage], correlation_id="corr-p2"
+        tenant_id=TENANT_ID, items=[item_with_lineage], correlation_id="corr-p2", created_by="synthetic-producer"
     )
     prod_service.simulate(plan_with_lineage.plan_id)
     opt = prod_service.optimize(

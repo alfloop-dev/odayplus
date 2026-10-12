@@ -118,6 +118,7 @@ def test_decision_writeback_contract_idempotency_and_fail_closed() -> None:
     # Attempt decision writeback without simulation/optimization -> fails closed (422)
     resp_fail_closed = client.post(
         f"/api/v1/priceops/plans/{plan_id}/decision-writeback",
+        headers=auth_headers(Role.PRICING_MANAGER, subject="independent-pricer"),
         json={
             "actor": "pricing-officer",
             "decision": "approved",
@@ -140,7 +141,7 @@ def test_decision_writeback_contract_idempotency_and_fail_closed() -> None:
     assert submitted.status_code == status.HTTP_200_OK
 
     # 3. Perform decision writeback with Idempotency-Key
-    headers_idem = {**PRICEOPS_HEADERS, "Idempotency-Key": "wb-idem-key-888"}
+    headers_idem = {**auth_headers(Role.PRICING_MANAGER, subject="independent-pricer"), "Idempotency-Key": "wb-idem-key-888"}
     resp_wb1 = client.post(
         f"/api/v1/priceops/plans/{plan_id}/decision-writeback",
         json={
@@ -153,7 +154,7 @@ def test_decision_writeback_contract_idempotency_and_fail_closed() -> None:
     assert resp_wb1.status_code == status.HTTP_200_OK
     data1 = resp_wb1.json()
     assert data1["decision"] == "approved"
-    assert data1["actor"] == PRICEOPS_HEADERS["x-subject-id"]
+    assert data1["actor"] == "independent-pricer"
     assert "decision_id" in data1
 
     # Replaying decision writeback returns identical response

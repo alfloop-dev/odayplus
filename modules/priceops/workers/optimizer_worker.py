@@ -28,6 +28,7 @@ class PlanRequest:
     correlation_id: str
     items: Sequence[PricingPlanItem]
     plan_id: str | None = None
+    created_by: str | None = None
     exploration_gate_id: str | None = None
     exploration_algorithm: str = "THOMPSON_SAMPLING"
     exploration_seed: int | None = None
@@ -92,6 +93,7 @@ class PriceOpsOptimizerWorker:
                 items=request.items,
                 correlation_id=request.correlation_id,
                 plan_id=request.plan_id,
+                created_by=request.created_by,
             )
             self.service.simulate(plan.plan_id, generated_at=moment)
             optimization = self.service.optimize(

@@ -2046,6 +2046,8 @@ else:
             api,
             create_priceops_router(
                 repository=price_repo,
+                store_repository=bundle.store_repository if require_live_data else None,
+                brand_repository=bundle.brand_repository if require_live_data else None,
                 audit_log=audit_log,
                 job_queue=job_queue,
                 require_durable_commands=require_live_data,

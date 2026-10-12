@@ -168,13 +168,17 @@ class PriceOpsService:
         correlation_id: str,
         plan_id: str | None = None,
         created_at: datetime | None = None,
+        created_by: str | None = None,
     ) -> PricingPlan:
+        if self.production_required and not (created_by and created_by.strip()):
+            raise ValueError("production pricing plans require a verified creator")
         plan = PricingPlan.create(
             tenant_id=tenant_id,
             items=tuple(items),
             correlation_id=correlation_id,
             plan_id=plan_id,
             created_at=created_at,
+            created_by=created_by,
         )
         return self.repository.insert_plan(plan)
 
@@ -435,6 +439,17 @@ class PriceOpsService:
             occurred_at=occurred_at,
         )
 
+    def approval_actor_blockers(self, plan_id: str, actor_id: str, *, decision: str = "approved") -> list[str]:
+        plan = self._require_plan(plan_id)
+        if _normalize_approval_decision(decision) != "approved":
+            return []
+        creator = getattr(plan, "created_by", None)
+        if creator and creator == actor_id:
+            return ["plan creator cannot approve their own pricing plan"]
+        if self.production_required and not creator:
+            return ["verified plan creator is missing; independent approval cannot be established"]
+        return []
+
     def approve(
         self,
         plan_id: str,
@@ -446,6 +461,14 @@ class PriceOpsService:
     ) -> ApprovalRecord:
         plan = self._require_plan(plan_id)
         normalized_decision = _normalize_approval_decision(decision)
+        if normalized_decision not in {"approved", "rejected"}:
+            raise ApprovalBlockedError("unsupported pricing approval decision")
+        if not reason.strip():
+            raise ApprovalBlockedError("decision reason is required")
+        if normalized_decision == "approved":
+            actor_blockers = self.approval_actor_blockers(plan_id, actor_id)
+            if actor_blockers:
+                raise ApprovalBlockedError("; ".join(actor_blockers))
         target = (
             PlanStatus.APPROVED_FOR_PILOT if normalized_decision == "approved" else PlanStatus.STOP
         )

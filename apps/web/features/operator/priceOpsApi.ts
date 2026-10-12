@@ -11,6 +11,7 @@ export type PriceComparison = {
   plan_id: string; plan_status: string; items: PriceComparisonItem[];
   is_approvable: boolean; is_feasible: boolean; rollback_ready: boolean;
   actor_id: string; policy_version: string; solver_version: string;
+  created_by?: string | null; approval_actor_blockers?: string[];
   command_permissions: { simulate: boolean; writeback: boolean };
 };
 export type PriceScenario = {
@@ -56,6 +57,8 @@ export async function fetchPriceComparison(planId: string, itemId: string): Prom
       !value.items.every(item => simulation(item.baseline_simulation) && simulation(item.candidate_simulation)) ||
       !nonempty(value.actor_id) || !nonempty(value.policy_version) || !nonempty(value.solver_version) ||
       typeof value.command_permissions?.simulate !== "boolean" || typeof value.command_permissions?.writeback !== "boolean") return null;
+  if (value.approval_actor_blockers !== undefined &&
+      (!Array.isArray(value.approval_actor_blockers) || value.approval_actor_blockers.some(reason => typeof reason !== "string"))) return null;
   return value;
 }
 export async function simulatePriceScenario(planId: string, itemId: string, candidatePrice: number, intent: PriceIntent): Promise<PriceScenario | null> {
