@@ -949,6 +949,28 @@
   inset: 0;
 }
 
+.modalBackdrop.outcomeBackdrop { padding: 20px; z-index: 100; place-items: center; }
+.outcomeDialog {
+  width: min(540px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(12, 18, 44, .3);
+}
+.outcomeDialogHeader { display: flex; align-items: center; gap: 8px; padding: 16px 18px 0; }
+.outcomeDialogHeader h2 { margin: 0; font-size: 15px; color: #1c2333; }
+.outcomeDialog .mono, .outcomeDialog .actionNote { color: #536079; }
+.outcomeDialog .outcomeSuccess { color: #176740; }
+.outcomeDialogBody { display: flex; flex-direction: column; gap: 13px; padding: 14px 18px 4px; }
+.outcomeMetrics { width: 100%; border-collapse: collapse; font-size: 12px; }
+.outcomeMetrics th, .outcomeMetrics td { padding: 8px 12px; border: 1px solid #e3e8f1; text-align: left; overflow-wrap: anywhere; }
+.outcomeMetrics thead { background: #f8fafd; color: #536079; }
+.outcomeReason { display: flex; flex-direction: column; gap: 5px; color: #536079; font-size: 11px; font-weight: 700; }
+.outcomeReason textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid #b5c0d3; border-radius: 8px; padding: 8px 10px; background: #fbfcfe; color: #1c2333; font-family: inherit; font-size: 12.5px; line-height: 1.5; }
+.outcomeReason textarea:focus-visible { outline: 2px solid #2e3a97; outline-offset: 2px; }
+.outcomeDialogActions { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px 16px; }
+
 .builderModal {
   position: relative;
   z-index: 1;

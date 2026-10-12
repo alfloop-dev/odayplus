@@ -213,6 +213,8 @@ test("Ineffective Growth Action is blocked from direct closeout", async ({
   await expect(
     closeoutPanel.getByTestId("growth-closeout-gate"),
   ).toHaveAttribute("data-can-close", "false");
+  await closeoutPanel.getByTestId("growth-outcome-open").click();
+  await page.getByLabel("判斷理由（寫入 Decision Log）").fill("合成覆核：目前仍需執行 Rollback，不得直接結案。");
   await expect(closeoutPanel.getByTestId("growth-close-button")).toBeDisabled();
   await expect(
     closeoutPanel.getByTestId("growth-required-action"),
@@ -232,6 +234,8 @@ test("Inconclusive Growth Action is blocked and shows required action", async ({
   await expect(
     closeoutPanel.getByTestId("growth-closeout-gate"),
   ).toHaveAttribute("data-can-close", "false");
+  await closeoutPanel.getByTestId("growth-outcome-open").click();
+  await page.getByLabel("判斷理由（寫入 Decision Log）").fill("合成覆核：目前證據不足，仍不得直接結案。");
   await expect(closeoutPanel.getByTestId("growth-close-button")).toBeDisabled();
   await expect(
     closeoutPanel.getByTestId("growth-required-action"),
@@ -255,7 +259,20 @@ test("Effective Growth Action can be closed and emits console audit log", async 
   await expect(
     closeoutPanel.getByTestId("growth-closeout-gate"),
   ).toHaveAttribute("data-can-close", "true");
+  let writes = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/growth/actions/growth-7001/outcome")) writes += 1;
+  });
+  const trigger = closeoutPanel.getByTestId("growth-outcome-open");
+  await trigger.focus();
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "活動成效判斷" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("判斷理由（寫入 Decision Log）")).toBeFocused();
   const closeButton = closeoutPanel.getByTestId("growth-close-button");
+  await expect(closeButton).toBeDisabled();
+  expect(writes).toBe(0);
+  await dialog.getByLabel("判斷理由（寫入 Decision Log）").fill("已核對對照組、觀測增量與 L3 證據，確認活動成效。");
   await expect(closeButton).toBeEnabled();
 
   const consoleLogs: string[] = [];
@@ -273,6 +290,9 @@ test("Effective Growth Action can be closed and emits console audit log", async 
   expect(parsed.action).toBe("APPROVE_CLOSEOUT");
   expect(parsed.itemId).toBe("growth-7001");
   expect(parsed.decisionId).toBe("dec-growth-7001");
+  expect(writes).toBe(1);
+  await dialog.getByRole("button", { name: "關閉活動成效判斷" }).click();
+  await expect(trigger).toBeFocused();
 });
 
 // ---------------------------------------------------------------------------

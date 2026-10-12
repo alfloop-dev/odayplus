@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@oday-plus/ui";
 import { CAUSAL_MIN_EVIDENCE, dataStatusTone, meetsCausalThreshold } from "@oday-plus/domain-types";
@@ -17,6 +17,7 @@ import {
   GROWTH_ENTRY_CARDS,
   GROWTH_KIND_PRESETS,
   growthKindLabel,
+  newIdempotencyKey,
   outcomeLabel,
   submitGrowthForApproval,
   transitionGrowthAction,
@@ -40,6 +41,7 @@ import {
   type OperatorDataAvailability,
 } from "./operatorDataMode";
 import g from "./growth.module.css";
+import { useModalDialogBehavior } from "./network/useModalDialogBehavior";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -1115,7 +1117,7 @@ function GrowthActionDetail({
         />
       ) : null}
       {["OUTCOME_READY", "INEFFECTIVE", "CLOSED"].includes(status) ? (
-        <CloseoutPanel item={currentItem} gate={gate} href={href} />
+        <CloseoutPanel key={currentItem.id} item={currentItem} gate={gate} href={href} />
       ) : null}
 
       <div data-testid="growth-item-audit">
@@ -1284,54 +1286,60 @@ function CloseoutPanel({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApproved, setIsApproved] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [rationale, setRationale] = useState("");
+  const intent = useRef<{ signature: string; key: string } | null>(null);
   const blockClass = gate.canClose ? g.outcomeSuccess : g.outcomeWarning;
 
   const handleApprove = async () => {
-    if (!gate.canClose || isSubmitting) return;
+    if (!gate.canClose || isSubmitting || isApproved || !rationale.trim()) return;
     setIsSubmitting(true);
     setApiError(null);
 
-    // Write outcome to API with Idempotency-Key and X-Correlation-Id
-    const result = await writeGrowthOutcome({
+    const request = {
       actionId: item.id,
       outcome: gate.outcome,
       requiredAction: gate.requiredAction,
       observedLift: item.observedLift,
       evidenceLevel: item.evidenceLevel,
-      rationale: item.rationale,
-    });
-
-    // Console logging is diagnostic only and never substitutes for a durable write.
-    const auditPayload = {
-      action: "APPROVE_CLOSEOUT",
-      itemId: item.id,
-      decisionId: item.audit.decisionId,
-      outcome: gate.outcome,
-      requiredAction: gate.requiredAction,
-      apiResult: result ? { correlationId: result.correlationId } : "api-write-failed",
-      timestamp: new Date().toISOString(),
+      rationale: rationale.trim(),
     };
-    console.log(`[Console Audit] ${JSON.stringify(auditPayload)}`);
-
-    if (result === null) {
-      setApiError("API 暫時不可用，結案未送出。請稍後重試。");
-      setIsSubmitting(false);
-      return;
+    const signature = JSON.stringify(request);
+    if (intent.current?.signature !== signature) {
+      intent.current = { signature, key: newIdempotencyKey() };
     }
-
-    setIsSubmitting(false);
-    setIsApproved(true);
+    try {
+      const result = await writeGrowthOutcome({ ...request, idempotencyKey: intent.current.key });
+      if (result === null) {
+        setApiError("暫時無法確認提交結果，請保留理由並重試相同判斷。");
+        return;
+      }
+      if (result.actionId !== item.id || result.outcome !== gate.outcome) {
+        setApiError("提交回應與目前活動判斷不符，請重新整理後確認。");
+        return;
+      }
+      // Diagnostic only; the API remains the durable decision authority.
+      console.log(`[Console Audit] ${JSON.stringify({
+        action: "APPROVE_CLOSEOUT", itemId: item.id, decisionId: item.audit.decisionId,
+        outcome: gate.outcome, requiredAction: gate.requiredAction,
+        apiResult: { correlationId: result.correlationId }, timestamp: new Date().toISOString(),
+      })}`);
+      setIsApproved(true);
+    } catch {
+      setApiError("暫時無法確認提交結果，請保留理由並重試相同判斷。");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <section
       className={g.actionPanel}
-      data-screen-label="Dialog Growth Outcome"
       data-testid="growth-closeout-panel"
     >
       {isApproved ? (
         <div className={g.outcomeSuccess} data-testid="growth-closeout-success">
-          <p>結案已成功提交並記錄稽核日誌。等待後端決策回寫。</p>
+          <p>成效判斷已提交，請重新整理活動確認最新狀態。</p>
           {apiError ? <p className={g.actionNote}>{apiError}</p> : null}
         </div>
       ) : (
@@ -1343,11 +1351,11 @@ function CloseoutPanel({
         <button
           type="button"
           className={g.primaryAction}
-          disabled={!gate.canClose || isApproved || isSubmitting}
-          onClick={handleApprove}
-          data-testid="growth-close-button"
+          disabled={isSubmitting}
+          onClick={() => setIsOpen(true)}
+          data-testid="growth-outcome-open"
         >
-          {isSubmitting ? "提交中…" : isApproved ? "已結案" : "結案並回寫成效"}
+          {isApproved ? "檢視已提交判斷" : "判斷成效"}
         </button>
         {gate.requiredAction !== "CLOSE" && !isApproved ? (
           <span className={g.secondaryAction} data-testid="growth-required-action">
@@ -1363,7 +1371,64 @@ function CloseoutPanel({
           重新整理判定
         </Link>
       </p>
+      {isOpen ? (
+        <GrowthOutcomeDialog
+          item={item} gate={gate} rationale={rationale} setRationale={setRationale}
+          isSubmitting={isSubmitting} isSubmitted={isApproved} error={apiError}
+          onSubmit={handleApprove} onClose={() => { if (!isSubmitting) setIsOpen(false); }}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function GrowthOutcomeDialog({
+  item, gate, rationale, setRationale, isSubmitting, isSubmitted, error, onSubmit, onClose,
+}: {
+  item: GrowthItem; gate: CloseoutGate; rationale: string; setRationale: (value: string) => void;
+  isSubmitting: boolean; isSubmitted: boolean; error: string | null;
+  onSubmit: () => Promise<void>; onClose: () => void;
+}) {
+  const panelRef = useModalDialogBehavior({ onClose, dismissible: !isSubmitting });
+  return (
+    <div className={`${g.modalBackdrop} ${g.outcomeBackdrop}`} data-screen-label="Dialog Growth Outcome"
+      data-testid="growth-outcome-modal" onMouseDown={(event) => { if (event.target === event.currentTarget && !isSubmitting) onClose(); }}>
+      <div className={g.outcomeDialog} ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="growth-outcome-title">
+        <header className={g.outcomeDialogHeader}>
+          <h2 id="growth-outcome-title">活動成效判斷</h2><span className={g.mono}>{item.id}</span>
+          <button type="button" className={g.builderClose} aria-label="關閉活動成效判斷" onClick={onClose} disabled={isSubmitting}>×</button>
+        </header>
+        <div className={g.outcomeDialogBody}>
+          <table className={g.outcomeMetrics} aria-label="活動成效指標">
+            <thead><tr><th>指標</th><th>目標</th><th>實際</th><th>檢核</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">營收增量</th><td>{formatLift(item.targetLift)}</td><td>{formatLift(item.observedLift)}</td><td>{item.observedLift === null ? "待觀測" : item.observedLift >= item.targetLift ? "達標" : "未達標"}</td></tr>
+              <tr><th scope="row">證據等級</th><td>{CAUSAL_MIN_EVIDENCE}</td><td>{item.evidenceLevel ?? "未提供"}</td><td>{item.evidenceLevel && meetsCausalThreshold(item.evidenceLevel) ? "達標" : "不足"}</td></tr>
+            </tbody>
+          </table>
+          <div className={gate.canClose ? g.outcomeSuccess : g.outcomeWarning}>
+            <strong>{outcomeLabel[gate.outcome]}</strong><p>{gate.reason}</p>
+            {!gate.canClose ? <p>需先：{requiredActionLabel[gate.requiredAction]}</p> : null}
+          </div>
+          <label className={g.outcomeReason} htmlFor="growth-outcome-rationale">
+            判斷理由（寫入 Decision Log）
+            <textarea id="growth-outcome-rationale" rows={2} data-autofocus value={rationale}
+              onChange={(event) => setRationale(event.currentTarget.value)} readOnly={isSubmitting || isSubmitted}
+              required aria-describedby="growth-outcome-reason-help" />
+          </label>
+          <p id="growth-outcome-reason-help" className={g.actionNote}>請說明本次判斷依據；成效與證據不足時仍不可直接結案。</p>
+          {error ? <p className={g.outcomeWarning} role="alert">{error}</p> : null}
+          {isSubmitted ? <p className={g.outcomeSuccess} role="status">成效判斷已提交。</p> : null}
+        </div>
+        <footer className={g.outcomeDialogActions}>
+          <button type="button" className={g.secondaryAction} onClick={onClose} disabled={isSubmitting}>{isSubmitted ? "關閉" : "取消"}</button>
+          <button type="button" className={g.primaryAction} data-testid="growth-close-button" onClick={onSubmit}
+            disabled={!gate.canClose || !rationale.trim() || isSubmitting || isSubmitted}>
+            {isSubmitting ? "提交中…" : isSubmitted ? "已送出" : "確認判斷並結案"}
+          </button>
+        </footer>
+      </div>
+    </div>
   );
 }
 

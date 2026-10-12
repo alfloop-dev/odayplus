@@ -227,6 +227,81 @@ describe("GrowthWorkspace API loading", () => {
     expect(within(table).getAllByText("建立定價草稿")).toHaveLength(3);
   });
 
+  it("opens the actual outcome dialog without a write and requires the operator's reason", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _options?: RequestInit) => new Response(JSON.stringify({
+      id: GROWTH_ITEMS[0].id, growth_outcome: "EFFECTIVE", correlation_id: "synthetic-confirmation",
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GrowthWorkspace basePath="/operator" searchParams={{ item: GROWTH_ITEMS[0].id }} apiData={{
+      availability: "fixture", freshness: FIXTURE_FRESHNESS, fromApi: false,
+      items: GROWTH_ITEMS, recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS,
+    }} />);
+    expect(screen.queryByRole("dialog", { name: "活動成效判斷" })).not.toBeInTheDocument();
+    const trigger = screen.getByTestId("growth-outcome-open"); trigger.focus(); fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "活動成效判斷" });
+    expect(dialog.closest('[data-screen-label="Dialog Growth Outcome"]')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("判斷理由（寫入 Decision Log）")).toHaveFocus();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("growth-close-button")).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("判斷理由（寫入 Decision Log）"), { target: { value: "Synthetic operator evidence review" } });
+    fireEvent.click(screen.getByTestId("growth-close-button"));
+    await waitFor(() => expect(screen.getByTestId("growth-closeout-success")).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(request.body as string).rationale).toBe("Synthetic operator evidence review");
+    fireEvent.click(within(dialog).getByRole("button", { name: "關閉活動成效判斷" }));
+    expect(trigger).toHaveFocus();
+  });
+
+  it("preserves the reason and idempotency key after an uncertain response, and keeps an in-flight dialog visible", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    let settle: (response: Response) => void = () => {};
+    let attempts = 0;
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _options?: RequestInit) => {
+      if (++attempts === 1) return Promise.resolve(new Response("synthetic unavailable", { status: 503 }));
+      return new Promise<Response>((resolve) => { settle = resolve; });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GrowthWorkspace basePath="/operator" searchParams={{ item: GROWTH_ITEMS[0].id }} apiData={{
+      availability: "fixture", freshness: FIXTURE_FRESHNESS, fromApi: false,
+      items: GROWTH_ITEMS, recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS,
+    }} />);
+    fireEvent.click(screen.getByTestId("growth-outcome-open"));
+    const dialog = screen.getByRole("dialog", { name: "活動成效判斷" });
+    const reason = within(dialog).getByLabelText("判斷理由（寫入 Decision Log）");
+    fireEvent.change(reason, { target: { value: "Synthetic preserved reason" } });
+    fireEvent.click(screen.getByTestId("growth-close-button"));
+    await screen.findByRole("alert");
+    expect(reason).toHaveValue("Synthetic preserved reason");
+    fireEvent.click(screen.getByTestId("growth-close-button"));
+    expect(reason).toHaveAttribute("readonly");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(dialog).toBeInTheDocument();
+    const first = fetchMock.mock.calls[0][1] as RequestInit;
+    const second = fetchMock.mock.calls[1][1] as RequestInit;
+    expect((second.headers as Record<string,string>)["Idempotency-Key"]).toBe((first.headers as Record<string,string>)["Idempotency-Key"]);
+    expect(second.body).toBe(first.body);
+    settle(new Response(JSON.stringify({ id: GROWTH_ITEMS[0].id, growth_outcome: "EFFECTIVE", correlation_id: "synthetic-retry" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await screen.findByTestId("growth-closeout-success");
+  });
+
+  it("does not claim submission success for a different activity receipt", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      id: "synthetic-other-activity", growth_outcome: "EFFECTIVE", correlation_id: "synthetic-mismatch",
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    render(<GrowthWorkspace basePath="/operator" searchParams={{ item: GROWTH_ITEMS[0].id }} apiData={{
+      availability: "fixture", freshness: FIXTURE_FRESHNESS, fromApi: false,
+      items: GROWTH_ITEMS, recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS,
+    }} />);
+    fireEvent.click(screen.getByTestId("growth-outcome-open"));
+    fireEvent.change(screen.getByLabelText("判斷理由（寫入 Decision Log）"), { target: { value: "Synthetic review" } });
+    fireEvent.click(screen.getByTestId("growth-close-button"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("提交回應與目前活動判斷不符");
+    expect(screen.queryByTestId("growth-closeout-success")).not.toBeInTheDocument();
+  });
+
   it("renders PriceOps interactive scenario workbench, baseline/alternative bands, and decision writeback", () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
 

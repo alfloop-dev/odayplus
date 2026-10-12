@@ -308,6 +308,12 @@ def create_growth_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
+            principal = getattr(request.state, "operator_principal", None)
+            if principal is None or not principal.authenticated or not principal.tenant_id:
+                raise HTTPException(status_code=401, detail="AUTHENTICATED_ACTOR_REQUIRED")
+            actor_role = getattr(request.state, "operator_role_id", None)
+            if not actor_role:
+                raise HTTPException(status_code=401, detail="VERIFIED_ROLE_REQUIRED")
             return resolve_service(request, service, service_resolver).write_outcome(
                 action_id=action_id,
                 outcome=body.outcome,
@@ -315,8 +321,9 @@ def create_growth_sub_router(
                 observed_lift=body.observedLift,
                 evidence_level=body.evidenceLevel,
                 rationale=body.rationale,
-                actor_role_id=body.actorRoleId or "opsLead",
-                actor_name=body.actorName or _actor_name_from_role(body.actorRoleId),
+                actor_role_id=actor_role,
+                actor_name=principal.subject_id,
+                tenant_id=principal.tenant_id,
                 idempotency_key=idempotency_key,
                 correlation_id=request.state.correlation_id,
             )
@@ -326,6 +333,8 @@ def create_growth_sub_router(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except GrowthConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except GrowthPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # ------------------------------------------------------------------
     # Conflict gate + approval lifecycle (package 6 five-step builder)

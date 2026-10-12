@@ -391,7 +391,7 @@ export const GROWTH_ITEMS: GrowthItem[] = [
 const GROWTH_API_BASE = "/api/v1/operator/growth";
 
 /** Generate a short idempotency key for browser-side requests. */
-function newIdempotencyKey(): string {
+export function newIdempotencyKey(): string {
   return `ik-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
@@ -614,8 +614,9 @@ export async function writeGrowthOutcome(params: {
   observedLift?: number | null;
   evidenceLevel?: EvidenceLevel | null;
   rationale?: string;
+  idempotencyKey?: string;
 }): Promise<{ actionId: string; outcome: string; correlationId: string } | null> {
-  const idempotencyKey = newIdempotencyKey();
+  const idempotencyKey = params.idempotencyKey ?? newIdempotencyKey();
   const correlationId = newCorrelationId();
   const result = await apiFetch<{
     id: string;

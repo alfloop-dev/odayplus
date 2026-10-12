@@ -29,6 +29,8 @@ Composes with: apps/api/app/routes/operator_modules/growth.py route module.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -1157,6 +1159,7 @@ class GrowthService:
         rationale: str = "",
         actor_role_id: str = "opsLead",
         actor_name: str = "Operator",
+        tenant_id: str | None = None,
         idempotency_key: str | None = None,
         correlation_id: str = "",
     ) -> dict[str, Any]:
@@ -1166,12 +1169,31 @@ class GrowthService:
         and required_action==CLOSE, the action moves to CLOSED — but only
         when the derived gate also confirms canClose=True.
         """
-        if idempotency_key:
-            cached = self._state["idempotencyResults"].get(idempotency_key)
-            if cached is not None:
-                return {**_clone(cached), "idempotentReplay": True}
-
         action = self._find_action(action_id)
+        tenant = tenant_id or self._tenant_id
+        if self._tenant_id and tenant != self._tenant_id:
+            raise GrowthPolicyError("TENANT_SCOPE_DENIED")
+        if not tenant and not self._seed_fixtures:
+            raise GrowthPolicyError("TENANT_SCOPE_REQUIRED")
+        if not actor_name or not actor_name.strip():
+            raise GrowthPolicyError("AUTHENTICATED_ACTOR_REQUIRED")
+        rationale = rationale.strip()
+        request_sha = hashlib.sha256(json.dumps({
+            "action_id": action_id, "outcome": outcome, "required_action": required_action,
+            "observed_lift": observed_lift, "evidence_level": evidence_level,
+            "rationale": rationale,
+        }, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        receipts = self._state.get("outcomeIdempotencyResults", {})
+        replay_key = hashlib.sha256(json.dumps([tenant, actor_name, idempotency_key]).encode()).hexdigest() if idempotency_key else None
+        if replay_key and replay_key in receipts:
+            cached = receipts[replay_key]
+            if cached["requestSha256"] != request_sha:
+                raise GrowthConflict("IDEMPOTENCY_CONFLICT")
+            return {**_clone(cached["response"]), "idempotentReplay": True}
+        if idempotency_key in self._state["idempotencyResults"]:
+            raise GrowthConflict("UNBOUND_LEGACY_REPLAY")
+        if not rationale:
+            raise GrowthPolicyError("outcome rationale is required")
         if action["status"] not in _OUTCOME_STAGES:
             raise GrowthConflict(
                 f"outcome writeback is only valid for OUTCOME_READY or CLOSED actions; "
@@ -1215,7 +1237,7 @@ class GrowthService:
             title=action["name"],
             recommendation="成效判斷",
             verdict=_verdict_label,
-            reason=rationale or derived["reason"],
+            reason=rationale,
         )
 
         audit = self._append_audit_event(
@@ -1257,7 +1279,7 @@ class GrowthService:
             "idempotentReplay": False,
         }
         if idempotency_key:
-            self._state["idempotencyResults"][idempotency_key] = _clone(result)
+            self._state.setdefault("outcomeIdempotencyResults", {})[replay_key] = {"requestSha256": request_sha, "response": _clone(result)}
         return result
 
     # ------------------------------------------------------------------

@@ -22,6 +22,7 @@ Reviewer: Antigravity6
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
@@ -46,6 +47,60 @@ def _headers(idem: str | None = None, correlation: str = "corr-growth-test") -> 
     if idem is not None:
         hdr["Idempotency-Key"] = idem
     return hdr
+
+
+@pytest.mark.parametrize("rationale", ["", "   ", None])
+def test_growth_outcome_requires_human_reason_without_mutating_record(rationale):
+    client = _client()
+    path = f"{BASE}/actions/growth-7001"
+    read_headers = _headers(correlation="synthetic-fixed-read")
+    before = client.get(path, headers=read_headers).json()
+    decisions = client.get(f"{BASE}/decisions", headers=read_headers).json()
+    body = {"outcome": "EFFECTIVE", "requiredAction": "CLOSE"}
+    if rationale is not None:
+        body["rationale"] = rationale
+    response = client.post(path + "/outcome", json=body, headers=_headers(idem="synthetic-empty-reason"))
+    assert response.status_code == 422, response.text
+    assert client.get(path, headers=read_headers).json() == before
+    assert client.get(f"{BASE}/decisions", headers=read_headers).json() == decisions
+
+
+def test_growth_outcome_replay_is_actor_and_request_bound_and_ignores_body_actor():
+    client = _client()
+    path = f"{BASE}/actions/growth-7001/outcome"
+    body = {"outcome": "EFFECTIVE", "requiredAction": "CLOSE", "rationale": "Synthetic independent review", "actorName": "forged-other", "actorRoleId": "forged-role"}
+    headers = _headers(idem="synthetic-bound-outcome")
+    first = client.post(path, json=body, headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["auditEvent"]["actorName"] == WRITE_HEADERS["X-Subject-Id"]
+    assert first.json()["auditEvent"]["actorRoleId"] != "forged-role"
+    assert first.json()["decision"]["reason"] == body["rationale"]
+    replay = client.post(path, json=body, headers=headers)
+    assert replay.status_code == 200 and replay.json()["idempotentReplay"]
+    assert replay.json()["auditEvent"]["id"] == first.json()["auditEvent"]["id"]
+    changed = client.post(path, json={**body, "rationale": "Changed review"}, headers=headers)
+    assert changed.status_code == 409, changed.text
+    different_record = client.post(f"{BASE}/actions/growth-7003/outcome", json=body, headers=headers)
+    assert different_record.status_code == 409, different_record.text
+    other = client.post(path, json=body, headers={**headers, "X-Subject-Id": "synthetic-other-reviewer"})
+    assert other.status_code == 200, other.text
+    assert other.json()["idempotentReplay"] is False
+    assert other.json()["auditEvent"]["actorName"] == "synthetic-other-reviewer"
+    denied = client.post(path, json=body, headers={**headers, "X-Roles": "auditor"})
+    assert denied.status_code == 403, denied.text
+
+
+def test_growth_outcome_does_not_replay_an_unbound_legacy_receipt():
+    from copy import deepcopy
+
+    from modules.opsboard.application.growth import GrowthConflict, GrowthService
+
+    service = GrowthService()
+    service._state["idempotencyResults"]["synthetic-legacy"] = {"id": "unattributable-receipt"}
+    before = deepcopy(service.export_state())
+    with pytest.raises(GrowthConflict, match="UNBOUND_LEGACY_REPLAY"):
+        service.write_outcome(action_id="growth-7001", outcome="EFFECTIVE", required_action="CLOSE", rationale="Synthetic review", actor_name="synthetic-reviewer", tenant_id="tenant-a", idempotency_key="synthetic-legacy")
+    assert service.export_state() == before
 
 
 def _create_draft(
@@ -309,7 +364,7 @@ def test_outcomes_persist_and_write_decision_log() -> None:
     for action_id, outcome, required, expected_status, verdict in cases:
         resp = client.post(
             f"{BASE}/actions/{action_id}/outcome",
-            json={"outcome": outcome, "requiredAction": required},
+            json={"outcome": outcome, "requiredAction": required, "rationale": "Synthetic operator reviewed the outcome evidence"},
             headers=_headers(idem=f"idem-out-{action_id}"),
         )
         assert resp.status_code == 200, (action_id, resp.text)
@@ -377,6 +432,7 @@ def test_growth_action_evidence_level_canonical_alignment() -> None:
             "requiredAction": "CLOSE",
             "observedLift": 2.5,
             "evidenceLevel": "L3",
+            "rationale": "Synthetic operator reviewed L3 evidence",
         },
         headers=_headers(),
     )
@@ -424,6 +480,7 @@ def test_outcome_rejects_evidence_that_names_no_rung() -> None:
                 "requiredAction": "CLOSE",
                 "observedLift": 2.5,
                 "evidenceLevel": value,
+                "rationale": "Synthetic evidence validation",
             },
             headers=_headers(),
         )
@@ -453,6 +510,7 @@ def test_unrated_evidence_cannot_close_an_action() -> None:
             "requiredAction": "CLOSE",
             "observedLift": 99.0,
             "evidenceLevel": None,
+            "rationale": "Synthetic unrated evidence review",
         },
         headers=_headers(),
     )
@@ -480,6 +538,7 @@ def test_evidence_below_the_causal_threshold_cannot_close_an_action() -> None:
             "requiredAction": "CLOSE",
             "observedLift": 99.0,
             "evidenceLevel": "L2",
+            "rationale": "Synthetic limited evidence review",
         },
         headers=_headers(),
     )
