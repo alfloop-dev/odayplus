@@ -62,10 +62,13 @@ UUID_COLUMNS = {
     "correlation_id",
     "causation_id",
 }
-READ_COLUMNS = ",".join(
-    f"{name}::text AS {name}" if name in {"before_value", "after_value"} else name
-    for name in (*IMMUTABLE_COLUMNS, "event_sha256", "worm_object_uri")
-)
+_READ_ONE = "SELECT audit_event_id, tenant_id, sequence_no, event_type, actor_subject_id, service_principal, actor_role, action, resource_type, resource_id, decision_id, source_snapshot_id, parser_run_id, before_value::text AS before_value, after_value::text AS after_value, reason, result, reason_code, correlation_id, causation_id, previous_event_sha256, occurred_at, retained_until, legal_hold, event_sha256, worm_object_uri FROM audit.audit_events WHERE tenant_id = ? AND audit_event_id = ?"
+
+_READ_TAIL = "SELECT audit_event_id, tenant_id, sequence_no, event_type, actor_subject_id, service_principal, actor_role, action, resource_type, resource_id, decision_id, source_snapshot_id, parser_run_id, before_value::text AS before_value, after_value::text AS after_value, reason, result, reason_code, correlation_id, causation_id, previous_event_sha256, occurred_at, retained_until, legal_hold, event_sha256, worm_object_uri FROM audit.audit_events WHERE tenant_id = ? ORDER BY sequence_no DESC LIMIT 1"
+
+_READ_ALL = "SELECT audit_event_id, tenant_id, sequence_no, event_type, actor_subject_id, service_principal, actor_role, action, resource_type, resource_id, decision_id, source_snapshot_id, parser_run_id, before_value::text AS before_value, after_value::text AS after_value, reason, result, reason_code, correlation_id, causation_id, previous_event_sha256, occurred_at, retained_until, legal_hold, event_sha256, worm_object_uri FROM audit.audit_events WHERE tenant_id = ? ORDER BY sequence_no"
+
+_INSERT_EVENT = "INSERT INTO audit.audit_events (audit_event_id,tenant_id,sequence_no,event_type,actor_subject_id,service_principal,actor_role,action,resource_type,resource_id,decision_id,source_snapshot_id,parser_run_id,before_value,after_value,reason,result,reason_code,correlation_id,causation_id,previous_event_sha256,occurred_at,retained_until,legal_hold,event_sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?::jsonb,?,?,?,?,?,?,?,?,?,?)"
 
 
 def _decode(row: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -190,7 +193,7 @@ class CanonicalPostgresAuditLog:
             )
             prior = _decode(
                 self.engine.query_one(
-                    f"SELECT {READ_COLUMNS} FROM audit.audit_events WHERE tenant_id = ? AND audit_event_id = ?",
+                    _READ_ONE,
                     (fact.tenant_id, fact.audit_event_id),
                 )
             )
@@ -206,7 +209,7 @@ class CanonicalPostgresAuditLog:
                 return prior
             tail = _decode(
                 self.engine.query_one(
-                    f"SELECT {READ_COLUMNS} FROM audit.audit_events WHERE tenant_id = ? ORDER BY sequence_no DESC LIMIT 1",
+                    _READ_TAIL,
                     (fact.tenant_id,),
                 )
             )
@@ -237,17 +240,11 @@ class CanonicalPostgresAuditLog:
                 else values[name]
                 for name in columns
             )
-            placeholders = ",".join(
-                "?::jsonb" if name in {"before_value", "after_value"} else "?" for name in columns
-            )
-            self.engine.execute(
-                f"INSERT INTO audit.audit_events ({','.join(columns)}) VALUES ({placeholders})",
-                parameters,
-            )
+            self.engine.execute(_INSERT_EVENT, parameters)
             # Delivery is separate; this writer cannot invent a WORM receipt.
             persisted = _decode(
                 self.engine.query_one(
-                    f"SELECT {READ_COLUMNS} FROM audit.audit_events WHERE tenant_id = ? AND audit_event_id = ?",
+                    _READ_ONE,
                     (fact.tenant_id, fact.audit_event_id),
                 )
             )
@@ -260,7 +257,7 @@ class CanonicalPostgresAuditLog:
             return [
                 _decode(row)
                 for row in self.engine.query(
-                    f"SELECT {READ_COLUMNS} FROM audit.audit_events WHERE tenant_id = ? ORDER BY sequence_no",
+                    _READ_ALL,
                     (tenant_id,),
                 )
             ]
