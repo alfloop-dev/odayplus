@@ -61,8 +61,11 @@ def test_b1_login_route_drives_the_throttle_before_verifying_credentials() -> No
     # credential is verified, otherwise a locked account still gets password
     # attempts and the counter can be skipped entirely.
     assert source.index("beginAttempt") < source.index(
-        "authenticateLocalCredentials(username, password)"
+        "authenticateLocalCredentials(username, password,"
     )
+    assert "beginAccountAttempt(id, null)" in source
+    adapter = _without_comments((ROOT / "apps/web/src/lib/auth/localAuth.ts").read_text(encoding="utf-8"))
+    assert adapter.index("options.reserveAccount(account.accountId)") < adapter.index("store.verifyPassword(")
 
 
 def test_b2_throttle_state_is_durable_in_identity_login_attempts() -> None:
@@ -113,7 +116,7 @@ def test_pre_verification_refusals_never_claim_the_account_is_locked() -> None:
     source = _without_comments(LOGIN_ROUTE.read_text(encoding="utf-8"))
 
     gate = source.index("if (!gate.allowed)")
-    verify = source.index("authenticateLocalCredentials(username, password)")
+    verify = source.index("authenticateLocalCredentials(username, password,")
     pre_verification = source[gate:verify]
 
     assert "AUTH_RATE_LIMITED" in pre_verification
