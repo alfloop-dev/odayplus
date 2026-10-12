@@ -9,15 +9,15 @@ import {
   SEGMENTS,
 } from "../growthViewModel";
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
-}));
+const routerPush = vi.hoisted(() => vi.fn());
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: routerPush }) }));
 
 describe("GrowthWorkspace API loading", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    routerPush.mockReset();
   });
 
   it("mounts the existing Growth API loader in production", async () => {
@@ -252,6 +252,40 @@ describe("GrowthWorkspace API loading", () => {
     expect(JSON.parse(request.body as string).rationale).toBe("Synthetic operator evidence review");
     fireEvent.click(within(dialog).getByRole("button", { name: "關閉活動成效判斷" }));
     expect(trigger).toHaveFocus();
+  });
+
+  it("keeps draft creation visible and keyboard accessible while the API result is uncertain", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    let settle: (response: Response) => void = () => {};
+    const fetchMock = vi.fn((input: RequestInfo | URL) => String(input).endsWith("/conflicts/check")
+      ? Promise.resolve(new Response(JSON.stringify({ checks: [], blocked: false, reasons: [] }), { status: 200 }))
+      : new Promise<Response>(resolve => { settle = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GrowthWorkspace basePath="/operator" searchParams={{ builder: "offpeak" }} apiData={{
+      availability: "fixture", freshness: FIXTURE_FRESHNESS, fromApi: false,
+      items: GROWTH_ITEMS, recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS,
+    }} />);
+    const dialog = screen.getByRole("dialog", { name: "建立 Growth Action 草稿" });
+    expect(within(dialog).getByLabelText("活動名稱")).toHaveFocus();
+    fireEvent.change(within(dialog).getByLabelText("活動名稱"), { target: { value: "Synthetic draft" } });
+    fireEvent.click(screen.getByTestId("growth-builder-next"));
+    expect(within(dialog).getByLabelText("客群")).toHaveFocus();
+    fireEvent.click(screen.getByTestId("growth-builder-next"));
+    fireEvent.click(screen.getByTestId("growth-builder-next"));
+    await screen.findByTestId("growth-builder-step-4");
+    fireEvent.click(screen.getByTestId("growth-builder-next"));
+    fireEvent.click(screen.getByTestId("growth-draft-submit"));
+    expect(screen.getByTestId("growth-builder-submit-status")).toHaveFocus();
+    expect(screen.getByTestId("growth-draft-close")).toBeDisabled();
+    expect(screen.getByTestId("growth-builder-prev")).toBeDisabled();
+    expect(screen.getByLabelText("關閉建立草稿視窗")).toBeDisabled();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(routerPush).not.toHaveBeenCalled();
+    settle(new Response("Synthetic unavailable", { status: 503 }));
+    await screen.findByTestId("growth-draft-api-error");
+    expect(screen.getByTestId("growth-builder-step-5")).toHaveFocus();
+    expect(screen.getByTestId("growth-builder-prev")).toBeEnabled();
+    expect(routerPush).not.toHaveBeenCalled();
   });
 
   it("preserves the reason and idempotency key after an uncertain response, and keeps an in-flight dialog visible", async () => {

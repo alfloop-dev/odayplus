@@ -1396,7 +1396,7 @@ function GrowthOutcomeDialog({
       <div className={g.outcomeDialog} ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="growth-outcome-title">
         <header className={g.outcomeDialogHeader}>
           <h2 id="growth-outcome-title">活動成效判斷</h2><span className={g.mono}>{item.id}</span>
-          <button type="button" className={g.builderClose} aria-label="關閉活動成效判斷" onClick={onClose} disabled={isSubmitting}>×</button>
+          <button type="button" className={g.closeButton} aria-label="關閉活動成效判斷" onClick={onClose} disabled={isSubmitting}>×</button>
         </header>
         <div className={g.outcomeDialogBody}>
           <table className={g.outcomeMetrics} aria-label="活動成效指標">
@@ -1457,6 +1457,17 @@ function GrowthBuilderModal({
   const [conflicts, setConflicts] = useState<ConflictCheck[] | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [checking, setChecking] = useState(false);
+  const close = () => { if (!isSubmitting) router.push(closeHref); };
+  const panelRef = useModalDialogBehavior({ onClose: close, dismissible: !isSubmitting });
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    const target = isSubmitting
+      ? panel?.querySelector<HTMLElement>('[data-testid="growth-builder-submit-status"]')
+      : panel?.querySelector<HTMLElement>(`[data-testid="growth-builder-step-${step}"] input, [data-testid="growth-builder-step-${step}"] select, [data-testid="growth-builder-step-${step}"] textarea`)
+        ?? panel?.querySelector<HTMLElement>(`[data-testid="growth-builder-step-${step}"]`);
+    target?.focus();
+  }, [step, isSubmitting, panelRef]);
 
   const set = (patch: Partial<GrowthBuilderForm>) =>
     setForm((prev) => ({ ...prev, ...patch }));
@@ -1558,37 +1569,36 @@ function GrowthBuilderModal({
 
   return (
     <div
-      className={g.modalBackdrop}
+      className={`${g.modalBackdrop} ${g.builderBackdrop}`}
       data-screen-label="Dialog Growth Draft Builder"
       data-testid="growth-draft-modal"
     >
-      <Link
-        href={closeHref}
-        className={g.modalDismiss}
-        aria-label="關閉建立草稿視窗"
-        tabIndex={-1}
-      />
+      <button type="button" onClick={close} disabled={isSubmitting}
+        className={g.modalDismiss} aria-label="關閉建立草稿視窗" tabIndex={-1} />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="growth-draft-title"
         className={g.builderModal}
         data-step={step}
+        ref={panelRef}
       >
         <div className={g.builderHeader}>
           <div>
             <h2 id="growth-draft-title">建立 Growth Action 草稿</h2>
             <p>類型：{growthKindLabel[form.kind]}</p>
           </div>
-          <Link
-            href={closeHref}
+          <button
+            type="button"
+            onClick={close}
+            disabled={isSubmitting}
             className={g.closeButton}
             aria-label="關閉"
             title="關閉"
             data-testid="growth-draft-close"
           >
             ×
-          </Link>
+          </button>
         </div>
 
         <ol className={g.builderSteps} data-testid="growth-builder-steps">
@@ -1612,12 +1622,12 @@ function GrowthBuilderModal({
           </div>
         ) : null}
 
-        <form className={g.builderForm}>
+        <form className={g.builderForm} onSubmit={(event) => event.preventDefault()}>
           {step === 1 ? (
             <div data-testid="growth-builder-step-1">
               <label>
                 活動名稱
-                <input value={form.name} onChange={(e) => set({ name: e.target.value })} name="name" />
+                <input data-autofocus value={form.name} onChange={(e) => set({ name: e.target.value })} name="name" />
               </label>
               <label>
                 門市
@@ -1685,7 +1695,7 @@ function GrowthBuilderModal({
           ) : null}
 
           {step === 4 ? (
-            <div data-testid="growth-builder-step-4">
+            <div data-testid="growth-builder-step-4" tabIndex={-1}>
               <p className={g.sectionHint}>
                 伺服器衝突閘門檢查（重疊／PriceOps／預算／打擾／核准）；任一項為 fail 即不可送審。
               </p>
@@ -1725,7 +1735,7 @@ function GrowthBuilderModal({
           ) : null}
 
           {step === 5 ? (
-            <div data-testid="growth-builder-step-5">
+            <div data-testid="growth-builder-step-5" tabIndex={-1}>
               <div className={g.summaryHeading}>DRAFT SUMMARY</div>
               <dl className={g.builderSummary}>
                 <dt>活動名稱</dt>
@@ -1752,16 +1762,16 @@ function GrowthBuilderModal({
 
           <div className={g.builderFooter}>
             {step > 1 ? (
-              <button type="button" className={g.secondaryAction} onClick={goPrev} data-testid="growth-builder-prev">
+              <button type="button" className={g.secondaryAction} onClick={goPrev} disabled={isSubmitting || checking} data-testid="growth-builder-prev">
                 ← 上一步
               </button>
             ) : (
-              <Link href={closeHref} className={g.secondaryAction}>
+              <button type="button" onClick={close} className={g.secondaryAction}>
                 取消
-              </Link>
+              </button>
             )}
             {step < 5 ? (
-              <button type="button" className={g.primaryAction} onClick={goNext} data-testid="growth-builder-next">
+              <button type="button" className={g.primaryAction} onClick={goNext} disabled={checking} data-testid="growth-builder-next">
                 下一步 →
               </button>
             ) : (
@@ -1788,6 +1798,7 @@ function GrowthBuilderModal({
             )}
           </div>
         </form>
+        {isSubmitting ? <p className={g.builderNote} role="status" tabIndex={0} data-testid="growth-builder-submit-status">正在提交草稿，請等待伺服器回應。</p> : null}
         <p className={g.builderNote}>
           建立草稿僅產生 DRAFT，不自動執行；送審核准（建立 Govern 核准項）後才進入生命週期。
         </p>

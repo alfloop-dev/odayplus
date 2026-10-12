@@ -48,3 +48,21 @@ npx playwright test --config tests/visual/operator-store-ops-parity.config.ts
 The supplemental visual configuration includes Store Ops and Growth outcome
 geometry/axe checks outside the fixed business E2E receipt inventory. Its
 fixtures are local test evidence, not production or remote approval.
+
+## Draft Builder visual and keyboard follow-up
+
+The original R7 `Dialog Growth Draft Builder` prescribes a 610 px panel and
+14 px radius. The implementation now uses those values, capped to the viewport
+with 20 px margins, and retains the existing five-step API-backed form.
+Keyboard focus starts in the activity name, advances to each step's form or
+summary, remains inside the dialog, closes with Escape, and returns to the
+invoker. While creation/submission is pending, all dismissal and back controls
+are disabled; a focusable status retains keyboard context. Native form submit
+is prevented so Enter cannot navigate away from the controlled workflow.
+
+Supplemental checks cover all five steps at 1440, 1024 and 390 px, geometry,
+contrast, Tab/Shift+Tab, Escape and focus return. The business E2E inventory
+remains unchanged. These local fixture checks do not grant remote visual
+approval or close the full 40-screen review. Draft creation/retry and
+create-then-submit failure recovery still require a separate actor/request-bound
+business review; the outcome replay guarantee above does not apply to them.
