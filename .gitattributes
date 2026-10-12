@@ -1,0 +1,2 @@
+# Preserve the pinned upstream font license bytes, including its trailing space.
+modules/opsboard/audit/assets/ibm-plex-sans-tc/LICENSE.txt whitespace=-blank-at-eol
