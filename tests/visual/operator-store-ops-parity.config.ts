@@ -6,7 +6,7 @@ import base from "../../playwright.config";
 export default defineConfig({
   ...base,
   testDir: "..",
-  testMatch: /operator-(?:store-ops(?:-parity)?|growth-(?:outcome|builder|lifecycle)-parity|network-review-parity|governance-navigation)\.spec\.ts/,
+  testMatch: /operator-(?:store-ops(?:-parity)?|growth-(?:outcome|builder|lifecycle)-parity|network-review-parity|governance-(?:navigation|command-parity))\.spec\.ts/,
   workers: 1,
   retries: 0,
   webServer: Array.isArray(base.webServer) ? base.webServer.slice(1) : base.webServer,

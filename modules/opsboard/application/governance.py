@@ -27,15 +27,20 @@ data-screen-label "Govern 治理稽核".
 
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
+
+from modules.opsboard.application.growth import GrowthConflict, GrowthNotFound, GrowthPolicyError
 
 __all__ = [
     "GovernanceService",
     "GovernanceNotFound",
     "GovernancePolicyError",
     "GovernanceConflict",
+    "GovernanceExportUnavailable",
     "DECISION_ACTIONS",
 ]
 
@@ -82,6 +87,10 @@ def _clone(value: Any) -> Any:
     return deepcopy(value)
 
 
+class GovernanceExportUnavailable(RuntimeError):
+    """Formal export has no admitted artifact/policy binding yet."""
+
+
 class GovernanceService:
     """In-memory Govern workspace aggregation + write service.
 
@@ -103,6 +112,7 @@ class GovernanceService:
         tenant_id: str | None = None,
         require_canonical: bool = False,
     ) -> None:
+        self._seed_fixtures = seed_fixtures
         self._growth = growth_service
         self._sitescore_decision_repository = sitescore_decision_repository
         self._avm_repository = avm_repository
@@ -126,6 +136,37 @@ class GovernanceService:
             **_clone(self._state),
             "idempotency": _clone(self._idempotency),
         }
+
+    def _command_replay(
+        self, *, operation: str, payload: dict[str, Any], actor: str,
+        role: str, tenant_id: str | None, idempotency_key: str | None,
+    ) -> tuple[str | None, str, dict[str, Any] | None]:
+        tenant = tenant_id or self._tenant_id
+        if self._tenant_id and tenant != self._tenant_id:
+            raise GovernancePolicyError("TENANT_SCOPE_DENIED")
+        if not tenant and not self._seed_fixtures:
+            raise GovernancePolicyError("TENANT_SCOPE_REQUIRED")
+        if not actor or not actor.strip():
+            raise GovernancePolicyError("AUTHENTICATED_ACTOR_REQUIRED")
+        request_sha = hashlib.sha256(json.dumps(
+            {"operation": operation, "payload": payload, "role": role},
+            sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode()).hexdigest()
+        key = hashlib.sha256(json.dumps([tenant, actor, idempotency_key]).encode()).hexdigest() if idempotency_key else None
+        cached = self._state.get("commandIdempotency", {}).get(key) if key else None
+        if cached is not None:
+            if cached["requestSha256"] != request_sha:
+                raise GovernanceConflict("IDEMPOTENCY_CONFLICT")
+            return key, request_sha, {**_clone(cached["response"]), "idempotentReplay": True}
+        if idempotency_key in self._idempotency:
+            raise GovernanceConflict("UNBOUND_LEGACY_REPLAY")
+        return key, request_sha, None
+
+    def _save_command_receipt(self, key: str | None, request_sha: str, response: dict[str, Any]) -> None:
+        if key:
+            self._state.setdefault("commandIdempotency", {})[key] = {
+                "requestSha256": request_sha, "response": _clone(response),
+            }
 
     def export_growth_state(self) -> dict[str, Any] | None:
         if self._growth is None:
@@ -522,6 +563,7 @@ class GovernanceService:
         reason: str = "",
         role: str = "營運主管",
         actor_name: str | None = None,
+        tenant_id: str | None = None,
         idempotency_key: str | None = None,
         correlation_id: str | None = None,
     ) -> dict[str, Any]:
@@ -531,9 +573,6 @@ class GovernanceService:
         at least ``_MIN_REASON_LEN`` non-whitespace characters.  The check runs
         here — never client-only — so an API caller cannot bypass it.
         """
-        if idempotency_key and idempotency_key in self._idempotency:
-            return {**_clone(self._idempotency[idempotency_key]), "idempotentReplay": True}
-
         normalized = action.strip().lower()
         if normalized not in DECISION_ACTIONS:
             raise GovernancePolicyError(
@@ -547,6 +586,35 @@ class GovernanceService:
                 "least 10 characters)"
             )
 
+        approval = self._find_local_approval(approval_id)
+        growth_owned = self._growth is not None and self._growth_owns(approval_id)
+        if approval is None and not growth_owned:
+            raise GovernanceNotFound(f"approval {approval_id} not found")
+        if approval is not None and self._require_canonical and approval.get("_canonical"):
+            raise GovernanceConflict(
+                f"approval {approval_id} is owned by {approval.get('module', 'canonical domain')}; use its canonical decision endpoint"
+            )
+        actor = actor_name or (role if self._seed_fixtures else "")
+        binding_ref = (approval or {}).get("entityRef", approval_id)
+        if growth_owned:
+            binding_ref = next(row["ref"] for row in self._growth.list_approvals() if row["id"] == approval_id)
+            try:
+                self._growth.get_action(binding_ref)
+            except GrowthNotFound as exc:
+                raise GovernanceNotFound(str(exc)) from exc
+        replay_key, request_sha, cached = self._command_replay(
+            operation="decide", payload={"approvalId": approval_id, "entityRef": binding_ref, "action": normalized, "reason": trimmed_reason},
+            actor=actor, role=role, tenant_id=tenant_id, idempotency_key=idempotency_key,
+        )
+        if cached is not None:
+            if growth_owned:
+                # Reconcile a prior parent save whose linked Growth save failed.
+                # Its bound command key prevents duplicate child decisions.
+                self._decide_growth(approval_id=approval_id, normalized=normalized,
+                    reason=trimmed_reason, actor_name=actor, role=role, tenant_id=tenant_id,
+                    idempotency_key=idempotency_key, correlation_id=correlation_id or "")
+            return cached
+
         # Growth approvals are owned by GrowthService — delegate so the linked
         # Growth Action advances too.  Return maps to a Growth rejection (the
         # action returns to DRAFT for revision).
@@ -555,7 +623,10 @@ class GovernanceService:
                 approval_id=approval_id,
                 normalized=normalized,
                 reason=trimmed_reason,
-                actor_name=actor_name or role,
+                actor_name=actor,
+                role=role,
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
                 correlation_id=correlation_id or "",
             )
 
@@ -576,9 +647,16 @@ class GovernanceService:
         elif self._growth is None or not self._growth_owns(approval_id):
             raise GovernanceNotFound(f"approval {approval_id} not found")
 
-        actor = actor_name or role
+        log_approval = approval
+        if growth_owned:
+            raw = next(row for row in self._growth.list_approvals() if row["id"] == approval_id)
+            freshness = self._growth.get_freshness()
+            log_approval = {**raw, "module": "Growth", "entityRef": raw["ref"],
+                "systemRecommendation": raw.get("risk", ""),
+                "modelVersion": freshness.get("modelVersion"),
+                "datasetSnapshot": freshness.get("featureSnapshotTime")}
         decision = self._append_decision(
-            approval=approval,
+            approval=log_approval,
             approval_id=approval_id,
             action=normalized,
             reason=trimmed_reason,
@@ -588,14 +666,14 @@ class GovernanceService:
             category="approval",
             actor=actor,
             action={"approve": "決策核准", "return": "決策退回", "reject": "決策駁回"}[normalized],
-            module=(approval or {}).get("module", "Govern"),
-            entity_ref=(approval or {}).get("entityRef", approval_id),
+            module=(log_approval or {}).get("module", "Govern"),
+            entity_ref=(log_approval or {}).get("entityRef", approval_id),
             summary=(
                 f"核准中心審查決策：{(approval or {}).get('title', approval_id)}，"
                 f"狀態變更為 {_FINAL_DECISION_LABEL[normalized]}。"
             ),
             reason=trimmed_reason,
-            correlation_id=f"corr-{approval_id}",
+            correlation_id=correlation_id or f"corr-{approval_id}",
         )
 
         result = {
@@ -607,8 +685,7 @@ class GovernanceService:
             "decision": decision,
             "correlation_id": correlation_id,
         }
-        if idempotency_key:
-            self._idempotency[idempotency_key] = result
+        self._save_command_receipt(replay_key, request_sha, result)
         return result
 
     def _growth_owns(self, approval_id: str) -> bool:
@@ -623,18 +700,32 @@ class GovernanceService:
         normalized: str,
         reason: str,
         actor_name: str,
+        role: str,
+        tenant_id: str | None,
+        idempotency_key: str | None,
         correlation_id: str,
     ) -> None:
         # GrowthService only understands approved / rejected; treat "return" as
         # a rejection that sends the action back to DRAFT for revision.
         decision = "approved" if normalized == "approve" else "rejected"
-        self._growth.resolve_approval(
-            approval_id=approval_id,
-            decision=decision,
-            reason=reason,
-            actor_name=actor_name,
-            correlation_id=correlation_id,
-        )
+        try:
+            self._growth.resolve_approval(
+                approval_id=approval_id,
+                decision=decision,
+                reason=reason,
+                actor_name=actor_name,
+                actor_role_id=role,
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                correlation_id=correlation_id,
+            )
+
+        except GrowthNotFound as exc:
+            raise GovernanceNotFound(str(exc)) from exc
+        except GrowthConflict as exc:
+            raise GovernanceConflict(str(exc)) from exc
+        except GrowthPolicyError as exc:
+            raise GovernancePolicyError(str(exc)) from exc
 
     def _find_local_approval(self, approval_id: str) -> dict[str, Any] | None:
         for row in self._state["approvals"]:
@@ -661,7 +752,7 @@ class GovernanceService:
             "item": f"{entity} {title}".strip(),
             "systemRecommendation": (approval or {}).get("systemRecommendation", "—"),
             "finalDecision": _FINAL_DECISION_LABEL[action],
-            "reason": reason or "符合風險與預算規範",
+            "reason": reason,
             "actor": actor,
             "decidedAt": _now_iso_minute(),
             "model": (
@@ -695,6 +786,7 @@ class GovernanceService:
         role: str = "營運主管",
         actor_name: str | None = None,
         retention_policy: str | None = None,
+        tenant_id: str | None = None,
         idempotency_key: str | None = None,
         correlation_id: str | None = None,
     ) -> dict[str, Any]:
@@ -704,8 +796,16 @@ class GovernanceService:
         (date_from/date_to), format, actor, correlation id and retention policy.
         Appends an Audit Trail event and a history entry.
         """
-        if idempotency_key and idempotency_key in self._idempotency:
-            return {**_clone(self._idempotency[idempotency_key]), "idempotentReplay": True}
+        if self._require_canonical or not self._seed_fixtures:
+            raise GovernanceExportUnavailable("CANONICAL_EVIDENCE_EXPORT_REQUIRED")
+        actor = actor_name or role
+        replay_key, request_sha, cached = self._command_replay(
+            operation="export_evidence_package", payload={"dateFrom": date_from, "dateTo": date_to,
+                "modules": modules, "contents": contents, "format": fmt, "retentionPolicy": retention_policy},
+            actor=actor, role=role, tenant_id=tenant_id, idempotency_key=idempotency_key,
+        )
+        if cached is not None:
+            return cached
 
         selected_modules = [m for m in modules if m] or ["全模組"]
         selected_contents = [c for c in contents if c] or ["Audit Trail", "Decision Log"]
@@ -765,8 +865,7 @@ class GovernanceService:
         )
 
         result = {"package": record, "correlation_id": correlation}
-        if idempotency_key:
-            self._idempotency[idempotency_key] = result
+        self._save_command_receipt(replay_key, request_sha, result)
         return result
 
     # ------------------------------------------------------------------

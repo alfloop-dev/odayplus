@@ -1063,55 +1063,23 @@ def test_live_domain_state_and_idempotency_are_tenant_isolated(
         bundle.engine.close()
 
 
-def test_live_governance_write_and_idempotency_survive_restart(
-    tmp_path: Path,
-) -> None:
-    database_path = tmp_path / "operator-governance-restart.sqlite3"
-    headers = _headers(
-        "tenant-governance",
-        idempotency_key="idem-governance-export",
-    )
-    payload = {
-        "dateFrom": "2026-07-01",
-        "dateTo": "2026-07-24",
-        "modules": ["Network"],
-        "contents": ["Audit Trail"],
-        "format": "PDF",
-    }
-
-    first_app, first_bundle = _live_app(database_path)
-    try:
-        with TestClient(first_app) as client:
-            first = client.post(
-                f"{BASE}/governance/evidence-package",
-                headers=headers,
-                json=payload,
-            )
-        assert first.status_code == 200, first.text
-        package_id = first.json()["package"]["id"]
-    finally:
-        first_bundle.engine.close()
-
-    reopened_app, reopened_bundle = _live_app(database_path)
-    try:
-        with TestClient(reopened_app) as client:
-            history = client.get(
-                f"{BASE}/governance/evidence-packages",
-                headers=_headers("tenant-governance"),
-            )
-            replay = client.post(
-                f"{BASE}/governance/evidence-package",
-                headers=headers,
-                json=payload,
-            )
-
-        assert history.status_code == 200, history.text
-        assert [item["id"] for item in history.json()["items"]] == [package_id]
-        assert replay.status_code == 200, replay.text
-        assert replay.json()["package"]["id"] == package_id
-        assert replay.json()["idempotentReplay"] is True
-    finally:
-        reopened_bundle.engine.close()
+def test_live_governance_export_refuses_metadata_only_success_after_restart(tmp_path: Path) -> None:
+    database_path = tmp_path / "operator-governance-unavailable.sqlite3"
+    headers = _headers("tenant-governance", idempotency_key="idem-unadmitted-export")
+    payload = {"dateFrom": "2026-07-01", "dateTo": "2026-07-24", "modules": ["Network"], "contents": ["Audit Trail"], "format": "PDF"}
+    for _attempt in range(2):
+        app, bundle = _live_app(database_path)
+        try:
+            with TestClient(app) as client:
+                before = client.get(f"{BASE}/governance/snapshot", headers=headers).json()
+                response = client.post(f"{BASE}/governance/evidence-package", headers=headers, json=payload)
+                assert response.status_code == 503 and "CANONICAL_EVIDENCE_EXPORT_REQUIRED" in response.text
+                after = client.get(f"{BASE}/governance/snapshot", headers=headers).json()
+                assert after["evidencePackages"] == before["evidencePackages"] == []
+                assert after["auditRows"] == before["auditRows"]
+                assert "package" not in response.json()
+        finally:
+            bundle.engine.close()
 
 
 @pytest.mark.parametrize(("header", "axis", "allowed"), [

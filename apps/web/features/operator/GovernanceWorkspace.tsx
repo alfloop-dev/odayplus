@@ -478,6 +478,10 @@ export function GovernanceWorkspace({
   const [fmt, setFmt] = useState("PDF");
 
   const [evdRunning, setEvdRunning] = useState(false);
+  const exportBusyRef = useRef(false);
+  const decisionBusyRef = useRef(false);
+  const exportIntent = useRef<{ signature: string; key: string } | null>(null);
+  const decisionIntent = useRef<{ signature: string; key: string } | null>(null);
   const [evdResult, setEvdResult] = useState<{ file: string; size: string; t: string; range: string } | null>(null);
   const [evdHist, setEvdHist] = useState<Array<{ id: string; range: string; mod: string; fmt: string; t: string; by: string }>>(
     fixturesAllowed
@@ -690,14 +694,18 @@ export function GovernanceWorkspace({
     ].filter((value): value is string => Boolean(value));
 
   const handleExport = async () => {
-    if (evdRunning) return;
+    if (exportBusyRef.current) return;
+    exportBusyRef.current = true;
     setEvdRunning(true);
+    setEvdResult(null);
     triggerToast("Evidence Package 產生中…");
 
     const modules = selectedExportModules();
     const contents = selectedExportContents();
 
     if (apiActive) {
+      const signature = JSON.stringify({ dateFrom: evFrom, dateTo: evTo, modules, contents, format: fmt, roleId });
+      if (exportIntent.current?.signature !== signature) exportIntent.current = { signature, key: `ik-govern-export-${crypto.randomUUID()}` };
       const record = await exportEvidencePackage({
         dateFrom: evFrom,
         dateTo: evTo,
@@ -707,14 +715,17 @@ export function GovernanceWorkspace({
         role,
         actorName: role,
         roleId,
+        idempotencyKey: exportIntent.current.key,
       });
       if (record) {
+        exportIntent.current = null;
         setEvdResult({
           file: record.file,
           size: record.size,
           t: record.generatedAt.split(" ")[1] ?? record.generatedAt,
           range: record.range,
         });
+        exportBusyRef.current = false;
         setEvdRunning(false);
         // Refresh so the server-recorded audit event + history row appear.
         await refreshSnapshot();
@@ -723,12 +734,12 @@ export function GovernanceWorkspace({
         );
         return;
       }
-      if (!fixturesAllowed) {
-        setEvdRunning(false);
-        triggerToast("Evidence Package 未建立，API 暫時無法使用。");
-        return;
-      }
+      exportBusyRef.current = false;
+      setEvdRunning(false);
+      triggerToast("尚未確認匯出結果，請重試相同內容；尚無可下載證據包。");
+      return;
     } else if (!fixturesAllowed) {
+      exportBusyRef.current = false;
       setEvdRunning(false);
       triggerToast("Evidence Package 未建立，Governance API 尚未就緒。");
       return;
@@ -746,6 +757,7 @@ export function GovernanceWorkspace({
       range: `${evFrom} – ${evTo}`,
     };
     setEvdResult(result);
+    exportBusyRef.current = false;
     setEvdRunning(false);
 
     const histItem = {
@@ -792,7 +804,7 @@ export function GovernanceWorkspace({
   }
 
   async function submitDecision(action: GovernanceDecisionAction) {
-    if (!selectedApproval || decisionRunning) {
+    if (!selectedApproval || decisionBusyRef.current) {
       return;
     }
 
@@ -805,7 +817,10 @@ export function GovernanceWorkspace({
     // API path: the server re-enforces the return/reject reason policy and
     // persists the decision + audit event so it survives reload.
     if (apiActive) {
+      decisionBusyRef.current = true;
       setDecisionRunning(true);
+      const signature = JSON.stringify({ approvalId: selectedApproval.id, action, reason: trimmedReason, roleId });
+      if (decisionIntent.current?.signature !== signature) decisionIntent.current = { signature, key: `ik-govern-decision-${crypto.randomUUID()}` };
       const outcome = await submitGovernanceDecision({
         approvalId: selectedApproval.id,
         action,
@@ -813,9 +828,11 @@ export function GovernanceWorkspace({
         role,
         actorName: role,
         roleId,
+        idempotencyKey: decisionIntent.current.key,
       });
       if (outcome.ok) {
         await refreshSnapshot();
+        decisionBusyRef.current = false;
         setDecisionRunning(false);
         setReason("");
         setReasonError("");
@@ -834,24 +851,17 @@ export function GovernanceWorkspace({
         );
         return;
       }
-      if (outcome.policyError) {
-        setDecisionRunning(false);
-        setReasonError(outcome.detail);
-        return;
-      }
-      if (!fixturesAllowed) {
-        setDecisionRunning(false);
-        setReasonError(outcome.detail);
-        return;
-      }
+      decisionBusyRef.current = false;
       setDecisionRunning(false);
+      setReasonError(outcome.detail);
+      return;
     } else if (!fixturesAllowed) {
       setReasonError("決策未送出，Governance API 尚未就緒。");
       return;
     }
 
     const finalDecisionLabel = action === "approve" ? "Approved" : action === "return" ? "Returned" : "Rejected";
-    const decisionReason = trimmedReason || "符合風險與預算規範";
+    const decisionReason = trimmedReason;
 
     // Update approvals state
     setLocalApprovals((prev) =>
@@ -1352,10 +1362,12 @@ export function GovernanceWorkspace({
               補助查核與內部稽核用 — 匯出範圍內的決策、稽核與成效紀錄。
             </div>
 
+            <fieldset className={styles.exportFields} disabled={evdRunning} aria-busy={evdRunning} aria-label="Evidence Package 匯出設定">
             <div className={styles.formGrid2Col}>
               <div>
-                <label className={styles.formLabel}>起始日</label>
+                <label className={styles.formLabel} htmlFor="governance-export-from">起始日</label>
                 <input
+                  id="governance-export-from"
                   className={styles.formInputDate}
                   onChange={(e) => setEvFrom(e.target.value)}
                   type="date"
@@ -1363,8 +1375,9 @@ export function GovernanceWorkspace({
                 />
               </div>
               <div>
-                <label className={styles.formLabel}>結束日</label>
+                <label className={styles.formLabel} htmlFor="governance-export-to">結束日</label>
                 <input
+                  id="governance-export-to"
                   className={styles.formInputDate}
                   onChange={(e) => setEvTo(e.target.value)}
                   type="date"
@@ -1458,8 +1471,9 @@ export function GovernanceWorkspace({
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <label className={styles.formLabel}>格式</label>
+              <label className={styles.formLabel} htmlFor="governance-export-format">格式</label>
               <select
+                id="governance-export-format"
                 className={styles.formSelect}
                 onChange={(e) => setFmt(e.target.value)}
                 style={{ width: "130px" }}
@@ -1469,6 +1483,8 @@ export function GovernanceWorkspace({
                 <option value="CSV">CSV (zip)</option>
               </select>
             </div>
+
+            </fieldset>
 
             <button
               className={styles.exportButton}
@@ -1507,7 +1523,7 @@ export function GovernanceWorkspace({
                   </button>
                 ) : (
                   <span className={styles.errorText}>
-                    尚未提供可下載 artifact，請由 Evidence Package API 回傳正式下載位置。
+                    尚無可下載的正式證據包。
                   </span>
                 )}
               </div>

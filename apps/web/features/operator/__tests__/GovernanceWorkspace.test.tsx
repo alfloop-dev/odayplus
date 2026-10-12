@@ -208,7 +208,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
     expect(await screen.findByTestId("governance-workspace")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "核准" }));
-    expect(await screen.findByText("決策未送出（API 無法連線）")).toBeInTheDocument();
+    expect(await screen.findByText("尚未確認決策結果，請重試相同內容以核對。")).toBeInTheDocument();
     expect(screen.queryByText(/已核准決策/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
@@ -216,6 +216,67 @@ describe("GovernanceWorkspace high-risk failures", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("evidence-package-result")).not.toBeInTheDocument(),
     );
+  });
+
+  it("never falls back to local approval after an uncertain API result, even in fixture mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    let attempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        attempts += 1;
+        if (attempts === 1) throw new Error("Synthetic lost acknowledgement");
+        const body = JSON.parse(init.body as string);
+        return new Response(JSON.stringify({ approvalId: body.approvalId, action: body.action, status: "approved", finalDecision: "Approved" }));
+      }
+      return new Response(JSON.stringify(decidingSnapshot));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onApprove = vi.fn();
+    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onApprove }} />);
+    await screen.findByTestId("governance-workspace");
+    fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await screen.findByText("尚未確認決策結果，請重試相同內容以核對。");
+    expect(onApprove).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await waitFor(() => expect(onApprove).toHaveBeenCalledTimes(1));
+    const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(new Headers(writes[0][1]!.headers).get("Idempotency-Key")).toBe(new Headers(writes[1][1]!.headers).get("Idempotency-Key"));
+  });
+
+  it("does not accept another approval's acknowledgement", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify(init?.method === "POST"
+      ? { approvalId: "wrong-approval", action: "approve", status: "approved", finalDecision: "Approved" }
+      : decidingSnapshot))));
+    const onApprove = vi.fn();
+    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onApprove }} />);
+    await screen.findByTestId("governance-workspace");
+    fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await screen.findByText("尚未確認決策結果，請重試相同內容以核對。");
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("retains export scope/key after failure and creates no local package", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    let settle!: (value: Response) => void;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => init?.method === "POST"
+      ? new Promise(resolve => { settle = resolve; })
+      : Promise.resolve(new Response(JSON.stringify(decidingSnapshot))));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GovernanceWorkspace roleId="ops-lead" />);
+    await screen.findByTestId("governance-workspace");
+    fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
+    fireEvent.click(screen.getByTestId("governance-export-button"));
+    expect(screen.getByLabelText("起始日")).toBeDisabled();
+    expect(screen.getByLabelText("格式")).toBeDisabled();
+    settle(new Response("Synthetic unavailable", { status: 503 }));
+    await screen.findByText("尚未確認匯出結果，請重試相同內容；尚無可下載證據包。");
+    expect(screen.queryByTestId("evidence-package-result")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("governance-export-button"));
+    const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(writes).toHaveLength(2);
+    expect(new Headers(writes[0][1]!.headers).get("Idempotency-Key")).toBe(new Headers(writes[1][1]!.headers).get("Idempotency-Key"));
+    settle(new Response("Synthetic still unavailable", { status: 503 }));
   });
 
   it("blocks seed governance payloads instead of rendering local approvals", async () => {
