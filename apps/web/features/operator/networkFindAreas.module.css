@@ -2488,12 +2488,12 @@
 }
 
 .reviewDialog {
-  width: 520px;
-  max-width: 94vw;
+  width: min(520px, 100%);
+  box-sizing: border-box;
   background: #ffffff;
   border-radius: 14px;
   box-shadow: 0 24px 64px rgba(12, 18, 44, 0.3);
-  max-height: 92vh;
+  max-height: calc(100dvh - 40px);
   overflow-y: auto;
 }
 
@@ -2513,7 +2513,7 @@
   margin-left: auto;
   background: none;
   border: none;
-  color: #8a93a8;
+  color: #536079;
   font-size: 17px;
   cursor: pointer;
   line-height: 1;
@@ -3365,6 +3365,13 @@
   box-shadow: 0 0 0 3px rgba(46, 58, 151, 0.12);
 }
 
+.reviewDialog .reviewSyncNote { color: #536079; overflow-wrap: anywhere; }
+.reviewDialogClose:focus-visible, .reviewDialogCancel:focus-visible,
+.reviewDialogSubmit:focus-visible, .reviewAckButton:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
 .reviewDialogFieldLabelWarn + .reviewDialogInput {
   border-color: #e4c88a;
   background: #fffdf6;
@@ -3678,18 +3685,6 @@
 
   .roiValue {
     margin-left: 0;
-  }
-
-  .reviewDialogOverlay {
-    align-items: flex-end;
-    padding: 10px;
-  }
-
-  .reviewDialog {
-    width: 100%;
-    max-width: 100%;
-    max-height: 94vh;
-    border-radius: 12px;
   }
 
   .workspace > *,
