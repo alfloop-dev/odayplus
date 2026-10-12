@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
 from shared.audit.integrity import (
@@ -23,6 +24,7 @@ from shared.audit.integrity import (
     canonical_json,
     sha256_hex,
 )
+from shared.audit.worm import AuditWormReceipt, audit_event_object_name
 from shared.infrastructure.persistence.postgresql import PostgresEngine
 
 IMMUTABLE_COLUMNS = (
@@ -101,6 +103,11 @@ def _payload(row: dict[str, Any]) -> dict[str, Any]:
     for name in ("occurred_at", "retained_until"):
         payload[name] = _time(payload[name])
     return payload
+
+
+def canonical_audit_payload(row: dict[str, Any]) -> dict[str, Any]:
+    """Use the exact physical writer's immutable JSON/hash contract for WORM."""
+    return _payload(row)
 
 
 @dataclass(frozen=True)
@@ -287,3 +294,47 @@ class CanonicalPostgresAuditLog:
                 )
             previous = row["event_sha256"]
         return AuditChainVerification(ok=not issues, issues=tuple(issues))
+
+    def attach_worm_receipt(
+        self, tenant_id: str, audit_event_id: str, *,
+        expected_event_sha256: str, sink_id: str, receipt: AuditWormReceipt,
+    ) -> dict[str, Any]:
+        """Attach verified delivery metadata; immutable audit facts never change.
+
+        The worker needs UPDATE on worm_object_uri only. This method grants
+        no database permission and requires a receipt from its configured sink.
+        """
+        with self._tenant(tenant_id):
+            self.engine.query_one(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                ("canonical-audit-delivery:" + audit_event_id,),
+            )
+            row = self.get_event(tenant_id, audit_event_id)
+            if row is None or row["event_sha256"] != expected_event_sha256:
+                raise AuditIntegrityError("Delivery does not match the committed canonical audit")
+            if (
+                receipt.record_type != "audit-events" or receipt.record_id != audit_event_id
+                or receipt.checksum != row["event_sha256"] or receipt.sink_id != sink_id
+            ):
+                raise AuditIntegrityError("WORM receipt does not match the canonical record")
+            source, target = urlsplit(sink_id), urlsplit(receipt.object_uri)
+            expected_path = unquote(source.path).rstrip("/") + "/" + audit_event_object_name(
+                audit_event_id, row["sequence_no"], row["event_sha256"]
+            )
+            if (
+                source.scheme not in {"file", "gs"} or target.scheme != source.scheme
+                or target.netloc != source.netloc or target.query or target.fragment
+                or unquote(target.path) != expected_path
+            ):
+                raise AuditIntegrityError("WORM receipt object differs from the configured audit target")
+            if row["worm_object_uri"] not in (None, receipt.object_uri):
+                raise AuditImmutabilityError("Existing WORM delivery metadata cannot be replaced")
+            updated = self.engine.execute(
+                "UPDATE audit.audit_events SET worm_object_uri = ? WHERE tenant_id = ? "
+                "AND audit_event_id = ? AND event_sha256 = ? "
+                "AND (worm_object_uri IS NULL OR worm_object_uri = ?)",
+                (receipt.object_uri, tenant_id, audit_event_id, expected_event_sha256, receipt.object_uri),
+            )
+            if updated.rowcount != 1:
+                raise AuditIntegrityError("Canonical WORM delivery update lost its verified binding")
+            return self.get_event(tenant_id, audit_event_id)

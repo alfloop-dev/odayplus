@@ -76,9 +76,10 @@ class RegistryIntakeAuditRetention:
 
 
 class CanonicalIntakeAuditSink:
-    def __init__(self, writer: CanonicalPostgresAuditLog, retention: Any) -> None:
+    def __init__(self, writer: CanonicalPostgresAuditLog, retention: Any, delivery: Any = None) -> None:
         self.writer = writer
         self.retention = retention
+        self.delivery = delivery
 
     def set_retention_provider(self, retention: Any) -> None:
         if retention is None or not callable(getattr(retention, "resolve", None)):
@@ -105,6 +106,9 @@ class CanonicalIntakeAuditSink:
         result = deepcopy(dict(audit))
         authorized_scope = deepcopy(dict(scope))
         try:
+            if self.delivery is None:
+                raise ValueError("Canonical Intake audit delivery is unavailable")
+            self.delivery.require_business_transaction()
             if result["tenant_id"] != authorized_scope["tenant_id"]:
                 raise ValueError("Audit tenant differs from its authoritative parent")
             at = datetime.fromisoformat(result["occurred_at"].replace("Z", "+00:00"))
@@ -151,6 +155,7 @@ class CanonicalIntakeAuditSink:
                 reason_code=result.get("reason_code"),
             )
             persisted = self.writer.append(fact)
+            self.delivery.enqueue(persisted)
             result["after_value"] = after
             result["canonical_event_sha256"] = persisted["event_sha256"]
             result["canonical_sequence_no"] = persisted["sequence_no"]

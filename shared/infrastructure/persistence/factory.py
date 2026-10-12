@@ -507,14 +507,19 @@ def _postgres_bundle(
         CanonicalIntakeAuditSink,
         RegistryIntakeAuditRetention,
     )
+    from shared.audit.canonical_delivery import CanonicalAuditDelivery
     from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
 
+    resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
+    pg_job_queue = DurableJobQueue(engine)
+    canonical_audit_writer = CanonicalPostgresAuditLog(engine)
+
     assisted_intake_store.configure_canonical_audit(CanonicalIntakeAuditSink(
-        CanonicalPostgresAuditLog(engine),
+        canonical_audit_writer,
         RegistryIntakeAuditRetention(SqlDecisionPolicyRepository(engine), pg_identity_store),
+        CanonicalAuditDelivery(canonical_audit_writer, pg_job_queue, resolved_worm_sink),
     ))
 
-    resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
     pg_audit_log = DurableAuditLog(engine, worm_sink=resolved_worm_sink)
     pg_manual_corr_repo = DurableManualCorrectionRepository(engine)
 
@@ -525,7 +530,7 @@ def _postgres_bundle(
             engine,
             worm_sink=resolved_worm_sink,
         ),
-        job_queue=DurableJobQueue(engine),
+        job_queue=pg_job_queue,
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
         forecastops_policy_repository=SqlDecisionPolicyRepository(engine),

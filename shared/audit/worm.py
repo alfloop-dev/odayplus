@@ -406,6 +406,13 @@ def _object_name(
     return f"{record_type}/{prefix}-{_safe_object_token(record_id)}-{checksum[:16]}.json"
 
 
+def audit_event_object_name(record_id: str, sequence: int, checksum: str) -> str:
+    """The existing deterministic object key for a verified audit record."""
+    return _object_name(
+        record_type="audit-events", record_id=record_id, sequence=sequence, checksum=checksum
+    )
+
+
 def _safe_object_token(value: str) -> str:
     return "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value)
 
@@ -416,5 +423,6 @@ __all__ = [
     "AuditWormSinkError",
     "GcsWormEvidenceSink",
     "LocalAppendOnlyWormSink",
+    "audit_event_object_name",
     "build_audit_worm_sink_from_env",
 ]
