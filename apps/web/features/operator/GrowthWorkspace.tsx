@@ -1765,7 +1765,7 @@ function GrowthBuilderModal({
                   disabled={isSubmitting}
                   data-testid="growth-draft-submit"
                 >
-                  {isSubmitting ? "建立中…" : createdDraft ? "保留草稿" : "建立草稿"}
+                  {createdDraft ? "保留草稿" : isSubmitting ? "建立中…" : "建立草稿"}
                 </button>
                 <button
                   type="button"
@@ -1780,7 +1780,7 @@ function GrowthBuilderModal({
             )}
           </div>
         </form>
-        {isSubmitting ? <p className={g.builderNote} role="status" tabIndex={0} data-testid="growth-builder-submit-status">正在提交草稿，請等待伺服器回應。</p> : null}
+        {isSubmitting ? <p className={g.builderNote} role="status" tabIndex={0} data-testid="growth-builder-submit-status">{createdDraft ? "正在送出核准請求，請等待伺服器回應。" : "正在提交草稿，請等待伺服器回應。"}</p> : null}
         <p className={g.builderNote}>
           建立草稿僅產生 DRAFT，不自動執行；送審核准（建立 Govern 核准項）後才進入生命週期。
         </p>
