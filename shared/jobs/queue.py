@@ -329,7 +329,7 @@ class InMemoryJobQueue:
             self._jobs[job_id] = updated
             return updated
 
-    def claim_next(self, worker_id: str = "worker-1") -> JobRecord | None:
+    def claim_next(self, worker_id: str = "worker-1", *, audit_only: bool = False) -> JobRecord | None:
         with self._reservation_lock:
             now = datetime.now(UTC)
             for record in sorted(
@@ -342,7 +342,11 @@ class InMemoryJobQueue:
                     and record.lease_expires_at is not None
                     and record.lease_expires_at < now
                 )
-                if is_eligible and not is_non_executable_receipt_job_type(record.job_type):
+                if (
+                    is_eligible
+                    and not is_non_executable_receipt_job_type(record.job_type)
+                    and (not audit_only or record.job_type in AUDIT_DELIVERY_JOB_TYPES)
+                ):
                     updated = JobRecord(
                         job_type=record.job_type,
                         payload=record.payload,

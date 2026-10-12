@@ -229,7 +229,7 @@ class DurableJobQueue:
                     )
             return True
 
-    def claim_next(self, worker_id: str = "worker-1") -> JobRecord | None:
+    def claim_next(self, worker_id: str = "worker-1", *, audit_only: bool = False) -> JobRecord | None:
         with self._engine.lock:
             now = datetime.now(UTC)
             now_str = now.isoformat()
@@ -246,6 +246,7 @@ class DurableJobQueue:
                     "  WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "    AND lease_expires_at < ?)) "
                     "  AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
+                    "  AND (? = FALSE OR job_type IN (?, ?)) "
                     "  ORDER BY CASE WHEN job_type IN (?, ?) THEN 0 ELSE 1 END, created_at, job_id "
                     "  FOR UPDATE SKIP LOCKED "
                     "  LIMIT 1"
@@ -265,6 +266,8 @@ class DurableJobQueue:
                         JobStatus.RUNNING.value,
                         now_str,
                         *receipt_patterns,
+                        audit_only,
+                        *AUDIT_DELIVERY_JOB_TYPES,
                         *AUDIT_DELIVERY_JOB_TYPES,
                         JobStatus.RUNNING.value,
                         *_LEGACY_RETRYING_STATUS_VALUES,
@@ -282,6 +285,7 @@ class DurableJobQueue:
                     "WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "AND lease_expires_at < ?)) "
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
+                    "AND (? = FALSE OR job_type IN (?, ?)) "
                     "ORDER BY CASE WHEN job_type IN (?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
                     (
                         JobStatus.QUEUED.value,
@@ -289,6 +293,8 @@ class DurableJobQueue:
                         JobStatus.RUNNING.value,
                         now_str,
                         *receipt_patterns,
+                        audit_only,
+                        *AUDIT_DELIVERY_JOB_TYPES,
                         *AUDIT_DELIVERY_JOB_TYPES,
                     ),
                 )

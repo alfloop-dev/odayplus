@@ -337,3 +337,104 @@ def test_actual_operator_scope_denial_precedes_backlog_and_missing_intent_fails_
     unavailable = _operator_post(client, f"intake/{iid}/correct", fields={"address": "Synthetic"})
     assert unavailable.status_code == 503, unavailable.text
     assert repository.list_intakes() == before and repository.list_idempotency_records() == []
+
+
+def test_actual_postgresql_publisher_delivers_while_general_worker_is_occupied(case):
+    from threading import Event, Thread
+
+    from shared.jobs.registry import JobRegistry
+
+    db, bundle, monkeypatch = case
+    started, release = Event(), Event()
+    registry = JobRegistry()
+
+    def long_work(job, persistence):
+        started.set()
+        assert release.wait(20), "synthetic general worker was not released"
+
+    registry.register("synthetic-long-work", long_work)
+    ordinary, _ = bundle.job_queue.enqueue(JobRequest("synthetic-long-work", {}), correlation_id="synthetic")
+    general = ODayWorker(persistence=bundle, registry=registry, worker_id="synthetic-busy-general")
+    thread = Thread(target=general.run_once)
+    thread.start()
+    publisher_bundle = None
+    try:
+        assert started.wait(5)
+        assert source._submit(bundle).status_code == 202
+        before = source._snapshot(bundle)
+        publisher_bundle = source._bundle(db, monkeypatch)
+        publisher = ODayWorker(persistence=publisher_bundle, audit_only=True, worker_id="synthetic-dedicated-publisher")
+        for _ in range(3):
+            assert publisher.run_once() is True
+            assert thread.is_alive()
+            assert bundle.job_queue.get(ordinary.job_id).status == JobStatus.RUNNING
+        assert publisher.run_once() is False
+        assert all(row["worm_object_uri"] for row in delivery._rows(publisher_bundle))
+        assert source._snapshot(bundle) == before
+    finally:
+        release.set()
+        thread.join(5)
+        if publisher_bundle:
+            publisher_bundle.engine.close()
+    assert not thread.is_alive()
+    assert bundle.job_queue.get(ordinary.job_id).status == JobStatus.SUCCEEDED
+
+
+def test_actual_postgresql_publisher_ignores_expired_ordinary_and_recovers_expired_audit_with_fencing(case):
+    from shared.jobs.queue import JobFenceRejectedError
+
+    _, bundle, _ = case
+    ordinary, _ = bundle.job_queue.enqueue(JobRequest("synthetic-ordinary", {}), correlation_id="synthetic")
+    assert bundle.job_queue.claim_next(worker_id="synthetic-expired-general").job_id == ordinary.job_id
+    expired = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
+    bundle.engine.execute("UPDATE durable_jobs SET lease_expires_at = ? WHERE job_id = ?", (expired, ordinary.job_id))
+    other, _ = bundle.job_queue.enqueue(JobRequest("synthetic-other", {}), correlation_id="synthetic")
+    assert bundle.job_queue.claim_next(worker_id="synthetic-publisher", audit_only=True) is None
+    ordinary_before = (bundle.job_queue.get(ordinary.job_id), bundle.job_queue.get(other.job_id))
+    assert source._submit(bundle).status_code == 202
+    before = source._snapshot(bundle)
+    held = bundle.job_queue.claim_next(worker_id="synthetic-expired-publisher", audit_only=True)
+    bundle.engine.execute("UPDATE durable_jobs SET lease_expires_at = ? WHERE job_id = ?", (expired, held.job_id))
+    publisher = ODayWorker(persistence=bundle, audit_only=True, worker_id="synthetic-recovery-publisher")
+    assert publisher.run_once() is True
+    recovered = bundle.job_queue.get(held.job_id)
+    assert recovered.status == JobStatus.SUCCEEDED and recovered.fence_token > held.fence_token
+    with pytest.raises(JobFenceRejectedError):
+        bundle.job_queue.update_status(held.job_id, JobStatus.FAILED, expected_version=held.version, fence_token=held.fence_token)
+    assert publisher.run_once() is True and publisher.run_once() is True
+    assert publisher.run_once() is False
+    assert (bundle.job_queue.get(ordinary.job_id), bundle.job_queue.get(other.job_id)) == ordinary_before
+    assert all(row["worm_object_uri"] for row in delivery._rows(bundle))
+    assert source._snapshot(bundle) == before
+
+
+def test_actual_publisher_process_bootstraps_and_delivers_only_audits(case, monkeypatch):
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    _, bundle, _ = case
+    assert source._submit(bundle).status_code == 202
+    ordinary, _ = bundle.job_queue.enqueue(JobRequest("synthetic-ordinary", {}), correlation_id="synthetic")
+    before = source._snapshot(bundle)
+    monkeypatch.setenv("ODAY_RELEASE_SHA", "local")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+    # The worker image sets PYTHONPATH=/app; use this checkout as that root.
+    monkeypatch.setenv("PYTHONPATH", str(Path.cwd()))
+    completed = subprocess.run(
+        [sys.executable, "product_ops/deployment/cloud_run_job_entrypoint.py", "audit-publisher",
+         "--run-for-seconds", "3", "--max-jobs", "10"],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    print(completed.stdout)
+    assert completed.returncode == 0, completed.stderr
+    receipts = [json.loads(line) for line in completed.stdout.splitlines() if line.startswith("{")]
+    receipt = next(row for row in receipts if row.get("receipt_kind") == "audit_publisher")
+    assert receipt["status"] == "observation_window_complete" and receipt["audit_only"]
+    assert receipt["release_sha"] == "local" and receipt["processed_count"] == 3
+    assert all(row["job_status"] == "succeeded" and row["job_type"] == JOB_TYPE for row in receipt["processed"])
+    assert all(row["worm_object_uri"] for row in delivery._rows(bundle))
+    assert bundle.job_queue.get(ordinary.job_id).status == JobStatus.QUEUED
+    assert bundle.job_queue.get(ordinary.job_id).attempts == 0
+    assert source._snapshot(bundle) == before

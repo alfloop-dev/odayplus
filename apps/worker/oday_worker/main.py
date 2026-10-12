@@ -133,6 +133,7 @@ class ODayWorker:
         telemetry: Telemetry | None = None,
         worker_id: str | None = None,
         heartbeat_interval_seconds: float = 15.0,
+        audit_only: bool = False,
     ) -> None:
         self.persistence = persistence or build_persistence()
         self.job_queue = self.persistence.job_queue
@@ -142,12 +143,16 @@ class ODayWorker:
         self.telemetry = telemetry or Telemetry("oday-worker")
         self.worker_id = worker_id or _default_worker_id()
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.audit_only = audit_only
 
     def run_once(self) -> bool:
         """Claim and execute the next queued job. Returns True if a job was executed."""
         self.sample_audit_backlog()
         try:
-            job = self.job_queue.claim_next(worker_id=self.worker_id)
+            if self.audit_only:
+                job = self.job_queue.claim_next(worker_id=self.worker_id, audit_only=True)
+            else:
+                job = self.job_queue.claim_next(worker_id=self.worker_id)
         except Exception as exc:
             self.telemetry.logger.error(
                 "Failed to claim next job: %s",
@@ -372,21 +377,20 @@ class ODayWorker:
     def loop(self, stop_event: Any = None) -> None:
         while stop_event is None or not stop_event.is_set():
             executed = self.run_once()
-            if executed:
-                try:
-                    self.export_metrics()
-                except Exception as exc:
-                    self.telemetry.logger.error(
-                        f"Worker lifecycle export_metrics failed: {exc}",
-                        correlation_id="unknown",
-                        resource="worker/metrics",
-                        error_code=type(exc).__name__,
-                    )
+            try:
+                self.export_metrics()
+            except Exception as exc:
+                self.telemetry.logger.error(
+                    f"Worker lifecycle export_metrics failed: {exc}",
+                    correlation_id="unknown",
+                    resource="worker/metrics",
+                    error_code=type(exc).__name__,
+                )
             if not executed:
                 time.sleep(1.0)
 
     def sample_audit_backlog(self):
-        if not self.persistence.is_production:
+        if getattr(getattr(self.persistence, "engine", None), "dialect", None) != "postgresql":
             return None
         from shared.audit.backlog import CanonicalAuditBacklog
         try:

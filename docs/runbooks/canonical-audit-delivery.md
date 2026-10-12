@@ -101,7 +101,45 @@ eligible lease/claim. Receipt rows remain nonexecutable; ordinary jobs retain
 their chronological order. This does not interrupt an already-running job or
 prove adequate dedicated-publisher capacity.
 
-This implementation does not close the whole §6 contract. Continuous/dedicated
+## Dedicated publisher runtime
+
+The existing worker image entrypoint now has an `audit-publisher` command:
+
+```bash
+python product_ops/deployment/cloud_run_job_entrypoint.py audit-publisher \
+  --run-for-seconds 60 --max-jobs 100
+```
+
+The runtime composition sets `audit_only=True`. Memory, SQLite and the actual
+PostgreSQL `FOR UPDATE SKIP LOCKED` claim select only canonical or Store Ops audit
+delivery rows before changing a lease, attempt or fence. They do not claim an
+ordinary job just to reject it afterward. Expired ordinary jobs remain untouched;
+expired audit jobs use the same heartbeat/fencing recovery path as other jobs.
+
+The command waits for late audit arrivals within its bounded observation window,
+exports metrics even on idle polls and emits an `audit_publisher` execution
+receipt. Claim or metric-export failure is a failed execution; delivery retry or
+dead-letter is never a success. `observation_window_complete` records that the
+poll window ended, not that every audit was delivered or any team was paged.
+The general long-running worker loop also exports on idle iterations now.
+
+An isolated PostgreSQL test holds a general worker in a synthetic long job,
+then a second persistence connection and audit-only worker deliver all three
+real canonical events through the default registry while that job remains
+running. Another case reclaims an expired audit lease, rejects the stale fence,
+and leaves both queued and expired ordinary work unchanged. These prove the
+runtime selection/isolation path, not production capacity or provider latency.
+
+Before release, Platform/SRE must reserve separate publisher resources, bind the
+same admitted worker image/database/WORM configuration, and record schedule
+overlap/gaps, pool limits, timeout, batch bounds, backlog deadlines and capacity.
+The example bounds are not approved SLO values. A canary must read back the actual
+job configuration and execution receipts, exercise busy general workers and
+WORM interruption/recovery, and verify metrics freshness and Security/Platform
+paging. No resource, schedule, IAM grant or production flag is created/enabled
+by this code change. The nine-owner release register remains unchanged.
+
+This implementation does not close the whole §6 contract. Live dedicated
 publisher capacity, actual Security/Platform
 paging and verified provider receipts still need integration/admission evidence.
 The current generic P1 receiver is ops-lead; it is not evidence that both required
