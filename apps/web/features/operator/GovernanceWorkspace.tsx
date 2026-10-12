@@ -41,8 +41,7 @@ import {
 } from "./operatorDataMode";
 import { ModelReleaseController } from "./governance/ModelReleaseController";
 import { DecisionCommentsPanel } from "./governance/DecisionCommentsPanel";
-
-type GovernanceTab = "approvals" | "decisions" | "audit" | "userManagement" | "evidencePackage" | "statusBoard" | "featureFlags" | "learningHub";
+import type { GovernanceTab, GovernanceViewState } from "./governance/governanceUrlState";
 
 /**
  * Rendered wherever a governance field is absent or unusable. The row keeps its
@@ -67,6 +66,8 @@ export type GovernanceWorkspaceProps = {
   canDecide?: boolean;
   canComment?: boolean;
   callbacks?: GovernanceWorkspaceCallbacks;
+  viewState?: GovernanceViewState;
+  onViewStateChange?: (state: GovernanceViewState) => void;
 };
 
 const fallbackApprovals: GovernanceApproval[] = [
@@ -399,8 +400,12 @@ export function GovernanceWorkspace({
   canDecide: callerAllowsDecision = true,
   canComment = true,
   callbacks,
+  viewState,
+  onViewStateChange,
 }: GovernanceWorkspaceProps) {
   const fixturesAllowed = operatorFixturesAllowed();
+  const viewStateRef = useRef(viewState);
+  viewStateRef.current = viewState;
 
   // Callers hand these rows over from the Operator shell envelope, which is a
   // different producer with a different row shape. Normalize at the boundary so
@@ -447,15 +452,15 @@ export function GovernanceWorkspace({
   const [apiLoadError, setApiLoadError] = useState<string | null>(null);
   const [serverAuthority, setServerAuthority] = useState<GovernanceActionAuthority | null>(null);
 
-  const [activeTab, setActiveTab] = useState<GovernanceTab>("approvals");
-  const [selectedApprovalId, setSelectedApprovalId] = useState(localApprovals[0]?.id ?? "");
+  const [activeTab, setActiveTab] = useState<GovernanceTab>(viewState?.tab ?? "approvals");
+  const [selectedApprovalId, setSelectedApprovalId] = useState(viewState?.approvalId ?? localApprovals[0]?.id ?? "");
   const [selectedEvidenceId, setSelectedEvidenceId] = useState(
-    localApprovals[0]?.evidence?.[0]?.id ?? "",
+    viewState?.evidenceId ?? localApprovals[0]?.evidence?.[0]?.id ?? "",
   );
-  const [reason, setReason] = useState("");
+  const [reasonEntry, setReasonEntry] = useState({ approvalId:"", value:"" });
   const [reasonError, setReasonError] = useState("");
   const [decisionRunning, setDecisionRunning] = useState(false);
-  const [auditCategory, setAuditCategory] = useState<GovernanceAuditCategory | "all">("all");
+  const [auditCategory, setAuditCategory] = useState<GovernanceAuditCategory | "all">(viewState?.auditCategory ?? "all");
   const [lastAction, setLastAction] = useState("");
   const [localToast, setLocalToast] = useState<string | null>(null);
 
@@ -539,9 +544,9 @@ export function GovernanceWorkspace({
       })),
     );
     setSelectedApprovalId((current) =>
-      apiApprovals.some((approval) => approval.id === current)
+      viewStateRef.current?.approvalId ?? (apiApprovals.some((approval) => approval.id === current)
         ? current
-        : apiApprovals[0]?.id ?? "",
+        : apiApprovals[0]?.id ?? ""),
     );
     setApiActive(true);
     if (inspection === "seed") {
@@ -567,9 +572,9 @@ export function GovernanceWorkspace({
     const nextApprovals = approvals ?? [];
     setLocalApprovals(nextApprovals);
     setSelectedApprovalId((current) =>
-      nextApprovals.some((approval) => approval.id === current)
+      viewStateRef.current?.approvalId ?? (nextApprovals.some((approval) => approval.id === current)
         ? current
-        : nextApprovals[0]?.id ?? "",
+        : nextApprovals[0]?.id ?? ""),
     );
   }, [approvals, apiActive]);
 
@@ -604,13 +609,29 @@ export function GovernanceWorkspace({
       }),
     [localApprovals],
   );
-  const selectedApproval =
-    localApprovals.find((approval) => approval.id === selectedApprovalId) ?? localApprovals[0];
-  const selectedEvidence =
-    selectedApproval?.evidence?.find((evidence) => evidence.id === selectedEvidenceId) ??
-    selectedApproval?.evidence?.[0];
+  const selectedApproval = selectedApprovalId
+    ? localApprovals.find((approval) => approval.id === selectedApprovalId)
+    : localApprovals[0];
+  const selectedEvidence = selectedEvidenceId
+    ? selectedApproval?.evidence?.find((evidence) => evidence.id === selectedEvidenceId)
+    : selectedApproval?.evidence?.[0];
+  const reason = reasonEntry.approvalId === selectedApproval?.id ? reasonEntry.value : "";
+  function setReason(value: string) {
+    setReasonEntry({ approvalId:selectedApproval?.id ?? "", value });
+  }
 
   useEffect(() => {
+    if (!viewState || decisionRunning) return;
+    setActiveTab(viewState.tab);
+    setSelectedApprovalId(viewState.approvalId ?? localApprovals[0]?.id ?? "");
+    setSelectedEvidenceId(viewState.evidenceId ?? "");
+    setAuditCategory(viewState.auditCategory);
+  }, [viewState?.tab, viewState?.approvalId, viewState?.evidenceId, viewState?.auditCategory, decisionRunning, localApprovals]);
+
+  useEffect(() => { setReasonError(""); setLastAction(""); }, [selectedApproval?.id]);
+
+  useEffect(() => {
+    if (decisionRunning || viewState?.evidenceId) return;
     if (!selectedApproval) {
       setSelectedEvidenceId("");
       return;
@@ -620,7 +641,7 @@ export function GovernanceWorkspace({
         ? current
         : selectedApproval.evidence?.[0]?.id ?? "",
     );
-  }, [selectedApproval]);
+  }, [selectedApproval, decisionRunning, viewState?.evidenceId]);
 
   const auditCategories = useMemo(() => {
     const categorySet = new Set<GovernanceAuditCategory>(baseAuditCategories);
@@ -753,12 +774,21 @@ export function GovernanceWorkspace({
   };
 
   function selectApproval(approval: GovernanceApproval) {
+    if (decisionRunning) return;
     setSelectedApprovalId(approval.id);
     setSelectedEvidenceId(approval.evidence?.[0]?.id ?? "");
     setReason("");
     setReasonError("");
     setLastAction("");
     callbacks?.onSelectApproval?.(approval);
+    onViewStateChange?.({ tab:activeTab, approvalId:approval.id, evidenceId:approval.evidence?.[0]?.id ?? null, auditCategory });
+  }
+
+  function changeView(patch: Partial<GovernanceViewState>) {
+    if (decisionRunning) return;
+    const next = { tab:activeTab, approvalId:selectedApprovalId || null, evidenceId:selectedEvidenceId || null, auditCategory, ...patch };
+    setActiveTab(next.tab); setSelectedEvidenceId(next.evidenceId ?? ""); setAuditCategory(next.auditCategory);
+    onViewStateChange?.(next);
   }
 
   async function submitDecision(action: GovernanceDecisionAction) {
@@ -991,7 +1021,8 @@ export function GovernanceWorkspace({
             className={styles.tab}
             data-testid={`governance-tab-${tab.id}`}
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => changeView({ tab:tab.id })}
+            disabled={decisionRunning}
             type="button"
           >
             {tab.label}
@@ -1016,6 +1047,7 @@ export function GovernanceWorkspace({
                   className={styles.queueItem}
                   key={approval.id}
                   onClick={() => selectApproval(approval)}
+                  disabled={decisionRunning}
                   type="button"
                 >
                   <span className={styles.queueTopline}>
@@ -1070,7 +1102,7 @@ export function GovernanceWorkspace({
                   </div>
                   <div>
                     <dt>核准角色</dt>
-                    <dd>{selectedApproval.owner ?? role}</dd>
+                    <dd>{selectedApproval.owner ?? FIELD_UNAVAILABLE}</dd>
                   </div>
                   <div>
                     <dt>SLA</dt>
@@ -1093,7 +1125,7 @@ export function GovernanceWorkspace({
                   </section>
                   <section>
                     <h4>決策邊界</h4>
-                    <p>{selectedApproval.roleNote ?? `${role} 必須先完成證據審查。`}</p>
+                    <p>{selectedApproval.roleNote ?? "未提供決策邊界。"}</p>
                   </section>
                 </div>
 
@@ -1108,11 +1140,12 @@ export function GovernanceWorkspace({
                           aria-pressed={selectedEvidence?.id === evidence.id}
                           className={styles.evidenceChip}
                           key={evidence.id}
-                          onClick={() => setSelectedEvidenceId(evidence.id)}
+                          onClick={() => changeView({ evidenceId:evidence.id })}
+                          disabled={decisionRunning}
                           type="button"
                         >
                           <span>{evidence.label}</span>
-                          <small>{evidence.state ?? evidence.type ?? "ready"}</small>
+                          <small>{evidence.state ?? FIELD_UNAVAILABLE}</small>
                         </button>
                       ))}
                     {selectedApproval.evidence?.length ? null : (
@@ -1121,6 +1154,8 @@ export function GovernanceWorkspace({
                   </div>
                   {selectedEvidence ? (
                     <EvidenceDetail evidence={selectedEvidence} approval={selectedApproval} />
+                  ) : selectedEvidenceId ? (
+                    <p className={styles.emptyState} data-testid="governance-evidence-unavailable">指定證據未取得，請選擇此核准項目可用的證據。</p>
                   ) : null}
                   <div className={styles.referenceRow}>
                     <span>關聯</span>
@@ -1137,6 +1172,7 @@ export function GovernanceWorkspace({
                         <span>核准選填；退回／駁回必填，寫入 Decision Log</span>
                       </label>
                       <textarea
+                        readOnly={decisionRunning}
                         aria-describedby={reasonError ? "governance-reason-error" : "governance-reason-help"}
                         aria-invalid={Boolean(reasonError)}
                         id="governance-reason"
@@ -1183,7 +1219,7 @@ export function GovernanceWorkspace({
                   ) : (
                     <div className={styles.decidedNotice}>
                       <strong>已完成決策 ({selectedApproval.status})</strong>
-                      <p>決策理由：{selectedApproval.reason || "符合風險與預算規範"}</p>
+                      <p>決策理由：{selectedApproval.reason || FIELD_UNAVAILABLE}</p>
                     </div>
                   )}
                   {lastAction ? <p className={styles.lastAction}>{lastAction}</p> : null}
@@ -1197,7 +1233,9 @@ export function GovernanceWorkspace({
                 />
               </>
             ) : (
-              <div className={styles.emptyState}>目前沒有核准請求</div>
+              <div className={styles.emptyState} data-testid="governance-approval-unavailable">
+                {selectedApprovalId ? "指定核准項目未取得，請從可用佇列選擇項目。" : "目前沒有核准請求"}
+              </div>
             )}
           </article>
         </section>
@@ -1261,7 +1299,7 @@ export function GovernanceWorkspace({
           <div className={styles.filters} aria-label="Audit category filters">
             <button
               aria-current={auditCategory === "all" ? "true" : undefined}
-              onClick={() => setAuditCategory("all")}
+              onClick={() => changeView({ auditCategory:"all" })}
               type="button"
             >
               全部
@@ -1270,7 +1308,7 @@ export function GovernanceWorkspace({
               <button
                 aria-current={auditCategory === category ? "true" : undefined}
                 key={category}
-                onClick={() => setAuditCategory(category)}
+                onClick={() => changeView({ auditCategory:category })}
                 type="button"
               >
                 {auditCategoryLabel(category)}
@@ -1696,7 +1734,7 @@ function EvidenceDetail({
         </div>
         <div>
           <dt>狀態</dt>
-          <dd>{evidence.state ?? "ready"}</dd>
+          <dd>{evidence.state ?? FIELD_UNAVAILABLE}</dd>
         </div>
         <div>
           <dt>綁定實體</dt>

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GovernanceWorkspace, inspectGovernanceSnapshot } from "../GovernanceWorkspace";
 import { OperatorConsole } from "../OperatorConsole";
 import { normalizeGovernanceStatusBoard } from "../governance/governanceEnvelope";
+import type { GovernanceViewState } from "../governance/governanceUrlState";
 
 const snapshot = {
   approvals: [{
@@ -73,6 +74,74 @@ const readAdminSnapshot = {
   ...snapshot,
   actionAuthority: { verified: true, systemRoles: ["auditor", "platform_admin"], decide: false, exportEvidence: false },
 };
+
+describe("Governance URL target and decision ownership", () => {
+  const second = { ...snapshot.approvals[0], id:"APR-LIVE-2", title:"Second scoped approval", evidence:[{ id:"EV-SECOND", label:"Second scoped evidence" }] };
+  const twoRecords = { ...decidingSnapshot, approvals:[snapshot.approvals[0], second] };
+  const target: GovernanceViewState = { tab:"approvals", approvalId:second.id, evidenceId:"EV-SECOND", auditCategory:"all" };
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+  function reads() {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE","true");
+    const fetchMock=vi.fn(async (input:RequestInfo|URL,_init?:RequestInit) => new Response(JSON.stringify(String(input).endsWith("/snapshot") ? twoRecords : {items:[]}),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);return fetchMock;
+  }
+
+  it("keeps the requested second approval and evidence after asynchronous snapshot loading", async () => {
+    reads();
+    render(<GovernanceWorkspace roleId="ops-lead" viewState={target} />);
+    await screen.findByRole("heading",{name:second.title});
+    expect(screen.getByTestId("governance-selected-evidence")).toHaveTextContent("EV-SECOND");
+    expect(screen.getByTestId("governance-selected-evidence")).toHaveTextContent("未提供");
+    expect(within(screen.getByRole("article",{name:"Approval detail"})).queryByRole("heading",{name:snapshot.approvals[0].title})).not.toBeInTheDocument();
+  });
+
+  it("never substitutes a first approval or evidence for a missing URL target", async () => {
+    const fetchMock=reads();
+    const view=render(<GovernanceWorkspace roleId="ops-lead" viewState={{...target,approvalId:"APR-NOT-IN-SCOPE"}} />);
+    expect(await screen.findByTestId("governance-approval-unavailable")).toHaveTextContent("指定核准項目未取得");
+    expect(within(screen.getByRole("article",{name:"Approval detail"})).queryByRole("button",{name:"核准"})).not.toBeInTheDocument();
+    view.rerender(<GovernanceWorkspace roleId="ops-lead" viewState={{...target,evidenceId:"EV-NOT-IN-SCOPE"}} />);
+    expect(await screen.findByTestId("governance-evidence-unavailable")).toHaveTextContent("指定證據未取得");
+    expect(screen.queryByTestId("governance-selected-evidence")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.every(([,init])=>!init || (init as RequestInit).method!=="POST")).toBe(true);
+  });
+
+  it("retains the record-bound reason when changing evidence or tabs", async () => {
+    reads();const navigate=vi.fn();
+    const view=render(<GovernanceWorkspace roleId="ops-lead" viewState={target} onViewStateChange={navigate} />);
+    await screen.findByRole("heading",{name:second.title});
+    fireEvent.change(screen.getByLabelText(/決策理由/),{target:{value:"Reason belongs only to the second approval"}});
+    view.rerender(<GovernanceWorkspace roleId="ops-lead" viewState={{...target,evidenceId:null}} onViewStateChange={navigate} />);
+    expect(screen.getByLabelText(/決策理由/)).toHaveValue("Reason belongs only to the second approval");
+    fireEvent.click(screen.getByTestId("governance-tab-audit"));
+    expect(navigate).toHaveBeenCalledWith(expect.objectContaining({tab:"audit",approvalId:second.id}));
+    view.rerender(<GovernanceWorkspace roleId="ops-lead" viewState={{...target,approvalId:snapshot.approvals[0].id,evidenceId:null}} />);
+    expect(screen.getByLabelText(/決策理由/)).toHaveValue("");
+  });
+
+  it("freezes navigation while a decision is pending and never copies its reason into the next target", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE","true");
+    let settle:(response:Response)=>void=()=>{};
+    const fetchMock=vi.fn((input:RequestInfo|URL,init?:RequestInit)=>init?.method==="POST"
+      ? new Promise<Response>(resolve=>{settle=resolve;})
+      : Promise.resolve(new Response(JSON.stringify(String(input).endsWith("/snapshot")?twoRecords:{items:[]}),{status:200})));
+    vi.stubGlobal("fetch",fetchMock);
+    const view=render(<GovernanceWorkspace roleId="ops-lead" viewState={target} />);
+    await screen.findByRole("heading",{name:second.title});
+    fireEvent.change(screen.getByLabelText(/決策理由/),{target:{value:"Reason belongs only to the second approval"}});
+    fireEvent.click(screen.getByRole("button",{name:"退回修改"}));
+    expect(screen.getByLabelText(/決策理由/)).toHaveAttribute("readonly");
+    expect(screen.getByTestId("governance-tab-audit")).toBeDisabled();
+    view.rerender(<GovernanceWorkspace roleId="ops-lead" viewState={{...target,approvalId:snapshot.approvals[0].id,evidenceId:null}} />);
+    expect(screen.getByRole("heading",{name:second.title})).toBeInTheDocument();
+    const post=fetchMock.mock.calls.find(([,init])=>init?.method==="POST")!;
+    expect(JSON.parse(post[1]!.body as string)).toEqual(expect.objectContaining({approvalId:second.id,reason:"Reason belongs only to the second approval"}));
+    settle(new Response("Synthetic unconfirmed result",{status:503}));
+    await screen.findByRole("heading",{name:snapshot.approvals[0].title});
+    expect(screen.getByLabelText(/決策理由/)).toHaveValue("");
+  });
+});
 
 describe("GovernanceWorkspace high-risk failures", () => {
   afterEach(() => {

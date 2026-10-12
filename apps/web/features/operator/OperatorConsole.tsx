@@ -27,6 +27,7 @@ import {
   normalizeGovernanceDecisionRows,
 } from "./governance/governanceEnvelope";
 import { GrowthWorkspace } from "./GrowthWorkspace";
+import { readGovernanceViewState, serializeGovernanceViewState, type GovernanceViewState } from "./governance/governanceUrlState";
 import { NetworkFindAreasWorkspace } from "./NetworkFindAreasWorkspace";
 import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
 import { ISSUE_FIXTURES } from "./fixtures";
@@ -409,6 +410,7 @@ export function OperatorConsole({
   const [activeStoreOpsDialog, setActiveStoreOpsDialog] = useState<StoreOpsWorkflowDialogType | null>(null);
   const [selectedStoreOpsIssue, setSelectedStoreOpsIssue] = useState<Issue | undefined>(undefined);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const [governanceView, setGovernanceView] = useState(() => readGovernanceViewState(searchParams));
   const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isTaskCenterOpen, setIsTaskCenterOpen] = useState(false);
@@ -570,8 +572,25 @@ export function OperatorConsole({
     }
     setSelectedEntityId(entity);
     setActiveTabId(tab);
+    setGovernanceView(readGovernanceViewState(searchParams));
     setHasHydratedPreferences(true);
   }, [searchParams]);
+
+  useEffect(() => {
+    function restoreLocation() {
+      const params = new URLSearchParams(window.location.search);
+      const requested = params.get("ws") ?? DEFAULT_WORKSPACE_ID;
+      const role = getOperatorRole(activeRoleId);
+      const workspace = isWorkspaceId(requested) && isWorkspaceAllowed(role, requested) ? requested : DEFAULT_WORKSPACE_ID;
+      setActiveWorkspaceId(workspace);
+      setSelectedEntityId(params.get("entity"));
+      setActiveTabId(params.get("tab") ?? "overview");
+      setGovernanceView(readGovernanceViewState(params));
+      window.sessionStorage.setItem(workspaceStorageKey, workspace);
+    }
+    window.addEventListener("popstate", restoreLocation);
+    return () => window.removeEventListener("popstate", restoreLocation);
+  }, [activeRoleId]);
 
   useEffect(() => {
     if (!hasHydratedPreferences) return;
@@ -974,10 +993,12 @@ export function OperatorConsole({
     setToast(message);
   }
 
-  function updateDeepLink(target: ShellTarget) {
+  function updateDeepLink(target: ShellTarget, historyMode: "push" | "replace" = "replace") {
     if (typeof window === "undefined") return;
     const nextUrl = new URL(window.location.href);
     nextUrl.searchParams.set("ws", target.workspace);
+    nextUrl.searchParams.delete("evidence");
+    nextUrl.searchParams.delete("auditCategory");
     if (target.entityId) {
       nextUrl.searchParams.set("entity", target.entityId);
     } else {
@@ -988,7 +1009,9 @@ export function OperatorConsole({
     } else {
       nextUrl.searchParams.delete("tab");
     }
-    window.history.replaceState({}, "", `${nextUrl.pathname}${nextUrl.search}`);
+    const href = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+    if (historyMode === "push") window.history.pushState(null, "", href);
+    else window.history.replaceState(null, "", href);
   }
 
   function handleTargetSelect(target: ShellTarget, label: string) {
@@ -1004,7 +1027,8 @@ export function OperatorConsole({
     setSelectedEntityId(target.entityId ?? null);
     setActiveTabId(target.tab ?? "overview");
     window.sessionStorage.setItem(workspaceStorageKey, workspaceId);
-    updateDeepLink({ ...target, workspace: workspaceId });
+    setGovernanceView(readGovernanceViewState({ tab:target.tab, entity:target.entityId }));
+    updateDeepLink({ ...target, workspace: workspaceId }, "push");
     setIsSearchOpen(false);
     setIsCommandPaletteOpen(false);
     setSearchValue("");
@@ -1024,6 +1048,15 @@ export function OperatorConsole({
     handleTargetSelect({ workspace: workspaceId, tab: "overview" }, getWorkspace(workspaceId).label);
   }
 
+  function handleGovernanceViewChange(next: GovernanceViewState) {
+    if (!isWorkspaceAllowed(activeRole, "govern")) return;
+    const url = new URL(window.location.href);
+    url.search = serializeGovernanceViewState(next, url.searchParams).toString();
+    const href = `${url.pathname}${url.search}${url.hash}`;
+    if (href !== `${window.location.pathname}${window.location.search}${window.location.hash}`) window.history.pushState(null, "", href);
+    setGovernanceView(next); setSelectedEntityId(next.approvalId); setActiveTabId(next.tab);
+  }
+
   function handleRoleSelect(roleId: OperatorRoleId) {
     const nextRole = getOperatorRole(roleId);
     setActiveRoleId(nextRole.id);
@@ -1034,9 +1067,12 @@ export function OperatorConsole({
       setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
       window.sessionStorage.setItem(workspaceStorageKey, DEFAULT_WORKSPACE_ID);
       updateDeepLink({ workspace: DEFAULT_WORKSPACE_ID, tab: "overview" });
+    } else {
+      updateDeepLink({ workspace:activeWorkspaceId, tab:"overview" });
     }
     setSelectedEntityId(null);
     setActiveTabId("overview");
+    setGovernanceView(readGovernanceViewState({}));
 
     showToast(`已切換為 ${nextRole.label}`);
   }
@@ -1050,6 +1086,7 @@ export function OperatorConsole({
     setActiveTabId("overview");
     setSearchValue("");
     setCommandQuery("");
+    setGovernanceView(readGovernanceViewState({}));
     updateDeepLink({ workspace: DEFAULT_WORKSPACE_ID, tab: "overview" });
     showToast("已重置為營運主管 Today");
   }
@@ -1570,6 +1607,8 @@ export function OperatorConsole({
         ) : activeWorkspaceId === "govern" ? (
           // GovernanceWorkspace renders its own Package 10 page header.
           <GovernanceWorkspace
+            viewState={governanceView}
+            onViewStateChange={handleGovernanceViewChange}
             approvals={liveApprovals.length ? liveApprovals : undefined}
             auditRows={liveGovernanceAuditRows.length ? liveGovernanceAuditRows : undefined}
             callbacks={{
