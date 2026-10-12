@@ -7,21 +7,29 @@ from typing import Any
 
 from shared.audit.integrity import sha256_hex, verify_audit_event_integrity
 from shared.audit.worm import AuditWormReceipt
+from shared.jobs.queue import JobRequest
 
 COLLECTION = "opsboard.store_ops.audit_delivery"
+JOB_TYPE = "store-ops-audit-delivery"
 
 
 class StoreOpsAuditDelivery:
-    def __init__(self, store: Any, sink: Any) -> None:
+    def __init__(self, store: Any, sink: Any, job_queue: Any = None) -> None:
         self.store = store
         self.engine = store.engine
         self.sink = sink
+        self.job_queue = job_queue
 
     @property
     def sink_id(self) -> str:
         return self.sink.sink_id
 
     def write_audit_event(self, event: Any) -> AuditWormReceipt:
+        if getattr(self.job_queue, "_engine", None) is not self.engine:
+            raise RuntimeError("Store Ops audit delivery requires a same-transaction job queue")
+        tenant_id = self.store.tenant_id
+        if event.metadata.get("tenant_id") != tenant_id:
+            raise ValueError("Store Ops audit event tenant does not match its delivery queue")
         self.store.put(
             COLLECTION,
             event.event_id,
@@ -31,6 +39,18 @@ class StoreOpsAuditDelivery:
                 "status": "pending",
             },
         )
+        self.job_queue.enqueue(
+            JobRequest(
+                job_type=JOB_TYPE,
+                idempotency_key="store-ops-audit:" + tenant_id + ":" + event.event_id,
+                payload={
+                    "tenant_id": tenant_id,
+                    "audit_event_id": event.event_id,
+                    "sink_id": self.sink_id,
+                },
+            ),
+            correlation_id=event.correlation_id,
+        )
         return AuditWormReceipt(
             sink_id=self.sink_id,
             object_uri="outbox://store-ops-audit/" + event.event_id,
@@ -39,15 +59,18 @@ class StoreOpsAuditDelivery:
             checksum=sha256_hex(event.to_dict()),
         )
 
-    def deliver_pending(self) -> dict[str, Any]:
-        """Recover pending tenant deliveries on subsequent authorized requests.
+    def deliver_pending(self, *, event_id: str | None = None) -> dict[str, Any]:
+        """Recover pending deliveries from an authorized request or durable job.
 
         The delivery row is locked while attempting the immutable write. A
         failed write remains pending. A write interrupted before its receipt
         is saved can use the sink's verified readback instead of overwriting.
         """
         delivered = 0
-        for candidate in self.store.list_all(COLLECTION):
+        candidates = self.store.list_all(COLLECTION) if event_id is None else [self.store.get(COLLECTION, event_id)]
+        for candidate in candidates:
+            if candidate is None:
+                continue
             if candidate.get("status") != "pending":
                 continue
             event = candidate["event"]

@@ -40,6 +40,7 @@ def _client(bundle):
         create_operator_store_ops_router(
             repository=bundle.store_ops_repository,
             store_repository=bundle.store_repository,
+            delivery_job_queue=bundle.job_queue,
             audit_log=bundle.audit_log,
             require_live_data=True,
         ),
@@ -284,6 +285,10 @@ def test_receipt_failure_rolls_back_written_state_and_business_audit(case):
     ]
     assert events == []
     assert case["repo"]._store.list_all(COLLECTION) == []
+    assert case["bundle"].engine.query_one(
+        "SELECT COUNT(*) AS count FROM durable_jobs WHERE job_type = ?",
+        ("store-ops-audit-delivery",),
+    )["count"] == 0
     case["monkeypatch"].setattr(DurableStoreOpsRepository, "save_idempotency_result", real_save)
     assert _transition(case).status_code == 200
 
@@ -400,3 +405,122 @@ def test_replay_refreshes_snapshot_without_reexecuting_the_original_command(case
     assert replay.json()["issue"]["status"] == "escalated"
     assert replay.json()["issues"][0]["status"] == "escalated"
     assert len(case["repo"].get_state()["auditEvents"]) == 2
+
+
+def test_live_attachment_upload_list_download_and_delete_use_scoped_actor(case):
+    client = _client(case["bundle"])
+    path = f"{BASE}/issues/{case['issue']}/attachments"
+    upload = client.post(path, json={"filename": "synthetic.jpg", "contentBase64": "c3ludGhldGlj", "actorName": "forged-user", "actorRoleId": "auditPm"}, headers=case["headers"])
+    assert upload.status_code == 200, upload.text
+    attachment_id = upload.json()["id"]
+    assert upload.json()["uploadedBy"] == case["subject"]
+    listed = client.get(path, headers=case["headers"])
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["count"] == 1
+    downloaded = client.get(path + f"/{attachment_id}/download", headers=case["headers"])
+    assert downloaded.status_code == 200, downloaded.text
+    deleted = client.delete(path + f"/{attachment_id}", headers={**case["headers"], "X-Actor-Role-Id": "auditPm"})
+    assert deleted.status_code == 200, deleted.text
+    assert client.get(path, headers=case["headers"]).json()["count"] == 0
+    events = case["repo"].get_state()["auditEvents"]
+    assert len(events) == 3
+    assert all(event["actorName"] == case["subject"] and event["actorRoleId"] == "opsLead" for event in events)
+
+
+def test_worker_recovers_pending_delivery_without_another_http_request(case):
+    from apps.worker.oday_worker.main import ODayWorker
+
+    sink = case["bundle"].audit_log._worm_sink
+    real_write = sink.write_audit_event
+
+    def fail_business_delivery(event):
+        if event.event_type == "operator.store_ops.issue_transition":
+            raise RuntimeError("synthetic delivery outage")
+        return real_write(event)
+
+    case["monkeypatch"].setattr(sink, "write_audit_event", fail_business_delivery)
+    response = _transition(case)
+    assert response.status_code == 200, response.text
+    assert response.json()["auditDelivery"]["pending"] == 1
+    case["monkeypatch"].setattr(sink, "write_audit_event", real_write)
+    worker = ODayWorker(persistence=case["bundle"], worker_id="synthetic-audit-worker")
+    assert worker.run_once() is True
+    deliveries = case["repo"]._store.list_all(COLLECTION)
+    assert len(deliveries) == 1
+    assert deliveries[0]["status"] == "delivered"
+    job = case["bundle"].job_queue.get_by_idempotency_key(
+        "store-ops-audit:" + case["tenant"] + ":" + deliveries[0]["event"].event_id
+    )
+    assert job.status.value == "succeeded"
+    assert job.attempts == 1
+    assert worker.run_once() is False
+    assert len(case["repo"].get_state()["auditEvents"]) == 1
+
+
+def test_delivery_job_enqueue_failure_rolls_back_the_complete_business_transaction(case):
+    original = case["repo"].get_state()
+    real_enqueue = case["bundle"].job_queue.enqueue
+
+    def fail_enqueue(request, *, correlation_id):
+        if request.job_type == "store-ops-audit-delivery":
+            raise RuntimeError("synthetic queue persistence failure")
+        return real_enqueue(request, correlation_id=correlation_id)
+
+    case["monkeypatch"].setattr(case["bundle"].job_queue, "enqueue", fail_enqueue)
+    assert _transition(case).status_code == 503
+    assert case["repo"].get_state() == original
+    assert case["repo"]._store.list_all(COLLECTION) == []
+    assert not any(
+        event.event_type == "operator.store_ops.issue_transition"
+        for event in case["bundle"].audit_log.list_events(tenant_id=case["tenant"])
+    )
+
+
+def test_worker_outage_retries_without_claiming_delivery_success(case):
+    from apps.worker.oday_worker.main import ODayWorker
+
+    sink = case["bundle"].audit_log._worm_sink
+    real_write = sink.write_audit_event
+
+    def fail_business_delivery(event):
+        if event.event_type == "operator.store_ops.issue_transition":
+            raise RuntimeError("synthetic delivery outage")
+        return real_write(event)
+
+    case["monkeypatch"].setattr(sink, "write_audit_event", fail_business_delivery)
+    assert _transition(case).status_code == 200
+    delivery = case["repo"]._store.list_all(COLLECTION)[0]
+    key = "store-ops-audit:" + case["tenant"] + ":" + delivery["event"].event_id
+    worker = ODayWorker(persistence=case["bundle"], worker_id="synthetic-retry-worker")
+    assert worker.run_once() is True
+    job = case["bundle"].job_queue.get_by_idempotency_key(key)
+    assert job.status.value == "queued"
+    assert job.attempts == 1
+    assert case["repo"]._store.get(COLLECTION, delivery["event"].event_id)["status"] == "pending"
+    case["monkeypatch"].setattr(sink, "write_audit_event", real_write)
+    assert worker.run_once() is True
+    job = case["bundle"].job_queue.get_by_idempotency_key(key)
+    assert job.status.value == "succeeded"
+    assert job.attempts == 2
+    assert len(case["repo"].get_state()["auditEvents"]) == 1
+
+
+def test_worker_rejects_a_different_sink_without_an_external_write(case):
+    from apps.worker.consumers.store_ops_audit import handle_store_ops_audit_delivery
+    from shared.jobs.queue import JobRecord, NonRetryableJobError
+
+    assert _transition(case).status_code == 200
+    delivery = case["repo"]._store.list_all(COLLECTION)[0]
+    sink = case["bundle"].audit_log._worm_sink
+
+    def forbidden_write(event):
+        pytest.fail("A job may not choose another configured WORM target")
+
+    case["monkeypatch"].setattr(sink, "write_audit_event", forbidden_write)
+    job = JobRecord(
+        job_type="store-ops-audit-delivery",
+        payload={"tenant_id": case["tenant"], "audit_event_id": delivery["event"].event_id, "sink_id": "gs://unapproved-target"},
+        correlation_id="synthetic-target-denial",
+    )
+    with pytest.raises(NonRetryableJobError, match="configured sink"):
+        handle_store_ops_audit_delivery(job, case["bundle"])

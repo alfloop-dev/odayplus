@@ -2084,6 +2084,7 @@ else:
             create_operator_store_ops_router(
                 repository=store_ops_repo,
                 store_repository=bundle.store_repository,
+                delivery_job_queue=bundle.job_queue,
                 audit_log=audit_log,
                 require_live_data=require_live_data,
             ),

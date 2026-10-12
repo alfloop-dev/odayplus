@@ -193,6 +193,7 @@ apps/worker/__init__.py,product_system,product_required,true,,engineering;operat
 apps/worker/assisted_listing_intake/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/assisted_listing_intake/worker.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/consumers/assisted_listing_intake.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+apps/worker/consumers/store_ops_audit.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/oday_worker/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/oday_worker/__main__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/oday_worker/handlers.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.

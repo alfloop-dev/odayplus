@@ -61,6 +61,7 @@ def create_operator_store_ops_router(
     *,
     repository: Any = None,
     store_repository: Any = None,
+    delivery_job_queue: Any = None,
     audit_log: InMemoryAuditLog | None = None,
     require_live_data: bool | None = None,
 ) -> APIRouter:
@@ -168,7 +169,7 @@ def create_operator_store_ops_router(
                 ]
             )
             sink = getattr(active_audit_log, "_worm_sink", None)
-            delivery = StoreOpsAuditDelivery(scoped_store, sink) if sink is not None else None
+            delivery = StoreOpsAuditDelivery(scoped_store, sink, delivery_job_queue) if sink is not None else None
             audit = _TenantStoreOpsAudit(active_audit_log, engine, tenant_id, subject_id, delivery)
             with engine.transaction():
                 engine.execute(
@@ -198,7 +199,7 @@ def create_operator_store_ops_router(
                     # receipt; scope reduction cannot reveal an old response.
                     scoped_service.get_issue(str(issue_id))
                 result = getattr(scoped_service, method.__name__)(*args, **kwargs)
-                if result.get("idempotentReplay") is True:
+                if isinstance(result, dict) and result.get("idempotentReplay") is True:
                     result.update(scoped_service.snapshot())
                     if issue_id is not None:
                         result["issue"] = scoped_service.get_issue(str(issue_id))
@@ -217,11 +218,14 @@ def create_operator_store_ops_router(
                         )
             if delivery is not None:
                 try:
-                    result["auditDelivery"] = delivery.deliver_pending()
+                    delivery_status = delivery.deliver_pending()
+                    if isinstance(result, dict):
+                        result["auditDelivery"] = delivery_status
                 except Exception:
                     # The business transaction has committed. Delivery status
                     # loss cannot turn it into a fictitious write rejection.
-                    result["auditDelivery"] = {"status": "pending", "pending": None, "retryable": True}
+                    if isinstance(result, dict):
+                        result["auditDelivery"] = {"status": "pending", "pending": None, "retryable": True}
             return result
         except StoreOpsLiveDataUnavailable as exc:
             raise HTTPException(
@@ -411,6 +415,8 @@ def create_operator_store_ops_router(
                 masking_profile=masking_profile,
                 user_roles=user_roles,
                 tenant_id=x_tenant_id,
+                actor_role_id=None,
+                actor_name=None,
             )
         except StoreOpsNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

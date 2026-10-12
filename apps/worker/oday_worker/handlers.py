@@ -827,12 +827,17 @@ def build_default_registry() -> JobRegistry:
         INTAKE_JOB_TYPE,
         handle_assisted_listing_intake,
     )
+    from apps.worker.consumers.store_ops_audit import handle_store_ops_audit_delivery
+    from modules.opsboard.application.store_ops_audit_delivery import (
+        JOB_TYPE as STORE_OPS_AUDIT_JOB_TYPE,
+    )
 
     registry = JobRegistry()
     registry.register(FORECAST_JOB_TYPE, handle_forecast)
     registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)
     registry.register(INTAKE_JOB_TYPE, handle_assisted_listing_intake)
     registry.register(BATCH_LISTING_INTAKE_JOB_TYPE, handle_batch_listing_intake)
+    registry.register(STORE_OPS_AUDIT_JOB_TYPE, handle_store_ops_audit_delivery)
     return registry
 
 
