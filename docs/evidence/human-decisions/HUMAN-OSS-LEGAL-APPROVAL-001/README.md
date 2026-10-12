@@ -28,3 +28,14 @@
 - **收據**：`oss-license-approval-receipt.json`，sha256 `ce5fe213070e4f45cfc85953ac26d4a70e82a886a36d35d45125328064635210`，與 issue 內 JSON 逐字相同（見 `oss-license-readback.json`）
 - **決定**：D01 sharp/libvips 1.3.3、D03 psycopg 3.3.4／psycopg-binary 3.3.4／psycopg-pool 3.3.1、D04 moocore 0.3.2 附條件允許；D02 psycopg2-binary 2.9.12 接受上游連結例外；D05–D14 照 ODP-OSS-DECISION-PACK-001 既有方向核准
 - **限制**：豁免只適用上述精確版本，升版即需重新核准；本紀錄不登記豁免、不改 licence gate，由 ODP-OSS-LICENSE-EXEMPTION-REGISTER-001 依此收據登記
+
+### 修訂
+
+兩份修訂都由核准者本人以 #1421 留言發布，逐字讀回見 `oss-license-amendments-readback.json`。
+
+| 修訂 | 收據 | sha256 | 內容 |
+|---|---|---|---|
+| 1（2026-10-07） | `oss-license-amendment-1-receipt.json` | `164d6d8836659c1dd7910fc821cdd827efe6ed3493bd263c0f5a28f8e77f6e47` | D01 libvips 1.3.3 → 1.3.4（GHSA-wq5f-xc86-pv6w，sharp 0.35.5） |
+| 2（2026-10-10） | `oss-license-amendment-2-receipt.json` | `dbaa0f01d3be66f926d6fe2bbcecb706de4a573c96f23c080746fd17b2a33e07` | D01 補列 `@img/sharp-wasm32@0.35.5` |
+
+修訂後 D01 涵蓋 `@img/sharp-libvips-linux-x64@1.3.4`、`@img/sharp-libvips-linuxmusl-x64@1.3.4`、`@img/sharp-wasm32@0.35.5`，條件不變；D02–D14、複審日與到期日不變。本紀錄同樣不登記豁免、不改 licence gate。
