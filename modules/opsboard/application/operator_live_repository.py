@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Protocol
 
+from modules.opsboard.application.today_metrics import build_today_metrics
+
 
 class OperatorLiveRepositoryError(RuntimeError):
     """Raised when one of the authoritative repositories cannot be read."""
@@ -527,6 +529,41 @@ class OperatorLiveRepository:
                 "list_scores",
             )
 
+        store_ops_issues: list[dict[str, Any]] = []
+        issue_source = "store_ops_repository.get_state"
+        issue_repository, issue_error = self._tenant_scoped_repository(
+            "store_ops_repository", scope
+        )
+        if not sections["stores"].complete or issue_repository is None or not bool(getattr(issue_repository, "is_live", False)):
+            sections["storeOpsIssues"] = self._unavailable(
+                issue_source,
+                reason_code="OPERATOR_STORE_OPS_ISSUES_UNAVAILABLE",
+                message=issue_error or "live issue repository and complete store scope are required",
+            )
+        else:
+            try:
+                issue_state = issue_repository.get_state()
+                issue_rows = issue_state["issues"]
+                if not isinstance(issue_rows, list) or not all(
+                    isinstance(issue, dict)
+                    and isinstance(issue.get("storeId"), str)
+                    and issue["storeId"].strip()
+                    for issue in issue_rows
+                ):
+                    raise ValueError("issue state lacks explicit store scope")
+                store_ops_issues = [
+                    deepcopy(issue) for issue in issue_rows
+                    if issue["storeId"] in visible_store_ids
+                ]
+            except Exception as exc:
+                sections["storeOpsIssues"] = self._unavailable(
+                    issue_source,
+                    reason_code="OPERATOR_STORE_OPS_ISSUES_UNAVAILABLE",
+                    message=f"{type(exc).__name__}: {exc}",
+                )
+            else:
+                sections["storeOpsIssues"] = self._available(issue_source, store_ops_issues)
+
         audit_events, sections["auditEvents"] = self._read_list(
             "audit_events",
             self._persistence.audit_log,
@@ -566,6 +603,7 @@ class OperatorLiveRepository:
             "heatzones": heatzones,
             "audit_events": audit_events,
             "active_jobs": active_jobs,
+            "store_ops_issues": store_ops_issues,
             "sections": sections,
         }
 
@@ -616,7 +654,6 @@ class OperatorLiveRepository:
         decisions = list(sources["sitescore_decisions"])
         ingestion_runs = list(sources["ingestion_runs"])
         audit_events = list(sources["audit_events"])
-        active_jobs = int(sources["active_jobs"])
         sections: dict[str, OperatorSectionAvailability] = dict(
             sources["sections"]
         )
@@ -688,6 +725,8 @@ class OperatorLiveRepository:
             name: availability.record_count
             for name, availability in sections.items()
         }
+        record_counts["successfulTransactionNet"] = transaction_net
+        record_counts["openListings"] = open_listings
         queue_availability = (
             "degraded"
             if any(
@@ -788,79 +827,12 @@ class OperatorLiveRepository:
                     "complete": data_mode == "live",
                 },
             },
-            "kpis": [
-                {
-                    "label": "營運任務",
-                    "value": str(len(queue)),
-                    "delta": "",
-                    "meta": "authoritative repositories",
-                    "tone": "warning" if queue else "success",
-                    "availability": queue_availability,
-                },
-                {
-                    "label": "待核准",
-                    "value": str(len(approvals)),
-                    "delta": "",
-                    "meta": "authoritative repositories",
-                    "tone": "warning" if approvals else "success",
-                    "availability": approval_availability,
-                },
-                {
-                    "label": "有效門市",
-                    "value": (
-                        str(
-                            sum(
-                                1
-                                for item in stores
-                                if _status(_value(item, "store_status")).lower()
-                                == "open"
-                            )
-                        )
-                        if sections["stores"].available
-                        else None
-                    ),
-                    "delta": "",
-                    "meta": "store repository",
-                    "tone": "neutral",
-                    "availability": sections["stores"].state,
-                },
-                {
-                    "label": "交易淨額",
-                    "value": (
-                        f"{transaction_net:.2f}"
-                        if sections["transactions"].available
-                        else None
-                    ),
-                    "delta": "",
-                    "meta": "successful persisted transactions",
-                    "tone": "neutral",
-                    "availability": sections["transactions"].state,
-                },
-                {
-                    "label": "有效物件",
-                    "value": (
-                        str(open_listings)
-                        if sections["listings"].available
-                        else None
-                    ),
-                    "delta": "",
-                    "meta": "listing repository",
-                    "tone": "neutral",
-                    "availability": sections["listings"].state,
-                },
-                {
-                    "label": "執行中工作",
-                    "value": (
-                        str(active_jobs)
-                        if sections["activeJobs"].available
-                        else None
-                    ),
-                    "delta": "",
-                    "meta": "job repository",
-                    "tone": "info" if active_jobs else "neutral",
-                    "availability": sections["activeJobs"].state,
-                },
-            ],
+            "kpis": build_today_metrics(
+                issues=(sources["store_ops_issues"] if sections["storeOpsIssues"].complete else None),
+                approvals_count=(len(approvals) if approval_availability == "available" else None),
+                now=datetime.now(UTC),
+            ),
+            "todayIssues": sources["store_ops_issues"] if sections["storeOpsIssues"].complete else None,
             "workQueue": queue,
             "decisions": approvals,
             "riskRows": risk_rows,

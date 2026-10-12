@@ -137,6 +137,7 @@ def create_operator_router(
     evidence_store: Any | None = None,
     intake_repository: Any | None = None,
     live_repository: OperatorLiveRepositoryProtocol | None = None,
+    fixture_issue_repository: Any | None = None,
     identity_user_role_service: Any | None = None,
     require_live_data: bool = False,
     persistence_mode: str = "memory",
@@ -207,6 +208,7 @@ def create_operator_router(
         svc = state_service or OperatorStateService(
             persistence_mode=persistence_mode,
             provider_mode=provider_mode,
+            fixture_issue_repository=fixture_issue_repository,
         )
 
     router = APIRouter(prefix="/operator", tags=["operator"])

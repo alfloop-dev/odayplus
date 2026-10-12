@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -520,7 +521,7 @@ export function OperatorConsole({
   const isGovernContent = canRenderWorkspace && activeWorkspaceId === "govern";
   const dataModeBanner = dataModeBannerCopy(shellDataStatus, fixturesAllowed);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const topbar = topbarRef.current;
     if (!topbar) return;
     const root = document.documentElement;
@@ -678,6 +679,11 @@ export function OperatorConsole({
         }
 
         applyOperatorEnvelope(payload);
+        // The server resolves the selected persona from the authenticated
+        // principal; a stale/default browser preference must not impersonate
+        // operations when that principal is an expansion contributor.
+        const resolvedRoleId = normalizeShellEnvelope(payload, { allowFixtureFallback: fixturesAllowed }).meta.role.id;
+        if (isOperatorRoleId(resolvedRoleId)) setActiveRoleId(resolvedRoleId);
         setShellDataStatus(inspection.status === "ready" ? "ready" : "fixture");
       } catch (err) {
         console.error("Error loading operator shell envelope:", err);

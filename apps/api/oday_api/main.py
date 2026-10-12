@@ -2196,6 +2196,7 @@ else:
                 evidence_store=evidence_store,
                 intake_repository=operator_intake_repository,
                 live_repository=operator_live_repository,
+                fixture_issue_repository=store_ops_repo if not require_live_data else None,
                 require_live_data=require_live_data,
                 persistence_mode=persistence_mode,
                 provider_mode=provider_mode,

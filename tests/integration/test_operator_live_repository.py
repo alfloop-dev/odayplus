@@ -103,9 +103,9 @@ def test_empty_live_repository_is_ready_without_seed_rows() -> None:
     assert envelope["workQueue"] == []
     assert envelope["approvals"] == []
     kpis = {item["label"]: item["value"] for item in envelope["kpis"]}
-    assert kpis["營運任務"] == "0"
-    assert kpis["待核准"] == "0"
-    assert kpis["交易淨額"] == "0.00"
+    assert kpis["高風險未指派"] is None
+    assert kpis["待我核准"] is None
+    assert envelope["meta"]["recordCounts"]["successfulTransactionNet"] == 0.0
 
 
 def test_live_repository_projects_persisted_rows_and_real_kpis() -> None:
@@ -156,8 +156,9 @@ def test_live_repository_projects_persisted_rows_and_real_kpis() -> None:
     assert envelope["notifications"][0]["id"] == "notification-alert-live-1"
     assert envelope["auditFeed"][0]["correlationId"] == "corr-live-1"
     kpis = {item["label"]: item["value"] for item in envelope["kpis"]}
-    assert kpis["有效門市"] == "1"
-    assert kpis["交易淨額"] == "180.50"
+    assert kpis["已逾期 Issue"] is None
+    assert envelope["meta"]["recordCounts"]["stores"] == 1
+    assert envelope["meta"]["recordCounts"]["successfulTransactionNet"] == 180.50
     assert envelope["meta"]["recordCounts"]["transactions"] == 1
     assert envelope["meta"]["source"] == "operator-shell-production"
 
@@ -412,8 +413,8 @@ def test_live_operator_http_context_applies_verified_tenant_and_store_scope() ->
     assert payload["meta"]["recordCounts"]["stores"] == 1
     assert payload["meta"]["recordCounts"]["transactions"] == 1
     kpis = {item["label"]: item["value"] for item in payload["kpis"]}
-    assert kpis["有效門市"] == "1"
-    assert kpis["交易淨額"] == "100.00"
+    assert kpis["已逾期 Issue"] is None
+    assert payload["meta"]["recordCounts"]["successfulTransactionNet"] == 100.0
     assert "Tenant B Secret" not in str(payload)
 
     missing_tenant = _operator_request(
@@ -953,8 +954,9 @@ def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -
         assert sections_canonical["siteScoreDecisions"]["state"] == "available"
         assert sections_canonical["siteScoreDecisions"]["recordCount"] == 1
 
-        assert meta_canonical["dataMode"] == "live"
-        assert meta_canonical["dataOrigin"]["complete"] is True
+        assert sections_canonical["storeOpsIssues"]["state"] == "unavailable"
+        assert meta_canonical["dataMode"] == "degraded"
+        assert meta_canonical["dataOrigin"]["complete"] is False
         assert "listing-ownership-less" not in str(state_canonical)
         assert "job-unscoped" not in str(state_canonical)
         assert "run-unscoped" not in str(state_canonical)
@@ -996,7 +998,8 @@ def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -
             )
             assert res_canonical.status_code == 200, res_canonical.text
             data_c = res_canonical.json()
-            assert data_c["meta"]["dataMode"] == "live"
+            assert data_c["meta"]["dataMode"] == "degraded"
+            assert data_c["meta"]["sections"]["storeOpsIssues"]["state"] == "unavailable"
             assert data_c["meta"]["sections"]["listings"]["recordCount"] == 1
             assert data_c["meta"]["sections"]["heatZones"]["recordCount"] == 1
             assert data_c["meta"]["sections"]["ingestionRuns"]["recordCount"] == 1

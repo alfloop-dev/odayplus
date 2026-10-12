@@ -33,6 +33,7 @@ export type ShellMetric = {
   delta?: string;
   meta?: string;
   tone?: Tone;
+  availability?: "available" | "degraded" | "unavailable";
 };
 
 export type ShellQueueItem = {
@@ -297,11 +298,12 @@ function normalizeRole(
 function normalizeMetric(value: unknown): ShellMetric | null {
   if (!isObject(value) || typeof value.label !== "string") return null;
   return {
+    availability: value.availability === "available" || value.availability === "degraded" || value.availability === "unavailable" ? value.availability : undefined,
     delta: typeof value.delta === "string" ? value.delta : undefined,
     label: value.label,
     meta: typeof value.meta === "string" ? value.meta : undefined,
     tone: typeof value.tone === "string" ? (value.tone as Tone) : "neutral",
-    value: String(value.value ?? ""),
+    value: value.availability === "unavailable" ? "" : String(value.value ?? ""),
   };
 }
 
@@ -513,7 +515,7 @@ export function TodayWorkspace({
       >
         {today.kpis.length ? (
           today.kpis.map((metric) => (
-            <article className={styles.todayKpiCard} data-tone={metric.tone ?? "neutral"} key={metric.label}>
+            <article className={styles.todayKpiCard} data-tone={metric.tone ?? "neutral"} data-availability={metric.availability} key={metric.label}>
               <span className={styles.todayKpiLabel}>
                 <i aria-hidden="true" />
                 {metric.label}
