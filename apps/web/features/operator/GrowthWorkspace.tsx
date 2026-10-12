@@ -36,6 +36,7 @@ import {
   type GrowthSegment,
   type PriceOpsRecommendation,
 } from "./growthViewModel.ts";
+import { PriceOpsWorkbench } from "./PriceOpsWorkbench";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   operatorFixturesAllowed,
@@ -177,6 +178,7 @@ export function GrowthWorkspace({
   const fixturesAllowed = operatorFixturesAllowed();
   const segmentId = readParam(searchParams.segment);
   const itemId = readParam(searchParams.item);
+  const priceRecId = readParam(searchParams.prec);
   const draftId = readParam(searchParams.draft);
   const builderParam = readParam(searchParams.builder);
   const tabParam = readParam(searchParams.gtab);
@@ -341,6 +343,7 @@ export function GrowthWorkspace({
         ) : activeTab === "priceops" ? (
           <RecommendationSection
             recommendations={vm.recommendations}
+            selectedRecId={priceRecId}
             segments={vm.segments}
             href={href}
           />
@@ -417,7 +420,7 @@ function formFromRecommendation(rec: PriceOpsRecommendation): GrowthBuilderForm 
     store: "全品牌",
     observationWindow: "平日 10:00–14:00",
     channel: "店內告示＋App 價格頁",
-    targetLift: rec.expectedRevenueLift.toFixed(1),
+    targetLift: rec.expectedRevenueLift?.toFixed(1) ?? "",
     budget: "0",
     rationale: "以 PriceOps 建議為基礎；待補齊對照組與 pre-trend 檢定後送審。",
     rollbackPlan: "14 天未達標即回滾。",
@@ -476,63 +479,20 @@ function SegmentSection({
 /** PriceOps tab — pricing recommendation table and interactive simulation workbench. */
 function RecommendationSection({
   recommendations,
+  selectedRecId,
   segments,
   href,
 }: {
   recommendations: PriceOpsRecommendation[];
+  selectedRecId?: string;
   segments: GrowthSegment[];
   href: (o: Record<string, string | undefined>) => string;
 }) {
   const segmentName = (id: string) => segments.find((segment) => segment.id === id)?.name ?? id;
 
-  const [selectedRecId, setSelectedRecId] = useState<string>(recommendations[0]?.id ?? "");
-  const selectedRec = recommendations.find((r) => r.id === selectedRecId) ?? recommendations[0];
-
-  const parseNumPrice = (val: string | number) => {
-    if (typeof val === "number") return val;
-    if (!val) return 0;
-    const cleaned = val.replace(/[^0-9.]/g, "");
-    const parsed = parseFloat(cleaned);
-    return isNaN(parsed) ? 0 : parsed;
-  };
-
-  const [candidatePriceInput, setCandidatePriceInput] = useState<string>(
-    selectedRec ? String(parseNumPrice(selectedRec.candidatePrice) || selectedRec.candidatePrice) : ""
-  );
-  const [decisionReason, setDecisionReason] = useState<string>(
-    "依定價情境模擬與毛利帶 (P10/P50/P90) 比較完成決策核准回寫"
-  );
-  const [decisionType, setDecisionType] = useState<"approved" | "rejected" | "scenario_selected">(
-    "approved"
-  );
-  const [writebackRecord, setWritebackRecord] = useState<{
-    decisionId: string;
-    actor: string;
-    writtenBackAt: string;
-    decision: string;
-  } | null>(null);
-
-  useEffect(() => {
-    if (selectedRec) {
-      const num = parseNumPrice(selectedRec.candidatePrice);
-      setCandidatePriceInput(num > 0 ? String(num) : selectedRec.candidatePrice);
-    }
-  }, [selectedRecId]);
-
-  const candidatePriceNum = parseNumPrice(candidatePriceInput);
-  const currentPriceNum = selectedRec ? parseNumPrice(selectedRec.currentPrice) : 0;
-  const isInvalidPrice = candidatePriceInput.trim() === "" || candidatePriceNum <= 0;
-  const isHardBlocked = selectedRec?.constraintStatus === "HARD_CONSTRAINT_FAILED" || isInvalidPrice;
-
-  const handleWriteback = () => {
-    if (isHardBlocked) return;
-    setWritebackRecord({
-      decisionId: `pricing-decision-${Math.random().toString(36).substring(2, 9)}`,
-      actor: "pricing-officer",
-      writtenBackAt: new Date().toISOString(),
-      decision: decisionType,
-    });
-  };
+  const selectedRec = selectedRecId
+    ? recommendations.find(rec => rec.id === selectedRecId)
+    : undefined;
 
   return (
     <section
@@ -558,7 +518,7 @@ function RecommendationSection({
           <tbody>
             {recommendations.map((rec) => {
               const blocked = rec.constraintStatus === "HARD_CONSTRAINT_FAILED";
-              const isSelected = rec.id === selectedRecId;
+              const isSelected = rec.id === selectedRec?.id;
               return (
                 <tr key={rec.id} style={isSelected ? { background: "#f0f4ff" } : undefined}>
                   <td>
@@ -571,29 +531,26 @@ function RecommendationSection({
                   <td>{rec.window ?? "待建立草稿"}</td>
                   <td className={g.priceMono}>{rec.currentPrice}</td>
                   <td>
-                    <span className={g.priceCandidate}>{rec.candidatePrice}</span>
+                    {rec.planId && rec.itemId ? (
+                      <Link className={g.priceCandidate} href={href({ prec: rec.id })}
+                        aria-label={`查看 ${rec.id} 定價情境`}>
+                        {rec.candidatePrice}
+                      </Link>
+                    ) : <span className={g.priceCandidate}>{rec.candidatePrice}</span>}
                     <span className={g.priceConstraint} data-constraint={rec.constraintStatus}>
                       {rec.constraintStatus}
                     </span>
                   </td>
                   <td className={g.priceMono}>{rec.expectedUtilization ?? "—"}</td>
-                  <td className={g.pricePositive}>{formatLift(rec.expectedRevenueLift)}</td>
+                  <td className={g.pricePositive}>{rec.expectedRevenueLift === null ? "未提供百分比" : formatLift(rec.expectedRevenueLift)}</td>
                   <td>
-                    {rec.marginRisk ?? formatLift(rec.expectedMarginLift)}
-                    <span className={g.priceLinked}>信心 {rec.confidence}</span>
+                    {rec.marginRisk ?? (rec.expectedMarginLift === null ? "風險未提供" : formatLift(rec.expectedMarginLift))}
+                    <span className={g.priceLinked}>信心 {rec.confidence ?? "未提供"}</span>
                   </td>
                   <td className={g.priceRollback}>
                     {rec.rollbackCondition ?? "建立草稿時必填"}
                   </td>
                   <td style={{ display: "flex", gap: "6px" }}>
-                    <button
-                      type="button"
-                      className={g.segDraftBtn}
-                      onClick={() => setSelectedRecId(rec.id)}
-                      style={{ padding: "3px 8px", fontSize: "11px" }}
-                    >
-                      {isSelected ? "模擬中" : "情境模擬"}
-                    </button>
                     {blocked ? (
                       <span
                         className={g.priceDraftDisabled}
@@ -619,193 +576,10 @@ function RecommendationSection({
         </table>
       </div>
 
-      {/* Interactive Pricing Simulation & Decision Writeback Workbench */}
-      {selectedRec && (
-        <div
-          data-testid="priceops-scenario-workbench"
-          style={{
-            marginTop: "16px",
-            padding: "16px",
-            background: "#ffffff",
-            border: "1px solid #dbe2ef",
-            borderRadius: "12px",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-            <h4 style={{ margin: 0, color: "#112d4e", fontSize: "14px", fontWeight: 700 }}>
-              PriceOps 定價情境模擬 workbench — {selectedRec.store ?? segmentName(selectedRec.segmentId)} ({selectedRec.id})
-            </h4>
-            <span style={{ fontSize: "11px", color: "#666", background: "#f0f2f5", padding: "2px 8px", borderRadius: "4px" }}>
-              Policy: brand-pricing-policy-v1 | Solver: priceops-exhaustive-ladder-v1
-            </span>
-          </div>
-
-          {/* Fail Closed Alert when blocked or invalid */}
-          {isHardBlocked && (
-            <div
-              data-testid="priceops-fail-closed-alert"
-              style={{
-                marginBottom: "12px",
-                padding: "10px 14px",
-                background: "#fff0f0",
-                border: "1px solid #ffcdd2",
-                borderRadius: "8px",
-                color: "#c62828",
-                fontSize: "12px",
-                fontWeight: 600,
-              }}
-            >
-              ⚠️ Pricing Simulation Unavailable (Fail-Closed):{" "}
-              {isInvalidPrice
-                ? "無效的候選價格參數 (無效數字或 <= 0)，情境模擬已中斷。"
-                : `檢測到硬限制違規 (${selectedRec.constraintDetail ?? "Hard Constraint Failed"})，系統已封鎖情境執行與決策核准。`}
-            </div>
-          )}
-
-          {/* Scenario Input Parameter Controls */}
-          <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", marginBottom: "16px", alignItems: "center" }}>
-            <label style={{ fontSize: "12px", color: "#333", fontWeight: 600 }}>
-              調整情境價:
-              <input
-                type="number"
-                value={candidatePriceInput}
-                onChange={(e) => setCandidatePriceInput(e.target.value)}
-                style={{
-                  marginLeft: "8px",
-                  padding: "4px 8px",
-                  border: isInvalidPrice ? "1px solid #d32f2f" : "1px solid #ccc",
-                  borderRadius: "6px",
-                  fontSize: "12px",
-                  width: "100px",
-                }}
-              />
-            </label>
-            <span style={{ fontSize: "11px", color: "#555" }}>
-              Baseline 現價: <strong>${selectedRec.currentPrice}</strong>
-            </span>
-            <span style={{ fontSize: "11px", color: "#555" }}>
-              彈性信心: <strong>{selectedRec.confidence}</strong>
-            </span>
-            {isInvalidPrice && (
-              <span style={{ fontSize: "11px", color: "#d32f2f", fontWeight: 600 }}>
-                請輸入大於 0 之有效價格
-              </span>
-            )}
-          </div>
-
-          {/* Baseline vs Alternative Scenario Bands Comparison */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
-            {/* Baseline Band */}
-            <div
-              data-testid="priceops-baseline-band"
-              style={{
-                padding: "12px",
-                background: "#f8f9fa",
-                border: "1px solid #e9ecef",
-                borderRadius: "8px",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                <span style={{ fontSize: "12px", fontWeight: 700, color: "#495057" }}>
-                  Baseline (目前價格)
-                </span>
-                <span style={{ fontSize: "10px", padding: "2px 6px", background: "#e9ecef", borderRadius: "4px" }}>
-                  Current View
-                </span>
-              </div>
-              <div style={{ fontSize: "12px", lineHeight: "1.6", color: "#333" }}>
-                <div>價格: <strong>${selectedRec.currentPrice}</strong></div>
-                <div>預期需求 (P10/P50/P90): <strong>{(currentPriceNum * 0.45).toFixed(1)} / {(currentPriceNum * 0.5).toFixed(1)} / {(currentPriceNum * 0.55).toFixed(1)}</strong></div>
-                <div>預期毛利 (P10/P50/P90): <strong>${(currentPriceNum * 0.5).toFixed(1)} / ${(currentPriceNum * 0.65).toFixed(1)} / ${(currentPriceNum * 0.8).toFixed(1)}</strong></div>
-              </div>
-            </div>
-
-            {/* Alternative Scenario Band */}
-            <div
-              data-testid="priceops-alternative-band"
-              style={{
-                padding: "12px",
-                background: "#f0f7ff",
-                border: "1px solid #bae0ff",
-                borderRadius: "8px",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                <span style={{ fontSize: "12px", fontWeight: 700, color: "#0050b3" }}>
-                  Alternative Scenario (情境模擬)
-                </span>
-                <span style={{ fontSize: "10px", padding: "2px 6px", background: "#e6f7ff", color: "#1890ff", borderRadius: "4px" }}>
-                  Alternative
-                </span>
-              </div>
-              <div style={{ fontSize: "12px", lineHeight: "1.6", color: "#333" }}>
-                <div>情境價格: <strong>${isNaN(candidatePriceNum) ? "—" : candidatePriceNum}</strong></div>
-                <div>預期需求 (P10/P50/P90): <strong>{((candidatePriceNum || 0) * 0.42).toFixed(1)} / {((candidatePriceNum || 0) * 0.48).toFixed(1)} / {((candidatePriceNum || 0) * 0.54).toFixed(1)}</strong></div>
-                <div>Δ 毛利預期: <strong style={{ color: "#2e7d32" }}>{formatLift(selectedRec.expectedMarginLift)}</strong></div>
-              </div>
-            </div>
-          </div>
-
-          {/* Idempotent Decision Writeback Controls */}
-          <div
-            style={{
-              padding: "12px",
-              background: "#fafafa",
-              border: "1px solid #f0f0f0",
-              borderRadius: "8px",
-            }}
-          >
-            <h5 style={{ margin: "0 0 8px", fontSize: "12px", fontWeight: 700, color: "#333" }}>
-              決策回寫 (Idempotent Decision Writeback)
-            </h5>
-            <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap", marginBottom: "8px" }}>
-              <select
-                value={decisionType}
-                onChange={(e) => setDecisionType(e.target.value as any)}
-                style={{ padding: "4px 8px", fontSize: "12px", borderRadius: "6px", border: "1px solid #ccc" }}
-              >
-                <option value="approved">核准情境 (Approved)</option>
-                <option value="rejected">退回情境 (Rejected)</option>
-                <option value="scenario_selected">選擇特定情境 (Scenario Selected)</option>
-              </select>
-              <input
-                type="text"
-                value={decisionReason}
-                onChange={(e) => setDecisionReason(e.target.value)}
-                placeholder="輸入決策原因..."
-                style={{ flex: 1, minWidth: "200px", padding: "4px 8px", fontSize: "12px", borderRadius: "6px", border: "1px solid #ccc" }}
-              />
-              <button
-                type="button"
-                data-testid="priceops-writeback-btn"
-                disabled={isHardBlocked}
-                onClick={handleWriteback}
-                className={isHardBlocked ? g.priceDraftDisabled : g.segDraftBtn}
-                style={{ margin: 0 }}
-              >
-                寫回決策 (Writeback)
-              </button>
-            </div>
-
-            {writebackRecord && (
-              <div
-                data-testid="priceops-audit-status"
-                style={{
-                  marginTop: "8px",
-                  padding: "8px 12px",
-                  background: "#e6f4ea",
-                  border: "1px solid #b7e1cd",
-                  borderRadius: "6px",
-                  fontSize: "11px",
-                  color: "#137333",
-                }}
-              >
-                ✓ 決策成功寫回與審計: ID <strong>{writebackRecord.decisionId}</strong> | 操作者: <strong>{writebackRecord.actor}</strong> | 決策: <strong>{writebackRecord.decision}</strong> | 時間: <strong>{new Date(writebackRecord.writtenBackAt).toLocaleTimeString()}</strong>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {selectedRec ? (
+        <PriceOpsWorkbench key={`${selectedRec.id}:${selectedRec.planId}:${selectedRec.itemId}`}
+          recommendation={selectedRec} segmentName={segmentName(selectedRec.segmentId)} />
+      ) : selectedRecId ? <p role="status" data-testid="priceops-selection-unavailable">指定定價建議未取得，請從清單重新選取。</p> : null}
 
       <p className={g.tabNote}>
         PriceOps 建議維持 SYSTEM_RECOMMENDED；調價需核准且附回滾條件，硬限制未通過時不可建立草稿。

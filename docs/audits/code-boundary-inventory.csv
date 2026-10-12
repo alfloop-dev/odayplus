@@ -1125,6 +1125,7 @@ tests/integration/test_place_geography_backfill.py,verification,verification_onl
 tests/integration/test_postgresql_persistence.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_priceops_api.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_priceops_bandit_gating.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_priceops_command_authority.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_priceops_constraints.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_production_api_composition.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_production_model_lifecycle.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1267,3 +1268,4 @@ tests/unit/test_operator_today_metrics.py,verification,verification_only,false,p
 tests/unit/test_priceops_elasticity_binding.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_pricing_bandit.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_pricing_simulation.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/visual/priceops_command_server.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

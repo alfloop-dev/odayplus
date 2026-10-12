@@ -84,13 +84,17 @@ export type PriceOpsRecommendation = {
   title: string;
   currentPrice: string;
   candidatePrice: string;
+  planId?: string;
+  itemId?: string;
+  /** Percent only when provided with its denominator; canonical absolute ΔGM stays separate. */
+  expectedIncrementalGrossMargin?: number;
   /** expected P50 revenue lift, percent. */
-  expectedRevenueLift: number;
+  expectedRevenueLift: number | null;
   /** expected P50 gross-margin lift, percent. */
-  expectedMarginLift: number;
+  expectedMarginLift: number | null;
   constraintStatus: "PASS" | "SOFT_WARNING" | "HARD_CONSTRAINT_FAILED";
   constraintDetail: string;
-  confidence: ConfidenceLevel;
+  confidence?: ConfidenceLevel;
   /** PriceOps only ever hands over a recommendation, never an approved decision. */
   decisionStatus: Extract<DecisionStatus, "SYSTEM_RECOMMENDED" | "DRAFT">;
   /** Optional operational fields supplied by richer PriceOps projections. */
@@ -101,6 +105,28 @@ export type PriceOpsRecommendation = {
   rollbackCondition?: string;
   linkedActionId?: string;
 };
+
+/** Preserve canonical plan/item identity; never turn an absolute amount into a percentage. */
+export function normalizePriceRecommendation(raw: PriceOpsRecommendation & {
+  recommendedPrice?: number; storeId?: string; bindingConstraints?: string[]; riskLevel?: string;
+}): PriceOpsRecommendation {
+  const canonical = typeof raw.planId === "string" && typeof raw.itemId === "string";
+  return {
+    ...raw,
+    currentPrice: String(raw.currentPrice ?? ""),
+    candidatePrice: String(raw.candidatePrice ?? raw.recommendedPrice ?? ""),
+    title: raw.title ?? `${raw.storeId ?? raw.itemId ?? raw.id} 定價建議`,
+    store: raw.store ?? raw.storeId,
+    marginRisk: raw.marginRisk ?? raw.riskLevel,
+    constraintStatus: raw.constraintStatus === "HARD_CONSTRAINT_FAILED" ? "HARD_CONSTRAINT_FAILED"
+      : raw.constraintStatus === "SOFT_WARNING" ? "SOFT_WARNING"
+      : ["PASS", "SAFE"].includes(raw.constraintStatus) ? "PASS" : "HARD_CONSTRAINT_FAILED",
+    constraintDetail: raw.constraintDetail ?? raw.bindingConstraints?.join("、") ?? "未提供",
+    expectedRevenueLift: Number.isFinite(raw.expectedRevenueLift) ? raw.expectedRevenueLift : null,
+    expectedMarginLift: Number.isFinite(raw.expectedMarginLift) ? raw.expectedMarginLift : null,
+    decisionStatus: canonical ? "SYSTEM_RECOMMENDED" : raw.decisionStatus,
+  };
+}
 
 /** Effectiveness verdict for an observed growth action. */
 export type GrowthOutcome =
@@ -875,7 +901,7 @@ export async function fetchGrowthApiData(params: {
         return {
           freshness: freshnessRes,
           segments: segmentsRes.items,
-          recommendations: recommendationsRes.items,
+          recommendations: recommendationsRes.items.map(normalizePriceRecommendation),
           items: actionsRes.items,
           fromApi: true,
           availability: "ready",

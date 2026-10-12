@@ -512,23 +512,46 @@ class PriceOpsService:
         )
         now = occurred_at or datetime.now(UTC)
 
-        # Check idempotency
+        if normalized_decision not in {"approved", "rejected", "scenario_selected"}:
+            raise ValueError("unsupported pricing decision")
+        if not actor.strip() or not reason.strip():
+            raise ValueError("actor and decision reason are required")
+
         existing_decisions = self.repository.list_decision_writebacks(plan_id)
         if idempotency_key:
             for existing in existing_decisions:
                 if existing.idempotency_key == idempotency_key:
+                    if (existing.actor, existing.decision, existing.reason, existing.selected_scenario_id) != (
+                        actor, normalized_decision, reason, selected_scenario_id
+                    ):
+                        raise ValueError("decision idempotency key conflicts with the original intent")
                     return existing
 
-        # Fail closed if simulation/optimization is unavailable or infeasible for approval / scenario selection
+        scenario = None
+        if selected_scenario_id:
+            scenario = self.repository.get_scenario_simulation(selected_scenario_id)
+            if scenario is None or scenario.plan_id != plan_id:
+                raise ValueError("selected scenario does not belong to this plan")
+        if normalized_decision == "scenario_selected" and scenario is None:
+            raise ValueError("scenario selection requires a retained scenario")
         if normalized_decision in {"approved", "scenario_selected"}:
             optimization = self.repository.get_optimization(plan_id)
-            if optimization is None or not optimization.is_feasible:
+            if optimization is None or not optimization.is_feasible or (
+                scenario is not None and not scenario.is_feasible
+            ):
+                raise UnavailableSimulationResultError("cannot perform decision writeback: pricing comparison or selected scenario is infeasible")
+            if normalized_decision == "approved" and scenario is not None:
+                optimized_prices = {item.item_id: item.result.recommended_price for item in optimization.items}
+                if any(optimized_prices.get(item.item_id) != item.candidate_price for item in scenario.items):
+                    raise ValueError("approval must match the optimized plan prices; select an alternative scenario without approving it")
+        if normalized_decision in {"approved", "rejected"}:
+            target = PlanStatus.APPROVED_FOR_PILOT if normalized_decision == "approved" else PlanStatus.STOP
+            if not plan.can_transition_to(target):
+                raise ValueError(f"cannot write back {normalized_decision} from {plan.status.value}")
+            if normalized_decision == "approved":
                 blockers = self._approval_blockers(plan_id)
-                if optimization is None:
-                    blockers.append("plan has no optimization comparison")
-                raise UnavailableSimulationResultError(
-                    f"plan {plan_id} cannot perform decision writeback: {'; '.join(blockers)}"
-                )
+                if blockers:
+                    raise ApprovalBlockedError("; ".join(blockers))
 
         solver_version = (
             PRICEOPS_OSS_SOLVER_VERSION if self.production_required else PRICEOPS_SOLVER_VERSION
@@ -547,17 +570,10 @@ class PriceOpsService:
             idempotency_key=idempotency_key,
         )
 
+        if normalized_decision in {"approved", "rejected"}:
+            self.approve(plan_id, actor_id=actor, reason=reason,
+                         decision=normalized_decision, approved_at=now)
         self.repository.save_decision_writeback(record)
-        target = (
-            PlanStatus.APPROVED_FOR_PILOT
-            if normalized_decision == "approved"
-            else PlanStatus.STOP
-            if normalized_decision == "rejected"
-            else plan.status
-        )
-        if plan.can_transition_to(target):
-            self._advance(plan, target, actor=actor, reason=reason, occurred_at=now)
-
         return record
 
 

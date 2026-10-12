@@ -1017,6 +1017,9 @@ def simulate_candidate_scenario(
     """
     now = generated_at or datetime.now(UTC)
     scenario_id = scenario_id or f"pricing-scenario-{uuid4()}"
+    unknown_items = set(candidate_prices) - {item.item_id for item in plan.items}
+    if unknown_items:
+        raise InvalidScenarioError("candidate prices contain items outside this plan")
     item_simulations: list[ItemScenarioSimulation] = []
     hard_violations_count = 0
 

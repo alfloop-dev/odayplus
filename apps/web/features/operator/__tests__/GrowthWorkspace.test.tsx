@@ -491,40 +491,25 @@ describe("GrowthWorkspace API loading", () => {
     expect(screen.queryByTestId("growth-closeout-success")).not.toBeInTheDocument();
   });
 
-  it("renders PriceOps interactive scenario workbench, baseline/alternative bands, and decision writeback", () => {
+  it("keeps the R7 PriceOps default table without the invented simulation panel", () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    render(<GrowthWorkspace searchParams={{ gtab: "priceops" }} apiData={{
+      availability: "fixture", freshness: FIXTURE_FRESHNESS, fromApi: false,
+      items: GROWTH_ITEMS, recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS,
+    }} />);
+    expect(screen.getByTestId("growth-recommendation-table")).toBeInTheDocument();
+    expect(screen.queryByTestId("priceops-scenario-workbench")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("priceops-writeback-btn")).not.toBeInTheDocument();
+  });
 
-    render(
-      <GrowthWorkspace
-        apiData={{
-          availability: "fixture",
-          freshness: FIXTURE_FRESHNESS,
-          fromApi: false,
-          items: GROWTH_ITEMS,
-          recommendations: PRICEOPS_RECOMMENDATIONS,
-          segments: SEGMENTS,
-        }}
-        basePath="/operator"
-        searchParams={{ gtab: "priceops" }}
-      />,
-    );
-
-    const workbench = screen.getByTestId("priceops-scenario-workbench");
-    expect(workbench).toBeInTheDocument();
-
-    const baselineBand = screen.getByTestId("priceops-baseline-band");
-    expect(baselineBand).toBeInTheDocument();
-    expect(within(baselineBand).getByText(/Baseline \(目前價格\)/)).toBeInTheDocument();
-
-    const alternativeBand = screen.getByTestId("priceops-alternative-band");
-    expect(alternativeBand).toBeInTheDocument();
-    expect(within(alternativeBand).getByText(/Alternative Scenario \(情境模擬\)/)).toBeInTheDocument();
-
-    const writebackBtn = screen.getByTestId("priceops-writeback-btn");
-    expect(writebackBtn).toBeInTheDocument();
-
-    fireEvent.click(writebackBtn);
-    expect(screen.getByTestId("priceops-audit-status")).toBeInTheDocument();
+  it("does not substitute a different pricing recommendation for a missing explicit target", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    render(<GrowthWorkspace searchParams={{ gtab: "priceops", prec: "missing-rec" }} apiData={{
+      availability: "fixture", freshness: FIXTURE_FRESHNESS, fromApi: false,
+      items: GROWTH_ITEMS, recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS,
+    }} />);
+    expect(screen.getByTestId("priceops-selection-unavailable")).toBeInTheDocument();
+    expect(screen.queryByTestId("priceops-scenario-workbench")).not.toBeInTheDocument();
   });
 
   it("keeps Growth approval decisions in Govern", () => {

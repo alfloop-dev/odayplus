@@ -291,7 +291,37 @@ else:
                 )
             return "__local__"
 
-        @router.post("/plans", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("priceops", Action.CREATE, engine=authz_engine))])
+        def plan_in_scope(plan: Any, principal: Any) -> bool:
+            scope = principal.scope
+            if scope.tenant_id and plan.tenant_id != scope.tenant_id:
+                return False
+            if durable_commands_required and not scope.tenant_id:
+                return False
+            return scope.permits_module("priceops") and all(
+                scope.permits_store(item.store_id)
+                and scope.permits_brand(item.brand_id)
+                # Pricing items carry no canonical region binding. A region
+                # restricted caller must not inherit access through a guess.
+                and scope.permits_region(None)
+                for item in plan.items
+            )
+
+        def require_plan_permission(action: Any) -> Any:
+            permission = require_permission("priceops", action, engine=authz_engine)
+
+            principal_dependency = Depends(permission)
+
+            def dependency(request: Request, principal: Any = principal_dependency) -> Any:
+                plan_id = request.path_params.get("plan_id")
+                if plan_id is not None:
+                    plan = service.repository.get_plan(plan_id)
+                    if plan is None or not plan_in_scope(plan, principal):
+                        raise HTTPException(status_code=404, detail="plan not found")
+                return principal
+
+            return dependency
+
+        @router.post("/plans", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_plan_permission(Action.CREATE))])
         def create_plan(
             body: PriceOpsPlanPayload,
             request: Request,
@@ -338,7 +368,7 @@ else:
                 operation=_execute,
             )
 
-        @router.post("/optimizer-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/optimizer-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def create_optimizer_job(
             body: PriceOpsOptimizerJobPayload,
             request: Request,
@@ -404,7 +434,7 @@ else:
                 operation=_execute,
             )
 
-        @router.get("/optimizer-jobs/{job_id}", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        @router.get("/optimizer-jobs/{job_id}", dependencies=[Depends(require_plan_permission(Action.VIEW))])
         def get_optimizer_job(job_id: str, request: Request) -> dict[str, Any]:
             result = command_store(request).get(
                 tenant_id=tenant_id(request),
@@ -417,8 +447,9 @@ else:
                 )
             return result
 
-        @router.get("/plans", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        @router.get("/plans", dependencies=[Depends(require_plan_permission(Action.VIEW))])
         def list_plans(
+            request: Request,
             tenant_id: str | None = Query(default=None),
             plan_status: str | None = Query(default=None, alias="status"),
             limit: int | None = Query(default=None),
@@ -433,7 +464,10 @@ else:
             `has_more`, so a caller that ignores the new fields and passes no
             query parameters sees what it saw before.
             """
-            rows = [plan.to_dict() for plan in service.repository.list_plans()]
+            rows = [
+                plan.to_dict() for plan in service.repository.list_plans()
+                if plan_in_scope(plan, request.state.operator_principal)
+            ]
             if tenant_id is not None:
                 rows = [row for row in rows if row.get("tenant_id") == tenant_id]
             if plan_status is not None:
@@ -442,7 +476,7 @@ else:
                 rows, page_params(limit=limit, offset=offset, sort=sort, order=order)
             )
 
-        @router.get("/plans/{plan_id}", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        @router.get("/plans/{plan_id}", dependencies=[Depends(require_plan_permission(Action.VIEW))])
         def get_plan(plan_id: str) -> dict[str, Any]:
             plan = service.repository.get_plan(plan_id)
             if plan is None:
@@ -465,13 +499,28 @@ else:
                 entry.to_dict() for entry in service.repository.list_label_entries(plan_id)
             ]
             payload["evaluation"] = _to_dict_or_none(service.repository.get_evaluation(plan_id))
+            payload["decision_writebacks"] = [
+                row.to_dict() for row in service.repository.list_decision_writebacks(plan_id)
+            ]
             return payload
 
-        @router.get("/plans/{plan_id}/comparison", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
-        def get_plan_comparison(plan_id: str) -> dict[str, Any]:
-            return _run_read(lambda: service.get_plan_comparison(plan_id))
+        @router.get("/plans/{plan_id}/comparison", dependencies=[Depends(require_plan_permission(Action.VIEW))])
+        def get_plan_comparison(plan_id: str, request: Request) -> dict[str, Any]:
+            from modules.priceops.domain.pricing import PRICEOPS_POLICY_VERSION
+            from shared.auth.rbac import rbac_allows
 
-        @router.post("/plans/{plan_id}/simulate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+            payload = _run_read(lambda: service.get_plan_comparison(plan_id))
+            principal = request.state.operator_principal
+            payload["command_permissions"] = {
+                "simulate": rbac_allows(principal, "priceops", Action.EXECUTE),
+                "writeback": rbac_allows(principal, "priceops", Action.APPROVE),
+            }
+            payload["actor_id"] = principal.subject_id
+            payload["policy_version"] = PRICEOPS_POLICY_VERSION
+            payload["solver_version"] = service.repository.get_optimization(plan_id).solver_version
+            return payload
+
+        @router.post("/plans/{plan_id}/simulate", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def simulate(
             plan_id: str,
             body: PriceOpsActorPayload,
@@ -496,7 +545,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/simulate-scenario", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/simulate-scenario", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def simulate_scenario(
             plan_id: str,
             body: PriceOpsScenarioSimulationPayload,
@@ -522,7 +571,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/decision-writeback", dependencies=[Depends(require_permission("priceops", Action.APPROVE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/decision-writeback", dependencies=[Depends(require_plan_permission(Action.APPROVE))])
         def decision_writeback(
             plan_id: str,
             body: PriceOpsDecisionWritebackPayload,
@@ -550,7 +599,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/optimize", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/optimize", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def optimize(
             plan_id: str,
             body: PriceOpsActorPayload,
@@ -579,7 +628,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/submit", dependencies=[Depends(require_permission("priceops", Action.CREATE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/submit", dependencies=[Depends(require_plan_permission(Action.CREATE))])
         def submit(
             plan_id: str,
             body: PriceOpsActorPayload,
@@ -604,7 +653,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/approve", dependencies=[Depends(require_permission("priceops", Action.APPROVE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/approve", dependencies=[Depends(require_plan_permission(Action.APPROVE))])
         def approve(
             plan_id: str,
             body: PriceOpsApprovalPayload,
@@ -630,7 +679,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/activate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/activate", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def activate(
             plan_id: str,
             body: PriceOpsActivationPayload,
@@ -658,7 +707,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/observation", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/observation", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def start_observation(
             plan_id: str,
             body: PriceOpsObservationPayload,
@@ -683,7 +732,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/evaluate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/evaluate", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def evaluate(
             plan_id: str,
             body: PriceOpsEvaluationPayload,
@@ -718,7 +767,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/rollback", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/rollback", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def rollback(
             plan_id: str,
             body: PriceOpsActorPayload,
@@ -744,7 +793,7 @@ else:
             )
 
         # -- Exploration Gates & Bandit (ODP-FR-PRICE-006) -------------------
-        @router.get("/exploration-gates", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        @router.get("/exploration-gates", dependencies=[Depends(require_plan_permission(Action.VIEW))])
         def get_exploration_gates(
             request: Request,
             tenant_id_param: str | None = Query(default=None, alias="tenant_id"),
@@ -771,7 +820,7 @@ else:
                 "gates": [g.to_dict() for g in all_gates],
             }
 
-        @router.post("/exploration-gates", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/exploration-gates", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def register_exploration_gate(
             body: PriceOpsExplorationGateRegisterPayload,
             request: Request,
@@ -809,7 +858,7 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.post("/exploration-gates/{gate_id}/revoke", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/exploration-gates/{gate_id}/revoke", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def revoke_exploration_gate(
             gate_id: str,
             body: PriceOpsExplorationGateRevokePayload,
@@ -838,7 +887,7 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.post("/exploration-candidates", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/exploration-candidates", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def generate_exploration_candidates(
             body: PriceOpsExplorationCandidatesPayload,
             request: Request,
@@ -896,7 +945,7 @@ else:
                 "candidates": [c.to_dict() for c in candidates],
             }
 
-        @router.get("/plans/{plan_id}/activation-receipt", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        @router.get("/plans/{plan_id}/activation-receipt", dependencies=[Depends(require_plan_permission(Action.VIEW))])
         def get_activation_receipt(
             plan_id: str,
             request: Request,
@@ -986,12 +1035,12 @@ else:
         return audit_log.record(
             AuditEvent(
                 event_type=event_type,
-                actor="system",
+                actor=request.state.operator_principal.subject_id,
                 action=action,
                 resource=resource,
                 outcome="accepted",
                 correlation_id=request.state.correlation_id,
-                metadata=metadata,
+                metadata={**metadata, "tenant_id": request.state.operator_principal.tenant_id},
             )
         )
 
@@ -1072,6 +1121,14 @@ else:
         transition happened again.
         """
 
+        principal = getattr(request.state, "operator_principal", None)
+        if principal is None or not principal.authenticated:
+            raise HTTPException(status_code=403, detail="verified principal required")
+        if hasattr(body, "actor"):
+            body.actor = principal.subject_id
+        if hasattr(body, "actor_id"):
+            body.actor_id = principal.subject_id
+
         def _execute() -> dict[str, Any]:
             try:
                 result = action()
@@ -1109,15 +1166,20 @@ else:
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"PriceOps plan transition failed; correlation_id={correlation_id}",
                 ) from exc
+            payload = result.to_dict()
             audit_event = _record_audit(
                 audit_log,
                 request,
                 event_type,
                 audit_action,
                 f"priceops/plans/{plan_id}",
-                {"plan_id": plan_id},
+                {"plan_id": plan_id, **{
+                    key: payload[key] for key in (
+                        "decision_id", "scenario_id", "selected_scenario_id",
+                        "reason", "policy_version", "solver_version",
+                    ) if key in payload
+                }},
             )
-            payload = result.to_dict()
             payload["audit_event_id"] = audit_event.event_id
             payload["correlation_id"] = request.state.correlation_id
             return payload
