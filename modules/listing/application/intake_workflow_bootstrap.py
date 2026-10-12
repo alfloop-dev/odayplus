@@ -82,7 +82,8 @@ def record_workflow_change(store: Any, intake: dict[str, Any], *, resource_type:
                            before: dict[str, Any] | None, after: dict[str, Any],
                            action: str, actor_id: str) -> str:
     """Append transaction-owned audit evidence; never return an unpersisted id."""
-    resource_key = {"intake": "intake_id", "assignment": "assignment_id", "sla_instance": "sla_instance_id"}[resource_type]
+    resource_key = {"intake": "intake_id", "assignment": "assignment_id", "sla_instance": "sla_instance_id",
+                    "correction": "correction_id", "identity_decision": "decision_id"}[resource_type]
     audit_id = str(uuid4())
     after["audit_event_id"] = audit_id
     if resource_type == "sla_instance":

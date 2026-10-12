@@ -23,6 +23,7 @@ from modules.listing.application.intake_assignment_commands import (
     change_assignment,
 )
 from modules.listing.application.intake_completion import IntakeWorkIncomplete
+from modules.listing.application.intake_correction_lineage import apply_field, correction_values
 from modules.listing.application.intake_sla_commands import change_sla
 from modules.listing.application.intake_workflow_bootstrap import (
     IntakeWorkflowPlan,
@@ -1868,7 +1869,7 @@ else:
                 # Intake bootstrap/assignment is one rollback boundary. Other
                 # commands include sagas that intentionally commit FAILED state
                 # before returning a non-2xx business outcome (e.g. SiteScore).
-                atomic_operations = {"submitUrlIntake", "submitIntakeBatch", "commitXlsxBatch", "assignIntake", "pauseSla", "resumeSla", "claimAssignment", "transferAssignment", "completeAssignment", "cancelIntake"}
+                atomic_operations = {"submitUrlIntake", "submitIntakeBatch", "commitXlsxBatch", "assignIntake", "pauseSla", "resumeSla", "claimAssignment", "transferAssignment", "completeAssignment", "cancelIntake", "proposeCorrection", "reviewIdentityDecision"}
                 unit_of_work = active.transaction() if operation_id in atomic_operations else nullcontext()
                 with unit_of_work:
                     # Memory requests share one locked surface; recheck after
@@ -1934,6 +1935,7 @@ else:
             corrected_value: Any,
             actor_id: str,
         ) -> None:
+            apply_field(intake, field_path, corrected_value)
             intake["version"] += 1
             ts = now()
             intake["updated_at"] = ts
@@ -1944,16 +1946,6 @@ else:
                 "occurred_at": ts,
                 "actor": actor_id,
                 "version_after": intake["version"],
-            })
-            fields = intake.setdefault("fields", [])
-            intake["fields"] = [
-                field for field in fields if field.get("field_path") != field_path
-            ]
-            intake["fields"].append({
-                "field_path": field_path,
-                "corrected": corrected_value,
-                "classification": "INTERNAL",
-                "masked": False,
             })
 
         def encode_cursor(
@@ -2798,70 +2790,69 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
-                allowed_states = (
-                    {"NEEDS_REVIEW"}
-                    if is_identity_affecting
-                    else {"AWAITING_ASSISTED_ENTRY", "NEEDS_REVIEW", "READY"}
-                )
+                current = active.intakes.get(intake_id)
+                if current is None:
+                    raise HTTPException(404, "intake not found")
+                require_intake_scope(principal, current)
+                allowed_states = ({"NEEDS_REVIEW"} if is_identity_affecting
+                                  else {"AWAITING_ASSISTED_ENTRY", "NEEDS_REVIEW", "READY"})
                 if current.get("state") not in allowed_states:
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
-                cid = str(uuid4())
-                correlation_id_str = str(uuid4())
-                audit_event_id = str(uuid4())
-
-                if is_identity_affecting:
-                    # The first actor only creates a reviewable proposal.  The
-                    # correction is applied by reviewIdentityDecision after an
-                    # independent actor approves it.
-                    current["version"] += 1
-                    current["updated_at"] = now()
-                    correction = {
-                        "correction_id": cid,
-                        "status": "PENDING_REVIEW",
-                        "intake_id": intake_id,
-                        "tenant_id": tenant_id,
-                        "scope": copy.deepcopy(current.get("scope", {})),
-                        "field_path": body.field_path,
-                        "corrected_value": copy.deepcopy(body.corrected_value),
-                        "proposer": actor_id,
-                        "intake_version": current["version"],
-                    }
-                    active.corrections[cid] = correction
-                    active.decisions[cid] = {
-                        "decision_id": cid,
-                        "status": "PENDING_REVIEW",
-                        "resource_versions": {"intake": current["version"]},
-                        "job_id": None,
-                        "audit_event_id": audit_event_id,
-                        "correlation_id": correlation_id_str,
-                        "version": 1,
-                        "action": "identity_correction",
-                        "tenant_id": tenant_id,
-                        "scope": copy.deepcopy(current.get("scope", {})),
-                        "intake_id": intake_id,
-                        "correction_id": cid,
-                        "proposer": actor_id,
-                    }
-                    status_value = "PENDING_REVIEW"
-                else:
-                    apply_correction(
-                        current,
-                        field_path=body.field_path,
-                        corrected_value=body.corrected_value,
-                        actor_id=actor_id,
-                    )
-                    status_value = "APPLIED"
-
-                receipt_val = {
-                    "correction_id": cid,
-                    "status": status_value,
-                    "intake_id": intake_id,
-                    "version": current["version"],
-                    "audit_event_id": audit_event_id,
-                    "correlation_id": correlation_id_str,
+                if not body.reason.strip():
+                    raise HTTPException(422, "CORRECTION_REASON_REQUIRED")
+                masked = mask_intake(principal, current)
+                if any(f.get("field_path") == body.field_path and f.get("masked") for f in masked.get("fields", [])):
+                    raise HTTPException(403, "FIELD_MASKED")
+                try:
+                    values = correction_values(current, body.field_path, body.corrected_value)
+                except PermissionError as exc:
+                    raise HTTPException(403, "FIELD_MASKED") from exc
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from exc
+                from shared.audit.integrity import sha256_hex
+                if body.expected_effective_value_sha256 is not None and body.expected_effective_value_sha256 != sha256_hex(values["before_effective_value"]):
+                    raise HTTPException(409, "EFFECTIVE_VALUE_CONFLICT")
+                before = copy.deepcopy(current)
+                cid, ts = str(uuid4()), now()
+                correlation_id_str = current["correlation_id"]
+                correction = {
+                    **values, "correction_id":cid, "status":"PENDING_REVIEW" if is_identity_affecting else "APPLIED",
+                    "intake_id":intake_id,"tenant_id":tenant_id,"scope":copy.deepcopy(current["scope"]),
+                    "reason":body.reason,"risk_acknowledged":body.risk_acknowledged,"proposer":actor_id,
+                    "proposed_by":actor_id,"reviewed_by":None,"version":1,"created_at":ts,
+                    "correlation_id":correlation_id_str,"identity_affecting":is_identity_affecting,
+                    "supersedes_correction_id":None,"reversal_of_correction_id":None,
                 }
-                return receipt_val, 201
+                if is_identity_affecting:
+                    correction["after_effective_value"] = copy.deepcopy(values["before_effective_value"])
+                    current["version"] += 1
+                    current["updated_at"] = ts
+                else:
+                    apply_correction(current, field_path=body.field_path,
+                                     corrected_value=body.corrected_value, actor_id=actor_id)
+                correction["intake_version"] = current["version"]
+                active.corrections[cid] = correction
+                record_workflow_change(active,current,resource_type="intake",before=before,after=current,
+                                       action="intake.correct.propose" if is_identity_affecting else "intake.correct.apply",
+                                       actor_id=actor_id)
+                audit_event_id = record_workflow_change(active,current,resource_type="correction",before=None,after=correction,
+                                                       action="correction.propose" if is_identity_affecting else "correction.apply",
+                                                       actor_id=actor_id)
+                if is_identity_affecting:
+                    decision = {
+                        "decision_id":cid,"status":"PENDING_REVIEW","resource_versions":{"intake":current["version"],"correction":1},
+                        "job_id":None,"correlation_id":correlation_id_str,"version":1,"action":"identity_correction",
+                        "tenant_id":tenant_id,"scope":copy.deepcopy(current["scope"]),"intake_id":intake_id,
+                        "correction_id":cid,"proposer":actor_id,"created_at":ts,"reason":body.reason,
+                        "risk_acknowledged":body.risk_acknowledged,"processing_history":[],
+                    }
+                    active.decisions[cid] = decision
+                    record_workflow_change(active,current,resource_type="identity_decision",before=None,after=decision,
+                                           action="identity.correction.propose",actor_id=actor_id)
+                return {"correction_id":cid,"status":correction["status"],"intake_id":intake_id,
+                        "version":correction["version"],"audit_event_id":audit_event_id,
+                        "correlation_id":correlation_id_str},201
 
             val, code, was_replayed = replay(
                 key,
@@ -4767,6 +4758,12 @@ else:
                 raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
             def make() -> tuple[dict[str, Any], int]:
+                current = active.decisions.get(decision_id)
+                if current is None:
+                    raise HTTPException(404, "identity decision not found")
+                require_workflow_resource_scope(principal, current)
+                if current.get("proposer") == actor_id:
+                    raise HTTPException(403, "SELF_REVIEW_DENIED")
                 if current.get("status") != "PENDING_REVIEW":
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
@@ -4780,23 +4777,67 @@ else:
                         raise HTTPException(409, "DEPENDENCY_CONFLICT")
                     if correction.get("status") != "PENDING_REVIEW":
                         raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-                    if correction_intake.get("version") != correction.get("intake_version"):
-                        raise HTTPException(409, "VERSION_CONFLICT")
+                    if (type(correction.get("version")) is not int or correction["version"] < 1
+                        or correction.get("scope") != correction_intake["scope"]
+                        or correction.get("tenant_id") != tenant_id
+                        or correction.get("intake_id") != correction_intake["intake_id"]
+                        or correction.get("proposer") != current.get("proposer")
+                        or correction.get("field_classification") is None):
+                        raise HTTPException(409, "CORRECTION_EVIDENCE_UNAVAILABLE")
+                    if body.decision == ReviewDecision.APPROVE:
+                        if correction_intake.get("version") != correction.get("intake_version"):
+                            raise HTTPException(409, "VERSION_CONFLICT")
+                        if correction_intake.get("state") != "NEEDS_REVIEW":
+                            raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+                        masked = mask_intake(principal, correction_intake)
+                        if any(f.get("field_path") == correction["field_path"] and f.get("masked") for f in masked.get("fields", [])):
+                            raise HTTPException(403, "FIELD_MASKED")
+                        try:
+                            observed = correction_values(correction_intake, correction["field_path"], correction["corrected_value"])
+                        except PermissionError as exc:
+                            raise HTTPException(403, "FIELD_MASKED") from exc
+                        except ValueError as exc:
+                            raise HTTPException(409, "CORRECTION_EVIDENCE_UNAVAILABLE") from exc
+                        if any(observed.get(name) != correction.get(name) for name in (
+                            "field_before", "source_snapshot_id", "parser_run_id",
+                        )):
+                            raise HTTPException(409, "CORRECTION_LINEAGE_CONFLICT")
+                before_decision = copy.deepcopy(current)
+                before_correction = copy.deepcopy(correction)
+                before_intake = copy.deepcopy(correction_intake)
                 updated = generic_mutate(active.decisions, decision_id, to_state, actor_id)
                 if correction is not None and correction_intake is not None:
                     if body.decision == ReviewDecision.APPROVE:
-                        apply_correction(
-                            correction_intake,
-                            field_path=correction["field_path"],
-                            corrected_value=correction["corrected_value"],
-                            actor_id=actor_id,
-                        )
+                        try:
+                            apply_correction(correction_intake, field_path=correction["field_path"],
+                                             corrected_value=correction["corrected_value"], actor_id=actor_id)
+                        except PermissionError as exc:
+                            raise HTTPException(403, "FIELD_MASKED") from exc
+                        except ValueError as exc:
+                            raise HTTPException(422, str(exc)) from exc
                         correction["status"] = "APPLIED"
-                        correction["reviewer"] = actor_id
+                        correction["after_effective_value"] = copy.deepcopy(correction["corrected_value"])
+                        correction["intake_version"] = correction_intake["version"]
                         updated["resource_versions"]["intake"] = correction_intake["version"]
+                        record_workflow_change(active,correction_intake,resource_type="intake",before=before_intake,
+                                               after=correction_intake,action="intake.correct.apply",actor_id=actor_id)
                     else:
                         correction["status"] = "REJECTED"
-                        correction["reviewer"] = actor_id
+                    correction["version"] += 1
+                    correction["reviewer"] = correction["reviewed_by"] = actor_id
+                    correction["reviewed_at"] = now()
+                    correction["review_reason"] = body.reason
+                    correction["review_risk_acknowledged"] = body.risk_acknowledged
+                    updated["reviewer"] = actor_id
+                    updated["review_reason"] = body.reason
+                    updated["resource_versions"]["correction"] = correction["version"]
+                    record_workflow_change(active,correction_intake,resource_type="correction",before=before_correction,
+                                           after=correction,action="correction.apply" if correction["status"] == "APPLIED" else "correction.reject",
+                                           actor_id=actor_id)
+                    record_workflow_change(active,correction_intake,resource_type="identity_decision",before=before_decision,
+                                           after=updated,action="identity.correction.review",actor_id=actor_id)
+                # Approval remains APPROVED. Identity execution needs the real
+                # canonical owner; this command cannot stamp EXECUTED evidence.
                 return updated, 200
 
             val, code, was_replayed = replay(
@@ -4809,6 +4850,7 @@ else:
                 resource_id=decision_id,
             )
             response.status_code = 200 if was_replayed else code
+            response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return DecisionReceipt(**val)
 
