@@ -12641,6 +12641,9 @@
               }
             },
             "description": "Unexpected server error"
+          },
+          "503": {
+            "description": "Canonical production evidence inputs not admitted"
           }
         },
         "summary": "Export Evidence",
@@ -12859,6 +12862,109 @@
           }
         },
         "summary": "Get Retained Evidence",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/api/v1/audit/evidence/exports/{export_id}/download": {
+      "get": {
+        "operationId": "download_retained_evidence_api_v1_audit_evidence_exports__export_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "title": "Export Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Verified retained evidence JSON/CSV ZIP",
+            "headers": {
+              "X-Artifact-SHA256": {
+                "description": "SHA-256 of response bytes",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "description": "Export permission or sensitive-data authority required"
+          },
+          "404": {
+            "description": "No evidence owned by this subject and tenant"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "410": {
+            "description": "Expired authorization, purged or unavailable artifact"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          },
+          "503": {
+            "description": "Canonical production download admission required"
+          }
+        },
+        "summary": "Download Retained Evidence",
         "tags": [
           "audit"
         ]
