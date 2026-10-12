@@ -1253,7 +1253,8 @@
 }
 
 .builderModal .summaryHeading,
-.builderModal .builderSummary dt { color: #536079; }
+.builderModal .builderSummary dt,
+.builderModal .actionNote { color: #536079; }
 
 @media (max-width: 1280px) {
   .campaign {

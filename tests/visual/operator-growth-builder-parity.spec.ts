@@ -48,8 +48,18 @@ for (const width of [1440, 1024, 390]) {
       await mkdir(evidence, { recursive:true });
       await page.screenshot({ path:path.join(evidence, `growth-builder-${width}-step-${step}.png`), animations:"disabled" });
       if (step < 5) await dialog.getByTestId("growth-builder-next").click();
-      else await writeFile(path.join(evidence, `growth-builder-${width}.json`), JSON.stringify({ results, creates, scope:"Local fixture UI; no release approval" }, null, 2));
     }
+    // The supplemental CI server intentionally has no API. Exercise that
+    // unavailable branch locally too, rather than only checking a live fixture.
+    await page.route("**/api/v1/operator/growth/conflicts/check", route => route.fulfill({ status:503, body:"Synthetic unavailable conflict check" }));
+    await dialog.getByTestId("growth-builder-prev").click();
+    await dialog.getByTestId("growth-builder-prev").click();
+    await dialog.getByTestId("growth-builder-next").click();
+    await expect(dialog.getByTestId("growth-conflict-panel")).toContainText("尚未取得伺服器衝突結果");
+    const unavailableAxe = await new AxeBuilder({ page }).include('[data-testid="growth-draft-modal"]').analyze();
+    expect(unavailableAxe.violations).toEqual([]);
+    const evidence = process.env.STORE_OPS_PARITY_EVIDENCE_DIR ?? info.outputDir;
+    await writeFile(path.join(evidence, `growth-builder-${width}.json`), JSON.stringify({ results, creates, unavailableAxeViolations:unavailableAxe.violations, unavailableConflictBranchVerified:true, scope:"Local fixture UI; no release approval" }, null, 2));
     expect(creates).toBe(0);
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);

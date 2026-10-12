@@ -61,7 +61,8 @@ are disabled; a focusable status retains keyboard context. Native form submit
 is prevented so Enter cannot navigate away from the controlled workflow.
 
 Supplemental checks cover all five steps at 1440, 1024 and 390 px, geometry,
-contrast, Tab/Shift+Tab, Escape and focus return. The business E2E inventory
+contrast, Tab/Shift+Tab, Escape and focus return, including the unavailable
+conflict-check branch used by the supplemental CI server. The business E2E inventory
 remains unchanged. These local fixture checks do not grant remote visual
 approval or close the full 40-screen review. Draft creation/retry and
 create-then-submit failure recovery still require a separate actor/request-bound
