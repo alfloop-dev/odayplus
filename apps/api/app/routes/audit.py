@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from modules.opsboard.audit import AuditEvidenceExportError, AuditEvidenceExportService
 from modules.opsboard.audit.application.evidence_artifact import (
@@ -13,6 +13,7 @@ from modules.opsboard.audit.application.evidence_artifact import (
     render_evidence_archive,
 )
 from modules.opsboard.audit.application.evidence_export import decision_card_from_mapping
+from modules.opsboard.audit.application.evidence_pdf import render_evidence_pdf
 from modules.opsboard.audit.domain.evidence import EvidenceExportRequest
 from shared.audit import AuditEvent, EvidenceGovernanceError, InMemoryAuditLog
 from shared.audit.integrity import canonical_json
@@ -181,9 +182,10 @@ else:
             response_class=Response,
             responses={
                 200: {
-                    "description": "Verified retained evidence JSON/CSV ZIP",
+                    "description": "Verified retained evidence PDF or JSON/CSV ZIP",
                     "content": {
-                        "application/zip": {"schema": {"type": "string", "format": "binary"}}
+                        "application/zip": {"schema": {"type": "string", "format": "binary"}},
+                        "application/pdf": {"schema": {"type": "string", "format": "binary"}},
                     },
                     "headers": {
                         "X-Artifact-SHA256": {
@@ -199,7 +201,10 @@ else:
             },
         )
         def download_retained_evidence(
-            export_id: str, request: Request, principal=export_guard
+            export_id: str,
+            request: Request,
+            format: Literal["zip", "pdf"] = "zip",
+            principal=export_guard,
         ) -> Response:
             if os.environ.get("ODP_PRODUCT_MODE") == "production":
                 raise HTTPException(
@@ -224,7 +229,11 @@ else:
                     status_code=410, detail="evidence download authorization expired"
                 )
             try:
-                artifact = render_evidence_archive(record)
+                artifact = (
+                    render_evidence_pdf(record)
+                    if format == "pdf"
+                    else render_evidence_archive(record)
+                )
             except EvidenceArtifactUnavailable as exc:
                 raise HTTPException(status_code=410, detail=str(exc)) from exc
             active_audit_log.record(
@@ -240,7 +249,7 @@ else:
                         "bundle_checksum": record.bundle_checksum,
                         "artifact_sha256": artifact.sha256,
                         "artifact_bytes": len(artifact.content),
-                        "format": "JSON/CSV ZIP",
+                        "format": "PDF" if format == "pdf" else "JSON/CSV ZIP",
                         "identity_boundary": _identity_boundary(principal),
                         "download_evidence_id": governance.get("download_evidence_id"),
                     },
@@ -252,7 +261,7 @@ else:
                 content=artifact.content,
                 media_type=artifact.media_type,
                 headers={
-                    "Content-Disposition": 'attachment; filename="audit-evidence.zip"',
+                    "Content-Disposition": f'attachment; filename="audit-evidence.{format}"',
                     "Cache-Control": "private, no-store",
                     "X-Content-Type-Options": "nosniff",
                     "X-Artifact-SHA256": artifact.sha256,

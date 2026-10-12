@@ -646,6 +646,7 @@ modules/opsboard/audit/__init__.py,product_system,product_required,true,,enginee
 modules/opsboard/audit/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/audit/application/evidence_artifact.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/audit/application/evidence_export.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/opsboard/audit/application/evidence_pdf.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/audit/domain/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/audit/domain/evidence.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/audit/evidence_store.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -1038,6 +1039,7 @@ tests/integration/test_audit_backlog_protection.py,verification,verification_onl
 tests/integration/test_audit_delivery_priority.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_audit_evidence_artifact.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_audit_evidence_export.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_audit_evidence_pdf.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_audit_evidence_persistence.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_auth_boundary_authz.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_avm_deal_outcome.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

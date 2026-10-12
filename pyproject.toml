@@ -48,6 +48,7 @@ dependencies = [
     "dagster>=1.12,<2",
     "optuna>=4.9,<5",
     "pymoo>=0.6.1,<0.7",
+    "reportlab>=5.0.1,<6",
 ]
 
 [dependency-groups]
@@ -59,6 +60,7 @@ dev = [
     "pytest>=8",
     "pytest-xdist>=3.6",
     "ruff>=0.6",
+    "pypdf>=6.20,<7",
 ]
 
 # This repo is run as a set of scripts/services, not built as a distributable

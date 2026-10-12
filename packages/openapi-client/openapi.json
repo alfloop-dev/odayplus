@@ -12879,11 +12879,31 @@
               "title": "Export Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "zip",
+              "enum": [
+                "zip",
+                "pdf"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
             "content": {
+              "application/pdf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
               "application/zip": {
                 "schema": {
                   "format": "binary",
@@ -12891,7 +12911,7 @@
                 }
               }
             },
-            "description": "Verified retained evidence JSON/CSV ZIP",
+            "description": "Verified retained evidence PDF or JSON/CSV ZIP",
             "headers": {
               "X-Artifact-SHA256": {
                 "description": "SHA-256 of response bytes",

@@ -1,6 +1,6 @@
 # Retained evidence JSON/CSV archive
 
-Task: `ODP-SYS-ACCEPT-261011`. This implements a real archive renderer and an
+Task: `ODP-SYS-ACCEPT-261011`. This implements real PDF and archive renderers and an
 authenticated local/test download; full production Evidence Package acceptance
 remains incomplete. It does not replace the R7 PDF/CSV form or authorize launch.
 
@@ -42,6 +42,10 @@ as record ownership. It returns actual ZIP bytes, `X-Artifact-SHA256`, attachmen
 disposition, `private, no-store`, and `nosniff`. An expired download authorization
 or a purge returns 410. A verified download creates `audit.evidence_download.v1`
 with the actor, actual archive hash/size, original bundle checksum and correlation.
+The optional `format=pdf` parameter returns the PDF of the same retained record;
+omitting it retains the ZIP default. Unsupported formats return 422. Both formats
+share the ownership, authorization-expiry, sensitive-data and production gates,
+and successful audits record the actual format and response digest.
 This is an authenticated response, not a seven-day signed URL or proof that the
 browser saved the response.
 
@@ -63,10 +67,28 @@ brand, region and store visibility, sensitive authorization receipts, human
 reason/segregation rules, privacy checks, artifact retention and download audit
 must be reviewed against the admitted source and actor manifest.
 
-The R7 Govern form still needs its actual PDF renderer, canonical data resolver,
+The R7 Govern form still needs its canonical data resolver,
 reliable export command/persistence, real download integration, artifact-backed
 history and exact source review. Its non-fixture export remains unavailable; a
-JSON/CSV ZIP is not claimed as a PDF or the complete system acceptance.
+Neither the PDF renderer nor JSON/CSV ZIP completes the canonical form or system acceptance.
+
+## PDF portability and attribution
+
+The PDF contains export metadata, every decision/event/matrix row, and the full
+retained-record appendix. It draws JSON as plain text, paginates long values
+including unbroken CJK/IDs, and refuses missing glyphs instead of replacing
+evidence with empty boxes. Fonts are embedded and no web links or JavaScript
+actions are created from evidence strings. The same retained record, locked
+renderer and font generate identical bytes after restart. It is not claimed as
+PDF/A, a digital signature, or an independently admitted evidence source.
+
+Runtime uses [ReportLab](https://docs.reportlab.com/reportlab/userguide/ch3_fonts/)
+5.0.1 from the frozen lock and unmodified IBM Plex Sans TC, pinned in
+`modules/opsboard/audit/assets/ibm-plex-sans-tc/SOURCE.json` with upstream commit,
+Git blob and SHA-256. The adjacent original OFL-1.1 license covers the font;
+its attribution must accompany redistribution. The Python dependency notice is
+generated from installed distributions. The dependency and font source records
+do not invent any release approval or alter human policy receipts.
 
 ## Verification
 

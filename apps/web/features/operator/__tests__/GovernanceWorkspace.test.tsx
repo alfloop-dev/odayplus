@@ -233,7 +233,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
     vi.stubGlobal("fetch", fetchMock);
     const onApprove = vi.fn();
     render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onApprove }} />);
-    await screen.findByTestId("governance-workspace");
+    await screen.findByRole("heading", { name: snapshot.approvals[0].title });
     fireEvent.click(screen.getByRole("button", { name: "核准" }));
     await screen.findByText("尚未確認決策結果，請重試相同內容以核對。");
     expect(onApprove).not.toHaveBeenCalled();
@@ -250,7 +250,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
       : decidingSnapshot))));
     const onApprove = vi.fn();
     render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onApprove }} />);
-    await screen.findByTestId("governance-workspace");
+    await screen.findByRole("heading", { name: snapshot.approvals[0].title });
     fireEvent.click(screen.getByRole("button", { name: "核准" }));
     await screen.findByText("尚未確認決策結果，請重試相同內容以核對。");
     expect(onApprove).not.toHaveBeenCalled();
@@ -264,7 +264,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
       : Promise.resolve(new Response(JSON.stringify(decidingSnapshot))));
     vi.stubGlobal("fetch", fetchMock);
     render(<GovernanceWorkspace roleId="ops-lead" />);
-    await screen.findByTestId("governance-workspace");
+    await screen.findByRole("heading", { name: snapshot.approvals[0].title });
     fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
     fireEvent.click(screen.getByTestId("governance-export-button"));
     expect(screen.getByLabelText("起始日")).toBeDisabled();

@@ -23,13 +23,13 @@ class EvidenceArtifactUnavailable(ValueError):
 
 
 @dataclass(frozen=True)
-class EvidenceArchive:
+class EvidenceArtifact:
     content: bytes
     sha256: str
     media_type: str = "application/zip"
 
 
-def render_evidence_archive(record: RetainedEvidence) -> EvidenceArchive:
+def render_evidence_archive(record: RetainedEvidence) -> EvidenceArtifact:
     """Use only the persisted, integrity-verified bundle; never rebuild evidence."""
     verify_retained_evidence(record)
     if record.purged_at is not None:
@@ -79,7 +79,7 @@ def render_evidence_archive(record: RetainedEvidence) -> EvidenceArchive:
             entry.external_attr = 0o100600 << 16
             archive.writestr(entry, content)
     content = output.getvalue()
-    return EvidenceArchive(content=content, sha256=hashlib.sha256(content).hexdigest())
+    return EvidenceArtifact(content=content, sha256=hashlib.sha256(content).hexdigest())
 
 
 def _json_bytes(value: Any) -> bytes:

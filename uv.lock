@@ -2561,6 +2561,7 @@ dependencies = [
     { name = "pynacl" },
     { name = "pyomo" },
     { name = "pyyaml" },
+    { name = "reportlab" },
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "sqlalchemy" },
@@ -2575,6 +2576,7 @@ dev = [
     { name = "jsonschema" },
     { name = "openapi-spec-validator" },
     { name = "pgserver" },
+    { name = "pypdf" },
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "ruff" },
@@ -2609,6 +2611,7 @@ requires-dist = [
     { name = "pynacl", specifier = ">=1.6,<2" },
     { name = "pyomo", specifier = ">=6.9,<7" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "reportlab", specifier = ">=5.0.1,<6" },
     { name = "scikit-learn", specifier = ">=1.5" },
     { name = "scipy", specifier = ">=1.15,<2" },
     { name = "sqlalchemy", specifier = ">=2.0" },
@@ -2623,6 +2626,7 @@ dev = [
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "openapi-spec-validator", specifier = ">=0.9.0" },
     { name = "pgserver", specifier = ">=0.1.3" },
+    { name = "pypdf", specifier = ">=6.20,<7" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-xdist", specifier = ">=3.6" },
     { name = "ruff", specifier = ">=0.6" },
@@ -3679,6 +3683,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pypdf"
+version = "6.20.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e2/c1/da25a099164cf4b210d63b957c902ad687139f4b8c12c20aec7953a4a266/pypdf-6.20.1.tar.gz", hash = "sha256:28f5a9d2fdc2749264612d94e6a58de54c11d730d9f0cabf8ad34117c4942b45", size = 7075352, upload-time = "2026-10-12T16:14:24.784Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/f8/4cbd09988b4b158260b7e0df38bf16f19e998bf0e257a18661a8da04280e/pypdf-6.20.1-py3-none-any.whl", hash = "sha256:aa5a55ddcffdc5e5ab291d5decb23f6383f4e56f8e3263dc39af41fff03885ad", size = 402665, upload-time = "2026-10-12T16:14:22.556Z" },
+]
+
+[[package]]
 name = "pyreadline3"
 version = "3.5.6"
 source = { registry = "https://pypi.org/simple" }
@@ -3865,6 +3878,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/22/f5/df4e9027acead3ecc63e50fe1e36aca1523e1719559c499951bb4b53188f/referencing-0.37.0.tar.gz", hash = "sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8", size = 78036, upload-time = "2025-10-13T15:30:48.871Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl", hash = "sha256:381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231", size = 26766, upload-time = "2025-10-13T15:30:47.625Z" },
+]
+
+[[package]]
+name = "reportlab"
+version = "5.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "charset-normalizer" },
+    { name = "pillow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4a/51/dbe28534ae12c852f61be91f039f343305fd1f34f1c66b8de75afae7a525/reportlab-5.0.1.tar.gz", hash = "sha256:ebd13154be1c8515e665de70bd2d303ae9ddc3ef47e44afd5116441ca0283a26", size = 3945711, upload-time = "2026-08-20T13:48:16.461Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/db/cb/dacbc268cb68d0428ea2cbd85266195a9ab3e677449589ddae59bd7542ac/reportlab-5.0.1-py3-none-any.whl", hash = "sha256:1c36e6bb0e71780c72331eba60da7f602e8d4389a8723825af71342e49d791e8", size = 1957258, upload-time = "2026-08-20T13:48:14.026Z" },
 ]
 
 [[package]]

@@ -161,8 +161,8 @@ def test_download_binds_verified_subject_tenant_and_archive_digest():
     contract = client.get("/openapi.json").json()["paths"][
         "/audit/evidence/exports/{export_id}/download"
     ]["get"]
-    assert contract["responses"]["200"]["content"] == {
-        "application/zip": {"schema": {"type": "string", "format": "binary"}}
+    assert contract["responses"]["200"]["content"]["application/zip"] == {
+        "schema": {"type": "string", "format": "binary"}
     }
     response = client.post("/audit/evidence/export", json=body)
     assert response.status_code == 201
@@ -219,7 +219,8 @@ def test_download_binds_verified_subject_tenant_and_archive_digest():
     assert client.get("/audit/evidence/exports").json()["exports"][0]["export_id"] == export_id
 
 
-def test_sensitive_download_requires_verified_authority_not_body_strings():
+@pytest.mark.parametrize("format", ["zip", "pdf"])
+def test_sensitive_download_requires_verified_authority_not_body_strings(format):
     client, _, body, _ = _client()
     body.update(
         {
@@ -233,17 +234,24 @@ def test_sensitive_download_requires_verified_authority_not_body_strings():
     )
     response = client.post("/audit/evidence/export", json=body)
     assert response.status_code == 201
-    download = client.get(f"/audit/evidence/exports/{response.json()['export_id']}/download")
+    download = client.get(
+        f"/audit/evidence/exports/{response.json()['export_id']}/download",
+        params={"format": format},
+    )
     assert download.status_code == 403
     assert download.json()["detail"] == "SENSITIVE_EVIDENCE_DOWNLOAD_AUTHORITY_REQUIRED"
 
 
-def test_download_rejects_expired_authorization_and_unbound_legacy_record():
+@pytest.mark.parametrize("format", ["zip", "pdf"])
+def test_download_rejects_expired_authorization_and_unbound_legacy_record(format):
     client, store, body, _ = _client()
     body["expires_at"] = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
     response = client.post("/audit/evidence/export", json=body)
     assert response.status_code == 201
-    download = client.get(f"/audit/evidence/exports/{response.json()['export_id']}/download")
+    download = client.get(
+        f"/audit/evidence/exports/{response.json()['export_id']}/download",
+        params={"format": format},
+    )
     assert download.status_code == 410
     legacy = _retained(store)
     assert client.get(f"/audit/evidence/exports/{legacy.export_id}").status_code == 404
@@ -276,7 +284,8 @@ def test_archive_rejects_retention_purge_tombstone():
         render_evidence_archive(store.get(record.export_id))
 
 
-def test_production_rejects_caller_supplied_evidence_and_unadmitted_download(monkeypatch):
+@pytest.mark.parametrize("format", ["zip", "pdf"])
+def test_production_rejects_caller_supplied_evidence_and_unadmitted_download(monkeypatch, format):
     from apps.api.oday_api.security import dependencies
 
     client, store, body, _ = _client()
@@ -298,6 +307,9 @@ def test_production_rejects_caller_supplied_evidence_and_unadmitted_download(mon
     assert rejected.status_code == 503
     assert rejected.json()["detail"] == "CANONICAL_EVIDENCE_INPUT_REQUIRED"
     assert len(store.list_all()) == count
-    download = client.get(f"/audit/evidence/exports/{response.json()['export_id']}/download")
+    download = client.get(
+        f"/audit/evidence/exports/{response.json()['export_id']}/download",
+        params={"format": format},
+    )
     assert download.status_code == 503
     assert download.json()["detail"] == "CANONICAL_EVIDENCE_DOWNLOAD_ADMISSION_REQUIRED"
