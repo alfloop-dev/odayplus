@@ -3,7 +3,7 @@
 import pytest
 
 from shared.infrastructure.persistence.factory import _durable_bundle
-from shared.jobs.queue import InMemoryJobQueue, JobRequest, JobStatus
+from shared.jobs.queue import AUDIT_DELIVERY_JOB_TYPES, InMemoryJobQueue, JobRequest, JobStatus
 
 
 @pytest.mark.parametrize("durable", [False, True])
@@ -16,12 +16,12 @@ def test_audit_priority_keeps_receipts_nonexecutable_and_ordinary_jobs_in_order(
         first, _ = queue.enqueue(JobRequest("ordinary-one", {}), correlation_id="synthetic")
         second, _ = queue.enqueue(JobRequest("ordinary-two", {}), correlation_id="synthetic")
         audits = []
-        for kind in ("canonical-audit-delivery", "store-ops-audit-delivery"):
+        for kind in AUDIT_DELIVERY_JOB_TYPES:
             job, _ = queue.enqueue(JobRequest(kind, {}), correlation_id="synthetic")
             audits.append(job.job_id)
         get = (lambda: queue.lease(45)) if method == "lease" else (lambda: queue.claim_next(worker_id="synthetic-priority"))
         claimed = []
-        for _ in range(4):
+        for _ in range(len(audits) + 2):
             job = get()
             claimed.append(job.job_id)
             if method == "lease":
@@ -45,7 +45,7 @@ def test_audit_only_claim_never_consumes_ordinary_work_and_preserves_default_cla
         before = queue.get(ordinary.job_id)
         assert queue.claim_next(worker_id="synthetic-audit-publisher", audit_only=True) is None
         assert queue.get(ordinary.job_id) == before
-        for kind in ("canonical-audit-delivery", "store-ops-audit-delivery"):
+        for kind in AUDIT_DELIVERY_JOB_TYPES:
             audit, _ = queue.enqueue(JobRequest(kind, {}), correlation_id="synthetic")
             claim = queue.claim_next(worker_id="synthetic-audit-publisher", audit_only=True)
             assert claim.job_id == audit.job_id and claim.locked_by == "synthetic-audit-publisher"

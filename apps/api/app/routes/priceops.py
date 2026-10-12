@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -16,6 +17,7 @@ from shared.api.idempotency import (
 )
 from shared.api.pagination import page_params, paginate
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.audit.durable_delivery import DurableAuditDelivery
 from shared.infrastructure.persistence.command_receipts import (
     CommandReceiptIncompleteError,
     CommandReceiptPersistenceError,
@@ -275,7 +277,69 @@ else:
                 raise _durable_store_required(
                     "PriceOps production commands reject process-local stores"
                 )
+            if store.is_durable:
+                engine = getattr(getattr(price_repository, "_store", None), "engine", None)
+                if engine is None or any(bound is not engine for bound in (
+                    getattr(active_queue, "_engine", None),
+                    getattr(active_audit_log, "_engine", None),
+                )):
+                    raise _durable_store_required(
+                        "PriceOps commands require one engine for business, audit and receipts"
+                    )
+                for master in (store_repository, brand_repository):
+                    if master is not None and getattr(master, "_engine", None) is not engine:
+                        raise _durable_store_required(
+                            "PriceOps canonical ownership must share the command transaction"
+                        )
+                store = TenantScopedCommandReceiptStore(
+                    queue=active_queue, service="priceops",
+                    transaction_factory=lambda: command_transaction(engine, active_queue, request),
+                )
             return store
+
+        @contextmanager
+        def command_transaction(engine: Any, queue: Any, request: Request):
+            """Recheck locked ownership and atomically persist every command effect."""
+            with engine.transaction():
+                postgres = getattr(engine, "dialect", "") == "postgresql"
+                if not postgres and not engine._conn.in_transaction:
+                    engine.execute("BEGIN IMMEDIATE")
+                plan_id = request.path_params.get("plan_id")
+                proposals = tuple(getattr(request.state, "priceops_proposals", ()))
+                plan_ids = {p.plan_id for p in proposals if p.plan_id}
+                if plan_id:
+                    plan_ids.add(plan_id)
+                if postgres:
+                    for identity in sorted(plan_ids):
+                        engine.query_one("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                                         ("priceops-plan:" + identity,))
+                plan = service.repository.get_plan(plan_id) if plan_id else None
+                items = [item for proposal in proposals for item in proposal.items]
+                if plan is not None:
+                    items.extend(plan.items)
+                if postgres and store_repository is not None:
+                    brand_ids = set()
+                    for identity in sorted({item.store_id for item in items}):
+                        row = engine.query_one("SELECT brand_id FROM stores WHERE store_id = ? FOR SHARE",
+                                               (identity,))
+                        if row:
+                            brand_ids.add(row["brand_id"])
+                    for identity in sorted(brand_ids):
+                        engine.query_one("SELECT brand_id FROM brands WHERE brand_id = ? FOR SHARE",
+                                         (identity,))
+                principal = request.state.operator_principal
+                if plan_id and (plan is None or not plan_in_scope(plan, principal)):
+                    raise HTTPException(status_code=404, detail="plan not found")
+                for proposal in proposals:
+                    require_proposal_scope(proposal, request)
+                approval = getattr(request.state, "priceops_approval", None)
+                if approval is not None:
+                    require_independent_approval(*approval, request)
+                sink = getattr(active_audit_log, "_worm_sink", None)
+                delivery = DurableAuditDelivery(engine, tenant_id(request), queue, sink) if sink else None
+                context = active_audit_log.transactional_worm_sink(delivery) if delivery else nullcontext()
+                with context:
+                    yield
 
         def tenant_id(request: Request, fallback: str | None = None) -> str:
             principal = getattr(request.state, "operator_principal", None)
@@ -366,6 +430,11 @@ else:
                 existing = service.repository.get_plan(body.plan_id)
                 if existing is not None and not plan_in_scope(existing, principal):
                     raise HTTPException(status_code=404, detail="plan not found")
+            proposals = getattr(request.state, "priceops_proposals", None)
+            if proposals is None:
+                proposals = request.state.priceops_proposals = []
+            if not any(proposal is body for proposal in proposals):
+                proposals.append(body)
 
 
         def require_plan_permission(action: Any) -> Any:
@@ -384,6 +453,7 @@ else:
             return dependency
 
         def require_independent_approval(plan_id: str, decision: str, request: Request) -> None:
+            request.state.priceops_approval = (plan_id, decision)
             blockers = service.approval_actor_blockers(
                 plan_id, request.state.operator_principal.subject_id, decision=decision,
             )
@@ -1160,13 +1230,11 @@ else:
     ) -> dict[str, Any]:
         """Run a creation under the idempotency policy and mark the replay.
 
-        The whole operation -- resolve, create, audit -- runs inside
-        the durable command receipt store so reservation and replay are covered
-        by one
-        lock. Looking up first and remembering afterwards leaves a
-        check-then-act window: these sync handlers run concurrently in the
-        threadpool, so N same-key POSTs all miss the lookup and all create,
-        returning N distinct ids and N ``created: true`` responses.
+        The receipt store reserves the key before executing and returns the
+        recorded response on replay. Durable PriceOps binds the entire run to
+        its same-engine transaction; process-local PoC keeps its reservation
+        policy. A separate lookup followed by a write would leave concurrent
+        requests free to create multiple plans for the same intent.
         """
         try:
             outcome = command_store.run(

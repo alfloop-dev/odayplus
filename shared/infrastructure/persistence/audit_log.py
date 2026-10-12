@@ -53,6 +53,20 @@ class DurableAuditLog:
         self._ensure_integrity_columns()
 
     def record(self, event: AuditEvent) -> AuditEvent:
+        with self._engine.transaction():
+            if getattr(self._engine, "dialect", "") == "postgresql":
+                # Acquire the database-wide chain lock before the per-engine
+                # process lock. Waiting for another transaction while holding
+                # that process lock can prevent its receipt from committing.
+                self._engine.query_one(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                    ("durable-audit-chain",),
+                )
+            elif not self._engine._conn.in_transaction:
+                self._engine.execute("BEGIN IMMEDIATE")
+            return self._append(event)
+
+    def _append(self, event: AuditEvent) -> AuditEvent:
         override = _TRANSACTIONAL_WORM.get()
         worm_sink = override[1] if override is not None and override[0] is self else self._worm_sink
         with self._engine.lock:
@@ -112,14 +126,16 @@ class DurableAuditLog:
         """Redirect this request's WORM write to a same-engine durable outbox.
 
         The configured external sink is unchanged. An override is permitted
-        only while its PostgreSQL transaction is active, so a rollback also
+        only while its SQL transaction is active, so a rollback also
         removes the queued audit delivery. Other requests retain their sink.
         """
-        if (
-            getattr(sink, "engine", None) is not self._engine
-            or getattr(getattr(self._engine, "_local", None), "connection", None) is None
-        ):
-            raise RuntimeError("transactional WORM requires the active audit PostgreSQL engine")
+        active = (
+            getattr(getattr(self._engine, "_local", None), "connection", None) is not None
+            or (getattr(self._engine, "_tx_depth", 0) > 0
+                and getattr(getattr(self._engine, "_conn", None), "in_transaction", False))
+        )
+        if getattr(sink, "engine", None) is not self._engine or not active:
+            raise RuntimeError("transactional WORM requires the active audit SQL engine")
         token = _TRANSACTIONAL_WORM.set((self, sink))
         try:
             yield

@@ -828,11 +828,13 @@ def build_default_registry() -> JobRegistry:
         handle_assisted_listing_intake,
     )
     from apps.worker.consumers.canonical_audit import handle_canonical_audit_delivery
+    from apps.worker.consumers.durable_audit import handle_durable_audit_delivery
     from apps.worker.consumers.store_ops_audit import handle_store_ops_audit_delivery
     from modules.opsboard.application.store_ops_audit_delivery import (
         JOB_TYPE as STORE_OPS_AUDIT_JOB_TYPE,
     )
     from shared.audit.canonical_delivery import JOB_TYPE as CANONICAL_AUDIT_JOB_TYPE
+    from shared.audit.durable_delivery import JOB_TYPE as DURABLE_AUDIT_JOB_TYPE
 
     registry = JobRegistry()
     registry.register(FORECAST_JOB_TYPE, handle_forecast)
@@ -841,6 +843,7 @@ def build_default_registry() -> JobRegistry:
     registry.register(BATCH_LISTING_INTAKE_JOB_TYPE, handle_batch_listing_intake)
     registry.register(STORE_OPS_AUDIT_JOB_TYPE, handle_store_ops_audit_delivery)
     registry.register(CANONICAL_AUDIT_JOB_TYPE, handle_canonical_audit_delivery)
+    registry.register(DURABLE_AUDIT_JOB_TYPE, handle_durable_audit_delivery)
     return registry
 
 

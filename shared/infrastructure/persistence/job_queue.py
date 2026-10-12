@@ -122,7 +122,7 @@ class DurableJobQueue:
                     "SELECT * FROM durable_jobs "
                     "WHERE (status IN (?, ?, ?) OR (status = ? AND leased_until < ?)) "
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "ORDER BY CASE WHEN job_type IN (?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
+                    "ORDER BY CASE WHEN job_type IN (?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
                     (
                         JobStatus.QUEUED.value,
                         *_LEGACY_RETRYING_STATUS_VALUES,
@@ -246,8 +246,8 @@ class DurableJobQueue:
                     "  WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "    AND lease_expires_at < ?)) "
                     "  AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "  AND (? = FALSE OR job_type IN (?, ?)) "
-                    "  ORDER BY CASE WHEN job_type IN (?, ?) THEN 0 ELSE 1 END, created_at, job_id "
+                    "  AND (? = FALSE OR job_type IN (?, ?, ?)) "
+                    "  ORDER BY CASE WHEN job_type IN (?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id "
                     "  FOR UPDATE SKIP LOCKED "
                     "  LIMIT 1"
                     ") "
@@ -285,8 +285,8 @@ class DurableJobQueue:
                     "WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "AND lease_expires_at < ?)) "
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "AND (? = FALSE OR job_type IN (?, ?)) "
-                    "ORDER BY CASE WHEN job_type IN (?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
+                    "AND (? = FALSE OR job_type IN (?, ?, ?)) "
+                    "ORDER BY CASE WHEN job_type IN (?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
                     (
                         JobStatus.QUEUED.value,
                         *_LEGACY_RETRYING_STATUS_VALUES,

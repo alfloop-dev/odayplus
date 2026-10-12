@@ -11,8 +11,8 @@ python product_ops/deployment/cloud_run_job_entrypoint.py audit-publisher \
   --run-for-seconds 60 --max-jobs 100
 ```
 
-Its atomic claim selects only `canonical-audit-delivery` and
-`store-ops-audit-delivery`. Other queued or expired work remains untouched. It
+Its atomic claim selects only `canonical-audit-delivery`,
+`store-ops-audit-delivery` and `durable-audit-delivery`. Other queued or expired work remains untouched. It
 keeps polling during an empty queue until the observation window expires or the
 job bound is reached, and exports metrics during idle polls. Existing worker
 retry, heartbeat, fence and default-registry receipt checks still apply.
