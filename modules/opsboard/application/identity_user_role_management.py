@@ -191,6 +191,7 @@ class IdentityUserRoleManagementService:
         ]
 
     def _fixed_recovery_audit(self, tenant: str) -> dict[str, AuditEvent]:
+        from shared.identity.dev_smoke_journal import DevSmokeBindingJournal, ProvisioningJournal
         from shared.identity.dev_smoke_recovery import (
             RECOVERY_BINDING_CORRELATION,
             RECOVERY_BINDING_KEYS,
@@ -203,6 +204,8 @@ class IdentityUserRoleManagementService:
         if tenant != TENANT_ID:
             return {}  # no cross-tenant recovery read or metadata exposure
         fixed = {
+            ProvisioningJournal._CORRELATION: (ProvisioningJournal._TYPE, ProvisioningJournal._KEYS),
+            DevSmokeBindingJournal._CORRELATION: (DevSmokeBindingJournal._TYPE, DevSmokeBindingJournal._KEYS),
             RecoveryJournal._CORRELATION: (RecoveryJournal._TYPE, RecoveryJournal._KEYS),
             RecoveryCapabilityService._CAP_CORRELATION: (RecoveryCapabilityService._CAP_TYPE, RecoveryCapabilityService._CAP_KEYS),
             RECOVERY_BINDING_CORRELATION: (RECOVERY_BINDING_TYPE, RECOVERY_BINDING_KEYS),
@@ -243,6 +246,7 @@ class IdentityUserRoleManagementService:
                                                  "release.dev_smoke.recovery_binding"}):
                 continue
             is_recovery = event.event_type in {
+                "release.dev_smoke.reservation", "release.dev_smoke.binding",
                 "identity.dev_smoke.recovery", "identity.dev_smoke.recovery_capability",
                 "release.dev_smoke.recovery_binding",
             }
@@ -253,6 +257,10 @@ class IdentityUserRoleManagementService:
                 # Refuse the whole read BEFORE subject filtering. Dropping a
                 # corrupt quarantine/duplicate could leave a valid ACK history
                 # and turn uncertainty into success. Never echo unsafe metadata.
+                from shared.identity.dev_smoke_journal import (
+                    DevSmokeBindingJournal,
+                    ProvisioningJournal,
+                )
                 from shared.identity.dev_smoke_recovery import (
                     RECOVERY_BINDING_KEYS,
                     RECOVERY_BINDING_TYPE,
@@ -260,7 +268,9 @@ class IdentityUserRoleManagementService:
                     RecoveryCapabilityService,
                     RecoveryJournal,
                 )
-                allowed = {RecoveryJournal._TYPE: RecoveryJournal._KEYS,
+                allowed = {ProvisioningJournal._TYPE: ProvisioningJournal._KEYS,
+                           DevSmokeBindingJournal._TYPE: DevSmokeBindingJournal._KEYS,
+                           RecoveryJournal._TYPE: RecoveryJournal._KEYS,
                            RecoveryCapabilityService._CAP_TYPE: RecoveryCapabilityService._CAP_KEYS,
                            RECOVERY_BINDING_TYPE: RECOVERY_BINDING_KEYS}[event.event_type]
                 if (set(meta) != allowed or meta.get("secret_values_redacted") is not True

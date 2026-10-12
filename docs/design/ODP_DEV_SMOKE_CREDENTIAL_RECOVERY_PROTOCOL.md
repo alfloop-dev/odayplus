@@ -1010,3 +1010,16 @@ A checksum/JSON marker alone is not authority, permission or proof of a remote
 GitHub201. Existing legacy orphan objects are retained for adjudication, not
 rewritten into committed evidence. See the auxiliary source evidence in
 `audit-commit-boundary-repair.md`; production migration/execution stays blocked.
+
+Historical projection checks all FIVE fixed correlations, including old
+provisioning/binding, before tenant/event-type/subject selection. Already persisted
+security/authentication poison is not made acceptable by the new request barrier.
+Old ledger metadata is also pinned/redacted before any cross-tenant projection.
+
+Web bearer-refresh mint/update failure is availability, NOT revocation or an
+absent session. It propagates to logout503 without cookie clearance or cleanup
+success. A transient session401 cannot pair with a false logout200 to prove
+revocation. Restoration of refresh must not make a successfully revoked cookie
+usable again. Offline handler controls use an explicit memory store, not PG proof;
+see `legacy-history-refresh-repair.md`. Foreground UNKNOWN/once-only intent and all
+operational holds remain unchanged; no automatic cleanup retry is introduced.

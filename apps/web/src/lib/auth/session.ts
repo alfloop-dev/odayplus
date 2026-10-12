@@ -333,7 +333,10 @@ export async function readWebSession(
       await store.updateAccessToken(record.sessionId, accessToken);
       record = { ...record, accessToken };
     } catch {
-      return null;
+      // Availability is not revocation. In particular logout MUST NOT mistake
+      // an active session with a failed bearer refresh for an absent session,
+      // clear its cookie and acknowledge cleanup while its DB row stays live.
+      throw new Error("WEB_AUTH_UNAVAILABLE");
     }
   }
   await store.touchSession(

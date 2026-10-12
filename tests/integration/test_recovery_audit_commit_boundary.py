@@ -16,7 +16,13 @@ from shared.identity.dev_smoke_recovery import (
     RecoveryRefused,
 )
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
-from tests.integration.test_dev_smoke_recovery import binding_ready, consume, issue, snapshot
+from tests.integration.test_dev_smoke_recovery import (
+    binding_proven,
+    binding_ready,
+    consume,
+    issue,
+    snapshot,
+)
 from tests.integration.test_dev_smoke_recovery import identity_stack as identity_stack
 from tests.integration.test_dev_smoke_recovery import recovery as recovery
 from tests.integration.test_dev_smoke_recovery import recovery_runtime as recovery_runtime
@@ -126,6 +132,40 @@ def test_late_db_original_session_expiry_after_audit_insert_rolls_back_without_w
     assert s.engine.query_one("SELECT count(*) AS n FROM durable_audit_events")["n"] == count
     assert s.engine.query("SELECT * FROM durable_audit_worm_outbox") == []
     assert not list((tmp_path / "worm").rglob("*.json"))
+
+
+@pytest.mark.parametrize("correlation", [ProvisioningJournal._CORRELATION, DevSmokeBindingJournal._CORRELATION])
+@pytest.mark.parametrize("tenant", [None, "other-tenant", "matching"])
+def test_already_persisted_legacy_auth_poison_cannot_hide_behind_valid_ack(recovery_runtime: Any, correlation: str, tenant: str | None) -> None:
+    from shared.audit.events import AuditEvent
+    from shared.audit.integrity import attach_audit_event_integrity
+    from shared.identity.dev_smoke_journal import TENANT_ID
+    from shared.identity.dev_smoke_recovery import PRESERVED_ACCOUNT_ID, TARGET_ACCOUNT_ID
+    s = recovery_runtime
+    root, cap = binding_ready(s)
+    intent = s.binding.binding_intent(s.principal, root)
+    s.binding.binding_acknowledge(s.principal, root, intent_event_id=intent["audit_event_id"], put_status=201)
+    assert binding_proven(s, root, cap, intent)
+    previous = s.audit.list_events()[-1]
+    # Restore an already-persisted, INTEGRITY-VALID historical row below the new
+    # append barrier. No future raw request/audit writer is permitted to do this.
+    meta = {} if tenant is None else {"tenant_id": TENANT_ID if tenant == "matching" else tenant}
+    poisoned = attach_audit_event_integrity(AuditEvent(event_type="security.authentication", actor="offline-other",
+        action="AUTHENTICATE", resource="offline", outcome="denied", correlation_id=correlation, metadata=meta),
+        sequence=previous.sequence + 1, previous_hash=previous.event_hash)
+    s.engine.execute("INSERT INTO durable_audit_events(event_id,event_type,actor,action,resource,outcome,correlation_id,job_id,metadata_json,occurred_at,sequence,previous_hash,event_hash,signature_key_id,signature_version,signature_alg,worm_sink_id) VALUES (?,?,?,?,?,?,?,?,CAST(? AS jsonb),?,?,?,?,?,?,?,?)",
+        (poisoned.event_id, poisoned.event_type, poisoned.actor, poisoned.action, poisoned.resource, poisoned.outcome,
+         poisoned.correlation_id, poisoned.job_id, json.dumps(poisoned.metadata), poisoned.occurred_at.isoformat(),
+         poisoned.sequence, poisoned.previous_hash, poisoned.event_hash, poisoned.signature_key_id,
+         poisoned.signature_version, poisoned.signature_alg, poisoned.worm_sink_id))
+    assert s.audit.verify_chain().ok
+    before = snapshot(s)
+    for subject in (None, TARGET_ACCOUNT_ID, PRESERVED_ACCOUNT_ID):
+        response = s.client.get("/api/v1/operator/users/audit-trail", headers=s.headers,
+                               params={} if subject is None else {"subject_id": subject})
+        assert response.status_code == 403 and "RECOVERY_AUDIT_LINEAGE_INVALID" in response.text
+    assert snapshot(s) == before
+    assert any(e.event_id == poisoned.event_id for e in s.audit.list_events(correlation_id=correlation))
 
 
 def test_pg_pool_size_one_commits_before_publication_and_claim_visible_to_other_pool(recovery: Any, tmp_path: Path) -> None:
