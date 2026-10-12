@@ -17,10 +17,12 @@
 
 ## 尚未涵蓋與限制
 
-- 分類目前**沒有遮蔽強制效果**：runner 只檢查欄位是否列齊，RESTRICTED 欄位仍會原樣保存。依收據條件另開工作補上遮蔽或拒存。
+- 原核准時分類尚無保存強制效果；此歷史情況保留於核准收據與審閱表。producer 已在 2026-10-08 合併 [#81](https://github.com/alfloop-dev/oday-data-platform/pull/81)：分類含 `RESTRICTED`／`PROHIBITED` 時，在 provider／檔案寫入之前拒絕 raw lane；未知欄位與 schema drift 亦不得保存。這是拒存，不代表已有可准入的遮蔽來源資料。
 - `market_events`、`brand_locator` 尚無 adapter；`tgos`、`google_places_verifier`、`survey` 沒有 runner lane。核准已記錄，但對應程式完成前不得啟用。
-- `google_places_verifier` 僅核准即時驗證、不保存原始回應；目前 Dagster asset 會保存 raw response，啟用前必須改程式。
+- `google_places_verifier` 僅核准逐筆即時驗證、不保存原始回應。producer 已在 2026-10-08 合併 [#82](https://github.com/alfloop-dev/oday-data-platform/pull/82)：舊 bulk／raw asset 入口拒絕執行，candidate verifier 只保留最小結論。這不證明正式 runtime、帳單／配額、單次 egress lease 或實際來源資料已准入。
 - 這份紀錄本身不會啟用任何來源。啟用需另外設定 `ODAY_SOURCE_*_ENABLED` 與 `ODAY_SOURCE_*_APPROVAL_RECEIPT_SHA256`。
+
+2026-10-12 技術讀回以 producer `606c35f26a47df9eae7667eaeb82f5eebf75fa22` 為準；隔離離線重驗 158 tests／69 subtests 通過。完整條件與邊界見 [來源准入核對紀錄](../../../runbooks/source-admission-readback-20261012.md)。核准 JSON、逐欄分類與其 digest 未修改，九項 release-authority 狀態也未改寫。
 
 ## OSS 授權政策與 LGPL 四案
 
