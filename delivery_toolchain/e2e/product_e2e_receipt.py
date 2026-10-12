@@ -19,8 +19,9 @@ from _support import load_json_object as read_json
 SCHEMA_VERSION = "2.0.0"
 EXPECTED_CANONICAL_SPEC_COUNT = 18
 # Current-dev composition retains the Today/shell regressions and adds the
-# four Package10 Find Areas layout cases. Actual Playwright --list: 129/18.
-EXPECTED_PLAYWRIGHT_TEST_COUNT = 129
+# four Package10 Find Areas layout cases and the contributor persona regression.
+# Actual Playwright --list: 130 tests in the same 18 canonical spec files.
+EXPECTED_PLAYWRIGHT_TEST_COUNT = 130
 RAW_PLAYWRIGHT_PATH = "docs/evidence/e2e/raw_playwright_results.json"
 RAW_PYTEST_PATH = "docs/evidence/e2e/raw_pytest_results.json"
 RECEIPT_PATH = "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json"

@@ -579,10 +579,10 @@ describe("Operator console govern route with a delayed shell envelope", () => {
         allowedWorkspaces: ["today", "store", "growth", "network", "govern"],
       },
       {
-        id: "cs-lead",
-        label: "客服主管",
-        subtitle: "評論、客服案件與門市回覆",
-        allowedWorkspaces: ["today", "store", "govern"],
+        id: "pm-audit",
+        label: "PM／稽核",
+        subtitle: "治理、決策與稽核",
+        allowedWorkspaces: ["today", "network", "govern"],
       },
     ];
     const withSideChannel = {
@@ -601,6 +601,7 @@ describe("Operator console govern route with a delayed shell envelope", () => {
     };
     const withoutSideChannel = {
       ...shellEnvelopePayload,
+      meta: { ...shellEnvelopePayload.meta, role: { ...shellEnvelopePayload.meta.role, ...roles[1] } },
       navigation: { ...shellEnvelopePayload.navigation, roles },
     };
 
@@ -629,9 +630,9 @@ describe("Operator console govern route with a delayed shell envelope", () => {
     fireEvent.click(screen.getByTestId("operator-command-trigger"));
     const palette = await screen.findByTestId("operator-command-palette");
     fireEvent.change(screen.getByRole("combobox", { name: /Command palette search/ }), {
-      target: { value: "切換角色：客服主管" },
+      target: { value: "切換角色：PM／稽核" },
     });
-    fireEvent.click(await within(palette).findByRole("option", { name: /切換角色：客服主管/ }));
+    fireEvent.click(await within(palette).findByRole("option", { name: /切換角色：PM／稽核/ }));
 
     await waitFor(() => expect(bootstrapCalls).toBeGreaterThan(1));
     await waitFor(() =>
