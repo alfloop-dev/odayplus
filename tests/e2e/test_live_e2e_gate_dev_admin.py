@@ -1896,7 +1896,11 @@ def test_full_gate_recovery_bundle_keeps_invitation_and_all_auth_checks(monkeypa
         assert credential_bundle_acknowledged(bundle, events, target_account=user) is (failure == "projection-control")
         rows = [SimpleNamespace(**{**e, "occurred_at": datetime.fromisoformat(e["timestamp"])}) for e in events]
         service = IdentityUserRoleManagementService(engine=SimpleNamespace(dialect="postgresql"),
-            audit_log=SimpleNamespace(list_events=lambda **kwargs: rows))
+            audit_log=SimpleNamespace(list_events=lambda *, tenant_id=None, correlation_id=None: [
+                row for row in rows
+                if (correlation_id is None or row.correlation_id == correlation_id)
+                and (tenant_id is None or isinstance(row.metadata, dict)
+                     and row.metadata.get("tenant_id") == tenant_id)]))
         app = FastAPI()
         app.include_router(create_user_role_sub_router(service), prefix="/api/v1/operator")
         with TestClient(app) as client:

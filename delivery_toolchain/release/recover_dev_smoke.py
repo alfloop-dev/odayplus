@@ -1517,7 +1517,7 @@ class ForegroundOwnedWebSessions:
         self._origin, self._address, self._ca = origin, address, ca_pem
         self._cookies = {"original": "", "target": ""}
         self._extra_cookies: dict[str, tuple[str, ...]] = {"original": (), "target": ()}
-        self._logout_attempted: set[str] = set()
+        self._logout_attempted: dict[bytes, object] = {}
         self._verified: set[str] = set()
         self._attempted: set[str] = set()
         self._stopped = self._closed = self._actions_created = False
@@ -1527,6 +1527,20 @@ class ForegroundOwnedWebSessions:
 
     def __repr__(self) -> str:
         return "ForegroundOwnedWebSessions(<redacted>)"
+
+    @staticmethod
+    def _logout_key(cookie: str) -> bytes:
+        import hashlib
+        return hashlib.sha256(cookie.encode("ascii")).digest()
+
+    def _logout_claimed(self, cookie: str) -> bool:
+        return self._logout_key(cookie) in self._logout_attempted
+
+    def _claim_logout(self, cookie: str) -> bool:
+        # ONE shared intent registry for gate/canonical/owner cleanup. setdefault
+        # claims atomically; no response/receipt failure releases this intent.
+        marker = object()
+        return self._logout_attempted.setdefault(self._logout_key(cookie), marker) is marker
 
     def __reduce_ex__(self, protocol: int):
         raise RecoveryRefused("RECOVERY_CUSTODY_SERIALIZATION_REFUSED")
@@ -1684,10 +1698,11 @@ class ForegroundOwnedWebSessions:
                 failed = not gate_sessions._cleanup_known_sessions() or failed
             for role in ("target", "original"):
                 for ordinal, cookie in enumerate((self._cookies[role], *self._extra_cookies[role])):
-                    if not cookie or cookie in self._logout_attempted:
-                        continue  # same value across roles is NEVER retried
+                    if not cookie or self._logout_claimed(cookie):
+                        continue  # same value across gate/roles is NEVER retried
                     def perform(cookie=cookie):
-                        self._logout_attempted.add(cookie)  # durable start precedes this single effect
+                        if not self._claim_logout(cookie):  # durable start precedes this single effect
+                            raise ValueError
                         result = self._request("logout", cookie=cookie)
                         if result.payload.get("ok") is not True:
                             raise ValueError
@@ -1711,7 +1726,8 @@ class ForegroundOwnedWebSessions:
         self._closed = self._stopped = True
         self._cookies = {"original": "", "target": ""}  # NOT logout/zeroization proof
         self._extra_cookies = {"original": (), "target": ()}
-        self._logout_attempted.clear()
+        # Keep non-serialized digests while a gate can still reference this owner;
+        # close/reference release must NOT reopen a cookie's logout intent.
 
 
 class RecoveryActionRefused(RecoveryRefused):
@@ -2507,6 +2523,8 @@ class ForegroundSamePairGate:
                 if cookie not in self._cookies or self._cookies[cookie]["attempted"]:
                     raise ValueError
                 self._cookies[cookie]["attempted"] = True  # no repeat even if receipt/transport fails
+                if not self._sessions._claim_logout(cookie):
+                    raise ValueError  # already claimed by either owner; never another transport
                 operation = "gate-session-logout"
             if operation:
                 elapsed, remaining = self._budget._time()

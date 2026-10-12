@@ -148,6 +148,84 @@ def foreground_gate(owned_sessions: Any, monkeypatch: Any):
     return setup
 
 
+@pytest.mark.parametrize("role", ["original", "target"])
+@pytest.mark.parametrize("form", [False, True])
+@pytest.mark.parametrize("lost", [False, True])
+def test_echoed_owner_cookie_has_one_logout_intent_across_gate_and_owner(
+        foreground_gate: Any, monkeypatch: Any, tmp_path: Any, role: str, form: bool, lost: bool) -> None:
+    """Actual canonical evaluator + both production owners; synthetic replies only."""
+    import json
+
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.release import recover_dev_smoke as r
+
+    with foreground_gate() as (driver, actions, owner, budget, p, calls, sessions, original, target, events):
+        cookie = owner._cookies[role]
+        roundtrip = r._ForegroundGateHTTPSClient._roundtrip
+        gate_logouts = []
+        fault_at = []
+        def faulty(client, method, path, *, authenticated, body, headers):
+            if not client._api and headers.get("cookie") == f"__Host-oday_web_session={cookie}":
+                if (method, path) == ("POST", "/auth/logout"):
+                    calls.append(("web", method, path, budget._active[0]))
+                    gate_logouts.append(cookie)
+                    if lost:
+                        raise OSError("OFFLINE-PRIVATE-REPLY")
+                    return gate.HttpResponse(200, {"ok": True}, cookies={"__Host-oday_web_session": ""})
+                if (method, path) == ("GET", "/auth/session"):
+                    calls.append(("web", method, path, budget._active[0]))
+                    return gate.HttpResponse(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
+            response = roundtrip(client, method, path, authenticated=authenticated, body=body, headers=headers)
+            if (not client._api and (method, path) == ("POST", "/login")
+                    and body.get("password") != target.password
+                    and (headers.get("content-type") == "application/x-www-form-urlencoded") == form):
+                fault_at.append(len(calls) - 1)
+                driver._retain_cookies({"__Host-oday_web_session": cookie})
+                return gate.HttpResponse(303 if form else 200, {"ok": True, "subject": body["username"]},
+                    location=owner._origin + "/operator?view=admin" if form else "",
+                    cookies={"__Host-oday_web_session": cookie})
+            return response
+        monkeypatch.setattr(r._ForegroundGateHTTPSClient, "_roundtrip", faulty)
+        with pytest.raises(r.RecoveryActionRefused):
+            driver.execute(actions)
+        assert fault_at and driver._unknown_login and owner._closed
+        assert not any(c[2] == "/login" for c in calls[fault_at[0] + 1:])
+        owner_logouts = [value for operation, value, *_ in sessions if operation == "logout"]
+        assert gate_logouts.count(cookie) + owner_logouts.count(cookie) == 1, "gate/owner repeated the same logout"
+        assert len(gate_logouts) == 1
+        assert driver._failure_receipt()["own_session_cleanup"] == "unknown"
+        before = list(calls), list(sessions)
+        driver.stop_and_cleanup(actions)
+        assert (calls, sessions) == before
+        records = "".join(path.read_text() for path in (tmp_path / p["execution_id"]).glob("*.json"))
+        assert all(value not in records + json.dumps(driver._failure_receipt())
+                   for value in (cookie, original.password, target.password, "OFFLINE-PRIVATE-REPLY"))
+
+
+@pytest.mark.parametrize("lost", [False, True])
+def test_canonical_gate_logout_also_claims_shared_owner_intent(
+        foreground_gate: Any, monkeypatch: Any, lost: bool) -> None:
+    from delivery_toolchain.release import recover_dev_smoke as r
+    from tests.e2e import test_live_e2e_gate_dev_admin as f
+
+    with foreground_gate("logout" if lost else "") as (driver, actions, owner, budget, p, calls, sessions, original, target, events):
+        cookie = owner._cookies["target"]
+        monkeypatch.setattr(f, "SESSION_VALUE", cookie)  # synthetic positive reply aliases reconciled owner
+        if lost:
+            with pytest.raises(r.RecoveryActionRefused):
+                driver.execute(actions)
+            assert driver._failure_receipt()["own_session_cleanup"] == "unknown"
+        else:
+            assert driver.execute(actions)["gate_passed"] is True
+            budget.begin("fresh_consumer")
+            budget.finish(outcome="completed")  # no live consumer/proof
+            assert owner.cleanup(gate_sessions=driver)["own_session_cleanup"] == "completed"
+        assert owner._logout_claimed(cookie)  # intent survives owner.close, only digest retained
+        assert not any(operation == "logout" and value == cookie for operation, value, *_ in sessions)
+        assert driver._cookies[cookie]["attempted"]
+        assert driver._cookies[cookie]["verified"] is (not lost)
+
+
 def test_parent_full_samepair_actual_canonical_evaluator(foreground_gate: Any, tmp_path: Any) -> None:
     import json
     import pickle

@@ -250,7 +250,9 @@ def test_recovery_audit_projection_refuses_extended_credential_metadata(recovery
 @pytest.mark.parametrize("event_type", [
     RecoveryJournal._TYPE, RecoveryCapabilityService._CAP_TYPE, "release.dev_smoke.recovery_binding",
 ])
-@pytest.mark.parametrize("corruption", ["extended-quarantine", "extended-duplicate", "missing", "redaction"])
+@pytest.mark.parametrize("corruption", ["extended-quarantine", "extended-duplicate", "missing", "redaction",
+                                         "missing-tenant", "wrong-tenant", "null-metadata", "list-metadata",
+                                         "tampered-tenant"])
 def test_mounted_ack_cannot_hide_malformed_recovery_history(recovery_runtime: Any, event_type: str,
                                                            corruption: str) -> None:
     """Actual PG audit + authenticated route: an existing ACK cannot hide a bad extra row."""
@@ -267,10 +269,24 @@ def test_mounted_ack_cannot_hide_malformed_recovery_history(recovery_runtime: An
             metadata["stage"] = "recovery-required"
     elif corruption == "missing":
         metadata.pop("stage")
-    else:
+    elif corruption == "missing-tenant":
+        metadata.pop("tenant_id")
+    elif corruption == "wrong-tenant":
+        metadata["tenant_id"] = str(uuid4())
+    elif corruption == "null-metadata":
+        metadata = None
+    elif corruption == "list-metadata":
+        metadata = ["private-injected-marker"]
+    elif corruption == "redaction":
         metadata["secret_values_redacted"] = False
-    s.audit.record(AuditEvent(event_type=source.event_type, actor=source.actor, action=source.action,
+    corrupted = s.audit.record(AuditEvent(event_type=source.event_type, actor=source.actor, action=source.action,
         resource=source.resource, correlation_id=source.correlation_id, outcome="success", metadata=metadata))
+    if corruption == "tampered-tenant":
+        # Deliberately corrupt ONLY the disposable PG fixture below the immutable
+        # log API. Tenant SQL would hide this row before digest verification.
+        metadata["tenant_id"] = str(uuid4())
+        s.engine.execute("UPDATE durable_audit_events SET metadata_json = CAST(? AS jsonb) WHERE event_id = ?",
+                         (json.dumps(metadata), corrupted.event_id))
     before = snapshot(s)
     # Corrupt target identifiers/subject filters cannot make the extra event disappear.
     for subject in (None, TARGET_ACCOUNT_ID, PRESERVED_ACCOUNT_ID, str(uuid4())):
@@ -278,7 +294,42 @@ def test_mounted_ack_cannot_hide_malformed_recovery_history(recovery_runtime: An
                                 params={} if subject is None else {"subject_id": subject})
         assert response.status_code == 403 and "RECOVERY_AUDIT_LINEAGE_INVALID" in response.text
         assert "private-injected-marker" not in response.text and "events" not in response.json()
-    assert snapshot(s) == before and s.audit.verify_chain().ok
+    if corruption == "wrong-tenant":
+        from modules.opsboard.application.user_role_management import UserRolePolicyError
+        # A metadata-spoofed fixed correlation cannot expose original recovery
+        # account/session fields to the claimed other tenant either.
+        with pytest.raises(UserRolePolicyError, match="^RECOVERY_AUDIT_LINEAGE_INVALID$"):
+            s.service.get_audit_trail(tenant_id=metadata["tenant_id"])
+    assert snapshot(s) == before
+    if corruption == "null-metadata":
+        # Existing generic PG reader cannot decode JSONB null; the recovery
+        # boundary must still produce its static refusal, never partial ACK.
+        with pytest.raises(TypeError):
+            s.audit.verify_chain()
+    else:
+        assert s.audit.verify_chain().ok is (corruption != "tampered-tenant")
+
+
+def test_fixed_recovery_validation_preserves_unrelated_tenant_read_isolation(
+        recovery_runtime: Any, monkeypatch: Any) -> None:
+    s = recovery_runtime
+    other = str(uuid4())
+    marker = "private-unrelated-other-tenant"
+    event = s.audit.record(AuditEvent(event_type="identity.account.status", actor="offline-other",
+        action="STATUS", resource="offline-other", correlation_id="offline-unrelated",
+        outcome="success", metadata={"tenant_id": other, "note": marker}))
+    response = s.client.get("/api/v1/operator/users/audit-trail", headers=s.headers)
+    assert response.status_code == 200 and marker not in response.text and event.event_id not in response.text
+    calls = []
+    read = s.audit.list_events
+    def observe(**kwargs):
+        calls.append(kwargs)
+        return read(**kwargs)
+    monkeypatch.setattr(s.audit, "list_events", observe)
+    projected = s.service.get_audit_trail(tenant_id=other)
+    assert calls == [{"tenant_id": other}]  # no unrelated fixed-correlation read
+    assert [row["event_id"] for row in projected] == [event.event_id]
+    assert s.audit.verify_chain().ok
 
 
 def snapshot(s: Any) -> dict[str, Any]:

@@ -190,12 +190,50 @@ class IdentityUserRoleManagementService:
             for role in Role
         ]
 
+    def _fixed_recovery_audit(self, tenant: str) -> dict[str, AuditEvent]:
+        from shared.identity.dev_smoke_recovery import (
+            RECOVERY_BINDING_CORRELATION,
+            RECOVERY_BINDING_KEYS,
+            RECOVERY_BINDING_TYPE,
+            TENANT_ID,
+            RecoveryCapabilityService,
+            RecoveryJournal,
+        )
+
+        if tenant != TENANT_ID:
+            return {}  # no cross-tenant recovery read or metadata exposure
+        fixed = {
+            RecoveryJournal._CORRELATION: (RecoveryJournal._TYPE, RecoveryJournal._KEYS),
+            RecoveryCapabilityService._CAP_CORRELATION: (RecoveryCapabilityService._CAP_TYPE, RecoveryCapabilityService._CAP_KEYS),
+            RECOVERY_BINDING_CORRELATION: (RECOVERY_BINDING_TYPE, RECOVERY_BINDING_KEYS),
+        }
+        events: dict[str, AuditEvent] = {}
+        try:
+            for correlation, (event_type, keys) in fixed.items():
+                # Indexed fixed correlations are independent of metadata tenant.
+                # list_events verifies each row's integrity BEFORE we inspect it.
+                # Never let SQL tenant selection hide a quarantine or bad digest.
+                for event in self._audit_log.list_events(correlation_id=correlation):
+                    meta = event.metadata
+                    if (event.correlation_id != correlation or event.event_type != event_type
+                            or type(meta) is not dict or set(meta) != keys
+                            or meta.get("tenant_id") != TENANT_ID
+                            or meta.get("secret_values_redacted") is not True):
+                        raise ValueError
+                    events[event.event_id] = event
+        except (ValueError, TypeError):  # integrity errors and unparseable/null persisted fields
+            raise UserRolePolicyError("RECOVERY_AUDIT_LINEAGE_INVALID") from None
+        return events
+
     def get_audit_trail(
         self, *, subject_id: str | None = None, tenant_id: str | None = None
     ) -> list[dict[str, Any]]:
         tenant = self._require_tenant(tenant_id)
+        fixed = self._fixed_recovery_audit(tenant)  # validate BEFORE metadata/subject filtering
+        selected = {event.event_id: event for event in self._audit_log.list_events(tenant_id=tenant)}
+        selected.update(fixed)  # same IDs from both reads are projected only once
         events: list[dict[str, Any]] = []
-        for event in self._audit_log.list_events(tenant_id=tenant):
+        for event in selected.values():
             # Identifier-only dev provisioning journals are projected through
             # this same authenticated, tenant-filtered administration read. The
             # consumer must refuse uncertain roots, not infer ACK from a secret.
@@ -218,13 +256,15 @@ class IdentityUserRoleManagementService:
                 from shared.identity.dev_smoke_recovery import (
                     RECOVERY_BINDING_KEYS,
                     RECOVERY_BINDING_TYPE,
+                    TENANT_ID,
                     RecoveryCapabilityService,
                     RecoveryJournal,
                 )
                 allowed = {RecoveryJournal._TYPE: RecoveryJournal._KEYS,
                            RecoveryCapabilityService._CAP_TYPE: RecoveryCapabilityService._CAP_KEYS,
                            RECOVERY_BINDING_TYPE: RECOVERY_BINDING_KEYS}[event.event_type]
-                if set(meta) != allowed or meta.get("secret_values_redacted") is not True:
+                if (set(meta) != allowed or meta.get("secret_values_redacted") is not True
+                        or meta.get("tenant_id") != TENANT_ID or tenant != TENANT_ID):
                     raise UserRolePolicyError("RECOVERY_AUDIT_LINEAGE_INVALID")
             if subject_id and subject_id not in {meta.get("subject_id"), meta.get("account_id"), meta.get("target_account_id")}:
                 continue
