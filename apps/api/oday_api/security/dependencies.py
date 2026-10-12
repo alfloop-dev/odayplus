@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from collections.abc import Iterable, Mapping
 from datetime import date
 from typing import TYPE_CHECKING, Any
@@ -251,14 +250,17 @@ def principal_from_headers(
     credential yields an authenticated principal; any authentication failure
     raises HTTP 401.
 
-    When ODP_PRODUCT_MODE == "production", browser-supplied spoofable headers
-    are NEVER trusted under any circumstances (Contract §4.2, T16).
+    All authoritative production/staging/require-live controls use the same
+    runtime resolver as application composition; spoofable headers are NEVER
+    trusted in any such mode (Contract §4.2, T16).
 
     When no boundary is configured in non-production mode, the legacy
     header-trust stub is used so local dev and unit tests are unaffected.
     """
 
-    is_production = os.environ.get("ODP_PRODUCT_MODE") == "production"
+    from apps.api.oday_api.runtime_mode import live_data_required
+
+    is_production = live_data_required()
 
     boundary = boundary if boundary is not None else default_boundary()
     if boundary is not None:

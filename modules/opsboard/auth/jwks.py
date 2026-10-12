@@ -48,17 +48,21 @@ class JwksResolver:
     def resolve(self, kid: str | None) -> SigningKey | None:
         if not kid:
             return None
-        now = self._clock()
         with self._lock:
+            now = self._clock()  # refresh time AFTER a potentially blocking lock
             key = self._keys.get(kid)
             if key is not None and now < self._expires_at:
                 return key
             self._refresh(now)
-            return self._keys.get(kid)
+            # Retain old cache for bounded outage tolerance, never renew its
+            # authority on a failed refresh or a wait crossing the expiry.
+            return self._keys.get(kid) if self._clock() < self._expires_at else None
 
     def _refresh(self, now: float) -> None:
         try:
             payload = self._fetch(self._uri)
+            if not isinstance(payload, dict) or not isinstance(payload.get("keys"), list):
+                raise ValueError("JWKS_INVALID")
             parsed = {
                 key.kid: key
                 for item in payload.get("keys", [])
@@ -68,9 +72,11 @@ class JwksResolver:
             }
         except (httpx.HTTPError, KeyError, TypeError, ValueError):
             return
-        if parsed:
-            self._keys = parsed
-            self._expires_at = now + self._ttl
+        # A successful empty set authoritatively withdraws all cached keys.
+        # Retrieval/shape failure above is uncertainty, not withdrawal; retained
+        # keys still cannot be used outside their prior finite validity bound.
+        self._keys = parsed
+        self._expires_at = now + self._ttl
 
     @staticmethod
     def _fetch_http(uri: str) -> dict[str, Any]:

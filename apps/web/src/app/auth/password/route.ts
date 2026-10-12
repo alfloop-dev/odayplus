@@ -24,6 +24,8 @@ import {
   getDefaultSessionStore,
 } from "../../../lib/auth/sessionStore";
 
+import { getDefaultLoginThrottle, resolveClientIp, type LoginThrottle } from "../../../lib/auth/loginThrottle";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -130,6 +132,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const identityStore = getDefaultIdentityStore();
   let account: IdentityAccount | null = null;
   let committedCredentialRevision: string | undefined;
+  let verificationBudget: { throttle: LoginThrottle; username: string; ip: string | null } | null = null;
   if (identityStore) {
     try {
       account = await accountForSession(session, identityStore);
@@ -140,6 +143,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           "Current password verification failed.",
         );
       }
+      const throttle = getDefaultLoginThrottle(process.env);
+      if (!throttle) return errorResponse(503, "WEB_AUTH_UNAVAILABLE", "Web authentication is temporarily unavailable.");
+      const ip = resolveClientIp(request.headers);
+      // SAME durable account/source budget as /login, counted atomically BEFORE
+      // current-password Argon2. Loss/crash/policy/provider errors keep the claim.
+      const allowance = await throttle.beginAttempt(account.username, ip);
+      if (!allowance.allowed) return errorResponse(429, "AUTH_RATE_LIMITED", "Authentication temporarily refused.");
+      verificationBudget = { throttle, username: account.username, ip };
       const credential = await identityStore.getPasswordCredential(
         account.accountId,
       );
@@ -155,6 +166,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         normalizedCurrentPassword,
       );
       if (!current.valid) {
+        await throttle.recordFailure(account.username, ip);
         return errorResponse(
           401,
           "AUTH_INVALID_CREDENTIALS",
@@ -275,6 +287,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         maxAge: Math.max(1, finalSession.expiresAt - now),
       },
     );
+    if (verificationBudget) await verificationBudget.throttle.recordSuccess(verificationBudget.username, verificationBudget.ip);
     return response;
   } catch {
     // Production CAS already atomically revoked ONLY this account's old rows.

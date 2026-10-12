@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "../../../app/auth/password/route";
 import {
   readWebSession,
@@ -12,10 +12,16 @@ import { validatePasswordPolicy } from "../localAuth";
 import { MockIdentityStore, PostgresIdentityStore, setIdentityStoreForTests } from "../identityStore";
 import { MockSessionStore, PostgresSessionStore, setSessionStoreForTests } from "../sessionStore";
 import { authenticateLocalCredentials } from "../localAuth";
-import { LoginThrottle, PostgresLoginThrottleStore, setLoginThrottleForTests } from "../loginThrottle";
+import { LoginThrottle, MockLoginThrottleStore, PostgresLoginThrottleStore, setLoginThrottleForTests } from "../loginThrottle";
 import { POST as loginPost } from "../../../app/login/route";
 
 const SECRET = "test-session-secret-with-at-least-32-bytes";
+
+beforeEach(() => {
+  // Explicit offline fixture budget. The actual PG test below replaces it with
+  // its real store before any request; production refusal is never waived.
+  setLoginThrottleForTests(new LoginThrottle(new MockLoginThrottleStore()));
+});
 
 // Invoked by the existing Python PostgreSQL identity fixture against its
 // disposable database, never against a live deployment. Ordinary Node checks

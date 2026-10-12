@@ -39,11 +39,12 @@ from typing import Any
 from uuid import UUID
 
 from shared.audit import AuditEvent
-from shared.auth import DataClassification, Role
+from shared.auth import DataClassification, Principal, Role
 
 from .user_role_management import (
     ROLE_LABELS,
     UserNotFound,
+    UserRoleAuthorizationRefused,
     UserRolePolicyError,
 )
 
@@ -83,6 +84,7 @@ class IdentityUserRoleManagementService:
     """Identity-backed implementation of the Operator user administration API."""
 
     requires_tenant = True
+    requires_verified_actor = True
 
     def __init__(self, *, engine: Any, audit_log: Any) -> None:
         if str(getattr(engine, "dialect", "")).lower() != "postgresql":
@@ -191,55 +193,25 @@ class IdentityUserRoleManagementService:
         ]
 
     def _fixed_recovery_audit(self, tenant: str) -> dict[str, AuditEvent]:
-        from shared.identity.dev_smoke_journal import (
-            TENANT_ID as CREATION_TENANT_ID,
-        )
-        from shared.identity.dev_smoke_journal import DevSmokeBindingJournal, ProvisioningJournal
-        from shared.identity.dev_smoke_recovery import (
-            RECOVERY_BINDING_CORRELATION,
-            RECOVERY_BINDING_KEYS,
-            RECOVERY_BINDING_TYPE,
-            TENANT_ID,
-            RecoveryCapabilityService,
-            RecoveryJournal,
-        )
+        from shared.audit.tenant_read import fixed_ledger_events
 
-        fixed = {
-            ProvisioningJournal._CORRELATION: (ProvisioningJournal._TYPE, ProvisioningJournal._KEYS, CREATION_TENANT_ID),
-            DevSmokeBindingJournal._CORRELATION: (DevSmokeBindingJournal._TYPE, DevSmokeBindingJournal._KEYS, CREATION_TENANT_ID),
-            RecoveryJournal._CORRELATION: (RecoveryJournal._TYPE, RecoveryJournal._KEYS, TENANT_ID),
-            RecoveryCapabilityService._CAP_CORRELATION: (RecoveryCapabilityService._CAP_TYPE, RecoveryCapabilityService._CAP_KEYS, TENANT_ID),
-            RECOVERY_BINDING_CORRELATION: (RECOVERY_BINDING_TYPE, RECOVERY_BINDING_KEYS, TENANT_ID),
-        }
-        events: dict[str, AuditEvent] = {}
         try:
-            for correlation, (event_type, keys, pinned_tenant) in fixed.items():
-                if tenant != pinned_tenant:
-                    continue  # no other-tenant fixed-correlation read/exposure
-                # Indexed fixed correlations are independent of metadata tenant.
-                # list_events verifies each row's integrity BEFORE we inspect it.
-                # Never let SQL tenant selection hide a quarantine or bad digest.
-                for event in self._audit_log.list_events(correlation_id=correlation):
-                    meta = event.metadata
-                    if (event.correlation_id != correlation or event.event_type != event_type
-                            or type(meta) is not dict or set(meta) != keys
-                            or meta.get("tenant_id") != pinned_tenant
-                            or meta.get("secret_values_redacted") is not True):
-                        raise ValueError
-                    events[event.event_id] = event
-        except (ValueError, TypeError):  # integrity errors and unparseable/null persisted fields
+            return fixed_ledger_events(self._audit_log, tenant)
+        except (ValueError, TypeError):
             raise UserRolePolicyError("RECOVERY_AUDIT_LINEAGE_INVALID") from None
-        return events
 
     def get_audit_trail(
         self, *, subject_id: str | None = None, tenant_id: str | None = None
     ) -> list[dict[str, Any]]:
         tenant = self._require_tenant(tenant_id)
-        fixed = self._fixed_recovery_audit(tenant)  # validate BEFORE metadata/subject filtering
-        selected = {event.event_id: event for event in self._audit_log.list_events(tenant_id=tenant)}
-        selected.update(fixed)  # same IDs from both reads are projected only once
+        from shared.audit.tenant_read import validated_tenant_events
+
+        try:
+            selected = validated_tenant_events(self._audit_log, tenant)
+        except (ValueError, TypeError):
+            raise UserRolePolicyError("RECOVERY_AUDIT_LINEAGE_INVALID") from None
         events: list[dict[str, Any]] = []
-        for event in selected.values():
+        for event in selected:
             # Identifier-only dev provisioning journals are projected through
             # this same authenticated, tenant-filtered administration read. The
             # consumer must refuse uncertain roots, not infer ACK from a secret.
@@ -308,6 +280,38 @@ class IdentityUserRoleManagementService:
         # Serialises concurrent administration of one tenant across instances so
         # the last-admin check cannot be raced.
         self._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (f"identity-admin:{tenant}",))
+
+    def _checked_actor(self, principal: Principal | None, tenant: str) -> tuple[str, str]:
+        # Called AFTER the blocking tenant lock, inside the mutation transaction.
+        # Browser actor names, header roles and a pre-lock principal snapshot are
+        # never sufficient authority for an identity mutation.
+        if (not isinstance(principal, Principal) or not principal.authenticated
+                or Role.PLATFORM_ADMIN not in principal.roles or principal.tenant_id != tenant):
+            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED")
+        actor = _uuid_or_none(principal.subject_id)
+        sid = _uuid_or_none(principal.attributes.get("sid"))
+        if actor is None or sid is None:
+            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED")
+        row = self._engine.query_one(
+            "SELECT LEAST(s.idle_expires_at, s.absolute_expires_at) AS deadline FROM identity.accounts a "
+            "JOIN identity.account_roles r ON r.account_id = a.account_id "
+            "JOIN identity.password_credentials p ON p.account_id = a.account_id "
+            "JOIN identity.sessions s ON s.account_id = a.account_id "
+            "WHERE a.account_id = ? AND a.tenant_id = ? AND a.status = 'active' "
+            "AND r.role = 'platform_admin' AND p.must_change = false AND s.session_id = ? "
+            "AND s.revoked_at IS NULL AND s.idle_expires_at > clock_timestamp() "
+            "AND s.absolute_expires_at > clock_timestamp() FOR SHARE OF a, r, p, s",
+            (actor, tenant, sid),
+        )
+        if row is None:
+            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED")
+        return actor, row["deadline"]
+
+    def _final_actor_time(self, deadline: str) -> None:
+        # Held rows prevent concurrent demotion/revocation, NOT natural expiry
+        # during later target/audit waits. Own self-demotion/disable stays valid.
+        if self._engine.query_one("SELECT 1 AS active WHERE clock_timestamp() < CAST(? AS timestamptz)", (deadline,)) is None:
+            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED")
 
     def _other_active_admins(self, tenant: str, account_id: str) -> int:
         row = self._engine.query_one(
@@ -408,6 +412,7 @@ class IdentityUserRoleManagementService:
         reason: str = "",
         correlation_id: str | None = None,
         tenant_id: str | None = None,
+        verified_principal: Principal | None = None,
     ) -> dict[str, Any]:
         """Replace an existing account's roles/scope (and optionally status)."""
 
@@ -442,6 +447,7 @@ class IdentityUserRoleManagementService:
         now = datetime.now(UTC)
         with self._engine.lock:
             self._lock_tenant(tenant)
+            actor, actor_deadline = self._checked_actor(verified_principal, tenant)
             try:
                 before = self._find(tenant, subject_id)
             except UserNotFound as exc:
@@ -527,6 +533,7 @@ class IdentityUserRoleManagementService:
                     "actor_role": actor_role,
                 },
             )
+            self._final_actor_time(actor_deadline)
         return after
 
     def set_user_status(
@@ -539,6 +546,7 @@ class IdentityUserRoleManagementService:
         reason: str = "",
         correlation_id: str | None = None,
         tenant_id: str | None = None,
+        verified_principal: Principal | None = None,
     ) -> dict[str, Any]:
         """Disable (revoking every session) or re-enable an account."""
 
@@ -549,6 +557,7 @@ class IdentityUserRoleManagementService:
         now = datetime.now(UTC)
         with self._engine.lock:
             self._lock_tenant(tenant)
+            actor, actor_deadline = self._checked_actor(verified_principal, tenant)
             before = self._find(tenant, subject_id)
             revoked = self._apply_status(
                 before,
@@ -574,6 +583,7 @@ class IdentityUserRoleManagementService:
                     "reason": reason,
                 },
             )
+            self._final_actor_time(actor_deadline)
         return after
 
 

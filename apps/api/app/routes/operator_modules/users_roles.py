@@ -24,6 +24,7 @@ from starlette.concurrency import run_in_threadpool
 from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.user_role_management import (
     UserNotFound,
+    UserRoleAuthorizationRefused,
     UserRoleManagementService,
     UserRolePolicyError,
 )
@@ -322,7 +323,10 @@ def create_user_role_sub_router(
         if not getattr(svc, "requires_tenant", False):
             return {}
         raw = getattr(req.state, "operator_system_roles", None) or ""
-        return {"actor_roles": frozenset(r for r in str(raw).split(",") if r)}
+        result: dict[str, Any] = {"actor_roles": frozenset(r for r in str(raw).split(",") if r)}
+        if getattr(svc, "requires_verified_actor", False):
+            result["verified_principal"] = getattr(req.state, "operator_principal", None)
+        return result
 
     @router.get("", dependencies=read_deps)
     def list_users(
@@ -714,6 +718,8 @@ def create_user_role_sub_router(
                 "message": f"User '{body.subjectId}' role and scope saved successfully.",
                 "correlation_id": getattr(request.state, "correlation_id", None),
             }
+        except UserRoleAuthorizationRefused as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except UserRolePolicyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -747,6 +753,8 @@ def create_user_role_sub_router(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
             ) from exc
+        except UserRoleAuthorizationRefused as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except UserRolePolicyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)

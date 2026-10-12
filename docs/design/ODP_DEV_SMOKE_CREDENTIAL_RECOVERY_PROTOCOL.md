@@ -1046,3 +1046,15 @@ and pad-bit aliases cannot authenticate as different raw cookie strings and
 bypass the legacy migration digest/tombstone. Existing canonical encoders are
 unchanged. Actual PG logout/deletion/alias controls and equivalent-byte decoder
 controls are in `canonical-cookie-migration-repair.md`; no new operational grant.
+
+Supplemental auth composition repairs use the authoritative API live-mode resolver
+for header refusal, tenant+audit VIEW on BOTH generic audit aliases and shared ALL5
+fixed-history validation before any filter. User administration now rechecks verified
+persisted admin/session after tenant lock and final DB-time bounds after writes/
+audit; cached pre-lock role snapshots cannot restore privileges. JWKS refresh failure
+never extends expired signing authority; valid empty refresh withdraws keys. Password
+change verifies under the existing upfront durable login account/source budget;
+unknown lookup uses one public representative Argon2 verification, not hash+verify.
+See `extended-auth-authority-repair.md`: SIX auth defects reproduced/repaired, FOUR
+supplemental release-admission static findings still unreproduced/unrepaired. This
+is not whole-composition acceptance, canonical verification or operational authority.

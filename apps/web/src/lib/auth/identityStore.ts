@@ -8,6 +8,11 @@
  */
 import { pgConnectionConfig } from "./pgConnection";
 
+// Public representative PHC, NOT any account credential. Precomputed once with
+// the same Argon2id parameters; every refused lookup performs ONE verify, even
+// on cold start, rather than an extra per-request hash before verification.
+const DUMMY_PASSWORD_PHC = "$argon2id$v=19$m=65536,t=3,p=1$b2ZmbGluZS1kdW1teS1pdiE$uRlzo/4z0+tuRzwm9kFYGcr72lLCU7YnT96TC56B6pk";
+
 export interface IdentityAccount {
   accountId: string;
   tenantId: string;
@@ -261,15 +266,8 @@ export class PostgresIdentityStore implements IdentityStore {
 
   async dummyVerify(): Promise<void> {
     const argon2 = await this.argon2();
-    // Pre-computed dummy hash for timing equalization
-    const dummyHash = await argon2.hash("dummy-password-for-timing-safety", {
-      type: argon2.argon2id,
-      memoryCost: 65536,
-      timeCost: 3,
-      parallelism: 1,
-    });
     try {
-      await argon2.verify(dummyHash, "wrong-password-for-dummy");
+      await argon2.verify(DUMMY_PASSWORD_PHC, "wrong-password-for-dummy");
     } catch {
       // Expected mismatch
     }

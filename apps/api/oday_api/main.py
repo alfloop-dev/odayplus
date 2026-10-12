@@ -1640,14 +1640,23 @@ else:
 
         @platform_router.get("/audit/events", tags=["audit"])
         def list_audit_events(
+            request: Request,
             correlation_id: str | None = None,
         ) -> dict[str, Any]:
-            return {
-                "events": [
-                    event.to_dict()
-                    for event in audit_log.list_events(correlation_id=correlation_id)
-                ]
-            }
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.audit.tenant_read import validated_tenant_events
+            from shared.auth import Action, rbac_allows
+
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(status_code=401, detail="Authentication required")
+            if not principal.tenant_id or not rbac_allows(principal, "audit", Action.VIEW):
+                raise HTTPException(status_code=403, detail="AUDIT_READ_REFUSED")
+            try:
+                events = validated_tenant_events(audit_log, principal.tenant_id, correlation_id=correlation_id)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=403, detail="RECOVERY_AUDIT_LINEAGE_INVALID") from None
+            return {"events": [event.to_dict() for event in events]}
 
         mount_versioned(api, platform_router)
 
