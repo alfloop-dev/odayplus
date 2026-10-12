@@ -50,6 +50,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0022",
         "0023",
         "0024",
+        "0025",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -285,11 +286,12 @@ def test_invitation_acceptance_budget_migration_is_reachable_from_alembic_head()
 @pytest.mark.parametrize("revision,parent,name,sql_name", [
     ("0023", "0022", "dev_smoke_recovery_capability", "000029_dev_smoke_recovery_capability.sql"),
     ("0024", "0023", "dev_smoke_session_fence", "000030_dev_smoke_session_fence.sql"),
+    ("0025", "0024", "audit_worm_outbox", "000032_audit_worm_outbox.sql"),
 ])
 def test_recovery_migration_chain_assets_and_preserving_downgrade(
     monkeypatch: pytest.MonkeyPatch, revision: str, parent: str, name: str, sql_name: str,
 ) -> None:
-    """Both security fences must be shipped/hashed, never erased by rollback."""
+    """Security fences/intent must be shipped/hashed, never erased by rollback."""
     root = Path(__file__).resolve().parents[2]
     plan = build_migration_plan(environment="dev")
     step = next(step for step in plan.steps if step.revision == revision)

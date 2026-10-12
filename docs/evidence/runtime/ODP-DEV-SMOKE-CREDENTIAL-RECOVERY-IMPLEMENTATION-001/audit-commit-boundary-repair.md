@@ -62,3 +62,13 @@ circular-import failure was retained and fixed with a runtime import at the memo
 append barrier. No existing assertions/budgets/skips are waived. Fresh exact-head
 measurements/review, canonical continuation, hosted CI and whole-composition
 coverage remain separate requirements, documented in the matching handoff.
+
+The first immutable963fad454 comprehensive serial measurement passed in1085.302s,
+but release/migration selection failed because its exact revision list still ended
+at0024 while actual head includes0025. That failure and head are retained. A
+follow-up extends the exact list and existing asset/hash/preserving-downgrade
+control to0025; no assertions are removed and no migration/runtime source is
+changed. The subsequent head requires fresh receipts, not transfer of963 results.
+The initially ineffective Python-clock late-expiry control was also retained and
+corrected to expire the actual PG original session after provisional audit/intent
+insertion: the final fence uses authoritative DB time, not Python identity time.
