@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 from modules.external_data.geo import GeoPipeline
 from modules.listing import ListingPipeline
 from modules.listing.application.assignment_sla import AssignmentSlaService
+from modules.listing.application.intake_sla_commands import change_sla
 from modules.listing.application.intake_workflow_bootstrap import (
     IntakeWorkflowPlan,
     IntakeWorkflowPolicy,
@@ -27,6 +28,7 @@ from modules.listing.application.intake_workflow_bootstrap import (
     record_workflow_change,
     schedule_from_record,
 )
+from modules.listing.domain.intake_states import DomainValidationError, PrincipalRole
 from shared.audit import InMemoryAuditLog
 
 _CURSOR_SIGNING_KEY_ENV = "ODP_INTAKE_CURSOR_SIGNING_KEY"
@@ -1836,7 +1838,7 @@ else:
                 # Intake bootstrap/assignment is one rollback boundary. Other
                 # commands include sagas that intentionally commit FAILED state
                 # before returning a non-2xx business outcome (e.g. SiteScore).
-                atomic_operations = {"submitUrlIntake", "submitIntakeBatch", "commitXlsxBatch", "assignIntake"}
+                atomic_operations = {"submitUrlIntake", "submitIntakeBatch", "commitXlsxBatch", "assignIntake", "pauseSla", "resumeSla"}
                 unit_of_work = active.transaction() if operation_id in atomic_operations else nullcontext()
                 with unit_of_work:
                     # Memory requests share one locked surface; recheck after
@@ -4400,14 +4402,22 @@ else:
                 if current.get("state") not in {"ON_TRACK", "DUE_SOON", "OVERDUE"}:
                     raise HTTPException(409, "SLA_PAUSE_DENIED")
                 require_version(if_match, current["version"])
-                current["state_before_pause"] = current["state"]
-                updated = generic_mutate(active.slas, sla_instance_id, "PAUSED", actor_id)
-                updated["active_pause_interval_id"] = str(uuid4())
-                updated["audit_event_id"] = str(uuid4())
-                updated["correlation_id"] = correlation_id or str(uuid4())
-                updated["receipt"] = f"RCPT-SLA-PAUSE-{str(uuid4())[:8].upper()}"
-
-
+                parent = linked_intake(current)
+                scope = parent["scope"] if parent is not None else current["scope"]
+                try:
+                    updated = change_sla(
+                        active, current, workflow_policy, scope=scope, actor_id=actor_id,
+                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else PrincipalRole.DATA_STEWARD,
+                        reason=body.reason, correlation_id=correlation_id or str(uuid4()),
+                        current_time=datetime.now(UTC),
+                        expected_resume_at=datetime.fromisoformat(body.expected_resume_at.replace("Z", "+00:00")),
+                    )
+                except PermissionError as exc:
+                    raise HTTPException(403, "SLA_PAUSE_DENIED") from exc
+                except DomainValidationError as exc:
+                    raise HTTPException(409, "SLA_PAUSE_DENIED") from exc
+                except Exception as exc:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
                 return updated, 200
 
             val, code, was_replayed = replay(
@@ -4469,13 +4479,21 @@ else:
                 if current.get("state") != "PAUSED":
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 require_version(if_match, current["version"])
-                resume_state = current.pop("state_before_pause", "ON_TRACK")
-                updated = generic_mutate(active.slas, sla_instance_id, resume_state, actor_id)
-                updated["active_pause_interval_id"] = None
-                updated["audit_event_id"] = str(uuid4())
-                updated["correlation_id"] = correlation_id or str(uuid4())
-
-
+                parent = linked_intake(current)
+                scope = parent["scope"] if parent is not None else current["scope"]
+                try:
+                    updated = change_sla(
+                        active, current, workflow_policy, scope=scope, actor_id=actor_id,
+                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else PrincipalRole.DATA_STEWARD,
+                        reason=body.reason, correlation_id=correlation_id or str(uuid4()),
+                        current_time=datetime.now(UTC),
+                    )
+                except PermissionError as exc:
+                    raise HTTPException(403, "ROLE_DENIED") from exc
+                except DomainValidationError as exc:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
+                except Exception as exc:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
                 return updated, 200
 
             val, code, was_replayed = replay(

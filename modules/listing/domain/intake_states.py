@@ -747,10 +747,10 @@ class SlaStateMachine(BaseStateMachine):
         cls._validate_common(entity, context)
         role = context.actor.role
 
-        if role not in {PrincipalRole.SVC_SLA, PrincipalRole.EXPANSION_MANAGER, PrincipalRole.EMERGENCY_ADMIN}:
-            # Human updates (e.g. pausing) must be manager or admin
+        if role not in {PrincipalRole.SVC_SLA, PrincipalRole.EXPANSION_MANAGER, PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
+            # Human pause commands require manager, steward or emergency admin.
             if target == SlaState.PAUSED:
-                raise DomainValidationError(DenialCode.ROLE_DENIED, "Only manager can pause SLA.")
+                raise DomainValidationError(DenialCode.ROLE_DENIED, "Only manager or steward can pause SLA.")
 
         entity.status = target
         entity.version += 1

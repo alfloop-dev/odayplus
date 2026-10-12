@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from modules.listing.application.assignment_sla import SlaCalendar
 from modules.listing.domain.intake_states import SlaSchedule
 
 
@@ -42,6 +43,12 @@ class IntakeWorkflowPolicy(Protocol):
         """Verify target membership/role and resolve any authorized due override."""
         ...
 
+    def calendar_for(self, scope: Mapping[str, Any]) -> SlaCalendar: ...
+
+    def authorize_sla_actor(self, schedule: SlaSchedule, scope: Mapping[str, Any], actor_id: str) -> None: ...
+
+    def pause_approval_account(self, schedule: SlaSchedule, scope: Mapping[str, Any], actor_id: str) -> str: ...
+
 
 def schedule_from_record(record: Mapping[str, Any]) -> SlaSchedule:
     value = record.get("schedule")
@@ -67,6 +74,8 @@ def record_workflow_change(store: Any, intake: dict[str, Any], *, resource_type:
     resource_key = {"intake": "intake_id", "assignment": "assignment_id", "sla_instance": "sla_instance_id"}[resource_type]
     audit_id = str(uuid4())
     after["audit_event_id"] = audit_id
+    if resource_type == "sla_instance":
+        after["receipt"] = audit_id
     audit = {
         "audit_event_id": audit_id, "tenant_id": intake["scope"]["tenant_id"],
         "intake_id": intake["intake_id"], "actor_subject_id": actor_id,
@@ -93,6 +102,7 @@ def enqueue_workflow_event(store: Any, intake: Mapping[str, Any], *, event_type:
         "aggregate_id": aggregate_id, "aggregate_version": aggregate_version,
         "partition_key": f"{tenant_id}:{intake['intake_id']}",
         "correlation_id": intake["correlation_id"], "payload": deepcopy(dict(payload)),
+        "sensitive_fields": ["payload.original_url"] if event_type == "intake.submitted" else [],
     }
     return event_id
 

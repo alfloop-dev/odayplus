@@ -361,8 +361,13 @@ class AssignmentSlaService:
                 DenialCode.WORKFLOW_STATE_DENIED, "Pause requires a reason and future resume time"
             )
         schedule = self._schedule(sla)
+        if self.get_derived_sla_state(schedule, started_at) == SlaState.BREACHED:
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED, "Breached SLA cannot be paused from a stale state"
+            )
         if context.actor.role not in {
             PrincipalRole.EXPANSION_MANAGER,
+            PrincipalRole.DATA_STEWARD,
             PrincipalRole.SVC_SLA,
             PrincipalRole.EMERGENCY_ADMIN,
         }:
@@ -397,6 +402,7 @@ class AssignmentSlaService:
         self._validate_sla_context(sla, context)
         if context.actor.role not in {
             PrincipalRole.EXPANSION_MANAGER,
+            PrincipalRole.DATA_STEWARD,
             PrincipalRole.SVC_SLA,
             PrincipalRole.EMERGENCY_ADMIN,
         }:

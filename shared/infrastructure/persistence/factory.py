@@ -497,6 +497,12 @@ def _postgres_bundle(
         config=SessionConfig(),
     )
 
+    from modules.listing.application.intake_registry_calendar import RegistryIntakeWorkflowPolicy
+
+    pg_intake_workflow_policy = RegistryIntakeWorkflowPolicy(
+        SqlDecisionPolicyRepository(engine), pg_identity_store
+    )
+
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
     pg_audit_log = DurableAuditLog(engine, worm_sink=resolved_worm_sink)
     pg_manual_corr_repo = DurableManualCorrectionRepository(engine)
@@ -546,6 +552,7 @@ def _postgres_bundle(
         outbox_repository=DurableOutboxRepository(engine),
         operator_intake_repository=DurableAssistedIntakeRepository(store),
         assisted_intake_store=assisted_intake_store,
+        assisted_intake_workflow_policy=pg_intake_workflow_policy,
         engine=engine,
         identity_store=pg_identity_store,
         session_service=pg_session_service,
