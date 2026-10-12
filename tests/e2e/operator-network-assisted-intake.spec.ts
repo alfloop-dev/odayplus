@@ -8,9 +8,9 @@ import {
 /**
  * Assisted Listing Intake — product E2E (ODP-OC-R5-011 / ODP-OC-R5-004).
  *
- * This test suite drives the REAL Operator Console UI against the REAL FastAPI backend
- * (both booted by playwright.config.ts). Nothing here is stubbed: every assertion
- * reflects a durable server decision.
+ * This suite drives the real Operator UI and FastAPI server with explicitly
+ * synthetic fixture records and header-trust test identities. Assertions cover
+ * persisted test effects; this is not a production login or real role UAT.
  *
  * ============================================================================
  * TEST-TO-ACCEPTANCE MAPPING (ODP-OC-R5-004)
@@ -91,6 +91,14 @@ test.beforeEach(async () => {
 
 /** Open the Network workspace as 展店經理 — the only role holding listing grants. */
 async function openRadarAsExpansionManager(page: Page) {
+  // Keep the actual synthetic browser principal aligned with its session
+  // subject; the generic config identity must not impersonate this operator.
+  await page.setExtraHTTPHeaders({
+    "x-subject-id": "operator-expansion-manager",
+    "x-roles": "expansion_user,site_reviewer",
+    "x-operator-role": "expansion-manager",
+    "x-tenant-id": "tenant-a",
+  });
   await page.addInitScript(() => {
     window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
     // The operator identity is fail-closed: without a session subject the UI
@@ -124,11 +132,8 @@ async function getIntakeApi(id: string) {
     baseURL: API_BASE_URL,
     extraHTTPHeaders: {
       "x-subject-id": "operator-expansion-manager",
-      // Read the durable record as the same manager principal that drove the
-      // UI (expansion-manager maps to expansion_user,site_reviewer). Staff
-      // `view` is ownership-scoped against the record's submitter/owner (a
-      // display label, not this probe's subject id), so a staff read of a
-      // UI-created record correctly fails closed with OWNERSHIP_REQUIRED.
+      // The same verified fixture subject owns the record. Platform roles,
+      // rather than client display/persona labels, determine the audit role.
       "x-roles": "expansion_user,site_reviewer",
       "x-operator-role": "expansion-manager",
       "x-tenant-id": "tenant-a",
@@ -1003,7 +1008,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       (e: any) => e.action === "intake.decide.create",
     );
     expect(auditCreate).toBeDefined();
-    expect(auditCreate.actorRoleId).toBe("expansion-manager");
+    expect(auditCreate.actorRoleId).toBe("site_reviewer");
+    expect(auditCreate.actorName).toBe("operator-expansion-manager");
     expect(auditCreate.occurredAt).toBeTruthy();
     expect(auditCreate.message).toContain("Audit test create reason");
     expect(auditCreate.correlationId).toBeTruthy();
@@ -1056,7 +1062,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       (e: any) => e.action === "intake.promote_request",
     );
     expect(auditPromote).toBeDefined();
-    expect(auditPromote.actorRoleId).toBe("expansion-manager");
+    expect(auditPromote.actorRoleId).toBe("expansion_user");
+    expect(auditPromote.actorName).toBe("operator-expansion-manager");
     expect(auditPromote.occurredAt).toBeTruthy();
     expect(auditPromote.message).toContain("Audit test promote reason");
     expect(auditPromote.correlationId).toBe("promote-corr-id-12345");
@@ -1091,7 +1098,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       (e: any) => e.action === "intake.decide.revise",
     );
     expect(auditRevise).toBeDefined();
-    expect(auditRevise.actorRoleId).toBe("expansion-manager");
+    expect(auditRevise.actorRoleId).toBe("site_reviewer");
+    expect(auditRevise.actorName).toBe("operator-expansion-manager");
     expect(auditRevise.occurredAt).toBeTruthy();
     expect(auditRevise.message).toContain("Audit test revise reason");
     expect(auditRevise.correlationId).toBeTruthy();
@@ -1130,7 +1138,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       (e: any) => e.action === "intake.decide.duplicate",
     );
     expect(auditDup).toBeDefined();
-    expect(auditDup.actorRoleId).toBe("expansion-manager");
+    expect(auditDup.actorRoleId).toBe("site_reviewer");
+    expect(auditDup.actorName).toBe("operator-expansion-manager");
     expect(auditDup.occurredAt).toBeTruthy();
     expect(auditDup.message).toContain("Audit test duplicate reason");
     expect(auditDup.correlationId).toBeTruthy();
@@ -1169,7 +1178,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       (e: any) => e.action === "intake.decide.quarantine",
     );
     expect(auditQuarantine).toBeDefined();
-    expect(auditQuarantine.actorRoleId).toBe("expansion-manager");
+    expect(auditQuarantine.actorRoleId).toBe("site_reviewer");
+    expect(auditQuarantine.actorName).toBe("operator-expansion-manager");
     expect(auditQuarantine.occurredAt).toBeTruthy();
     expect(auditQuarantine.message).toContain("Audit test quarantine reason");
     expect(auditQuarantine.correlationId).toBeTruthy();
@@ -1207,7 +1217,27 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
         "Idempotency-Key": "reject-key-12345",
       },
     });
-    const rejectRes = await apiContext.post(
+    const deniedStaff = await apiContext.post(
+      `/api/v1/operator/network-listings/intake/${id5}/decide`,
+      { data: { action: "reject", reason: "Staff cannot manufacture manager authority",
+        riskSummary: "Synthetic rejection risk", riskAcknowledged: true,
+        actorRoleId: "expansion-manager", actorName: "forged-manager" } },
+    );
+    expect(deniedStaff.status()).toBe(422);
+    const unchanged = await getIntakeApi(id5);
+    expect(unchanged.stage).toBe("NEEDS_REVIEW");
+    expect(unchanged.auditEvents.filter((event: any) => event.action === "intake.decide.reject")).toHaveLength(0);
+    await apiContext.dispose();
+    // Explicit authorized test identity, rather than a body-supplied persona.
+    const managerContext = await playwrightRequest.newContext({
+      baseURL: API_BASE_URL, extraHTTPHeaders: {
+        "x-subject-id": "operator-expansion-manager",
+        "x-roles": "expansion_user,site_reviewer", "x-operator-role": "expansion-manager",
+        "x-tenant-id": "tenant-a", "X-Correlation-Id": "reject-corr-id-12345",
+        "Idempotency-Key": "reject-key-12345",
+      },
+    });
+    const rejectRes = await managerContext.post(
       `/api/v1/operator/network-listings/intake/${id5}/decide`,
       {
         data: {
@@ -1221,7 +1251,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       },
     );
     expect(rejectRes.status()).toBe(200);
-    await apiContext.dispose();
+    await managerContext.dispose();
 
     const data5 = await getIntakeApi(id5);
     expect(data5.parserVersion).toBeTruthy();
@@ -1230,7 +1260,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       (e: any) => e.action === "intake.decide.reject",
     );
     expect(auditReject).toBeDefined();
-    expect(auditReject.actorRoleId).toBe("expansion-manager");
+    expect(auditReject.actorRoleId).toBe("site_reviewer");
+    expect(auditReject.actorName).toBe("operator-expansion-manager");
     expect(auditReject.occurredAt).toBeTruthy();
     expect(auditReject.message).toContain("Audit test reject reason");
     expect(auditReject.correlationId).toBe("reject-corr-id-12345");
