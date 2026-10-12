@@ -180,6 +180,8 @@ def test_actual_worker_exports_bounded_backlog_signals_and_keeps_recovery_runnin
     with monkeypatch.context() as patch:
         patch.setattr(bundle.engine, "query", unavailable)
         assert worker.sample_audit_backlog() is None
+        patch.setattr(registry, "increment", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("synthetic metric outage")))
+        assert worker.sample_audit_backlog() is None
     after = registry.snapshot()
     assert after["audit_worm_pending_count"][0]["value"] == 3
     assert after["audit_worm_backlog_check_failure_count"][0]["value"] == 1
@@ -211,3 +213,127 @@ def test_privacy_service_blocks_stale_high_risk_actions_before_any_mutation(case
     assert error.value.status_code == 503
     assert hold.version == 1 and hold.released_at is None
     assert source._snapshot(bundle) == before
+
+
+def _operator_case(bundle):
+    from fastapi import FastAPI, Request
+    from fastapi.testclient import TestClient
+
+    from apps.api.app.routes.operator import create_operator_router
+    from modules.opsboard.application.network_listings import NetworkListingService
+    from modules.opsboard.application.operator_live_repository import OperatorLiveRepository
+    from shared.api.errors import install_error_handlers
+    from shared.infrastructure.persistence import PostgresDocumentStore
+    from shared.infrastructure.persistence.operator_domains import (
+        DurableOperatorDomainStateRepository,
+        TenantScopedDocumentStore,
+    )
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
+
+    documents = PostgresDocumentStore(bundle.engine)
+    repository = DurableAssistedIntakeRepository(TenantScopedDocumentStore(documents, source.TENANT))
+    iid = str(uuid4())
+    # Explicit synthetic legacy BFF record; does not assert canonical ID mapping.
+    repository.save_intake({
+        "id": iid, "tenantId": source.TENANT, "submitter": source.OWNER,
+        "owner": source.OWNER, "heatZoneId": "HZ-01", "stage": "NEEDS_REVIEW",
+        "parsedFields": {}, "auditEvents": [], "matchResult": None,
+        "sourceId": "synthetic", "canonicalUrl": "https://example.invalid/legacy",
+    })
+    state = NetworkListingService(tenant_id=source.TENANT).export_state()
+    for listing in state["listings"]:
+        listing["submitter"] = source.OWNER
+    state_repository = DurableOperatorDomainStateRepository(documents, "network-listings")
+    state_repository.save(source.TENANT, state)
+    app = FastAPI()
+    app.state.job_queue = bundle.job_queue
+    install_error_handlers(app)
+
+    @app.middleware("http")
+    async def correlate(request: Request, call_next):
+        request.state.correlation_id = request.headers.get("x-correlation-id")
+        return await call_next(request)
+
+    app.include_router(create_operator_router(
+        audit_log=bundle.audit_log, document_store=documents,
+        listing_repository_for_tenant=bundle.listing_repository_for_tenant,
+        live_repository=OperatorLiveRepository(bundle), require_live_data=True,
+        persistence_mode="postgresql", provider_mode="live",
+    ), prefix="/api/v1")
+    return TestClient(app, raise_server_exceptions=False), iid, repository, state_repository
+
+
+def _operator_post(client, suffix, *, key="synthetic-bff-guard", **body):
+    return client.post("/api/v1/operator/network-listings/" + suffix,
+        headers={**source.HEADERS, "x-operator-role": "expansion-manager",
+                 "x-correlation-id": str(uuid4()), "Idempotency-Key": key},
+        json={"reason": "Synthetic independent review", "riskSummary": "Synthetic disclosed risk",
+              "riskAcknowledged": True, **body})
+
+
+@pytest.mark.parametrize("action", ["identity-correction", "decision", "promotion", "convert", "merge", "quarantine-retry"])
+def test_actual_operator_composition_blocks_new_high_risk_bff_writes(case, action):
+    _, bundle, _ = case
+    _prepare(bundle)
+    client, iid, repository, state_repository = _operator_case(bundle)
+    if action == "quarantine-retry":
+        intake = repository.get_intake(iid)
+        intake["stage"] = "QUARANTINED"
+        repository.save_intake(intake)
+    _age(bundle, 301)
+    suffix, body = {
+        "identity-correction": (f"intake/{iid}/correct", {"fields": {"address": "Synthetic"}}),
+        "decision": (f"intake/{iid}/decide", {"action": "reject"}),
+        "promotion": (f"intake/{iid}/promote", {}),
+        "convert": ("listings/L-2024/convert", {}),
+        "merge": ("listings/L-2029/merge", {"targetListingId": "L-2025"}),
+        "quarantine-retry": (f"intake/{iid}/retry", {}),
+    }[action]
+    before = (repository.list_intakes(), state_repository.load(source.TENANT), source._snapshot(bundle))
+    response = _operator_post(client, suffix, **body)
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "BACKPRESSURE_ACTIVE"
+    assert response.headers["Retry-After"] == "30"
+    assert (repository.list_intakes(), state_repository.load(source.TENANT), source._snapshot(bundle)) == before
+    assert repository.list_idempotency_records() == []
+
+
+def test_actual_operator_composition_preserves_authorized_replay_conflict_and_low_risk_write(case):
+    _, bundle, _ = case
+    _prepare(bundle)
+    client, iid, repository, _ = _operator_case(bundle)
+    suffix = f"intake/{iid}/correct"
+    first = _operator_post(client, suffix, key="synthetic-bff-replay", fields={"address": "Synthetic"})
+    assert first.status_code == 200, first.text
+    _age(bundle, 301)
+    before = repository.list_intakes()
+    replay = _operator_post(client, suffix, key="synthetic-bff-replay", fields={"address": "Synthetic"})
+    assert replay.status_code == 200 and replay.json() == first.json(), replay.text
+    assert repository.list_intakes() == before
+    conflict = _operator_post(client, suffix, key="synthetic-bff-replay", fields={"address": "Changed"})
+    assert conflict.status_code == 409, conflict.text
+    ordinary = _operator_post(client, suffix, key="synthetic-bff-floor", fields={"floor": "1"})
+    assert ordinary.status_code == 200, ordinary.text
+    assert client.get(f"/api/v1/operator/network-listings/intake/{iid}", headers={**source.HEADERS, "x-operator-role": "expansion-manager"}).status_code == 200
+
+
+def test_actual_operator_scope_denial_precedes_backlog_and_missing_intent_fails_closed(case):
+    _, bundle, _ = case
+    _prepare(bundle)
+    client, iid, repository, _ = _operator_case(bundle)
+    intake = repository.get_intake(iid)
+    intake["heatZoneId"] = "synthetic-foreign-zone"
+    repository.save_intake(intake)
+    _age(bundle, 301)
+    denied = client.post(f"/api/v1/operator/network-listings/intake/{iid}/correct",
+        headers={**source.HEADERS, "x-operator-role": "expansion-manager", "x-heat-zone-ids": "allowed-zone",
+                 "x-correlation-id": str(uuid4()), "Idempotency-Key": "synthetic-denied"},
+        json={"fields": {"address": "Synthetic"}, "reason": "Synthetic", "riskSummary": "Synthetic", "riskAcknowledged": True})
+    assert denied.status_code in (403, 404), denied.text
+    bundle.engine.execute("DELETE FROM durable_jobs WHERE job_type = ?", (JOB_TYPE,))
+    before = repository.list_intakes()
+    unavailable = _operator_post(client, f"intake/{iid}/correct", fields={"address": "Synthetic"})
+    assert unavailable.status_code == 503, unavailable.text
+    assert repository.list_intakes() == before and repository.list_idempotency_records() == []

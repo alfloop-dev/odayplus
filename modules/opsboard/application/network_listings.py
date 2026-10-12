@@ -475,8 +475,10 @@ class NetworkListingService:
         initial_state: dict[str, Any] | None = None,
         seed_fixtures: bool = True,
         tenant_id: str | None = None,
+        high_risk_write_guard: Callable[[str], None] | None = None,
     ) -> None:
         self._seed_fixtures = seed_fixtures
+        self._high_risk_write_guard = high_risk_write_guard
         self._tenant_id = tenant_id.strip() if tenant_id and tenant_id.strip() else None
         self._listing_repository = listing_repository
         self._intakes: AssistedIntakeRepository = (
@@ -537,19 +539,28 @@ class NetworkListingService:
         except (TypeError, ValueError) as exc:
             raise NetworkListingPolicyError("INVALID_REQUEST_CONTEXT") from exc
         request_sha = hashlib.sha256(encoded.encode()).hexdigest()
-        if not key:
-            return OperatorWrite(action, None, actor, request_sha)
-        scoped_key = hashlib.sha256(actor.encode()).hexdigest() + ":" + key
-        pair = (action, scoped_key)
-        cached = self._idempotency_cache.get(pair)
-        if cached is not None:
-            if self._idempotency_bindings.get(pair) != (actor, request_sha):
-                raise NetworkListingConflict("IDEMPOTENCY_CONFLICT")
-            return OperatorWrite(action, scoped_key, actor, request_sha, _copy(cached))
-        if (action, key) in self._idempotency_cache:
-            # Legacy receipts cannot be attributed from a display name. Stop
-            # for governed reconciliation instead of replaying or reapplying.
-            raise NetworkListingConflict("UNBOUND_LEGACY_REPLAY")
+        scoped_key = None
+        if key:
+            scoped_key = hashlib.sha256(actor.encode()).hexdigest() + ":" + key
+            pair = (action, scoped_key)
+            cached = self._idempotency_cache.get(pair)
+            if cached is not None:
+                if self._idempotency_bindings.get(pair) != (actor, request_sha):
+                    raise NetworkListingConflict("IDEMPOTENCY_CONFLICT")
+                return OperatorWrite(action, scoped_key, actor, request_sha, _copy(cached))
+            if (action, key) in self._idempotency_cache:
+                # Legacy receipts cannot be attributed from a display name. Stop
+                # for governed reconciliation instead of replaying or reapplying.
+                raise NetworkListingConflict("UNBOUND_LEGACY_REPLAY")
+        high_risk = action in {"convert", "merge", "decide_intake", "promote_intake"}
+        if action == "correct_intake":
+            from modules.external_data.application.assisted_intake import IDENTITY_FIELDS
+
+            high_risk = any(field in IDENTITY_FIELDS for field in request_value["fields"])
+        if action == "retry_intake":
+            high_risk = self._listing_intake(request_value["intake_id"])["stage"] == "QUARANTINED"
+        if high_risk and self._high_risk_write_guard is not None:
+            self._high_risk_write_guard(self._require_tenant(None))
         return OperatorWrite(action, scoped_key, actor, request_sha)
 
     def _save_write(self, write: OperatorWrite, response: dict[str, Any]) -> None:

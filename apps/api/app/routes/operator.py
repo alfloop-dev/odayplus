@@ -626,6 +626,25 @@ def create_operator_router(
             document_store,
             "network-listings",
         )
+        listing_write_guard = None
+        if getattr(document_store.engine, "dialect", None) == "postgresql":
+            from shared.audit.backlog import (
+                AuditBacklogBlocked,
+                AuditBacklogUnavailable,
+                CanonicalAuditBacklog,
+            )
+
+            listing_backlog = CanonicalAuditBacklog(document_store.engine)
+
+            def listing_write_guard(tenant_id: str) -> None:
+                try:
+                    listing_backlog.require_available(tenant_id)
+                except (AuditBacklogBlocked, AuditBacklogUnavailable) as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="BACKPRESSURE_ACTIVE",
+                        headers={"Retry-After": "30"},
+                    ) from exc
         scoring_state_repository = DurableOperatorDomainStateRepository(
             document_store,
             "network-scoring",
@@ -664,6 +683,7 @@ def create_operator_router(
                 # listing aggregate fail-closed empty until real intake writes.
                 seed_fixtures=allow_test_reset,
                 tenant_id=tenant_id,
+                high_risk_write_guard=listing_write_guard,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={

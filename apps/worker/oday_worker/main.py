@@ -398,8 +398,12 @@ class ODayWorker:
         except Exception as exc:
             try:
                 self.telemetry.metrics.increment("audit_worm_backlog_check_failure_count", labels={"service": "oday-worker", "error_class": type(exc).__name__})
-            except Exception:
-                pass
+            except Exception as metric_exc:
+                self.telemetry.logger.error(
+                    "Canonical audit backlog failure metric unavailable",
+                    correlation_id="unknown", resource="audit/backlog",
+                    error_code=type(metric_exc).__name__,
+                )
             self.telemetry.logger.error("Canonical audit backlog observation unavailable", correlation_id="unknown", resource="audit/backlog", error_code=type(exc).__name__)
             return None
 

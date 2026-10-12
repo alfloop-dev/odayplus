@@ -75,6 +75,20 @@ Ordinary corrections, reads and already-committed authorized receipts remain
 available. The privacy service checks the same dependency before hold release,
 actual purge and confidential/restricted export.
 
+The live PostgreSQL Operator Network Listing BFF injects the same tenant-scoped
+backlog guard into its application service. It checks new listing conversions,
+merges, Intake decisions/promotions and corrections to the existing server-owned
+identity fields after the actor/request-bound replay check. Route authorization
+and resource scope checks still precede the service call. Authorized cached
+receipts, ordinary corrections and reads remain available; changed replay bodies
+remain conflicts. A quarantined retry is checked without expanding the existing
+retry workflow's allowed states. Backpressure returns 503 with the BFF's existing
+`BACKPRESSURE_ACTIVE` detail and `Retry-After: 30`.
+
+This closes backlog admission for these legacy BFF endpoints. It does not
+establish canonical legacy-to-UUID reconciliation, canonical audit ownership or
+the BFF's complete SQL business/audit/outbox atomicity.
+
 Backlog age comes from the durable delivery job's creation time, not historical
 business occurrence time. Missing or mismatched intent is unavailable, never a
 healthy zero. Failed/dead-letter jobs remain pending until a verified object URI
@@ -87,8 +101,8 @@ eligible lease/claim. Receipt rows remain nonexecutable; ordinary jobs retain
 their chronological order. This does not interrupt an already-running job or
 prove adequate dedicated-publisher capacity.
 
-This implementation does not close the whole §6 contract. Legacy Operator BFF
-coverage, continuous/dedicated publisher capacity, actual Security/Platform
+This implementation does not close the whole §6 contract. Continuous/dedicated
+publisher capacity, actual Security/Platform
 paging and verified provider receipts still need integration/admission evidence.
 The current generic P1 receiver is ops-lead; it is not evidence that both required
 teams were paged. Synchronously required WORM actions such as
