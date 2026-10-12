@@ -14,6 +14,7 @@ __all__ = [
     "IntakeWorkflowService",
     "InMemoryIntakeRepository",
     "AssignmentSlaService",
+    "SlaCalendar",
     "InMemoryAssignmentRepository",
     "InMemorySlaRepository",
 ]
@@ -27,6 +28,7 @@ _EXPORT_MODULES = {
     "IntakeWorkflowService": "modules.listing.application.intake_workflow",
     "InMemoryIntakeRepository": "modules.listing.application.intake_workflow",
     "AssignmentSlaService": "modules.listing.application.assignment_sla",
+    "SlaCalendar": "modules.listing.application.assignment_sla",
     "InMemoryAssignmentRepository": "modules.listing.application.assignment_sla",
     "InMemorySlaRepository": "modules.listing.application.assignment_sla",
 }
