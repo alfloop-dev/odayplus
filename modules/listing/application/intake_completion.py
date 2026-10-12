@@ -124,6 +124,9 @@ def verify_completion(
                 except (ValueError, TypeError, AttributeError) as exc:
                     raise IntakeWorkIncomplete("Work audit identity is invalid") from exc
                 audit = store.workflow_audits.get(row.get("audit_event_id"))
+                canonical_check = getattr(store, "canonical_audit_is_committed", None)
+                if callable(canonical_check) and (not audit or not canonical_check(audit)):
+                    raise IntakeWorkIncomplete("Required work has no committed canonical audit")
                 if (
                     not audit
                     or audit.get("audit_event_id") != row.get("audit_event_id")

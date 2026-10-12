@@ -114,3 +114,68 @@ actions:
   - target: $.components.schemas.PromotionReceipt
     description: Remove the superseded pre-review final receipt schema.
     remove: true
+
+  # Additive runtime prerequisite error; pending review with the candidate.
+  - target: $.components.responses
+    description: Declare an unavailable canonical audit prerequisite.
+    update:
+      AuditUnavailable:
+        description: Required audit policy/storage is unavailable; no command is committed.
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ApiError'}
+
+  - target: $.paths['/v1/intakes/url'].post.responses
+    description: Refuse a command whose canonical audit prerequisite is unavailable.
+    update:
+      '503': {$ref: '#/components/responses/AuditUnavailable'}
+
+  - target: $.paths['/v1/intake-batches'].post.responses
+    description: Refuse a command whose canonical audit prerequisite is unavailable.
+    update:
+      '503': {$ref: '#/components/responses/AuditUnavailable'}
+
+  - target: $.paths['/v1/intakes/{intake_id}/corrections'].post.responses
+    description: Refuse a command whose canonical audit prerequisite is unavailable.
+    update:
+      '503': {$ref: '#/components/responses/AuditUnavailable'}
+
+  - target: $.paths['/v1/intakes/{intake_id}/assignment'].put.responses
+    description: Refuse a command whose canonical audit prerequisite is unavailable.
+    update:
+      '503': {$ref: '#/components/responses/AuditUnavailable'}
+
+  - target: $.paths['/v1/intakes/{intake_id}/actions/cancel'].post.responses
+    description: Refuse a command whose canonical audit prerequisite is unavailable.
+    update:
+      '503': {$ref: '#/components/responses/AuditUnavailable'}
+
+  - target: $.paths['/v1/assignments/{assignment_id}/actions/claim'].post.responses
+    description: Refuse a command whose canonical audit prerequisite is unavailable.
+    update:
+      '503': {$ref: '#/components/responses/AuditUnavailable'}
+
+  - target: $.paths['/v1/assignments/{assignment_id}/actions/transfer'].post.responses
+    description: Refuse a command whose canonical audit prerequisite is unavailable.
+    update:
+      '503': {$ref: '#/components/responses/AuditUnavailable'}
+
+  - target: $.paths['/v1/assignments/{assignment_id}/actions/complete'].post.responses
+    description: Refuse a command whose canonical audit prerequisite is unavailable.
+    update:
+      '503': {$ref: '#/components/responses/AuditUnavailable'}
+
+  - target: $.paths['/v1/sla-instances/{sla_instance_id}/actions/pause'].post.responses
+    description: Refuse a command whose canonical audit prerequisite is unavailable.
+    update:
+      '503': {$ref: '#/components/responses/AuditUnavailable'}
+
+  - target: $.paths['/v1/sla-instances/{sla_instance_id}/actions/resume'].post.responses
+    description: Refuse a command whose canonical audit prerequisite is unavailable.
+    update:
+      '503': {$ref: '#/components/responses/AuditUnavailable'}
+
+  - target: $.paths['/v1/identity-decisions/{decision_id}/actions/review'].post.responses
+    description: Refuse a command whose canonical audit prerequisite is unavailable.
+    update:
+      '503': {$ref: '#/components/responses/AuditUnavailable'}

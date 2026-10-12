@@ -262,6 +262,14 @@ class CanonicalPostgresAuditLog:
                 )
             ]
 
+    def get_event(self, tenant_id: str, audit_event_id: str) -> dict[str, Any] | None:
+        _uuid(audit_event_id)
+        with self._tenant(tenant_id):
+            row = _decode(self.engine.query_one(_READ_ONE, (tenant_id, audit_event_id)))
+            if row is not None and sha256_hex(_payload(row)) != row["event_sha256"]:
+                raise AuditIntegrityError("Canonical audit record is corrupt")
+            return row
+
     def verify_chain(self, tenant_id: str) -> AuditChainVerification:
         rows = self.list_events(tenant_id)
         previous = CHAIN_GENESIS_HASH

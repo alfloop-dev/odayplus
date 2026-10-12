@@ -293,6 +293,22 @@ class DurableAssistedIntakeStore:
         self._store = store
         self._engine = store.engine
         self._local = threading.local()
+        self._canonical_audit_sink = None
+
+    def configure_canonical_audit(self, sink: Any) -> None:
+        if sink.writer.engine is not self._engine:
+            raise ValueError("Canonical audit must share the business transaction engine")
+        self._canonical_audit_sink = sink
+
+    def configure_audit_retention(self, provider: Any) -> None:
+        if self._canonical_audit_sink is None:
+            raise RuntimeError("Canonical Intake audit writer is not wired")
+        self._canonical_audit_sink.set_retention_provider(provider)
+
+    def canonical_audit_is_committed(self, audit: Any) -> bool:
+        return bool(self._canonical_audit_sink
+                    and audit.get("tenant_id") == self._local.tenant_id
+                    and self._canonical_audit_sink.is_committed(audit))
 
     def __getattr__(self, name: str) -> Any:
         if name not in _STATE_COLLECTIONS:
@@ -425,6 +441,7 @@ class DurableAssistedIntakeStore:
             return
 
         with self._engine.lock:
+            canonical_audits = {}
             for _name, collection, key, baseline, value in sorted(changes):
                 storage_key = f"{tenant_id}:{key}"
                 persisted = self._read_locked(collection, storage_key)
@@ -432,12 +449,20 @@ class DurableAssistedIntakeStore:
                     raise AssistedIntakePersistenceConflict(
                         f"Concurrent Assisted Intake update for {collection}/{key}"
                     )
+                if _name == "workflow_audits":
+                    from shared.audit.errors import CanonicalAuditUnavailable
+                    parent = current["intakes"].get(value.get("intake_id"))
+                    if self._canonical_audit_sink is None or parent is None:
+                        raise CanonicalAuditUnavailable("Canonical audit writer/parent is unavailable")
+                    value = self._canonical_audit_sink.persist(value, parent["scope"])
+                    canonical_audits[key] = value
                 self._store.put(
                     collection,
                     storage_key,
                     self._wrap(tenant_id, key, deepcopy(value)),
                 )
-        self._local.baseline = deepcopy(current)
+        self.workflow_audits.update(canonical_audits)
+        self._local.baseline = deepcopy(self._current_collections())
 
     # Operator network-listings repository compatibility. Keeping one state
     # owner avoids dual writes between the operator and approved v1 routers.

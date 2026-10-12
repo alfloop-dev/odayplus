@@ -20,7 +20,10 @@ from shared.infrastructure.persistence.postgresql import (
     _REQUIRED_RELATIONS,
     PostgresEngine,
 )
-from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
+from tests.intake_workflow_fixture import (
+    SyntheticIntakeAuditRetention,
+    SyntheticIntakeWorkflowPolicy,
+)
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -200,7 +203,7 @@ def test_postgresql_batch_worker_result_survives_restart_in_live_operator_partit
     apply_upgrade_to_database(database_url)
     _install_canonical_runtime(database_url)
     _configure_production(monkeypatch, tmp_path, database_url)
-    app = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+    app = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     try:
         with TestClient(app) as client:
             enqueued = client.post(
@@ -225,7 +228,7 @@ def test_postgresql_batch_worker_result_survives_restart_in_live_operator_partit
     finally:
         app.state.persistence_bundle.engine.close()
 
-    restarted = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+    restarted = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     try:
         with TestClient(restarted) as client:
             persisted = client.get(path, headers=_headers(ACTOR_ID))
@@ -316,12 +319,12 @@ def test_production_api_boots_with_postgresql_and_fails_on_missing_intake_schema
         RuntimeError,
         match="Assisted Listing Intake schema is incomplete",
     ):
-        create_app(external_provider_validation=_live_provider_validation(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+        create_app(external_provider_validation=_live_provider_validation(), assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
 
     apply_upgrade_to_database(database_url)
     app = create_app(
         external_provider_validation=_live_provider_validation(),
-        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+        assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
     )
     try:
         assert app.state.persistence_bundle.mode == "postgresql"
@@ -343,7 +346,7 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
 
     app = create_app(
         external_provider_validation=_live_provider_validation(),
-        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+        assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
     )
     client = TestClient(app)
     submit_key = f"production-submit-{uuid4()}"
@@ -396,7 +399,7 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
 
     restarted = create_app(
         external_provider_validation=_live_provider_validation(),
-        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+        assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
     )
     restarted_client = TestClient(restarted)
     try:
@@ -491,7 +494,7 @@ def test_initial_workflow_and_evidence_survive_postgresql_restart(intake_blank_d
     _install_canonical_runtime(database_url)
     _configure_production(monkeypatch, tmp_path, database_url)
     policy = SyntheticIntakeWorkflowPolicy()
-    app = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_workflow_policy=policy)
+    app = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=policy)
     key = f"synthetic-workflow-restart-{uuid4()}"
     body = {"original_url": "https://example.invalid/workflow-restart", "scope": {"tenant_id": TENANT_ID}}
     try:
@@ -509,7 +512,7 @@ def test_initial_workflow_and_evidence_survive_postgresql_restart(intake_blank_d
             audit_ids, event_ids = set(state.workflow_audits), set(state.workflow_outbox)
     finally:
         app.state.persistence_bundle.engine.close()
-    restarted = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_workflow_policy=policy)
+    restarted = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=policy)
     try:
         with TestClient(restarted) as client:
             detail = client.get(f"/api/v1/intakes/{intake_id}", headers=_headers(ACTOR_ID))
@@ -532,7 +535,7 @@ def test_partial_database_flush_rolls_back_workflow_and_retry_is_fresh(intake_bl
     apply_upgrade_to_database(database_url)
     _install_canonical_runtime(database_url)
     _configure_production(monkeypatch, tmp_path, database_url)
-    app = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+    app = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     store = app.state.assisted_intake_store
     original_put = store._store.put
     calls = 0

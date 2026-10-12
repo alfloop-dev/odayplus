@@ -1886,9 +1886,16 @@ else:
                     active.replays[composite_key] = (digest, copy.deepcopy(result), code)
                     active.flush()
             except Exception as exc:
+                from shared.audit.errors import CanonicalAuditUnavailable
                 from shared.infrastructure.persistence.assisted_listing_intake import (
                     AssistedIntakePersistenceConflict,
                 )
+
+                if isinstance(exc, CanonicalAuditUnavailable):
+                    raise HTTPException(503, {
+                        "message": "系統目前無法確認此操作的稽核保存規則，請聯絡平台主管。",
+                        "reason_code": "AUDIT_POLICY_UNAVAILABLE",
+                    }) from exc
 
                 if isinstance(exc, AssistedIntakePersistenceConflict):
                     raise HTTPException(
@@ -2219,7 +2226,7 @@ else:
                     "description": "Idempotent replay",
                     "headers": response_headers("Idempotency-Replayed"),
                 },
-                **api_error_responses(403, 409, 422, idempotency_conflict=True),
+                **api_error_responses(503, 403, 409, 422, idempotency_conflict=True),
             },
         )
         def submit_url(
@@ -2318,7 +2325,7 @@ else:
             response_model=BatchIntakeReceipt,
             responses={
                 202: {"model": BatchIntakeReceipt, "description": "All rows accepted"},
-                **api_error_responses(409, 413, 422, idempotency_conflict=True),
+                **api_error_responses(503, 409, 413, 422, idempotency_conflict=True),
             },
         )
         def submit_batch(
@@ -2500,7 +2507,7 @@ else:
             operation_id="commitXlsxBatch",
             status_code=202,
             response_model=XlsxCommitReceipt,
-            responses=api_error_responses(400, 403, 409, 422, idempotency_conflict=True),
+            responses=api_error_responses(503, 400, 403, 409, 422, idempotency_conflict=True),
         )
         def commit_xlsx_batch(
             body: XlsxCommitRequest,
@@ -2745,7 +2752,7 @@ else:
                     "description": "Correction proposed",
                     "headers": response_headers("ETag", "Idempotency-Replayed"),
                 },
-                **api_error_responses(409, 422, 428),
+                **api_error_responses(503, 409, 422, 428),
             },
         )
         def correct(
@@ -2879,7 +2886,7 @@ else:
                     "description": "Assignment updated",
                     "headers": response_headers("ETag"),
                 },
-                **api_error_responses(403, 409, 422, 428),
+                **api_error_responses(503, 403, 409, 422, 428),
             },
         )
         def assign(
@@ -3866,7 +3873,7 @@ else:
                     "description": "Transition committed",
                     "headers": response_headers("ETag"),
                 },
-                **api_error_responses(403, 409, 422, 428),
+                **api_error_responses(503, 403, 409, 422, 428),
             },
         )
         def cancel_intake(
@@ -4138,7 +4145,7 @@ else:
                     "description": "Assignment updated",
                     "headers": response_headers("ETag"),
                 },
-                **api_error_responses(403, 409, 422, 428),
+                **api_error_responses(503, 403, 409, 422, 428),
             },
         )
         def claim_assignment(
@@ -4227,7 +4234,7 @@ else:
                     "description": "Assignment updated",
                     "headers": response_headers("ETag"),
                 },
-                **api_error_responses(403, 409, 422, 428),
+                **api_error_responses(503, 403, 409, 422, 428),
             },
         )
         def transfer_assignment(
@@ -4318,7 +4325,7 @@ else:
                     "description": "Assignment updated",
                     "headers": response_headers("ETag"),
                 },
-                **api_error_responses(403, 409, 422, 428),
+                **api_error_responses(503, 403, 409, 422, 428),
             },
         )
         def complete_assignment(
@@ -4407,7 +4414,7 @@ else:
                     "description": "SLA updated",
                     "headers": response_headers("ETag"),
                 },
-                **api_error_responses(403, 409, 422, 428),
+                **api_error_responses(503, 403, 409, 422, 428),
             },
         )
         def pause_sla(
@@ -4485,7 +4492,7 @@ else:
                     "description": "SLA updated",
                     "headers": response_headers("ETag"),
                 },
-                **api_error_responses(403, 409, 422, 428),
+                **api_error_responses(503, 403, 409, 422, 428),
             },
         )
         def resume_sla(
@@ -4716,7 +4723,7 @@ else:
                     "description": "Review queued",
                     "headers": response_headers("ETag"),
                 },
-                **api_error_responses(403, 409, 422, 428),
+                **api_error_responses(503, 403, 409, 422, 428),
             },
         )
         def review_identity(

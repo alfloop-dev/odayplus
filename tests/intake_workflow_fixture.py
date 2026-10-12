@@ -4,9 +4,23 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from modules.listing.application.intake_audit import ResolvedIntakeAuditRetention
 from modules.listing.application.intake_completion import CompletionRequirement
 from modules.listing.application.intake_workflow_bootstrap import IntakeWorkflowPlan
 from modules.listing.domain.intake_states import SlaSchedule
+from shared.audit.integrity import sha256_hex
+
+
+class SyntheticIntakeAuditRetention:
+    """Explicit synthetic policy override; application code never installs it."""
+
+    def resolve(self, scope, occurred_at):
+        policy_id = "synthetic-audit-v1:" + scope["tenant_id"]
+        return ResolvedIntakeAuditRetention(
+            scope["tenant_id"], policy_id, sha256_hex({"policy": policy_id, "days": 90}),
+            "00000000-0000-0000-0000-000000000105", "2026-01-01T00:00:00+00:00",
+            occurred_at + timedelta(days=90),
+        )
 
 
 class SyntheticIntakeWorkflowPolicy:

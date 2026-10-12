@@ -8,7 +8,10 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
-from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
+from tests.intake_workflow_fixture import (
+    SyntheticIntakeAuditRetention,
+    SyntheticIntakeWorkflowPolicy,
+)
 from tests.integration.test_assisted_listing_postgresql_runtime import (
     ACTOR_ID,
     REVIEWER_ID,
@@ -77,7 +80,7 @@ def postgres_case(intake_blank_db, monkeypatch, tmp_path):
 def _app():
     return create_app(
         external_provider_validation=_live_provider_validation(),
-        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+        assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
     )
 
 

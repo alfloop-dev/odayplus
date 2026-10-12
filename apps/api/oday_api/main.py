@@ -139,6 +139,7 @@ else:
         address_location_repository: Any = None,
         manual_correction_repository: Any = None,
         assisted_intake_workflow_policy: Any = None,
+        assisted_intake_audit_retention: Any = None,
         persistence: Any = None,
         external_provider_validation: Any = None,
         external_provider_connectivity_probe: Any = None,
@@ -1934,6 +1935,10 @@ else:
         # preserve its per-operation response set instead of adding the generic
         # platform responses to every operation.
         assisted_intake_store = getattr(bundle, "assisted_intake_store", None)
+        if assisted_intake_audit_retention is not None:
+            if assisted_intake_store is None:
+                raise RuntimeError("Audit retention override requires the PostgreSQL store")
+            assisted_intake_store.configure_audit_retention(assisted_intake_audit_retention)
         if production_persistence_supported and assisted_intake_store is None:
             raise RuntimeError("Production PostgreSQL requires a durable Assisted Intake store")
         mount_versioned(

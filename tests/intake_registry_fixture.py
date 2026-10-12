@@ -1,8 +1,10 @@
 """Synthetic registry rows and identities. Never installed by application code."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
+from modules.listing.application.intake_audit import AUDIT_RETENTION_KIND
 from modules.listing.application.intake_registry_calendar import (
     CALENDAR_POLICY_KIND,
     WORKFLOW_POLICY_KIND,
@@ -19,6 +21,12 @@ OWNER = "00000000-0000-0000-0000-000000000103"
 AT = datetime(2026, 10, 9, 8, 30, tzinfo=UTC)  # Synthetic Friday 16:30 Taipei.
 CALENDAR_ID = f"synthetic-calendar-v1:{TENANT}"
 POLICY_ID = f"synthetic-intake-v1:{TENANT}"
+
+
+def _audit_retention_row():
+    return replace(_row("synthetic-audit-v1", AUDIT_RETENTION_KIND, {
+        "schema_version": 1, "duration_basis": "UTC_ELAPSED", "retention_days": 90,
+    }), owner_role=Role.RECORDS_MANAGER.value, declared_inputs=("scope", "occurred_at"))
 
 
 def _row(label, kind, parameters):

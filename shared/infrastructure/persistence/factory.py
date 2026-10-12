@@ -503,6 +503,17 @@ def _postgres_bundle(
         SqlDecisionPolicyRepository(engine), pg_identity_store
     )
 
+    from modules.listing.application.intake_audit import (
+        CanonicalIntakeAuditSink,
+        RegistryIntakeAuditRetention,
+    )
+    from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
+
+    assisted_intake_store.configure_canonical_audit(CanonicalIntakeAuditSink(
+        CanonicalPostgresAuditLog(engine),
+        RegistryIntakeAuditRetention(SqlDecisionPolicyRepository(engine), pg_identity_store),
+    ))
+
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
     pg_audit_log = DurableAuditLog(engine, worm_sink=resolved_worm_sink)
     pg_manual_corr_repo = DurableManualCorrectionRepository(engine)

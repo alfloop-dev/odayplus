@@ -27,6 +27,7 @@ from tests.intake_registry_fixture import (
     MANAGER,
     OWNER,
     TENANT,
+    _audit_retention_row,
     _calendar_row,
     _workflow_row,
 )
@@ -89,6 +90,10 @@ def _seed_identities(conn):
             (account_id, role.value),
         )
         conn.execute("INSERT INTO identity.account_scopes(account_id) VALUES (%s)", (account_id,))
+    conn.execute(
+        "INSERT INTO identity.account_roles(account_id,role,granted_by) VALUES (%s,%s,'isolated-synthetic-test')",
+        (APPROVER, Role.RECORDS_MANAGER.value),
+    )
 
 
 def _bundle(database, monkeypatch):
@@ -111,7 +116,7 @@ def test_expand_migration_preserves_registry_rows_and_rejects_unknown_kind(intak
     with db.connect() as conn:
         assert (
             conn.execute("SELECT version_num FROM public.oday_plus_alembic_version").fetchone()[0]
-            == "0023"
+            == "0024"
         )
         assert (
             conn.execute(
@@ -121,6 +126,7 @@ def test_expand_migration_preserves_registry_rows_and_rejects_unknown_kind(intak
         )
         _insert_policy(conn, _workflow_row())
         _insert_policy(conn, _calendar_row())
+        _insert_policy(conn, _audit_retention_row())
         from dataclasses import replace
 
         for kind in (
@@ -195,6 +201,7 @@ def test_factory_resolves_sql_versions_and_rechecks_live_identity_scope(
         _seed_identities(conn)
         _insert_policy(conn, _workflow_row())
         _insert_policy(conn, _calendar_row())
+        _insert_policy(conn, _audit_retention_row())
     apply_upgrade_to_database(db.url())
     bundle = _bundle(db, monkeypatch)
     try:
@@ -250,6 +257,7 @@ def test_sql_policy_http_pause_resume_survives_restart_and_flush_failure(
         _seed_identities(conn)
         _insert_policy(conn, _workflow_row())
         _insert_policy(conn, _calendar_row())
+        _insert_policy(conn, _audit_retention_row())
 
     class Clock(datetime):
         instant = AT
@@ -383,6 +391,7 @@ def test_assignment_transitions_and_sla_completion_are_durable_atomic_and_replay
         _seed_identities(conn)
         _insert_policy(conn, replace(row, parameters=parameters))
         _insert_policy(conn, _calendar_row())
+        _insert_policy(conn, _audit_retention_row())
 
     class Clock(datetime):
         @classmethod
