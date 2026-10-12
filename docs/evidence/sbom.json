@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-eb8c74bde6feb1c93710f8a6f29e63ed",
+  "serialNumber": "urn:uuid:sha256-4c6083fa3e5ccec716516844bfa9bffe",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-11T16:17:00.638781+00:00",
+    "timestamp": "2026-10-12T21:25:00.087896+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@a45b9230ab515238ce3d8fa8378ae7cb7c789851",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@a45b9230ab515238ce3d8fa8378ae7cb7c789851"
+      "purl": "pkg:generic/alfloop-dev/odayplus@3075bbbe159260f6e33c928a4cc9ef828c6b4eae",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@3075bbbe159260f6e33c928a4cc9ef828c6b4eae"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "a45b9230ab515238ce3d8fa8378ae7cb7c789851"
+        "value": "3075bbbe159260f6e33c928a4cc9ef828c6b4eae"
       },
       {
         "name": "sbom-hash",
-        "value": "eb8c74bde6feb1c93710f8a6f29e63ed39e95b3804566a072b1fecd585e67400"
+        "value": "4c6083fa3e5ccec716516844bfa9bffe7aefb3e0fde04f97fc82a3d8cd1c1ed1"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:c4eaed3b0d9ca245f30715e8e1494767c974106f6c143c13daff6ec61c4d5858"
+        "value": "sha256:dbe23b066ab31afd89bda6d9c52dfee3100ef9cf2d327fc1be03a51c06acd25e"
       },
       {
         "name": "container-base-images",
@@ -14772,6 +14772,34 @@
       }
     },
     {
+      "name": "pypdf",
+      "version": "6.20.1",
+      "type": "library",
+      "purl": "pkg:pypi/pypdf@6.20.1",
+      "bom-ref": "pkg:pypi/pypdf@6.20.1",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA256",
+          "content": "28f5a9d2fdc2749264612d94e6a58de54c11d730d9f0cabf8ad34117c4942b45"
+        },
+        {
+          "alg": "SHA256",
+          "content": "aa5a55ddcffdc5e5ab291d5decb23f6383f4e56f8e3263dc39af41fff03885ad"
+        }
+      ],
+      "supplier": {
+        "name": "Mathieu Fenniak <biziqe@mathieu.fenniak.net>"
+      }
+    },
+    {
       "name": "pyreadline3",
       "version": "3.5.6",
       "type": "library",
@@ -15241,6 +15269,34 @@
       ],
       "supplier": {
         "name": "Jordan Harband <ljharb@gmail.com>"
+      }
+    },
+    {
+      "name": "reportlab",
+      "version": "5.0.1",
+      "type": "library",
+      "purl": "pkg:pypi/reportlab@5.0.1",
+      "bom-ref": "pkg:pypi/reportlab@5.0.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA256",
+          "content": "ebd13154be1c8515e665de70bd2d303ae9ddc3ef47e44afd5116441ca0283a26"
+        },
+        {
+          "alg": "SHA256",
+          "content": "1c36e6bb0e71780c72331eba60da7f602e8d4389a8723825af71342e49d791e8"
+        }
+      ],
+      "supplier": {
+        "name": "Andy Robinson, Robin Becker, the ReportLab team and the community"
       }
     },
     {
@@ -18605,7 +18661,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@a45b9230ab515238ce3d8fa8378ae7cb7c789851",
+      "ref": "pkg:generic/alfloop-dev/odayplus@3075bbbe159260f6e33c928a4cc9ef828c6b4eae",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -18649,9 +18705,11 @@
         "pkg:pypi/pymoo@0.6.2",
         "pkg:pypi/pynacl@1.6.2",
         "pkg:pypi/pyomo@6.10.1",
+        "pkg:pypi/pypdf@6.20.1",
         "pkg:pypi/pytest-xdist@3.8.0",
         "pkg:pypi/pytest@9.1.1",
         "pkg:pypi/pyyaml@6.0.3",
+        "pkg:pypi/reportlab@5.0.1",
         "pkg:pypi/ruff@0.15.20",
         "pkg:pypi/scikit-learn@1.9.0",
         "pkg:pypi/scipy@1.18.0",
@@ -21574,6 +21632,7 @@
         "pkg:pypi/pynacl@1.6.2",
         "pkg:pypi/pyomo@6.10.1",
         "pkg:pypi/pyyaml@6.0.3",
+        "pkg:pypi/reportlab@5.0.1",
         "pkg:pypi/scikit-learn@1.9.0",
         "pkg:pypi/scipy@1.18.0",
         "pkg:pypi/sqlalchemy@2.0.51",
@@ -21810,6 +21869,13 @@
         "pkg:pypi/attrs@26.1.0",
         "pkg:pypi/rpds-py@2026.6.3",
         "pkg:pypi/typing-extensions@4.15.0"
+      ]
+    },
+    {
+      "ref": "pkg:pypi/reportlab@5.0.1",
+      "dependsOn": [
+        "pkg:pypi/charset-normalizer@3.4.9",
+        "pkg:pypi/pillow@12.3.0"
       ]
     },
     {

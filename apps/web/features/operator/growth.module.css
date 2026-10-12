@@ -666,6 +666,13 @@
   text-align: center;
 }
 
+.selectionUnavailable {
+  color: #536079;
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
 .detailPanel {
   position: sticky;
   top: 62px;

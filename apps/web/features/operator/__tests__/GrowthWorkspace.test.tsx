@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GrowthWorkspace } from "../GrowthWorkspace";
 import {
   FIXTURE_FRESHNESS,
+  buildGrowthViewModel,
   GROWTH_ITEMS,
   PRICEOPS_RECOMMENDATIONS,
   SEGMENTS,
@@ -11,6 +12,78 @@ import {
 
 const routerPush = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: routerPush }) }));
+
+describe("Growth URL record ownership", () => {
+  const data = { availability: "fixture" as const, freshness: FIXTURE_FRESHNESS, fromApi: false,
+    segments: SEGMENTS, recommendations: PRICEOPS_RECOMMENDATIONS, items: GROWTH_ITEMS };
+  afterEach(() => { cleanup(); vi.unstubAllEnvs(); routerPush.mockReset(); });
+
+  it("never substitutes another action for an explicit missing URL target", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const vm = buildGrowthViewModel({ itemId: "missing-action" }, data);
+    expect(vm.selectedItem).toBeNull();
+    expect(vm.selectedItemGate).toBeNull();
+    render(<GrowthWorkspace searchParams={{ item: "missing-action" }} apiData={data} />);
+    expect(screen.getByTestId("growth-action-unavailable")).toHaveTextContent("指定活動未取得");
+    expect(screen.queryByTestId("growth-item-detail")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("growth-transition-action")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("growth-submit-approval")).not.toBeInTheDocument();
+  });
+
+  it("keeps empty segment selections empty instead of showing an action in another segment", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const emptySegment = { ...SEGMENTS[0], id: "synthetic-empty-segment", name: "Synthetic empty segment" };
+    const scoped = { ...data, segments: [...SEGMENTS, emptySegment] };
+    const vm = buildGrowthViewModel({ segmentId: emptySegment.id, itemId: GROWTH_ITEMS[0].id }, scoped);
+    expect(vm.items).toEqual([]);
+    expect(vm.selectedItem).toBeNull();
+    render(<GrowthWorkspace searchParams={{ segment: emptySegment.id }} apiData={scoped} />);
+    expect(screen.getByTestId("growth-action-unavailable")).toHaveTextContent("沒有符合目前條件");
+    expect(screen.queryByTestId("growth-item-detail")).not.toBeInTheDocument();
+  });
+
+  it("preserves a missing segment in navigation and does not widen its record scope", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const vm = buildGrowthViewModel({ segmentId: "missing-segment" }, data);
+    expect(vm.items).toEqual([]);
+    expect(vm.recommendations).toEqual([]);
+    render(<GrowthWorkspace searchParams={{ segment: "missing-segment", campaign_ref: ["handoff", "audit"], empty_marker: "" }} apiData={data} />);
+    expect(screen.getByTestId("growth-segment-unavailable")).toBeInTheDocument();
+    const href = new URL(screen.getByTestId("growth-tab-segments").getAttribute("href")!, "http://localhost");
+    expect(href.searchParams.get("segment")).toBe("missing-segment");
+    expect(href.searchParams.getAll("campaign_ref")).toEqual(["handoff", "audit"]);
+    expect(href.searchParams.has("empty_marker")).toBe(true);
+  });
+
+  it("chooses a default only from the visible filtered actions", () => {
+    const vm = buildGrowthViewModel({ statusFilter: "out" }, data);
+    expect(vm.selectedItem?.status).toMatch(/OUTCOME_READY|INEFFECTIVE|CLOSED/);
+    const empty = buildGrowthViewModel({ kindFilter: "no-such-kind" }, data);
+    expect(empty.selectedItem).toBeNull();
+    expect(empty.selectedItemGate).toBeNull();
+  });
+
+  it("does not replace a missing or differently scoped draft recommendation", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    render(<GrowthWorkspace searchParams={{ draft: "missing-recommendation" }} apiData={data} />);
+    expect(screen.getByTestId("growth-draft-unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const outside = PRICEOPS_RECOMMENDATIONS.find(row => row.segmentId !== SEGMENTS[0].id)!;
+    expect(buildGrowthViewModel({ segmentId: SEGMENTS[0].id, draftId: outside.id }, data).draftRecommendation).toBeNull();
+  });
+
+  it("removes missing detail when the requested row disappears and restores its exact return", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const item = GROWTH_ITEMS[0];
+    const { rerender } = render(<GrowthWorkspace searchParams={{ item: item.id }} apiData={data} />);
+    expect(screen.getByTestId("growth-item-detail")).toHaveTextContent(item.id);
+    rerender(<GrowthWorkspace searchParams={{ item: item.id }} apiData={{ ...data, items: GROWTH_ITEMS.filter(row => row.id !== item.id) }} />);
+    expect(screen.getByTestId("growth-action-unavailable")).toBeInTheDocument();
+    expect(screen.queryByTestId("growth-item-detail")).not.toBeInTheDocument();
+    rerender(<GrowthWorkspace searchParams={{ item: item.id }} apiData={data} />);
+    expect(screen.getByTestId("growth-item-detail")).toHaveTextContent(item.id);
+  });
+});
 
 describe("GrowthWorkspace API loading", () => {
   afterEach(() => {

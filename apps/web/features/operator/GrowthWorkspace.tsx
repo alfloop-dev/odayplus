@@ -17,6 +17,8 @@ import {
   GROWTH_ENTRY_CARDS,
   GROWTH_KIND_PRESETS,
   growthKindLabel,
+  growthItemKind as itemKind,
+  matchesGrowthStatusFilter as matchesStatusFilter,
   newIdempotencyKey,
   outcomeLabel,
   submitGrowthForApproval,
@@ -148,30 +150,6 @@ function statusLabel(status: string): string {
   return STATUS_LABEL[status] ?? status;
 }
 
-function matchesStatusFilter(status: string, filter?: string): boolean {
-  if (!filter) return true;
-  const normalized = status.toUpperCase();
-  if (filter === "candidate") return normalized === "SYSTEM_RECOMMENDED";
-  if (filter === "draft") return normalized === "DRAFT";
-  if (filter === "pending") return normalized === "PENDING_APPROVAL";
-  if (filter === "run") {
-    return ["APPROVED", "SCHEDULED", "RUNNING", "EXECUTED", "OBSERVING"].includes(normalized);
-  }
-  if (filter === "out") {
-    return ["OUTCOME_READY", "INEFFECTIVE", "CLOSED"].includes(normalized);
-  }
-  return true;
-}
-
-/** Derive a create-entry kind for an action that predates the entry-card flow. */
-function itemKind(item: GrowthItem): GrowthActionKind {
-  if (item.kind) return item.kind;
-  if (item.sourceRecommendationId) return "priceops";
-  if (item.name.includes("AdLift") || item.name.includes("廣告")) return "adlift";
-  if (item.name.includes("優惠券")) return "coupon";
-  if (item.name.includes("召回")) return "winback";
-  return "offpeak";
-}
 
 /**
  * 營收成長 Growth workspace — Package 10 / R7 parity.
@@ -259,7 +237,7 @@ export function GrowthWorkspace({
     );
   }
 
-  const vm = buildGrowthViewModel({ segmentId, itemId, draftId }, resolvedApiData);
+  const vm = buildGrowthViewModel({ segmentId, itemId, draftId, kindFilter, statusFilter }, resolvedApiData);
   const freshnessData = resolvedApiData?.freshness ?? {
     status: "FRESH" as const,
     updatedAt: "2026-07-09 14:20",
@@ -272,13 +250,16 @@ export function GrowthWorkspace({
   const href = (overrides: Record<string, string | undefined>): string => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(searchParams)) {
-      const first = Array.isArray(value) ? value[0] : value;
-      if (first) params.set(key, first);
+      if (Array.isArray(value)) {
+        for (const entry of value) params.append(key, entry);
+      } else if (value !== undefined) {
+        params.set(key, value);
+      }
     }
     params.set("ws", "growth");
     const merged: Record<string, string | undefined> = {
       gtab: activeTab === "campaign" ? undefined : activeTab,
-      segment: vm.selectedSegment?.id,
+      segment: segmentId,
       item: itemId,
       gkind: kindFilter,
       gstatus: statusFilter,
@@ -339,6 +320,17 @@ export function GrowthWorkspace({
           ))}
         </nav>
 
+        {segmentId && !vm.selectedSegment ? (
+          <div className={g.selectionUnavailable} role="status" data-testid="growth-segment-unavailable">
+            指定分群未取得，請選取目前範圍可用的分群。
+          </div>
+        ) : null}
+        {draftId && !builderKind && !vm.draftRecommendation ? (
+          <div className={g.selectionUnavailable} role="status" data-testid="growth-draft-unavailable">
+            指定建議未取得，請從建議清單重新選取。
+          </div>
+        ) : null}
+
         {activeTab === "segments" ? (
           <SegmentSection
             fixturesAllowed={fixturesAllowed}
@@ -356,6 +348,7 @@ export function GrowthWorkspace({
           <CampaignWorkbench
             items={vm.items}
             selected={vm.selectedItem}
+            requestedItemId={itemId}
             segments={vm.segments}
             kindFilter={kindFilter}
             statusFilter={statusFilter}
@@ -829,6 +822,7 @@ function RecommendationSection({
 function CampaignWorkbench({
   items,
   selected,
+  requestedItemId,
   segments,
   kindFilter,
   statusFilter,
@@ -837,7 +831,8 @@ function CampaignWorkbench({
   governHref,
 }: {
   items: GrowthItem[];
-  selected: GrowthItem;
+  selected: GrowthItem | null;
+  requestedItemId?: string;
   segments: GrowthSegment[];
   kindFilter?: string;
   statusFilter?: string;
@@ -921,8 +916,8 @@ function CampaignWorkbench({
               <Link
                 key={item.id}
                 href={href({ item: item.id })}
-                className={[g.actionCard, item.id === selected.id ? g.actionCardSelected : ""].join(" ")}
-                aria-selected={item.id === selected.id}
+                className={[g.actionCard, item.id === selected?.id ? g.actionCardSelected : ""].join(" ")}
+                aria-selected={item.id === selected?.id}
                 data-testid={`growth-item-${item.id}`}
               >
                 <div className={g.actionTop}>
@@ -972,14 +967,22 @@ function CampaignWorkbench({
       </div>
 
       {/* Sticky lifecycle detail */}
-      <GrowthActionDetail
-        key={selected.id}
-        item={selected}
-        recommendation={recommendationFor(selected)}
-        segmentName={segmentName}
-        href={href}
-        governHref={governHref}
-      />
+      {selected ? (
+        <GrowthActionDetail
+          key={selected.id}
+          item={selected}
+          recommendation={recommendationFor(selected)}
+          segmentName={segmentName}
+          href={href}
+          governHref={governHref}
+        />
+      ) : (
+        <aside className={g.detailPanel} aria-label="Growth action unavailable" data-testid="growth-action-unavailable">
+          <p className={g.selectionUnavailable} role="status">
+            {requestedItemId ? "指定活動未取得，請從清單選取可用活動。" : "沒有符合目前條件的活動。"}
+          </p>
+        </aside>
+      )}
     </section>
   );
 }

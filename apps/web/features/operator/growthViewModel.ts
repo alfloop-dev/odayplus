@@ -1049,13 +1049,34 @@ export function formatLift(value: number | null): string {
   return `${sign}${value.toFixed(1)}%`;
 }
 
+export function matchesGrowthStatusFilter(status: string, filter?: string): boolean {
+  if (!filter) return true;
+  const normalized = status.toUpperCase();
+  if (filter === "candidate") return normalized === "SYSTEM_RECOMMENDED";
+  if (filter === "draft") return normalized === "DRAFT";
+  if (filter === "pending") return normalized === "PENDING_APPROVAL";
+  if (filter === "run") return ["APPROVED", "SCHEDULED", "RUNNING", "EXECUTED", "OBSERVING"].includes(normalized);
+  if (filter === "out") return ["OUTCOME_READY", "INEFFECTIVE", "CLOSED"].includes(normalized);
+  return true;
+}
+
+/** Existing display classification for actions predating explicit entry kinds. */
+export function growthItemKind(item: GrowthItem): GrowthActionKind {
+  if (item.kind) return item.kind;
+  if (item.sourceRecommendationId) return "priceops";
+  if (item.name.includes("AdLift") || item.name.includes("廣告")) return "adlift";
+  if (item.name.includes("優惠券")) return "coupon";
+  if (item.name.includes("召回")) return "winback";
+  return "offpeak";
+}
+
 export type GrowthViewModel = {
   segments: GrowthSegment[];
   recommendations: PriceOpsRecommendation[];
   items: GrowthItem[];
   selectedSegment: GrowthSegment | null;
-  selectedItem: GrowthItem;
-  selectedItemGate: CloseoutGate;
+  selectedItem: GrowthItem | null;
+  selectedItemGate: CloseoutGate | null;
   draftRecommendation: PriceOpsRecommendation | null;
   summary: {
     segmentCount: number;
@@ -1079,6 +1100,8 @@ export function buildGrowthViewModel(
     segmentId?: string;
     itemId?: string;
     draftId?: string;
+    kindFilter?: string;
+    statusFilter?: string;
   },
   apiData?: GrowthApiData,
 ): GrowthViewModel {
@@ -1089,20 +1112,23 @@ export function buildGrowthViewModel(
   const selectedSegment =
     allSegments.find((segment) => segment.id === params.segmentId) ?? null;
 
-  const recommendations = selectedSegment
-    ? allRecommendations.filter((rec) => rec.segmentId === selectedSegment.id)
+  const recommendations = params.segmentId
+    ? allRecommendations.filter((rec) => selectedSegment && rec.segmentId === selectedSegment.id)
     : allRecommendations;
 
-  const items = selectedSegment
-    ? allItems.filter((item) => item.segmentId === selectedSegment.id)
+  const items = params.segmentId
+    ? allItems.filter((item) => selectedSegment && item.segmentId === selectedSegment.id)
     : allItems;
 
-  const fallbackItem = items[0] ?? allItems[0];
-  const selectedItem =
-    items.find((item) => item.id === params.itemId) ?? fallbackItem;
+  const selectedItem = params.itemId
+    ? items.find((item) => item.id === params.itemId) ?? null
+    : items.find((item) =>
+        (!params.kindFilter || growthItemKind(item) === params.kindFilter) &&
+        matchesGrowthStatusFilter(item.status, params.statusFilter),
+      ) ?? null;
 
   const draftRecommendation = params.draftId
-    ? allRecommendations.find((rec) => rec.id === params.draftId) ?? null
+    ? recommendations.find((rec) => rec.id === params.draftId) ?? null
     : null;
 
   const activeStatuses: GrowthStatus[] = [
@@ -1118,7 +1144,7 @@ export function buildGrowthViewModel(
     items,
     selectedSegment,
     selectedItem,
-    selectedItemGate: closeoutGate(selectedItem),
+    selectedItemGate: selectedItem ? closeoutGate(selectedItem) : null,
     draftRecommendation,
     dataSource: apiData?.fromApi ? "api" : "fixture",
     summary: {
