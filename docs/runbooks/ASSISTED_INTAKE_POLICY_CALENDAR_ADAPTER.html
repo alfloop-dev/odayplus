@@ -24,7 +24,7 @@
 <tr><td>nonexistent_time</td><td>必須明確 REJECT；不偷偷位移不存在的 DST 邊界</td></tr></table>
 <p>不預設時區、工作日、工作時間、午休或假日。工作量跨關閉區間時跳過它；超出已批准 coverage 時拒絕猜測期限。所有持久化 checkpoint 使用帶時區的 UTC。</p>
 <h2>暫停與恢復</h2>
-<p>HTTP 命令先檢查實際父 Intake 範圍，再檢查 If-Match、冪等鍵及仍有效的 manager／steward 帳戶。暫停原因必須被 policy 允許，expected_resume_at 必須在未來，已達 breach 的 SLA 即使狀態尚未更新也不能暫停。記錄區間 UUID、開始／預期恢復時間、原因、created_by、approved_by 與 approval_policy_version；自我批准被拒絕。</p>
+<p>HTTP 命令先檢查實際父 Intake 範圍，再檢查 If-Match、冪等鍵及仍有效的 manager／steward 帳戶。讀取冪等快取前也重新核對 registry 帳戶、角色與 scope，不能由舊成功收據保留已撤銷授權。暫停原因必須被 policy 允許，expected_resume_at 必須在未來，已達 breach 的 SLA 即使狀態尚未更新也不能暫停。記錄區間 UUID、開始／預期恢復時間、原因、created_by、approved_by 與 approval_policy_version；自我批准被拒絕。</p>
 <p><strong>批准來源的工程限制：</strong>本 adapter 的 approved_by 來自已存在 policy 的批准帳戶，是批准原因清單的來源，不是新產生的人工作業核准。Workflow／Ops 必須確認這個映射符合正式 pause approval 規則；若需逐次批准紀錄，須另接實際批准工作流，不能把 policy 批准說成新的逐次批准。</p>
 <p>恢復以服務時間關閉真實區間；排除該區間內的工作量，調整 warning／due／breach，並重新推導當前狀態。paused_duration_seconds 記錄實際暫停秒數，與日曆排除的工作秒數不同。Intake 與 Assignment 的期限變更一起增加版本並留下稽核。SLA 收據指向真正已寫入的 audit UUID。</p>
 <p>命令、區間、稽核、catalog outbox event 與 replay receipt 屬於同一 rollback 邊界；失敗不保留成功重播。缺乏父 Intake 或權威 schedule 的舊封套拒絕操作，等待核准的對帳與遷移。這個交易邊界不包含需要保存失敗狀態的 SiteScore promotion saga。</p>

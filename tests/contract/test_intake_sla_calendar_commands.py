@@ -214,3 +214,19 @@ def test_stale_on_track_state_cannot_pause_after_authoritative_breach(journey):
     snapshot = _snapshot(store)
     assert _command(journey).status_code == 409
     assert _snapshot(store) == snapshot
+
+
+@pytest.mark.parametrize("action", ["pause", "resume"])
+def test_cached_receipt_rechecks_current_registry_identity_authority(journey, action):
+    _, store, _, clock, _, identities = journey
+    if action == "resume":
+        assert _command(journey).status_code == 200
+        clock.instant = datetime(2026, 10, 13, 2, tzinfo=UTC)
+    version = 1 if action == "pause" else 2
+    key = f"synthetic-revoked-cache-{action}"
+    assert _command(journey, action, key=key, version=version).status_code == 200
+    identities.set_account_roles(MANAGER, {Role.EXPANSION_USER})
+    snapshot = _snapshot(store)
+    response = _command(journey, action, key=key, version=version)
+    assert response.status_code == 403, response.text
+    assert _snapshot(store) == snapshot

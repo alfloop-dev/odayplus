@@ -339,6 +339,19 @@ def test_sql_policy_http_pause_resume_survives_restart_and_flush_failure(
         response = client.post(path, json={"reason": "Synthetic resume"}, headers=resume_headers)
         assert response.status_code == 200, response.text
         assert response.json()["due_at"] == "2026-10-13T04:00:00Z"
+        with db.connect() as conn:
+            conn.execute(
+                "DELETE FROM identity.account_roles WHERE account_id=%s AND role=%s",
+                (MANAGER, Role.SITE_REVIEWER.value),
+            )
+        store.refresh(TENANT)
+        snapshot = deepcopy(
+            (store.slas, store.workflow_audits, store.workflow_outbox, store.replays)
+        )
+        replay = client.post(path, json={"reason": "Synthetic resume"}, headers=resume_headers)
+        assert replay.status_code == 403, replay.text
+        store.refresh(TENANT)
+        assert (store.slas, store.workflow_audits, store.workflow_outbox, store.replays) == snapshot
     finally:
         bundle.engine.close()
     bundle = _bundle(db, monkeypatch)

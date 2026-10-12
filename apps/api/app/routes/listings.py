@@ -1762,6 +1762,23 @@ else:
                 # missing axes still fail closed for restricted principals.
                 require_intake_scope(principal, value)
 
+        def require_sla_registry_authority(value: dict[str, Any], actor_id: str) -> None:
+            # Replays retain their outcome, but never retain revoked identity
+            # grants. This check must precede load_replay as well as mutation.
+            parent = linked_intake(value)
+            original_scope = parent["scope"] if parent is not None else value.get("scope", {})
+            scope = copy.deepcopy(original_scope)
+            try:
+                if workflow_policy is None:
+                    raise IntakeWorkflowUnavailable("SLA registry is unavailable")
+                workflow_policy.authorize_sla_actor(schedule_from_record(value), scope, actor_id)
+                if scope != original_scope:
+                    raise IntakeWorkflowUnavailable("Provider changed the authorized SLA scope")
+            except PermissionError as exc:
+                raise HTTPException(403, "ROLE_DENIED") from exc
+            except Exception as exc:
+                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+
         def require_actor(request: Request) -> str:
             principal = get_principal(request)
             if not principal.authenticated:
@@ -4420,6 +4437,7 @@ else:
                     raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
                 return updated, 200
 
+            require_sla_registry_authority(current, actor_id)
             val, code, was_replayed = replay(
                 key,
                 body.model_dump(),
@@ -4496,6 +4514,7 @@ else:
                     raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
                 return updated, 200
 
+            require_sla_registry_authority(current, actor_id)
             val, code, was_replayed = replay(
                 key,
                 body.model_dump(),
