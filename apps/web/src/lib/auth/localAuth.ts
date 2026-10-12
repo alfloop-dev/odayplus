@@ -128,7 +128,7 @@ export type LocalAuthResult =
     }
   | {
       ok: false;
-      code: "AUTH_INVALID_CREDENTIALS" | "AUTH_ACCOUNT_LOCKED";
+      code: "AUTH_INVALID_CREDENTIALS" | "AUTH_ACCOUNT_LOCKED" | "AUTH_RATE_LIMITED" | "WEB_AUTH_UNAVAILABLE";
       summary: string;
     };
 
@@ -145,6 +145,8 @@ export async function authenticateLocalCredentials(
     environment?: Record<string, string | undefined>;
     fetchImpl?: typeof fetch;
     identityStore?: IdentityStore | null;
+    /** Resolved durable budget before ANY account password verification. */
+    reserveAccount?: (accountId: string) => Promise<boolean>;
     mockAccounts?: Map<
       string,
       {
@@ -227,6 +229,13 @@ export async function authenticateLocalCredentials(
         };
       }
 
+      if (options.reserveAccount) {
+        try {
+          if (!await options.reserveAccount(account.accountId)) return { ok: false, code: "AUTH_RATE_LIMITED", summary: "Authentication temporarily refused." };
+        } catch {
+          return { ok: false, code: "WEB_AUTH_UNAVAILABLE", summary: "Authentication temporarily unavailable." };
+        }
+      }
       const credential = await store.getPasswordCredential(account.accountId);
       if (!credential) {
         await store.dummyVerify();

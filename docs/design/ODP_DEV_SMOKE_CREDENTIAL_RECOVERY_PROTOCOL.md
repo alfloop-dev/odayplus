@@ -1058,3 +1058,14 @@ unknown lookup uses one public representative Argon2 verification, not hash+veri
 See `extended-auth-authority-repair.md`: SIX auth defects reproduced/repaired, FOUR
 supplemental release-admission static findings still unreproduced/unrepaired. This
 is not whole-composition acceptance, canonical verification or operational authority.
+
+The subsequent `auth-release-followup-repair.md` records reproduction/repair of all
+SEVEN findings carried forward at rejectedb390: late persisted admin scope, signed
+OIDC-to-durable-session bridge, immutable resolved-account password budget, canonical
+TARGET-gate integrity, full initial-release environment fence, strict lease time at
+CAS/completion, authenticated actual serving Web/API release tuple. No new session/
+key grants or deployment permission; original OIDC bearer verification and local
+provider binding remain separate. A missing existing local BFF signing configuration
+refuses availability instead of trusting a caller SID. Pending/source-repair wording
+above is historic; only fresh matching-head review/receipts may establish current
+local disposition, NEVER canonical/full business/F11 acceptance or live authority.

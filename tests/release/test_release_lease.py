@@ -45,6 +45,13 @@ TASK_ID = "ODP-RELEASE-ADMISSION-AUTHORITY-001"
 NOW = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
 
 
+@pytest.fixture(autouse=True)
+def frozen_lease_clock(monkeypatch) -> None:
+    # Explicit offline clock domain: CAS/completion now check actual clock too.
+    from delivery_toolchain.release import release_lease
+    monkeypatch.setattr(release_lease, "_utc_now", lambda: NOW)
+
+
 @pytest.fixture
 def keys() -> tuple:
     private_pem, public_pem = generate_keypair()

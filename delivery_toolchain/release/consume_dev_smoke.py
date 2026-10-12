@@ -495,10 +495,13 @@ class _ObservedWeb:
     negative/form logins) is refused locally before the client is called.
     """
     def __init__(self, client: Any, *, execution_id: str, deadline: float, cleanup_deadline: float,
-                 latch: _UncertaintyLatch | None = None, login_pair: tuple[str, str] | None = None) -> None:
+                 latch: _UncertaintyLatch | None = None, login_pair: tuple[str, str] | None = None,
+                 expected_release: tuple[str, str] | None = None) -> None:
         if login_pair is not None and (type(login_pair) is not tuple or len(login_pair) != 2
                 or not all(type(value) is str and value for value in login_pair)):
             raise ConsumerRefused()
+        self._expected_release = expected_release
+        self.release_identity_verified = False
         self._login_pair = login_pair  # trusted same-pair memory only; None forbids login (API observer)
         self.client = client
         self.execution_id = execution_id
@@ -620,6 +623,26 @@ class _ObservedWeb:
                 if (ambiguous or unsafe
                         or not _login_reply_canonical(response, kwargs, issued=issued, positive=positive)):
                     self._unknown()
+                if positive and not self._latch.latched and self._expected_release is not None:
+                    sha, digest = self._expected_release
+                    owned_cookie = next(value for name, value in pairs if name == _SESSION_COOKIE and value)
+                    identity = self.request("GET", "/api/v1/platform/release-identity", authenticated=False,
+                        headers={"accept": "application/json", "cookie": f"{_SESSION_COOKIE}={owned_cookie}"},
+                        follow_redirects=False)
+                    identity_cookies, identity_ambiguous = _response_cookie_pairs(identity)
+                    if identity_cookies or identity_ambiguous:
+                        # A read must not silently transfer/issue cookie custody.
+                        self._retain_login_cookies(identity_cookies)
+                        self._unknown()
+                        return gate.HttpResponse(status=0, error="native serving cookie custody refused")
+                    expected = {"release_sha": sha, "web_release_sha": sha,
+                        "manifest_digest": digest, "web_manifest_digest": digest,
+                        "release_profile": "dev-admin", "web_release_profile": "dev-admin"}
+                    if (identity.failed or identity.status != 200 or identity.payload.get("release_profile_valid") is not True
+                            or any(identity.payload.get(k) != v for k, v in expected.items())):
+                        self._unknown()
+                        return gate.HttpResponse(status=0, error="native serving release pair refused")
+                    self.release_identity_verified = True
             if method == "POST" and path == "/auth/logout" and state is not None:
                 state["logout_acknowledged"] = (not ambiguous and not response.failed and response.status == 200
                     and response.payload.get("ok") is True
@@ -771,14 +794,14 @@ def consume(*, inputs: NativeInputs, environment: dict[str, str], sha: str, dige
             deadline=started + 480, cleanup_deadline=started + 540, latch=latch)
         web = _ObservedWeb(gate._web_client(config, correlation), execution_id=inputs.bundle.execution_id,
                            deadline=started + 480, cleanup_deadline=started + 540, latch=latch,
-                           login_pair=(inputs.bundle.username, inputs.bundle.password))
+                           login_pair=(inputs.bundle.username, inputs.bundle.password), expected_release=(sha, digest))
         # Canonical checks are unchanged; this wrapper also owns unconditional
         # cleanup on every evaluator exit, including early provenance refusal.
         # Never spawn the CLI or populate credential env/per-field fallback.
         _, report = gate.evaluate_gate(config, http=api, web_http=web,
             worker_driver=gate.ScheduledWorkerDriver(), correlation_id=correlation,
             now=datetime.now(UTC).isoformat())
-        if time.monotonic() >= started + 540:
+        if time.monotonic() >= started + 540 or not web.release_identity_verified or latch.latched:
             raise ConsumerRefused()
         return safe_consumption_report(report, ack_times=web.ack_times, job_created=created,
                                        sha=sha, digest=digest, run_id=run_id)

@@ -457,8 +457,13 @@ class _GCSLeaseStateStore:
             raise LeaseStateError(
                 f"lease {lease_id} does not match the lease recorded at issuance"
             )
+        transition_time = _utc_now()
+        if to_state == STATE_CONSUMED:
+            problems = _validity_window_errors(lease, transition_time)
+            if problems:
+                raise LeaseStateError("lease time invalid at durable transition: " + "; ".join(problems))
         record["state"] = to_state
-        record[f"{to_state}_at"] = _utc_now().isoformat()
+        record[f"{to_state}_at"] = transition_time.isoformat()
         record[actor_field] = actor
         payload = json.dumps(record, indent=2, ensure_ascii=False) + "\n"
         try:
@@ -694,8 +699,14 @@ class LeaseStateStore:
                         f"lease {lease_id} does not match the lease recorded at issuance"
                     )
 
+                # Read time AFTER the blocking flock/read/binding validation.
+                transition_time = _utc_now()
+                if to_state == STATE_CONSUMED:
+                    problems = _validity_window_errors(lease, transition_time)
+                    if problems:
+                        raise LeaseStateError("lease time invalid at durable transition: " + "; ".join(problems))
                 record["state"] = to_state
-                record[f"{to_state}_at"] = _utc_now().isoformat()
+                record[f"{to_state}_at"] = transition_time.isoformat()
                 record[actor_field] = actor
                 handle.seek(0)
                 handle.truncate()
@@ -936,7 +947,7 @@ def _validity_window_errors(lease: dict[str, Any], check_time: datetime) -> list
             f"lease is not valid until {lease['issued_at']}; current time is "
             f"{check_time.isoformat()}"
         )
-    if check_time > expires_at:
+    if check_time >= expires_at:
         errors.append(
             f"lease expired at {lease['expires_at']}; current time is {check_time.isoformat()}"
         )
@@ -1124,10 +1135,17 @@ def admit_and_consume(
             verifier=verifier,
         )
 
-    return True, [], build_receipt(
+    # A successful CAS receipt may arrive AFTER validity ended. Never admit or
+    # release/reopen the consumed claim; remote reply loss is also one-way.
+    completion_time = _utc_now()
+    errors = _validity_window_errors(lease, completion_time)
+    consumed_at = _parse_timestamp(record.get("consumed_at"))
+    if consumed_at is None or _validity_window_errors(lease, consumed_at):
+        errors.append("durable consumption time is missing or outside lease validity")
+    return not errors, errors, build_receipt(
         lease,
-        errors=[],
-        admitted=True,
+        errors=errors,
+        admitted=not errors,
         verified_at=verified_at,
         verifier=verifier,
         consumed_at=record.get("consumed_at"),

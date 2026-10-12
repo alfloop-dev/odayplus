@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { mintLocalJwt } from "./localJwt";
 import { NextResponse } from "next/server";
 import {
   readWebSession,
@@ -196,6 +197,22 @@ export async function proxyApiRequest(
       !production && !session && allowLegacyTrustedHeaders(environment),
     serviceIdentityToken,
   });
+  if (session?.provider === "oidc") {
+    try {
+      if (!session.sid || !session.accountId || !session.tenantId || !session.accessToken) throw new Error();
+      const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(session.accessToken));
+      const digest = Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, "0")).join("");
+      const now = Math.floor(Date.now() / 1000);
+      if (session.expiresAt <= now) throw new Error();
+      requestHeaders.set("x-odp-oidc-session", await mintLocalJwt({
+        subject: session.accountId, sid: session.sid, tenantId: session.tenantId,
+        oidcTokenDigest: digest, nowSeconds: now,
+        expiresInSeconds: Math.min(120, session.expiresAt - now), environment,
+      }));
+    } catch {
+      return authError(503, "WEB_AUTH_UNAVAILABLE", "Web authentication is temporarily unavailable.");
+    }
+  }
   const upstreamTimeoutMs =
     dependencies.upstreamTimeoutMs !== undefined &&
     Number.isFinite(dependencies.upstreamTimeoutMs) &&

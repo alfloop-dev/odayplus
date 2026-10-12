@@ -648,7 +648,7 @@ def test_plain_env_flags_or_unsigned_jwt_are_not_native_proof(offline_signing_ke
 @pytest.mark.parametrize("failure", [None, "oidc", "source", "admission", "gate", "canonical",
     "canonical-users", "canonical-audit", "canonical-ack", "canonical-principal",
     "canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown",
-    "canonical-duplicate-cookie"])
+    "canonical-duplicate-cookie", "canonical-serving-identity"])
 def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatch, failure):
     # Entirely MOCKED authority/runtime; no network/live receipt. Proves wiring.
     import httpx
@@ -703,6 +703,12 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
         assert kwargs["web_http"]._login_pair == (inputs.bundle.username, inputs.bundle.password)
         assert config.dev_admin_password == inputs.bundle.password
         assert not config.bootstrap_admin_password and not config.dev_admin_initial_password
+        # Exercise native serving-pair observation through owned real wrapper,
+        # synthetic HTTP only. A forged passing report alone cannot admit.
+        login = kwargs["web_http"].request("POST", "/login", authenticated=False,
+            body={"username": inputs.bundle.username, "password": inputs.bundle.password, "returnTo": c._FORM_RETURN_TO},
+            headers={"content-type": "application/json", "accept": "application/json", "origin": c.WEB_ORIGIN})
+        assert login.status == 200
         # Mimic actual audit observation; NOT an authenticated/live receipt.
         kwargs["web_http"].ack_times.append(datetime.now(UTC) - timedelta(seconds=10))
         return [], passing_gate_report()
@@ -730,6 +736,14 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
             "GET /api/v1/auth/principal [session]": f.base.response(200, {
                 "account_id": raw["account_id"], "tenant_id": raw["tenant_id"], "roles": ["platform_admin"]}),
         })
+        routes["GET /api/v1/platform/release-identity [session]"] = f.base.response(200, {
+            "release_sha": SHA, "web_release_sha": SHA, "manifest_digest": DIGEST, "web_manifest_digest": DIGEST,
+            "release_profile": "dev-admin", "web_release_profile": "dev-admin", "release_profile_valid": True})
+        if failure == "canonical-serving-identity":
+            routes["GET /api/v1/platform/release-identity [session]"] = f.base.response(200, {
+                "release_sha": SHA, "web_release_sha": "f" * 40,
+                "manifest_digest": DIGEST, "web_manifest_digest": DIGEST,
+                "release_profile": "dev-admin", "web_release_profile": "dev-admin", "release_profile_valid": True})
         paths = {"canonical-users": "GET /api/v1/operator/users [session]",
                  "canonical-audit": "GET /api/v1/operator/users/audit-trail [session]",
                  "canonical-principal": "GET /api/v1/auth/principal [session]"}
@@ -793,6 +807,16 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
             return checks, report
         monkeypatch.setattr(c.gate, "evaluate_gate", inspected_evaluate)
     else:
+        from tests.e2e import test_live_e2e_gate_dev_admin as f
+        monkeypatch.setattr(f, "USERNAME", inputs.bundle.username)
+        monkeypatch.setattr(f, "PASSWORD", inputs.bundle.password)
+        monkeypatch.setattr(f.base, "WEB_URL", c.WEB_ORIGIN)
+        routes = f.web_routes()
+        routes["GET /api/v1/platform/release-identity [session]"] = f.base.response(200, {
+            "release_sha": SHA, "web_release_sha": SHA, "manifest_digest": DIGEST, "web_manifest_digest": DIGEST,
+            "release_profile": "dev-admin", "web_release_profile": "dev-admin", "release_profile_valid": True})
+        web = f.AdminWeb(routes)
+        monkeypatch.setattr(c.gate, "_web_client", lambda *args: web)
         monkeypatch.setattr(c.gate, "evaluate_gate", mocked_gate)
     if failure and failure != "canonical":
         with pytest.raises(c.ConsumerRefused) as refused:
@@ -812,7 +836,7 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                     assert any(path == "GET /api/v1/auth/principal" and headers.get("cookie") == cookie
                                for path, headers in web.headers_seen)
             uncertain = {"canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown",
-                         "canonical-duplicate-cookie"}
+                         "canonical-duplicate-cookie", "canonical-serving-identity"}
             owned_cookies = {f"{f.SESSION_COOKIE}={f.SESSION_VALUE}"}
             if failure == "canonical-duplicate-cookie":
                 extra = f"{f.SESSION_COOKIE}=synthetic-extra-issued-session"
@@ -823,6 +847,7 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                 # owned-cookie cleanup reads/unattempted logout reach transport.
                 seen = [path for path, _ in web.headers_seen]
                 latch_at = (seen.index("POST /auth/logout") if failure == "canonical-logout-unknown"
+                            else seen.index("GET /api/v1/platform/release-identity") if failure == "canonical-serving-identity"
                             else [i for i, p in enumerate(seen) if p == "POST /login"][1])
                 after = web.headers_seen[latch_at + 1:]
                 assert all(path in {"GET /auth/session", "GET /api/v1/auth/principal", "POST /auth/logout"}

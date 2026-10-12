@@ -520,11 +520,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // 4. Authenticate credentials
-  const authResult = await authenticateLocalCredentials(username, password);
+  let resolvedAccountId: string | undefined;
+  const authResult = await authenticateLocalCredentials(username, password, { reserveAccount: async (id) => {
+    resolvedAccountId = id;
+    // Source already reserved above, do NOT double-charge it at resolution.
+    return (await throttle.beginAccountAttempt(id, null)).allowed;
+  } });
 
   if (!authResult.ok) {
+    if (authResult.code === "AUTH_RATE_LIMITED") return loginFailureResponse(429, "AUTH_RATE_LIMITED", "Too many login attempts. Try again later.");
+    if (authResult.code === "WEB_AUTH_UNAVAILABLE") return loginFailureResponse(503, "WEB_AUTH_UNAVAILABLE", "Web authentication is temporarily unavailable.");
     try {
       await throttle.recordFailure(username, clientIp);
+      if (resolvedAccountId) await throttle.recordAccountFailure(resolvedAccountId, null);
     } catch {
       // The attempt is already counted durably and the counter alone refuses
       // further attempts, so opening the lockout round is best effort and must
@@ -556,6 +564,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // attempt counted against the source IP, which only budgets failures.
   try {
     await throttle.recordSuccess(username, clientIp);
+    if (resolvedAccountId) await throttle.recordAccountSuccess(resolvedAccountId, null);
   } catch {
     // Non-fatal: a stale counter must not reject a proven-valid credential.
   }

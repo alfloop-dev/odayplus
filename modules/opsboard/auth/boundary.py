@@ -24,6 +24,7 @@ denying :class:`AuthOutcome` whose ``principal`` is
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -82,6 +83,7 @@ class Credentials:
     service_secret: bytes | None = None
     correlation_id: str | None = None
     source_ip: str | None = None
+    oidc_session_reference: str | None = field(default=None, repr=False)
 
     @classmethod
     def from_headers(cls, headers: Mapping[str, str]) -> Credentials:
@@ -98,6 +100,7 @@ class Credentials:
             service_secret=secret.encode("utf-8") if secret else None,
             correlation_id=request_correlation_id(headers["x-correlation-id"]) if headers.get("x-correlation-id") else None,
             source_ip=None,
+            oidc_session_reference=headers.get("x-odp-oidc-session"),
         )
 
 
@@ -190,7 +193,40 @@ class AuthenticationBoundary:
             token_type = "none"
             principal, reason = ANONYMOUS, AuthFailureReason.NO_CREDENTIALS
 
+        if reason is None and token_type == "oidc" and credentials.oidc_session_reference:
+            principal, reason = self._bind_oidc_session(principal, credentials, moment)
         return self._finalize(credentials, correlation_id, token_type, principal, reason)
+
+    def _bind_oidc_session(self, principal: Principal, credentials: Credentials, now: datetime) -> tuple[Principal, AuthFailureReason | None]:
+        # TWO independently authenticated bindings: original OIDC identity and
+        # BFF-signed reference to its server-owned durable session. Never trust
+        # a caller SID or permit local-password tokens to name OIDC sessions.
+        reference = credentials.oidc_session_reference
+        if not reference or len(reference) > 4096 or self._session_service is None:
+            return ANONYMOUS, AuthFailureReason.SESSION_NOT_FOUND
+        try:
+            header = decode_header(reference)
+            key = self._config.resolve_key(header.get("kid"), category="local")
+            if key is None or not self._config.local_issuer:
+                return ANONYMOUS, AuthFailureReason.BOUNDARY_NOT_CONFIGURED
+            claims = verify_compact_jwt(reference, key)
+            reason = self._validate_claims_generic(claims, now,
+                expected_issuer=self._config.local_issuer,
+                allowed_audiences=self._config.local_audiences or self._config.audiences)
+            if reason is not None:
+                return ANONYMOUS, reason
+            if (claims.get("purpose") != "oidc-web-session.v1"
+                    or claims.get("sub") != principal.subject_id
+                    or claims.get("tenant_id") != principal.tenant_id
+                    or claims.get("oidc_token_digest") != hashlib.sha256(credentials.bearer_token.encode()).hexdigest()):
+                return ANONYMOUS, AuthFailureReason.SESSION_NOT_FOUND
+            sid = UUID(claims["sid"])
+            session = self._session_service.validate_session(sid)
+            if (session is None or session.provider != "oidc" or str(session.account_id) != principal.subject_id):
+                return ANONYMOUS, AuthFailureReason.SESSION_REVOKED
+        except (JwtError, ValueError, TypeError, KeyError):
+            return ANONYMOUS, AuthFailureReason.MALFORMED_TOKEN
+        return replace(principal, attributes={**principal.attributes, "sid": str(sid)}), None
 
     # -- Token verification (multi-issuer) -----------------------------------
 

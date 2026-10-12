@@ -132,7 +132,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const identityStore = getDefaultIdentityStore();
   let account: IdentityAccount | null = null;
   let committedCredentialRevision: string | undefined;
-  let verificationBudget: { throttle: LoginThrottle; username: string; ip: string | null } | null = null;
+  let verificationBudget: { throttle: LoginThrottle; username: string; accountId: string; ip: string | null } | null = null;
   if (identityStore) {
     try {
       account = await accountForSession(session, identityStore);
@@ -149,8 +149,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // SAME durable account/source budget as /login, counted atomically BEFORE
       // current-password Argon2. Loss/crash/policy/provider errors keep the claim.
       const allowance = await throttle.beginAttempt(account.username, ip);
-      if (!allowance.allowed) return errorResponse(429, "AUTH_RATE_LIMITED", "Authentication temporarily refused.");
-      verificationBudget = { throttle, username: account.username, ip };
+      if (!allowance.allowed || !(await throttle.beginAccountAttempt(account.accountId, null)).allowed)
+        return errorResponse(429, "AUTH_RATE_LIMITED", "Authentication temporarily refused.");
+      verificationBudget = { throttle, username: account.username, accountId: account.accountId, ip };
       const credential = await identityStore.getPasswordCredential(
         account.accountId,
       );
@@ -167,6 +168,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
       if (!current.valid) {
         await throttle.recordFailure(account.username, ip);
+        await throttle.recordAccountFailure(account.accountId, null);
         return errorResponse(
           401,
           "AUTH_INVALID_CREDENTIALS",
@@ -287,7 +289,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         maxAge: Math.max(1, finalSession.expiresAt - now),
       },
     );
-    if (verificationBudget) await verificationBudget.throttle.recordSuccess(verificationBudget.username, verificationBudget.ip);
+    if (verificationBudget) {
+      await verificationBudget.throttle.recordSuccess(verificationBudget.username, verificationBudget.ip);
+      await verificationBudget.throttle.recordAccountSuccess(verificationBudget.accountId, null);
+    }
     return response;
   } catch {
     // Production CAS already atomically revoked ONLY this account's old rows.
