@@ -14,8 +14,10 @@ for (const width of [1440,1024,390]) {
       page.on("request",request => { if(request.method()==="POST" && /\/network-reviews\/[^/]+\/decide/.test(request.url()))writes+=1; });
       await page.goto("/operator?ws=network&tab=review");
       await expect(page.getByTestId("network-panel-review")).toBeVisible();
-      await page.getByTestId("review-card-RV-702").click();
-      const trigger=page.getByTestId(`review-btn-${action}-RV-702`);
+      // RV-701 exists in both the dedicated API queue and the archived fixture
+      // queue. The supplemental CI server intentionally runs without an API.
+      await page.getByTestId("review-card-RV-701").click();
+      const trigger=page.getByTestId(`review-btn-${action}-RV-701`);
       await trigger.focus(); await trigger.click();
       const dialog=page.getByRole("dialog");
       const reason=dialog.getByLabel("決策原因（必填 — 寫入 Decision Log）");
