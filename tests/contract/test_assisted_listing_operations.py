@@ -16,7 +16,11 @@ from jsonschema import Draft202012Validator, FormatChecker
 from apps.api.app.routes.listings import AssistedIntakeStore
 from apps.api.oday_api.main import create_app
 from delivery_toolchain.openapi.generate_assisted_listing_intake_client import ARTIFACT
-from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy, seed_synthetic_sla
+from tests.intake_workflow_fixture import (
+    SyntheticIntakeWorkflowPolicy,
+    seed_synthetic_assignment_workflow,
+    seed_synthetic_sla,
+)
 
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 TENANT_B = "00000000-0000-0000-0000-000000000002"
@@ -90,6 +94,7 @@ def _workflow_scope_case(client, action, *, scope, linked=True):
             "owner_subject_id": ACTOR_A,
         }
         store.assignments[resource_id] = resource
+        seed_synthetic_assignment_workflow(store, resource, intake)
         path = f"/api/v1/assignments/{resource_id}/actions/{action}"
         if action == "transfer":
             body.update(
@@ -215,7 +220,7 @@ def test_standalone_workflow_resources_use_their_own_scope(workflow_scope_client
     )
     # Scope authorization remains valid for a matching standalone envelope,
     # but SLA commands additionally require an actual Intake event binding.
-    expected = 503 if action in {"pause", "resume"} else 200
+    expected = 503
     assert response.status_code == (expected if kind == "matching" else 403)
     if kind != "matching" or expected == 503:
         assert (resource, intake, store.replays) == before
@@ -1398,6 +1403,14 @@ def test_assignment_actions(client: TestClient) -> None:
     version_after_transferred_claim = resp_transferred_claim.json()["version"]
 
     # 3. completeAssignment
+    # Completion requires actual terminal work, not just a request reason.
+    current_intake = AssistedIntakeStore._instances[-1].intakes[intake_id]
+    cancellation = client.post(
+        f"/api/v1/intakes/{intake_id}/actions/cancel",
+        json={"reason":"Synthetic triage is finished by cancellation"},
+        headers={**HEADERS_C,"Idempotency-Key":f"synthetic-complete-cancel-{uuid4()}","If-Match":f'W/"{current_intake["version"]}"'},
+    )
+    assert cancellation.status_code == 200, cancellation.text
     resp_complete = client.post(
         f"/api/v1/assignments/{assignment_id}/actions/complete",
         json={"reason": "Completed manual triage review with no issues found"},

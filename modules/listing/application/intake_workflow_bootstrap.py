@@ -49,6 +49,17 @@ class IntakeWorkflowPolicy(Protocol):
 
     def pause_approval_account(self, schedule: SlaSchedule, scope: Mapping[str, Any], actor_id: str) -> str: ...
 
+    def authorize_assignment_actor(self, schedule: SlaSchedule, scope: Mapping[str, Any], actor_id: str) -> None: ...
+
+    def authorize_assignment_action(self, schedule: SlaSchedule, scope: Mapping[str, Any], *, actor_id: str,
+                                    owner_subject_id: str, owner_role: str, action: str) -> None: ...
+
+    def resolve_transfer(self, scope: Mapping[str, Any], schedule: SlaSchedule, *, actor_id: str,
+                         current_owner_subject_id: str, current_owner_role: str, owner_subject_id: str,
+                         owner_role: str, requested_due_at: datetime, reason: str) -> IntakeWorkflowPlan: ...
+
+    def completion_requirements(self, scope: Mapping[str, Any], schedule: SlaSchedule) -> tuple[Any, ...]: ...
+
 
 def schedule_from_record(record: Mapping[str, Any]) -> SlaSchedule:
     value = record.get("schedule")

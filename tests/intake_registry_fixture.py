@@ -37,6 +37,7 @@ def _row(label, kind, parameters):
             "actor_account",
             "target_account",
             "requested_due_at",
+            "work_evidence",
         ),
         approved_by=APPROVER,
         approved_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -79,6 +80,14 @@ def _workflow_row():
             "assignee_role_bindings": {"expansion-staff": "expansion_user"},
             "deadline_override": {"mode": "KEEP_POLICY"},
             "approved_pause_reasons": ["Synthetic approved hold"],
+            "completion_requirements": [
+                {
+                    "kind": "intake",
+                    "allowed_states": ["READY", "CANCELLED"],
+                    "minimum_count": 1,
+                    "require_audit": True,
+                }
+            ],
         },
     )
 

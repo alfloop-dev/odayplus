@@ -12,6 +12,7 @@
 <tr><td>warning_work_minutes、due_work_minutes、breach_work_minutes</td><td>整數、非 bool；0 ≤ warning ≤ due ≤ breach，due &gt; 0</td><td>不得採用測試 fixture 的數值作正式政策</td></tr>
 <tr><td>assignee_role_bindings</td><td>請求 owner_role → canonical Role；目標帳戶必須實際持有該角色與工作範圍</td><td>Identity／Workflow owner 確認 role mapping</td></tr>
 <tr><td>deadline_override</td><td>明確 KEEP_POLICY，或 BOUNDED_WORK_MINUTES 加 minimum_minutes、maximum_minutes、actor_roles。提議時間必須落在批准的工作量範圍並等於日曆 checkpoint</td><td>不得由 UI 任意覆寫服務期限</td></tr>
+<tr><td>completion_requirements</td><td>非空工作清單：kind（intake／decision／correction／promotion／job）、allowed_states（只允許該種類終態）、minimum_count ≥ 1、require_audit（必填 bool），可明列 decision action／job type。需宣告 work_evidence input；資料從後端持久化記錄解析，前端不能提供 completed flag。</td><td>Workflow／Ops 必須批准每個工作類型的必要證據及稽核要求；沒有正式預設。</td></tr>
 <tr><td>approved_pause_reasons</td><td>明確批准原因字串清單；請求原因必須吻合</td><td>Workflow／Ops 確認清單與批准來源</td></tr>
 <tr><td>declared_inputs（registry 欄位）</td><td>初始化須含 scope、submitted_at；指派須另含 actor_account、target_account、requested_due_at</td><td>治理紀錄須揭露實際使用輸入</td></tr></table>
 <h2>Business calendar parameters（schema_version = 1）</h2>
@@ -23,6 +24,10 @@
 <tr><td>ambiguous_time</td><td>明確 EARLIER／LATER／REJECT；處理 DST 重複邊界</td></tr>
 <tr><td>nonexistent_time</td><td>必須明確 REJECT；不偷偷位移不存在的 DST 邊界</td></tr></table>
 <p>不預設時區、工作日、工作時間、午休或假日。工作量跨關閉區間時跳過它；超出已批准 coverage 時拒絕猜測期限。所有持久化 checkpoint 使用帶時區的 UTC。</p>
+<h2>任務轉移與完成</h2>
+<p>claim 僅允許当前 assignee；轉派與完成允許 owner／manager，帳戶須仍有效且角色／scope 匹配。轉派接手人使用實際 SQL identity；沒有 deadline proposal 時保留現在的 SLA checkpoint，有提議時套用批准的 override policy。目标的 claim 先提交 TRANSFERRED → ASSIGNED 接手，再 ASSIGNED → CLAIMED，每個版本都有自己的 audit／catalog event。</p>
+<p>任務完成先驗證批准的 completion_requirements：canonical UUID、tenant／父 Intake scope、記錄版本、終態及所要求的 current audit；尚有 pending decision／correction／promotion 時返回 WORK_INCOMPLETE。證據 ID／version／state 被留在 completion_evidence。接著以 Workflow/SLA service 身分完成 SLA，真實 paused interval 被關閉並排除其工作量。任務、SLA、父 Intake、audit、outbox 與冪等 receipt 同交易。完成後 GET detail 保留 completed Assignment，供查證。</p>
+<p>重播前核對当前 registry identity/scope；自己的既有轉派收據在 ownership 變更後可重播，但不会重新執行轉派。每个新 command 在交易鎖內重新讀取版本與父範圍。舊封套缺少 canonical Intake/SLA 關聯時拒絕生成成功收據，需核准對帳。</p>
 <h2>暫停與恢復</h2>
 <p>HTTP 命令先檢查實際父 Intake 範圍，再檢查 If-Match、冪等鍵及仍有效的 manager／steward 帳戶。讀取冪等快取前也重新核對 registry 帳戶、角色與 scope，不能由舊成功收據保留已撤銷授權。暫停原因必須被 policy 允許，expected_resume_at 必須在未來，已達 breach 的 SLA 即使狀態尚未更新也不能暫停。記錄區間 UUID、開始／預期恢復時間、原因、created_by、approved_by 與 approval_policy_version；自我批准被拒絕。</p>
 <p><strong>批准來源的工程限制：</strong>本 adapter 的 approved_by 來自已存在 policy 的批准帳戶，是批准原因清單的來源，不是新產生的人工作業核准。Workflow／Ops 必須確認這個映射符合正式 pause approval 規則；若需逐次批准紀錄，須另接實際批准工作流，不能把 policy 批准說成新的逐次批准。</p>

@@ -486,8 +486,32 @@ class AssignmentSlaService:
         sla = self.sla_repo.get_sla(sla_id)
         if not sla:
             raise ValueError(f"SLA {sla_id} not found")
-
+        self._validate_sla_context(sla, context)
+        if context.actor.role not in {PrincipalRole.SVC_SLA, PrincipalRole.EMERGENCY_ADMIN}:
+            raise DomainValidationError(DenialCode.ROLE_DENIED, "Only Workflow/SLA service may complete the SLA")
+        schedule = self._schedule(sla)
+        at = self._aware_time(context.current_time)
+        if at < schedule.started_at:
+            raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "SLA completion predates initialization")
+        intervals = list(sla.pause_intervals)
+        if sla.status == SlaState.PAUSED:
+            if not intervals or intervals[-1].ended_at is not None or at <= intervals[-1].started_at:
+                raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "Active completion pause interval is invalid")
+            if self.calendar is None:
+                raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "Resolved completion calendar is required")
+            resolved = self.calendar.resume_schedule(schedule, intervals[-1], at)
+            if not isinstance(resolved, SlaSchedule) or (
+                resolved.tenant_id, resolved.policy_version, resolved.calendar_version, resolved.started_at
+            ) != (schedule.tenant_id, schedule.policy_version, schedule.calendar_version, schedule.started_at) or any(
+                getattr(resolved, name) < getattr(schedule, name) for name in ("due_soon_at", "due_at", "breach_at")
+            ):
+                raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "Invalid completed SLA calendar binding")
+            schedule = resolved
+            intervals[-1] = replace(intervals[-1], ended_at=at)
         SlaStateMachine.transition(sla, SlaState.COMPLETED, context)
+        sla.schedule, sla.due_at, sla.pause_intervals = schedule, schedule.due_at, intervals
+        sla.paused_duration_seconds = int(sum((p.ended_at-p.started_at).total_seconds() for p in intervals if p.ended_at is not None))
+        sla.paused_reason = sla.resume_at = None
         self.sla_repo.save_sla(sla)
 
         self._record_event("sla.completed.v1", sla_id, sla.tenant_id, context.correlation_id, {})

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -288,6 +289,7 @@ def test_sql_policy_http_pause_resume_survives_restart_and_flush_failure(
         intake_id = response.json()["intake_id"]
     finally:
         bundle.engine.close()
+
     bundle = _bundle(db, monkeypatch)
     try:
         client = client_for(bundle)
@@ -363,5 +365,212 @@ def test_sql_policy_http_pause_resume_survives_restart_and_flush_failure(
             bundle.assisted_intake_store.slas[sla_id]["pause_intervals"][0]["resumed_at"]
             == "2026-10-13T02:00:00Z"
         )
+    finally:
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("failure", [None, "transfer", "complete"])
+def test_assignment_transitions_and_sla_completion_are_durable_atomic_and_replayable(
+    intake_blank_db, monkeypatch, failure
+):
+    db = intake_blank_db
+    _upgrade(db, "head")
+    apply_upgrade_to_database(db.url())
+    row = _workflow_row()
+    parameters = deepcopy(row.parameters)
+    parameters["assignee_role_bindings"]["site-reviewer"] = Role.SITE_REVIEWER.value
+    with db.connect() as conn:
+        _seed_identities(conn)
+        _insert_policy(conn, replace(row, parameters=parameters))
+        _insert_policy(conn, _calendar_row())
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return AT.astimezone(tz or UTC)
+
+    monkeypatch.setattr(listings, "datetime", Clock)
+
+    def headers(actor):
+        return {
+            "x-subject-id": actor,
+            "x-tenant-id": TENANT,
+            "x-roles": "site_reviewer,expansion_user" if actor == MANAGER else "expansion_user",
+        }
+
+    def client_for(bundle):
+        app = FastAPI()
+        app.include_router(
+            listings.create_assisted_intake_router(
+                bundle.assisted_intake_store, workflow_policy=bundle.assisted_intake_workflow_policy
+            ),
+            prefix="/api/v1",
+        )
+        return TestClient(app)
+
+    bundle = _bundle(db, monkeypatch)
+    try:
+        client = client_for(bundle)
+        submitted = client.post(
+            "/api/v1/intakes/url",
+            json={
+                "original_url": "https://example.invalid/sql-task",
+                "scope": {"tenant_id": TENANT},
+            },
+            headers={**headers(MANAGER), "Idempotency-Key": "synthetic-pg-submission"},
+        )
+        assert submitted.status_code == 202, submitted.text
+        iid = submitted.json()["intake_id"]
+        assigned = client.put(
+            f"/api/v1/intakes/{iid}/assignment",
+            json={
+                "owner_subject_id": OWNER,
+                "owner_role": "expansion-staff",
+                "due_at": "2026-10-13T02:30:00Z",
+                "reason": "Synthetic SQL assignment",
+            },
+            headers={
+                **headers(MANAGER),
+                "Idempotency-Key": "synthetic-pg-assign",
+                "If-Match": 'W/"1"',
+            },
+        )
+        assert assigned.status_code == 200, assigned.text
+        aid = assigned.json()["assignment_id"]
+        claimed = client.post(
+            f"/api/v1/assignments/{aid}/actions/claim",
+            json={"reason": "Synthetic SQL claim"},
+            headers={
+                **headers(OWNER),
+                "Idempotency-Key": "synthetic-pg-claim",
+                "If-Match": f'W/"{assigned.json()["version"]}"',
+            },
+        )
+        assert claimed.status_code == 200, claimed.text
+    finally:
+        bundle.engine.close()
+    bundle = _bundle(db, monkeypatch)
+    try:
+        client = client_for(bundle)
+        store = bundle.assisted_intake_store
+        store.refresh(TENANT)
+        assert store.assignments[aid]["status"] == "CLAIMED"
+        assert claimed.json()["audit_event_id"] in store.workflow_audits
+
+        def command(action, body, actor, version):
+            return client.post(
+                f"/api/v1/assignments/{aid}/actions/{action}",
+                json=body,
+                headers={
+                    **headers(actor),
+                    "Idempotency-Key": "synthetic-pg-" + action,
+                    "If-Match": f'W/"{version}"',
+                },
+            )
+
+        def run(action, body, actor, version):
+            if failure == action:
+                store.refresh(TENANT)
+                snapshot = deepcopy(
+                    (
+                        store.intakes,
+                        store.assignments,
+                        store.slas,
+                        store.workflow_audits,
+                        store.workflow_outbox,
+                        store.replays,
+                    )
+                )
+                original = store._store.put
+
+                def fail(collection, key, value):
+                    if collection == "assisted_intake.workflow_outbox":
+                        raise RuntimeError("synthetic assignment SQL flush failure")
+                    return original(collection, key, value)
+
+                monkeypatch.setattr(store._store, "put", fail)
+                with pytest.raises(RuntimeError, match="synthetic assignment SQL flush failure"):
+                    command(action, body, actor, version)
+                store.refresh(TENANT)
+                assert (
+                    store.intakes,
+                    store.assignments,
+                    store.slas,
+                    store.workflow_audits,
+                    store.workflow_outbox,
+                    store.replays,
+                ) == snapshot
+                monkeypatch.setattr(store._store, "put", original)
+            response = command(action, body, actor, version)
+            assert response.status_code == 200, response.text
+            return response
+
+        transferred = run(
+            "transfer",
+            {
+                "target_owner_subject_id": MANAGER,
+                "target_owner_role": "site-reviewer",
+                "reason": "Synthetic SQL handoff",
+                "handoff_note": "Synthetic SQL reviewed target",
+            },
+            OWNER,
+            claimed.json()["version"],
+        )
+        accepted = run(
+            "claim",
+            {"reason": "Synthetic SQL target acceptance"},
+            MANAGER,
+            transferred.json()["version"],
+        )
+        store.refresh(TENANT)
+        cancelled = client.post(
+            f"/api/v1/intakes/{iid}/actions/cancel",
+            json={"reason": "Synthetic SQL completed work"},
+            headers={
+                **headers(MANAGER),
+                "Idempotency-Key": "synthetic-pg-cancel",
+                "If-Match": f'W/"{store.intakes[iid]["version"]}"',
+            },
+        )
+        assert cancelled.status_code == 200, cancelled.text
+        completed = run(
+            "complete",
+            {"reason": "Synthetic SQL task completion"},
+            MANAGER,
+            accepted.json()["version"],
+        )
+    finally:
+        bundle.engine.close()
+    bundle = _bundle(db, monkeypatch)
+    try:
+        client = client_for(bundle)
+        store = bundle.assisted_intake_store
+        store.refresh(TENANT)
+        assert store.assignments[aid]["status"] == "COMPLETED"
+        sla = next(s for s in store.slas.values() if s["assignment_id"] == aid)
+        assert sla["state"] == "COMPLETED"
+        assert (
+            completed.json()["audit_event_id"] in store.workflow_audits
+            and sla["audit_event_id"] in store.workflow_audits
+        )
+        detail = client.get(f"/api/v1/intakes/{iid}", headers=headers(MANAGER))
+        assert (
+            detail.status_code == 200
+            and detail.json()["assignment_id"] == aid
+            and detail.json()["sla_state"] == "COMPLETED"
+        )
+        before = deepcopy((store.workflow_audits, store.workflow_outbox))
+        replay = client.post(
+            f"/api/v1/assignments/{aid}/actions/complete",
+            json={"reason": "Synthetic SQL task completion"},
+            headers={
+                **headers(MANAGER),
+                "Idempotency-Key": "synthetic-pg-complete",
+                "If-Match": f'W/"{accepted.json()["version"]}"',
+            },
+        )
+        assert replay.status_code == 200 and replay.json() == completed.json()
+        store.refresh(TENANT)
+        assert (store.workflow_audits, store.workflow_outbox) == before
     finally:
         bundle.engine.close()

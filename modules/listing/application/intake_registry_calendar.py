@@ -15,6 +15,7 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from modules.listing.application.intake_completion import CompletionRequirement
 from modules.listing.application.intake_workflow_bootstrap import (
     IntakeWorkflowPlan,
     IntakeWorkflowUnavailable,
@@ -370,6 +371,28 @@ class RegistryIntakeWorkflowPolicy:
             actor_id == owner_subject_id and Role.EXPANSION_USER in actor_roles
         ):
             raise PermissionError("Actor cannot assign this workflow")
+        return self._assignment_plan(
+            policy,
+            calendar,
+            schedule,
+            actor_roles,
+            owner_roles,
+            owner_role,
+            requested_due_at,
+            reason,
+        )
+
+    def _assignment_plan(
+        self,
+        policy,
+        calendar,
+        schedule,
+        actor_roles,
+        owner_roles,
+        owner_role,
+        requested_due_at,
+        reason,
+    ):
         bindings = policy.parameters.get("assignee_role_bindings")
         try:
             if not isinstance(bindings, Mapping) or Role(bindings[owner_role]) not in owner_roles:
@@ -378,10 +401,16 @@ class RegistryIntakeWorkflowPolicy:
             raise PermissionError("Assignment role is not authorized by policy") from exc
         if not isinstance(reason, str) or not reason.strip():
             raise PermissionError("Assignment justification is required")
-        requested = _instant(requested_due_at)
         override = policy.parameters.get("deadline_override")
         if not isinstance(override, Mapping):
             raise IntakeWorkflowUnavailable("Explicit deadline-override policy is required")
+        if requested_due_at is None:
+            if override.get("mode") not in {"KEEP_POLICY", "BOUNDED_WORK_MINUTES"}:
+                raise IntakeWorkflowUnavailable("Unsupported deadline-override policy")
+            return IntakeWorkflowPlan(
+                _required_text(policy.parameters.get("queue_key"), "routing queue"), schedule
+            )
+        requested = _instant(requested_due_at)
         result = schedule
         if override.get("mode") == "BOUNDED_WORK_MINUTES":
             roles = {Role(x) for x in override.get("actor_roles", [])}
@@ -417,6 +446,91 @@ class RegistryIntakeWorkflowPolicy:
         return IntakeWorkflowPlan(
             _required_text(policy.parameters.get("queue_key"), "routing queue"), result
         )
+
+    def authorize_assignment_actor(
+        self, schedule: SlaSchedule, scope: Mapping[str, Any], actor_id: str
+    ) -> None:
+        self._bound(schedule, scope)
+        _account, roles = self._account(actor_id, scope)
+        if not roles & {Role.EXPANSION_USER, Role.SITE_REVIEWER, Role.DATA_OWNER, Role.EXECUTIVE}:
+            raise PermissionError("Current account cannot use the assignment workflow")
+
+    def authorize_assignment_action(
+        self,
+        schedule: SlaSchedule,
+        scope: Mapping[str, Any],
+        *,
+        actor_id: str,
+        owner_subject_id: str,
+        owner_role: str,
+        action: str,
+    ) -> None:
+        self.authorize_assignment_actor(schedule, scope, actor_id)
+        policy, _calendar = self._bound(schedule, scope)
+        _actor, roles = self._account(actor_id, scope)
+        _owner, owner_roles = self._account(owner_subject_id, scope)
+        bindings = policy.parameters.get("assignee_role_bindings")
+        try:
+            if not isinstance(bindings, Mapping) or Role(bindings[owner_role]) not in owner_roles:
+                raise PermissionError("Assignment owner no longer holds its bound role")
+        except (KeyError, ValueError) as exc:
+            raise PermissionError("Assignment owner role is not configured") from exc
+        same_owner = UUID(actor_id) == UUID(owner_subject_id)
+        manager = bool(roles & {Role.SITE_REVIEWER, Role.EXECUTIVE})
+        if action == "claim" and not same_owner:
+            raise PermissionError("Only the current assignee may claim or accept transfer")
+        if action in {"transfer", "complete"} and not (same_owner or manager):
+            raise PermissionError("Only owner or manager may change this assignment")
+        if action not in {"claim", "transfer", "complete"}:
+            raise PermissionError("Unknown assignment command")
+
+    def resolve_transfer(
+        self,
+        scope: Mapping[str, Any],
+        schedule: SlaSchedule,
+        *,
+        actor_id: str,
+        current_owner_subject_id: str,
+        current_owner_role: str,
+        owner_subject_id: str,
+        owner_role: str,
+        requested_due_at: datetime,
+        reason: str,
+    ) -> IntakeWorkflowPlan:
+        self.authorize_assignment_action(
+            schedule,
+            scope,
+            actor_id=actor_id,
+            owner_subject_id=current_owner_subject_id,
+            owner_role=current_owner_role,
+            action="transfer",
+        )
+        policy, calendar = self._bound(schedule, scope)
+        if not all(
+            policy.reads(x) for x in ("actor_account", "target_account", "requested_due_at")
+        ):
+            raise IntakeWorkflowUnavailable("Transfer policy does not declare runtime inputs")
+        _actor, actor_roles = self._account(actor_id, scope)
+        _owner, owner_roles = self._account(owner_subject_id, scope)
+        return self._assignment_plan(
+            policy,
+            calendar,
+            schedule,
+            actor_roles,
+            owner_roles,
+            owner_role,
+            requested_due_at,
+            reason,
+        )
+
+    def completion_requirements(self, scope: Mapping[str, Any], schedule: SlaSchedule):
+        policy, _calendar = self._bound(schedule, scope)
+        if not policy.reads("work_evidence"):
+            raise IntakeWorkflowUnavailable("Completion policy does not declare work evidence")
+        requirements = policy.parameters.get("completion_requirements")
+        if not isinstance(requirements, list) or not requirements:
+            raise IntakeWorkflowUnavailable("Explicit completion requirements are unavailable")
+        return tuple(CompletionRequirement.parse(value) for value in requirements)
 
     def permits_pause(
         self, schedule: SlaSchedule, reason: str, expected_resume_at: datetime

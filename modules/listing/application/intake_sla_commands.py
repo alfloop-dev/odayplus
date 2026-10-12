@@ -40,6 +40,53 @@ def _iso(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+def sla_from_record(record: Mapping[str, Any], scope: Mapping[str, Any]) -> SlaInstanceAggregate:
+    before = deepcopy(dict(record))
+    schedule = schedule_from_record(before)
+    if (
+        schedule.tenant_id != scope.get("tenant_id")
+        or before.get("tenant_id") != schedule.tenant_id
+        or before.get("policy_version") != schedule.policy_version
+        or before.get("calendar_version") != schedule.calendar_version
+        or _parse(before["due_at"]) != schedule.due_at
+    ):
+        raise IntakeWorkflowUnavailable("SLA envelope and authoritative schedule differ")
+    intervals = []
+    for entry in before.get("pause_intervals", []):
+        UUID(entry["pause_interval_id"])
+        UUID(entry["approved_by"])
+        UUID(entry["created_by"])
+        if UUID(entry["approved_by"]) == UUID(entry["created_by"]):
+            raise IntakeWorkflowUnavailable("Pause approval cannot be self approval")
+        intervals.append(
+            SlaPauseInterval(
+                _parse(entry["paused_at"]),
+                _parse(entry["expected_resume_at"]),
+                entry["reason"],
+                _parse(entry["resumed_at"]) if entry.get("resumed_at") else None,
+            )
+        )
+    active = [entry for entry in before.get("pause_intervals", []) if not entry.get("resumed_at")]
+    if (
+        len(active) > 1
+        or (active and active[-1] is not before["pause_intervals"][-1])
+        or (before["state"] == "PAUSED") != bool(active)
+        or before.get("active_pause_interval_id")
+        != (active[0]["pause_interval_id"] if active else None)
+    ):
+        raise IntakeWorkflowUnavailable("Stored active pause interval is inconsistent")
+    return SlaInstanceAggregate(
+        id=before["sla_instance_id"],
+        tenant_id=schedule.tenant_id,
+        status=SlaState(before["state"]),
+        version=before["version"],
+        due_at=schedule.due_at,
+        schedule=schedule,
+        pause_intervals=intervals,
+        paused_duration_seconds=before["paused_duration_seconds"],
+    )
+
+
 def change_sla(
     store: Any,
     record: Mapping[str, Any],
@@ -82,40 +129,7 @@ def change_sla(
     authorized_scope = deepcopy(dict(scope))
     policy.authorize_sla_actor(schedule, authorized_scope, actor_id)
     calendar = policy.calendar_for(authorized_scope)
-    intervals = []
-    for entry in before.get("pause_intervals", []):
-        UUID(entry["pause_interval_id"])
-        UUID(entry["approved_by"])
-        UUID(entry["created_by"])
-        if UUID(entry["approved_by"]) == UUID(entry["created_by"]):
-            raise IntakeWorkflowUnavailable("Pause approval cannot be self approval")
-        intervals.append(
-            SlaPauseInterval(
-                _parse(entry["paused_at"]),
-                _parse(entry["expected_resume_at"]),
-                entry["reason"],
-                _parse(entry["resumed_at"]) if entry.get("resumed_at") else None,
-            )
-        )
-    active = [entry for entry in before.get("pause_intervals", []) if not entry.get("resumed_at")]
-    if (
-        len(active) > 1
-        or (active and active[-1] is not before["pause_intervals"][-1])
-        or (before["state"] == "PAUSED") != bool(active)
-        or before.get("active_pause_interval_id")
-        != (active[0]["pause_interval_id"] if active else None)
-    ):
-        raise IntakeWorkflowUnavailable("Stored active pause interval is inconsistent")
-    aggregate = SlaInstanceAggregate(
-        id=before["sla_instance_id"],
-        tenant_id=schedule.tenant_id,
-        status=SlaState(before["state"]),
-        version=before["version"],
-        due_at=schedule.due_at,
-        schedule=schedule,
-        pause_intervals=intervals,
-        paused_duration_seconds=before["paused_duration_seconds"],
-    )
+    aggregate = sla_from_record(before, scope)
     repository = InMemorySlaRepository()
     repository.save_sla(aggregate)
     service = AssignmentSlaService(InMemoryAssignmentRepository(), repository, calendar=calendar)
@@ -155,7 +169,7 @@ def change_sla(
         updated["active_pause_interval_id"] = pause_id
         action = "sla.pause"
     else:
-        if not intervals or current_time <= intervals[-1].started_at:
+        if not aggregate.pause_intervals or current_time <= aggregate.pause_intervals[-1].started_at:
             raise IntakeWorkflowUnavailable("Resume must follow the active pause start")
         service.resume_sla(aggregate.id, context)
         updated["pause_intervals"][-1].update(

@@ -4,11 +4,66 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from modules.listing.application.intake_completion import CompletionRequirement
 from modules.listing.application.intake_workflow_bootstrap import IntakeWorkflowPlan
 from modules.listing.domain.intake_states import SlaSchedule
 
 
 class SyntheticIntakeWorkflowPolicy:
+    def authorize_assignment_actor(self, schedule, scope, actor_id):
+        self.authorize_sla_actor(schedule, scope, actor_id)
+
+    def authorize_assignment_action(
+        self, schedule, scope, *, actor_id, owner_subject_id, owner_role, action
+    ):
+        self.authorize_assignment_actor(schedule, scope, actor_id)
+        UUID(owner_subject_id)
+        if action == "claim" and UUID(actor_id) != UUID(owner_subject_id):
+            raise PermissionError("Only synthetic assignee may claim")
+
+    def resolve_transfer(
+        self,
+        scope,
+        schedule,
+        *,
+        actor_id,
+        current_owner_subject_id,
+        current_owner_role,
+        owner_subject_id,
+        owner_role,
+        requested_due_at,
+        reason,
+    ):
+        self.authorize_assignment_action(
+            schedule,
+            scope,
+            actor_id=actor_id,
+            owner_subject_id=current_owner_subject_id,
+            owner_role=current_owner_role,
+            action="transfer",
+        )
+        return self.resolve_assignment(
+            scope,
+            schedule,
+            actor_id=actor_id,
+            owner_subject_id=owner_subject_id,
+            owner_role=owner_role,
+            requested_due_at=requested_due_at or schedule.due_at,
+            reason=reason,
+        )
+
+    def completion_requirements(self, scope, schedule):
+        return (
+            CompletionRequirement.parse(
+                {
+                    "kind": "intake",
+                    "allowed_states": ["READY", "CANCELLED"],
+                    "minimum_count": 1,
+                    "require_audit": True,
+                }
+            ),
+        )
+
     def authorize_sla_actor(self, schedule, scope, actor_id):
         UUID(actor_id)
         assert schedule.tenant_id == scope["tenant_id"]
@@ -101,3 +156,39 @@ def seed_synthetic_sla(record, *, paused=False, started_at=None):
             }
         ]
     return record
+
+
+def seed_synthetic_assignment_workflow(store, assignment, intake):
+    """Explicit valid workflow behind resource-scope probes."""
+    from copy import deepcopy
+
+    from modules.listing.application.intake_workflow_bootstrap import record_workflow_change
+
+    assignment.setdefault("owner_role", "expansion_user")
+    assignment.setdefault("created_at", datetime.now(UTC).isoformat())
+    sid = str(uuid4())
+    sla = {
+        "sla_instance_id": sid,
+        "assignment_id": assignment["assignment_id"],
+        "intake_id": intake["intake_id"],
+        "tenant_id": assignment["tenant_id"],
+        "state": "ON_TRACK",
+        "version": 1,
+        "paused_duration_seconds": 0,
+        "audit_event_id": str(uuid4()),
+        "correlation_id": str(uuid4()),
+    }
+    seed_synthetic_sla(sla)
+    assignment["due_at"] = sla["due_at"]
+    store.slas[sid] = sla
+    intake.setdefault("correlation_id", str(uuid4()))
+    intake["state"] = "READY"
+    record_workflow_change(
+        store,
+        intake,
+        resource_type="intake",
+        before=deepcopy(intake),
+        after=intake,
+        action="synthetic.work_resolved",
+        actor_id="00000000-0000-0000-0000-000000000101",
+    )

@@ -18,6 +18,11 @@ from uuid import UUID, uuid4
 from modules.external_data.geo import GeoPipeline
 from modules.listing import ListingPipeline
 from modules.listing.application.assignment_sla import AssignmentSlaService
+from modules.listing.application.intake_assignment_commands import (
+    authorize_assignment_read,
+    change_assignment,
+)
+from modules.listing.application.intake_completion import IntakeWorkIncomplete
 from modules.listing.application.intake_sla_commands import change_sla
 from modules.listing.application.intake_workflow_bootstrap import (
     IntakeWorkflowPlan,
@@ -1762,6 +1767,14 @@ else:
                 # missing axes still fail closed for restricted principals.
                 require_intake_scope(principal, value)
 
+        def require_assignment_registry_authority(value: dict[str, Any], actor_id: str) -> None:
+            try:
+                authorize_assignment_read(active, value, workflow_policy, actor_id)
+            except PermissionError as exc:
+                raise HTTPException(403, "ROLE_DENIED") from exc
+            except Exception as exc:
+                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+
         def require_sla_registry_authority(value: dict[str, Any], actor_id: str) -> None:
             # Replays retain their outcome, but never retain revoked identity
             # grants. This check must precede load_replay as well as mutation.
@@ -1855,7 +1868,7 @@ else:
                 # Intake bootstrap/assignment is one rollback boundary. Other
                 # commands include sagas that intentionally commit FAILED state
                 # before returning a non-2xx business outcome (e.g. SiteScore).
-                atomic_operations = {"submitUrlIntake", "submitIntakeBatch", "commitXlsxBatch", "assignIntake", "pauseSla", "resumeSla"}
+                atomic_operations = {"submitUrlIntake", "submitIntakeBatch", "commitXlsxBatch", "assignIntake", "pauseSla", "resumeSla", "claimAssignment", "transferAssignment", "completeAssignment", "cancelIntake"}
                 unit_of_work = active.transaction() if operation_id in atomic_operations else nullcontext()
                 with unit_of_work:
                     # Memory requests share one locked surface; recheck after
@@ -2682,6 +2695,12 @@ else:
                 (a for a in active.assignments.values() if a.get("intake_id") == intake_id and a.get("status") != "COMPLETED"),
                 None
             )
+
+            if active_assignment is None:
+                active_assignment = max(
+                    (a for a in active.assignments.values() if a.get("intake_id") == intake_id),
+                    key=lambda a: (a.get("created_at", ""), a["assignment_id"]), default=None,
+                )
 
             # Lookup SLA if exists
             active_sla = next(
@@ -3893,6 +3912,8 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
+                current = active.intakes[intake_id]
+                require_intake_scope(principal, current)
                 if current.get("state") not in {
                     "SUBMITTED", "AWAITING_ASSISTED_ENTRY", "NEEDS_REVIEW"
                 }:
@@ -3902,7 +3923,14 @@ else:
                     )
                 require_version(if_match, current["version"])
                 from_state = current.get("state", "SUBMITTED")
+                if any(d.get("intake_id") == intake_id and d.get("status") == "EXECUTED" for d in active.decisions.values()) or any(
+                    d.get("intake_id") == intake_id and d.get("status") in {"CANDIDATE_CREATED", "SCORE_QUEUED", "SCORE_FAILED", "COMPLETED"} for d in active.promotions.values()
+                ):
+                    raise HTTPException(409, "CANNOT_CANCEL")
+                before = copy.deepcopy(current)
                 updated = generic_mutate(active.intakes, intake_id, "CANCELLED", actor_id)
+                record_workflow_change(active, current, resource_type="intake", before=before,
+                    after=updated, action="intake.cancel", actor_id=actor_id)
                 tr = receipt(from_state, "CANCELLED", updated["version"], actor_id)
                 return tr, 200
 
@@ -4159,32 +4187,29 @@ else:
             if not (is_manager or is_staff or is_steward):
                 raise HTTPException(403, "ROLE_DENIED")
 
-            prior = load_replay(
-                key,
-                body.model_dump(),
-                tenant_id,
-                actor_id,
-                "claimAssignment",
-                resource_id=assignment_id,
-            )
-            if prior is not None:
-                val, _ = prior
-                response.status_code = 200
-                response.headers["ETag"] = f'W/"{val["version"]}"'
-                return AssignmentReceipt(**val)
-
-            if (is_staff or is_steward) and current.get("owner_subject_id") != actor_id:
-                raise HTTPException(403, "OWNERSHIP_REQUIRED")
+            require_assignment_registry_authority(current, actor_id)
 
             def make() -> tuple[dict[str, Any], int]:
-                if current.get("status") not in {
-                    "ASSIGNED",
-                    "TRANSFERRED",
-                    "ESCALATED",
-                }:
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-                require_version(if_match, current["version"])
-                updated = generic_mutate(active.assignments, assignment_id, "CLAIMED", actor_id)
+                working = active.assignments[assignment_id]
+                require_workflow_resource_scope(principal, working)
+                require_version(if_match, working["version"])
+                try:
+                    updated = change_assignment(
+                        active, working, workflow_policy, action="claim", actor_id=actor_id,
+                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else (PrincipalRole.DATA_STEWARD if is_steward else PrincipalRole.EXPANSION_STAFF),
+                        reason=body.reason, correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
+                        current_time=datetime.now(UTC),
+                    )
+                except PermissionError as exc:
+                    raise HTTPException(403, "OWNERSHIP_REQUIRED") from exc
+                except IntakeWorkIncomplete as exc:
+                    raise HTTPException(409, "WORK_INCOMPLETE") from exc
+                except DomainValidationError as exc:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
+                except (IntakeWorkflowUnavailable, KeyError, AttributeError) as exc:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+                except ValueError as exc:
+                    raise HTTPException(422, "VALIDATION_FAILED") from exc
                 return updated, 200
 
             val, code, was_replayed = replay(
@@ -4251,39 +4276,31 @@ else:
             if not (is_manager or is_staff or is_steward):
                 raise HTTPException(403, "ROLE_DENIED")
 
-            prior = load_replay(
-                key,
-                body.model_dump(),
-                tenant_id,
-                actor_id,
-                "transferAssignment",
-                resource_id=assignment_id,
-            )
-            if prior is not None:
-                val, _ = prior
-                response.status_code = 200
-                response.headers["ETag"] = f'W/"{val["version"]}"'
-                return AssignmentReceipt(**val)
-
-            if is_staff and current.get("owner_subject_id") != actor_id:
-                raise HTTPException(403, "OWNERSHIP_REQUIRED")
+            require_assignment_registry_authority(current, actor_id)
 
             def make() -> tuple[dict[str, Any], int]:
-                if current.get("status") not in {"ASSIGNED", "CLAIMED"}:
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-                require_version(if_match, current["version"])
-                current["owner_subject_id"] = body.target_owner_subject_id
-                if body.due_at is not None:
-                    current["due_at"] = body.due_at
-                updated = generic_mutate(active.assignments, assignment_id, "TRANSFERRED", actor_id)
-                updated["audit_event_id"] = str(uuid4())
-
-                # Update parent intake
-                intake = active.intakes.get(updated.get("intake_id", ""))
-                if intake:
-                    intake["assigned_to"] = body.target_owner_subject_id
-                    if body.due_at is not None:
-                        intake["due_at"] = body.due_at
+                working = active.assignments[assignment_id]
+                require_workflow_resource_scope(principal, working)
+                require_version(if_match, working["version"])
+                try:
+                    updated = change_assignment(
+                        active, working, workflow_policy, action="transfer", actor_id=actor_id,
+                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else (PrincipalRole.DATA_STEWARD if is_steward else PrincipalRole.EXPANSION_STAFF),
+                        reason=body.reason, correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
+                        current_time=datetime.now(UTC), target={"owner_subject_id": body.target_owner_subject_id, "owner_role": body.target_owner_role,
+                                    "handoff_note": body.handoff_note,
+                                    "due_at": datetime.fromisoformat(body.due_at.replace("Z", "+00:00")) if body.due_at else None},
+                    )
+                except PermissionError as exc:
+                    raise HTTPException(403, "OWNERSHIP_REQUIRED") from exc
+                except IntakeWorkIncomplete as exc:
+                    raise HTTPException(409, "WORK_INCOMPLETE") from exc
+                except DomainValidationError as exc:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
+                except (IntakeWorkflowUnavailable, KeyError, AttributeError) as exc:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+                except ValueError as exc:
+                    raise HTTPException(422, "VALIDATION_FAILED") from exc
                 return updated, 200
 
             val, code, was_replayed = replay(
@@ -4350,14 +4367,29 @@ else:
             if not (is_manager or is_staff or is_steward):
                 raise HTTPException(403, "ROLE_DENIED")
 
-            if (is_staff or is_steward) and current.get("owner_subject_id") != actor_id:
-                raise HTTPException(403, "OWNERSHIP_REQUIRED")
+            require_assignment_registry_authority(current, actor_id)
 
             def make() -> tuple[dict[str, Any], int]:
-                if current.get("status") not in {"CLAIMED", "ESCALATED"}:
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-                require_version(if_match, current["version"])
-                updated = generic_mutate(active.assignments, assignment_id, "COMPLETED", actor_id)
+                working = active.assignments[assignment_id]
+                require_workflow_resource_scope(principal, working)
+                require_version(if_match, working["version"])
+                try:
+                    updated = change_assignment(
+                        active, working, workflow_policy, action="complete", actor_id=actor_id,
+                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else (PrincipalRole.DATA_STEWARD if is_steward else PrincipalRole.EXPANSION_STAFF),
+                        reason=body.reason, correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
+                        current_time=datetime.now(UTC),
+                    )
+                except PermissionError as exc:
+                    raise HTTPException(403, "OWNERSHIP_REQUIRED") from exc
+                except IntakeWorkIncomplete as exc:
+                    raise HTTPException(409, "WORK_INCOMPLETE") from exc
+                except DomainValidationError as exc:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
+                except (IntakeWorkflowUnavailable, KeyError, AttributeError) as exc:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+                except ValueError as exc:
+                    raise HTTPException(422, "VALIDATION_FAILED") from exc
                 return updated, 200
 
             val, code, was_replayed = replay(
