@@ -973,6 +973,7 @@ function CampaignWorkbench({
 
       {/* Sticky lifecycle detail */}
       <GrowthActionDetail
+        key={selected.id}
         item={selected}
         recommendation={recommendationFor(selected)}
         segmentName={segmentName}
@@ -1158,7 +1159,11 @@ function ApprovalFlowPanel({
   onStatusChange: (status: GrowthStatus) => void;
 }) {
   const [approvalId, setApprovalId] = useState<string | null>(item.approvalId ?? null);
-  const [growthStatus, setGrowthStatus] = useState<string>(item.status);
+  const growthStatus = item.status;
+  const submitKey = useRef(newIdempotencyKey());
+  const busyRef = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const [busy, setBusy] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
@@ -1169,17 +1174,19 @@ function ApprovalFlowPanel({
   };
 
   const handleSubmit = async () => {
-    if (busy) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setApiError(null);
-    const result = await submitGrowthForApproval({ actionId: item.id });
+    const result = await submitGrowthForApproval({ actionId: item.id, idempotencyKey: submitKey.current });
+    if (!mountedRef.current) return;
+    busyRef.current = false;
     setBusy(false);
     if (!result) {
-      setApiError("送審被伺服器衝突閘門拒絕或 API 不可用；請檢查衝突後重試。");
+      setApiError("尚未確認送審結果，請重試以核對此草稿。");
       return;
     }
     setApprovalId(result.approval.id);
-    setGrowthStatus(result.status);
     onStatusChange(result.status as GrowthStatus);
     audit("SUBMIT_FOR_APPROVAL", { approvalId: result.approval.id, status: result.status });
   };
@@ -1187,7 +1194,7 @@ function ApprovalFlowPanel({
   return (
     <section className={g.actionPanel} data-testid="growth-approval-panel" data-growth-status={growthStatus}>
       {apiError ? (
-        <div className={g.inlineError} data-testid="growth-approval-error">
+        <div className={g.inlineError} role="alert" data-testid="growth-approval-error">
           <p>{apiError}</p>
         </div>
       ) : null}
@@ -1234,20 +1241,30 @@ function LifecycleTransitionPanel({
     RUNNING: { target: "OBSERVING", label: "啟動觀察" },
     EXECUTED: { target: "OBSERVING", label: "啟動觀察" },
   } as Partial<Record<GrowthStatus, { target: GrowthStatus; label: string }>>)[item.status];
+  const intentRef = useRef<{ signature: string; key: string } | null>(null);
+  const busyRef = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const [busy, setBusy] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
   const handleTransition = async () => {
-    if (!transition || busy) return;
+    if (!transition || busyRef.current) return;
+    busyRef.current = true;
+    const signature = JSON.stringify({ actionId: item.id, targetStatus: transition.target });
+    if (intentRef.current?.signature !== signature) intentRef.current = { signature, key: newIdempotencyKey() };
     setBusy(true);
     setApiError(null);
     const result = await transitionGrowthAction({
       actionId: item.id,
       targetStatus: transition.target,
+      idempotencyKey: intentRef.current.key,
     });
+    if (!mountedRef.current) return;
+    busyRef.current = false;
     setBusy(false);
     if (!result) {
-      setApiError("生命週期更新失敗；狀態未變更，請稍後重試。");
+      setApiError("尚未確認生命週期更新結果，請重試以核對。");
       return;
     }
     onStatusChange(result.status);
@@ -1255,7 +1272,7 @@ function LifecycleTransitionPanel({
 
   return (
     <section className={g.actionPanel} data-testid="growth-transition-panel">
-      {apiError ? <div className={g.inlineError}>{apiError}</div> : null}
+      {apiError ? <div className={g.inlineError} role="alert">{apiError}</div> : null}
       <button
         type="button"
         className={g.primaryAction}

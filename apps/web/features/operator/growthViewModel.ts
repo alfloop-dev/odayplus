@@ -569,6 +569,7 @@ export async function submitGrowthForApproval(params: {
 /** Approve or reject a Growth approval; advances the linked Growth state. */
 export async function resolveGrowthApproval(params: {
   approvalId: string;
+  idempotencyKey?: string;
   decision: "approved" | "rejected";
   reason?: string;
 }): Promise<{ approvalId: string; growthStatus: string; correlationId: string } | null> {
@@ -576,14 +577,16 @@ export async function resolveGrowthApproval(params: {
   const result = await apiFetch<{
     id: string;
     growthStatus: string;
+    status: string;
     correlation_id: string;
   }>(`/approvals/${params.approvalId}/decision`, {
     method: "POST",
+    timeoutMs: 20_000,
     correlationId,
-    headers: { "Idempotency-Key": newIdempotencyKey() },
+    headers: { "Idempotency-Key": params.idempotencyKey ?? newIdempotencyKey() },
     body: JSON.stringify({ decision: params.decision, reason: params.reason ?? "" }),
   });
-  if (!result) return null;
+  if (!result || result.id !== params.approvalId || result.status !== params.decision || result.growthStatus !== (params.decision === "approved" ? "APPROVED" : "DRAFT")) return null;
   return {
     approvalId: result.id,
     growthStatus: result.growthStatus,
@@ -594,6 +597,7 @@ export async function resolveGrowthApproval(params: {
 /** Advance a Growth Action through the server-owned lifecycle. */
 export async function transitionGrowthAction(params: {
   actionId: string;
+  idempotencyKey?: string;
   targetStatus: GrowthStatus;
 }): Promise<{ actionId: string; status: GrowthStatus; correlationId: string } | null> {
   const correlationId = newCorrelationId();
@@ -603,11 +607,12 @@ export async function transitionGrowthAction(params: {
     correlation_id: string;
   }>(`/actions/${params.actionId}/transition`, {
     method: "POST",
+    timeoutMs: 20_000,
     correlationId,
-    headers: { "Idempotency-Key": newIdempotencyKey() },
+    headers: { "Idempotency-Key": params.idempotencyKey ?? newIdempotencyKey() },
     body: JSON.stringify({ targetStatus: params.targetStatus }),
   });
-  if (!result) return null;
+  if (!result || result.id !== params.actionId || result.status !== params.targetStatus) return null;
   return {
     actionId: result.id,
     status: result.status,

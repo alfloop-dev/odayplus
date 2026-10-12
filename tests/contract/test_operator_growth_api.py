@@ -49,6 +49,10 @@ def _headers(idem: str | None = None, correlation: str = "corr-growth-test") -> 
     return hdr
 
 
+def _execution_headers(idem: str | None = None) -> dict[str, str]:
+    return {**_headers(idem=idem), "X-Roles": "regional_supervisor", "X-Subject-Id": "synthetic-growth-executor"}
+
+
 @pytest.mark.parametrize("rationale", ["", "   ", None])
 def test_growth_outcome_requires_human_reason_without_mutating_record(rationale):
     client = _client()
@@ -342,7 +346,7 @@ def test_full_lifecycle_pending_to_outcome_ready() -> None:
         resp = client.post(
             f"{BASE}/actions/{draft['id']}/transition",
             json={"targetStatus": target},
-            headers=_headers(),
+            headers=_execution_headers(),
         )
         assert resp.status_code == 200, (target, resp.text)
         assert resp.json()["status"] == target
@@ -389,7 +393,7 @@ def test_ineffective_action_cannot_close_directly() -> None:
     resp = client.post(
         f"{BASE}/actions/growth-7002/transition",
         json={"targetStatus": "CLOSED"},
-        headers=_headers(),
+        headers=_execution_headers(),
     )
     assert resp.status_code == 409, resp.text
 
@@ -457,7 +461,7 @@ def _drive_to_outcome_ready(client: TestClient, action_id: str) -> None:
         client.post(
             f"{BASE}/actions/{action_id}/transition",
             json={"targetStatus": target},
-            headers=_headers(),
+            headers=_execution_headers(),
         )
 
 
@@ -549,19 +553,24 @@ def test_evidence_below_the_causal_threshold_cannot_close_an_action() -> None:
     assert fetched["evidenceLevel"] == "L2"
 
 
-@pytest.mark.parametrize("operation", ["create", "submit"])
+@pytest.mark.parametrize("operation", ["create", "submit", "transition", "decision"])
 def test_growth_draft_commands_refuse_unbound_legacy_replay(operation):
     from modules.opsboard.application.growth import GrowthConflict, GrowthService
 
     service = GrowthService()
     draft = service.create_action(name="Synthetic", segment_id="seg-metro-dinner", objective="Synthetic", target_lift=1)
+    approval = service.submit_for_approval(action_id=draft["id"])["approval"] if operation == "decision" else None
     service._state["idempotencyResults"]["synthetic-legacy-command"] = {"id": "unattributable"}
     before = service.export_state()
     with pytest.raises(GrowthConflict, match="UNBOUND_LEGACY_REPLAY"):
         if operation == "create":
             service.create_action(name="Synthetic", segment_id="seg-metro-dinner", objective="Synthetic", target_lift=1, idempotency_key="synthetic-legacy-command")
-        else:
+        elif operation == "submit":
             service.submit_for_approval(action_id=draft["id"], idempotency_key="synthetic-legacy-command")
+        elif operation == "transition":
+            service.transition_action(action_id=draft["id"], target_status="SCHEDULED", idempotency_key="synthetic-legacy-command")
+        else:
+            service.resolve_approval(approval_id=approval["id"], decision="approved", idempotency_key="synthetic-legacy-command")
     assert service.export_state() == before
 
 
@@ -645,3 +654,176 @@ def test_growth_command_receipts_survive_reload_and_bind_tenant():
     assert replay["idempotentReplay"] and replay["approval"] == submitted["approval"]
     with pytest.raises(GrowthConflict, match="IDEMPOTENCY_CONFLICT"):
         reloaded.create_action(**{**kwargs, "budget": 5})
+
+
+@pytest.mark.parametrize("role,can_decide,can_execute", [
+    ("operations_manager", True, False),
+    ("regional_supervisor", False, True),
+    ("auditor", False, False),
+])
+def test_growth_decision_and_execution_use_separate_rbac_permissions(role, can_decide, can_execute):
+    client = _client()
+    draft = _create_draft(client, kind="offpeak", store="Synthetic Authority Store", window="Synthetic Authority Window")
+    approval = client.post(f"{BASE}/actions/{draft['id']}/submit", json={}, headers=_headers()).json()["approval"]
+    caller = {**_headers(), "X-Roles": role, "X-Subject-Id": "synthetic-role-probe"}
+    decided = client.post(f"{BASE}/approvals/{approval['id']}/decision", json={"decision": "approved", "reason": "Synthetic independent review"}, headers=caller)
+    assert decided.status_code == (200 if can_decide else 403), decided.text
+    if not can_decide:
+        authorized = client.post(f"{BASE}/approvals/{approval['id']}/decision", json={"decision": "approved", "reason": "Synthetic authorized review"}, headers=_headers())
+        assert authorized.status_code == 200
+    before = client.get(f"{BASE}/actions/{draft['id']}", headers=_headers()).json()
+    executed = client.post(f"{BASE}/actions/{draft['id']}/transition", json={"targetStatus": "SCHEDULED"}, headers=caller)
+    assert executed.status_code == (200 if can_execute else 403), executed.text
+    if not can_execute:
+        assert client.get(f"{BASE}/actions/{draft['id']}", headers=_headers()).json() == before
+
+
+def test_growth_transition_replay_is_actor_request_bound_and_ignores_body_actor():
+    client = _client()
+    path = f"{BASE}/actions/growth-7004/transition"
+    body = {"targetStatus": "OUTCOME_READY", "actorName": "forged", "actorRoleId": "forged"}
+    headers = _execution_headers(idem="synthetic-transition-bound")
+    first = client.post(path, json=body, headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["auditEvent"]["actorName"] == headers["X-Subject-Id"]
+    assert first.json()["auditEvent"]["actorRoleId"] != "forged"
+    replay = client.post(path, json=body, headers=headers)
+    assert replay.status_code == 200 and replay.json()["idempotentReplay"]
+    assert replay.json()["auditEvent"] == first.json()["auditEvent"]
+    changed = client.post(path, json={"targetStatus": "OBSERVING"}, headers=headers)
+    assert changed.status_code == 409
+    other_record = client.post(f"{BASE}/actions/growth-7001/transition", json=body, headers=headers)
+    assert other_record.status_code == 409
+    other_actor = client.post(path, json=body, headers={**headers, "X-Subject-Id": "synthetic-other-executor"})
+    assert other_actor.status_code == 409 and not other_actor.json().get("idempotentReplay")
+    denied = client.post(path, json=body, headers={**headers, "X-Roles": "operations_manager"})
+    assert denied.status_code == 403
+
+
+def test_growth_decision_replay_is_bound_to_verified_actor_record_and_request(monkeypatch):
+    from modules.opsboard.application.growth import GrowthService
+
+    events = []
+    original = GrowthService._append_audit_event
+    def record(self, **kwargs):
+        result = original(self, **kwargs)
+        events.append(result)
+        return result
+    monkeypatch.setattr(GrowthService, "_append_audit_event", record)
+    client = _client()
+    draft = _create_draft(client, kind="offpeak", store="Synthetic Decision Store", window="Synthetic Decision Window")
+    approval = client.post(f"{BASE}/actions/{draft['id']}/submit", json={}, headers=_headers()).json()["approval"]
+    other = _create_draft(client, kind="offpeak", store="Synthetic Other Store", window="Synthetic Other Window")
+    other_approval = client.post(f"{BASE}/actions/{other['id']}/submit", json={}, headers=_headers()).json()["approval"]
+    path = f"{BASE}/approvals/{approval['id']}/decision"
+    headers = {**_headers(idem="synthetic-decision-bound"), "X-Subject-Id": "synthetic-independent-reviewer"}
+    body = {"decision": "approved", "reason": "Synthetic review", "actorName": "forged", "actorRoleId": "forged"}
+    accepted = client.post(path, json=body, headers=headers)
+    assert accepted.status_code == 200, accepted.text
+    assert events[-1]["actorName"] == headers["X-Subject-Id"] and events[-1]["actorRoleId"] != "forged"
+    count = len(events)
+    replay = client.post(path, json=body, headers=headers)
+    assert replay.status_code == 200 and replay.json()["idempotentReplay"]
+    assert replay.json()["decision"] == accepted.json()["decision"] and len(events) == count
+    for altered in [{**body, "reason": "Changed reason"}, {**body, "decision": "rejected"}]:
+        assert client.post(path, json=altered, headers=headers).status_code == 409
+    assert client.post(f"{BASE}/approvals/{other_approval['id']}/decision", json=body, headers=headers).status_code == 409
+    different_actor = client.post(path, json=body, headers={**headers, "X-Subject-Id": "synthetic-other-reviewer"})
+    assert different_actor.status_code == 409 and "already decided" in different_actor.text
+    assert client.post(path, json=body, headers={**headers, "X-Roles": "regional_supervisor"}).status_code == 403
+    assert len(events) == count
+
+
+def test_growth_approval_and_execution_authority_fail_closed_without_wiring():
+    from fastapi import FastAPI
+
+    from apps.api.app.routes.operator_modules.growth import create_growth_sub_router
+    from modules.opsboard.application.growth import GrowthService
+
+    service = GrowthService()
+    before = service.export_state()
+    app = FastAPI()
+    app.include_router(create_growth_sub_router(service))
+    client = TestClient(app)
+    for path, body in [("/growth/actions/growth-7004/transition", {"targetStatus": "OBSERVING"}), ("/growth/approvals/synthetic/decision", {"decision": "approved"})]:
+        response = client.post(path, json=body)
+        assert response.status_code == 403 and "GROWTH_COMMAND_AUTHORITY_UNCONFIGURED" in response.text
+    assert service.export_state() == before
+
+
+def test_growth_transition_and_decision_receipts_survive_reload_and_bind_tenant():
+    from modules.opsboard.application.growth import GrowthPolicyError, GrowthService
+
+    service = GrowthService(tenant_id="synthetic-tenant")
+    draft = service.create_action(name="Synthetic", segment_id="seg-metro-dinner", objective="Synthetic", target_lift=1, store="Synthetic Store", observation_window="Synthetic Window")
+    approval = service.submit_for_approval(action_id=draft["id"])["approval"]
+    decision_args = dict(approval_id=approval["id"], decision="approved", reason="Synthetic review", actor_name="synthetic-reviewer", tenant_id="synthetic-tenant", idempotency_key="synthetic-durable-decision")
+    decided = service.resolve_approval(**decision_args)
+    restored = GrowthService(initial_state=service.export_state(), seed_fixtures=False, tenant_id="synthetic-tenant")
+    assert restored.resolve_approval(**decision_args)["decision"] == decided["decision"]
+    with pytest.raises(GrowthPolicyError, match="TENANT_SCOPE_DENIED"):
+        restored.resolve_approval(**{**decision_args, "tenant_id": "other"})
+    transition_args = dict(action_id=draft["id"], target_status="SCHEDULED", actor_name="synthetic-executor", tenant_id="synthetic-tenant", idempotency_key="synthetic-durable-transition")
+    transitioned = restored.transition_action(**transition_args)
+    reloaded = GrowthService(initial_state=restored.export_state(), seed_fixtures=False, tenant_id="synthetic-tenant")
+    replay = reloaded.transition_action(**transition_args)
+    assert replay["idempotentReplay"] and replay["auditEvent"] == transitioned["auditEvent"]
+    with pytest.raises(GrowthPolicyError, match="TENANT_SCOPE_DENIED"):
+        reloaded.transition_action(**{**transition_args, "tenant_id": "other"})
+
+
+@pytest.mark.parametrize("target", ["PENDING_APPROVAL", "APPROVED"])
+def test_growth_generic_execution_cannot_bypass_approval_workflow(target):
+    client = _client()
+    draft = _create_draft(client, kind="offpeak", store="Synthetic Boundary Store", window="Synthetic Boundary Window")
+    before = client.get(f"{BASE}/actions/{draft['id']}", headers=_headers()).json()
+    denied = client.post(f"{BASE}/actions/{draft['id']}/transition", json={"targetStatus": target}, headers=_execution_headers())
+    assert denied.status_code == 422 and "APPROVAL_WORKFLOW_REQUIRED" in denied.text
+    assert client.get(f"{BASE}/actions/{draft['id']}", headers=_headers()).json() == before
+    assert client.get(f"{BASE}/approvals", headers=_headers()).json()["items"] == []
+
+
+def test_growth_generic_execution_cannot_replace_a_pending_decision_or_outcome():
+    client = _client()
+    draft = _create_draft(client, kind="offpeak", store="Synthetic Pending Store", window="Synthetic Pending Window")
+    client.post(f"{BASE}/actions/{draft['id']}/submit", json={}, headers=_headers())
+    before = client.get(f"{BASE}/actions/{draft['id']}", headers=_headers()).json()
+    for target in ["APPROVED", "DRAFT"]:
+        denied = client.post(f"{BASE}/actions/{draft['id']}/transition", json={"targetStatus": target}, headers=_execution_headers())
+        assert denied.status_code == 422 and "APPROVAL_WORKFLOW_REQUIRED" in denied.text
+    assert client.get(f"{BASE}/actions/{draft['id']}", headers=_headers()).json() == before
+    outcome_before = client.get(f"{BASE}/actions/growth-7001", headers=_headers()).json()
+    denied = client.post(f"{BASE}/actions/growth-7001/transition", json={"targetStatus": "INEFFECTIVE"}, headers=_execution_headers())
+    assert denied.status_code == 422 and "OUTCOME_WORKFLOW_REQUIRED" in denied.text
+    assert client.get(f"{BASE}/actions/growth-7001", headers=_headers()).json() == outcome_before
+    before = client.get(f"{BASE}/actions/growth-7003", headers=_headers()).json()
+    denied = client.post(f"{BASE}/actions/growth-7003/transition", json={"targetStatus": "INEFFECTIVE"}, headers=_execution_headers())
+    assert denied.status_code == 422 and "OUTCOME_WORKFLOW_REQUIRED" in denied.text
+    assert client.get(f"{BASE}/actions/growth-7003", headers=_headers()).json() == before
+
+
+def test_growth_decision_does_not_revive_a_cancelled_linked_action():
+    client = _client()
+    draft = _create_draft(client, kind="offpeak", store="Synthetic Cancelled Store", window="Synthetic Cancelled Window")
+    approval = client.post(f"{BASE}/actions/{draft['id']}/submit", json={}, headers=_headers()).json()["approval"]
+    cancelled = client.post(f"{BASE}/actions/{draft['id']}/transition", json={"targetStatus": "CANCELLED"}, headers=_execution_headers())
+    assert cancelled.status_code == 200, cancelled.text
+    denied = client.post(f"{BASE}/approvals/{approval['id']}/decision", json={"decision": "approved", "reason": "Synthetic review"}, headers=_headers())
+    assert denied.status_code == 409 and "not PENDING_APPROVAL" in denied.text
+    assert client.get(f"{BASE}/actions/{draft['id']}", headers=_headers()).json()["status"] == "CANCELLED"
+    assert client.get(f"{BASE}/decisions", headers=_headers()).json()["items"] == []
+
+
+@pytest.mark.parametrize("target", ["CLOSED", "INEFFECTIVE"])
+def test_growth_generic_execution_cannot_bypass_a_mature_outcome_decision(target):
+    from modules.opsboard.application.growth import GrowthPolicyError, GrowthService
+
+    service = GrowthService()
+    # An isolated, mature, effective fixture proves the positive closeout gate
+    # cannot substitute for the dedicated human outcome command.
+    service._find_action("growth-7001")["status"] = "OUTCOME_READY"
+    assert service.get_action("growth-7001")["closeoutGate"]["canClose"]
+    before = service.export_state()
+    with pytest.raises(GrowthPolicyError, match="OUTCOME_WORKFLOW_REQUIRED"):
+        service.transition_action(action_id="growth-7001", target_status=target)
+    assert service.export_state() == before

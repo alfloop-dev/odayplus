@@ -980,6 +980,12 @@ def create_operator_router(
                 require_permission_fn=require_operator_permission(
                     "intervention", Action.CREATE, engine=authz_engine
                 ),
+                require_approval_permission_fn=require_operator_permission(
+                    "intervention", Action.APPROVE, engine=authz_engine
+                ),
+                require_transition_permission_fn=require_operator_permission(
+                    "intervention", Action.EXECUTE, engine=authz_engine
+                ),
                 service_resolver=growth_resolver,
             )
         )
@@ -1201,6 +1207,12 @@ def create_operator_router(
             require_view_permission_fn=operator_view_guard,
             require_permission_fn=require_operator_permission(
                 "intervention", Action.CREATE, engine=authz_engine
+            ),
+            require_approval_permission_fn=require_operator_permission(
+                "intervention", Action.APPROVE, engine=authz_engine
+            ),
+            require_transition_permission_fn=require_operator_permission(
+                "intervention", Action.EXECUTE, engine=authz_engine
             ),
         )
     )

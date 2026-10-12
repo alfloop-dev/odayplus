@@ -487,6 +487,62 @@ describe("GrowthWorkspace API loading", () => {
     expect(screen.queryByTestId("growth-reject")).not.toBeInTheDocument();
   });
 
+  it("retains submit intent across an uncertain result without claiming approval", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const draft = { ...GROWTH_ITEMS[4], status: "DRAFT" as const };
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _options?: RequestInit): Promise<Response> => fetchMock.mock.calls.length === 1
+      ? Promise.reject(new Error("Synthetic lost acknowledgement"))
+      : Promise.resolve(new Response(JSON.stringify({ id: draft.id, status: "PENDING_APPROVAL", approval: { id: "synthetic-approval", ref: draft.id, module: "Growth", status: "pending" } }))));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GrowthWorkspace basePath="/operator" searchParams={{ item: draft.id }} apiData={{ availability: "fixture", freshness: FIXTURE_FRESHNESS, fromApi: false, items: [draft], recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS }} />);
+    fireEvent.click(screen.getByTestId("growth-submit-approval"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("尚未確認送審"));
+    expect(screen.queryByTestId("growth-approval-created")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("growth-submit-approval"));
+    await screen.findByTestId("growth-approval-created");
+    const first = fetchMock.mock.calls[0][1]!;
+    const second = fetchMock.mock.calls[1][1]!;
+    expect(new Headers(first.headers).get("Idempotency-Key")).toBe(new Headers(second.headers).get("Idempotency-Key"));
+    expect(screen.getByTestId("growth-approval-created")).toHaveTextContent("synthetic-approval");
+  });
+
+  it("retains transition intent and rejects a mismatched acknowledgement", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const item = { ...GROWTH_ITEMS[4], status: "APPROVED" as const };
+    let settle!: (value: Response) => void;
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _options?: RequestInit): Promise<Response> => fetchMock.mock.calls.length === 1
+      ? Promise.resolve(new Response(JSON.stringify({ id: "wrong-action", status: "SCHEDULED" })))
+      : new Promise<Response>(resolve => { settle = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GrowthWorkspace basePath="/operator" searchParams={{ item: item.id }} apiData={{ availability: "fixture", freshness: FIXTURE_FRESHNESS, fromApi: false, items: [item], recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS }} />);
+    fireEvent.click(screen.getByTestId("growth-transition-action"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("尚未確認生命週期"));
+    expect(screen.getByTestId("growth-item-detail")).toHaveTextContent("已核准");
+    fireEvent.click(screen.getByTestId("growth-transition-action"));
+    expect(screen.getByTestId("growth-transition-action")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("growth-transition-action"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(new Headers(fetchMock.mock.calls[0][1]!.headers).get("Idempotency-Key")).toBe(new Headers(fetchMock.mock.calls[1][1]!.headers).get("Idempotency-Key"));
+    settle(new Response(JSON.stringify({ id: item.id, status: "SCHEDULED" })));
+    await waitFor(() => expect(screen.getByTestId("growth-item-detail")).toHaveTextContent("已排程"));
+  });
+
+  it("does not carry an old record response into a newly selected action", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const first = { ...GROWTH_ITEMS[4], id: "synthetic-first", status: "APPROVED" as const };
+    const second = { ...GROWTH_ITEMS[4], id: "synthetic-second", status: "APPROVED" as const };
+    let settle!: (value: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => { settle = resolve; })));
+    const apiData = { availability: "fixture" as const, freshness: FIXTURE_FRESHNESS, fromApi: false, items: [first, second], recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS };
+    const { rerender } = render(<GrowthWorkspace basePath="/operator" searchParams={{ item: first.id }} apiData={apiData} />);
+    fireEvent.click(screen.getByTestId("growth-transition-action"));
+    rerender(<GrowthWorkspace basePath="/operator" searchParams={{ item: second.id }} apiData={apiData} />);
+    settle(new Response(JSON.stringify({ id: first.id, status: "SCHEDULED" })));
+    await waitFor(() => expect(screen.getByTestId("growth-item-detail")).toHaveTextContent(second.id));
+    expect(screen.getByTestId("growth-item-detail")).toHaveTextContent("已核准");
+    expect(screen.getByTestId("growth-transition-action")).toHaveTextContent("排程上線");
+  });
+
   it("advances lifecycle only after the transition API succeeds", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
     const approved = {

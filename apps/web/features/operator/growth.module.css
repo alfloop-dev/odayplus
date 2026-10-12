@@ -1381,3 +1381,6 @@
     flex: 1;
   }
 }
+
+/* VDC-003: readable lifecycle/approval help on the white action panel. */
+.actionPanel .actionNote { color: #536079; }

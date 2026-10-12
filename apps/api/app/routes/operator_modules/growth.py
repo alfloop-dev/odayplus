@@ -11,7 +11,8 @@ Routes (all under /operator/growth):
   POST /actions/{id}/transition   — lifecycle advance
   POST /actions/{id}/outcome      — effectiveness writeback
 
-Auth: write endpoints require intervention CREATE guard passed from operator.py.
+Auth: draft/submit/outcome writes use intervention CREATE; approval decisions
+use APPROVE; lifecycle transitions use EXECUTE. Guards are passed from operator.py.
 Idempotency-Key is handled per-endpoint and passed to the service.
 X-Correlation-Id is read from request.state.correlation_id.
 """
@@ -157,6 +158,8 @@ def create_growth_sub_router(
     *,
     require_view_permission_fn: Any = None,
     require_permission_fn: Any = None,
+    require_approval_permission_fn: Any = None,
+    require_transition_permission_fn: Any = None,
     service_resolver: Any = None,
 ) -> APIRouter:
     """Return the Growth sub-router wired to a shared GrowthService instance."""
@@ -171,13 +174,19 @@ def create_growth_sub_router(
             raise HTTPException(status_code=401, detail="VERIFIED_ROLE_REQUIRED")
         return principal, role
 
-    # Build auth dependency list
+    # Separate business permissions; a CREATE grant is not approval or execution authority.
     read_deps: list[Any] = []
     if require_view_permission_fn is not None:
         read_deps = [Depends(require_view_permission_fn)]
     write_deps: list[Any] = []
     if require_permission_fn is not None:
         write_deps = [Depends(require_permission_fn)]
+
+    def command_authority_unconfigured() -> None:
+        raise HTTPException(status_code=403, detail="GROWTH_COMMAND_AUTHORITY_UNCONFIGURED")
+
+    approval_deps = [Depends(require_approval_permission_fn or command_authority_unconfigured)]
+    transition_deps = [Depends(require_transition_permission_fn or command_authority_unconfigured)]
 
     # ------------------------------------------------------------------
     # Read endpoints
@@ -289,7 +298,7 @@ def create_growth_sub_router(
         except GrowthConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    @router.post("/actions/{action_id}/transition", dependencies=write_deps)
+    @router.post("/actions/{action_id}/transition", dependencies=transition_deps)
     def transition_action(
         action_id: str,
         body: TransitionActionPayload,
@@ -297,13 +306,15 @@ def create_growth_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
+            principal, actor_role = verified_actor(request)
             return resolve_service(
                 request, service, service_resolver
             ).transition_action(
                 action_id=action_id,
                 target_status=body.targetStatus,
-                actor_role_id=body.actorRoleId or "opsLead",
-                actor_name=body.actorName or _actor_name_from_role(body.actorRoleId),
+                actor_role_id=actor_role,
+                actor_name=principal.subject_id,
+                tenant_id=principal.tenant_id,
                 idempotency_key=idempotency_key,
                 correlation_id=request.state.correlation_id,
             )
@@ -313,6 +324,9 @@ def create_growth_sub_router(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except GrowthConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+        except GrowthPolicyError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     @router.post("/actions/{action_id}/outcome", dependencies=write_deps)
     def write_outcome(
@@ -406,7 +420,7 @@ def create_growth_sub_router(
             "correlation_id": request.state.correlation_id,
         }
 
-    @router.post("/approvals/{approval_id}/decision", dependencies=write_deps)
+    @router.post("/approvals/{approval_id}/decision", dependencies=approval_deps)
     def decide_approval(
         approval_id: str,
         body: ApprovalDecisionPayload,
@@ -414,14 +428,16 @@ def create_growth_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
+            principal, actor_role = verified_actor(request)
             return resolve_service(
                 request, service, service_resolver
             ).resolve_approval(
                 approval_id=approval_id,
                 decision=body.decision,
                 reason=body.reason,
-                actor_role_id=body.actorRoleId or "opsLead",
-                actor_name=body.actorName or _actor_name_from_role(body.actorRoleId),
+                actor_role_id=actor_role,
+                actor_name=principal.subject_id,
+                tenant_id=principal.tenant_id,
                 idempotency_key=idempotency_key,
                 correlation_id=request.state.correlation_id,
             )
@@ -429,6 +445,9 @@ def create_growth_sub_router(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except GrowthConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+        except GrowthPolicyError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     @router.get("/decisions", dependencies=read_deps)
     def list_decisions(request: Request) -> dict[str, Any]:
