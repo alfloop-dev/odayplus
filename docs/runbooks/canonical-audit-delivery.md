@@ -66,9 +66,32 @@ Google Cloud permissions or storage policy.
 
 ## Remaining production gates
 
-This implementation does not close the whole §6 contract. The 5-minute pending
-backlog breaker, priority scheduling and Security/Platform paging still need
-runtime integration and evidence. Synchronously required WORM actions such as
+The v1 Intake mutation runner now checks persisted canonical backlog after
+authorized idempotency replay and before a new high-risk command executes.
+Identity corrections/reviews, match decisions, merge/split/unmerge, promotion
+requests/reviews, reversal requests and quarantine release fail closed when the
+oldest delivery intent exceeds 300 seconds or its backlog cannot be verified.
+Ordinary corrections, reads and already-committed authorized receipts remain
+available. The privacy service checks the same dependency before hold release,
+actual purge and confidential/restricted export.
+
+Backlog age comes from the durable delivery job's creation time, not historical
+business occurrence time. Missing or mismatched intent is unavailable, never a
+healthy zero. Failed/dead-letter jobs remain pending until a verified object URI
+is attached. The worker samples all provisioned/queued tenant scopes and emits
+bounded pending-count, oldest-age and observation-failure metrics through the
+existing release-bound exporter.
+
+Canonical and Store Ops audit jobs have first priority at the queue's next
+eligible lease/claim. Receipt rows remain nonexecutable; ordinary jobs retain
+their chronological order. This does not interrupt an already-running job or
+prove adequate dedicated-publisher capacity.
+
+This implementation does not close the whole §6 contract. Legacy Operator BFF
+coverage, continuous/dedicated publisher capacity, actual Security/Platform
+paging and verified provider receipts still need integration/admission evidence.
+The current generic P1 receiver is ops-lead; it is not evidence that both required
+teams were paged. Synchronously required WORM actions such as
 purge, legal-hold release and restricted export must retain their own policy
 and execution gates; this asynchronous delivery path cannot substitute for them.
 

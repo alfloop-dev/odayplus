@@ -1667,6 +1667,11 @@ else:
         active_audit_log = audit_log or InMemoryAuditLog()
         router = APIRouter(tags=["assisted-listing-intake"])
 
+        backlog = None
+        if getattr(getattr(active, "_engine", None), "dialect", None) == "postgresql":
+            from shared.audit.backlog import CanonicalAuditBacklog
+            backlog = CanonicalAuditBacklog(active._engine)
+
         def initialize_workflow(intake: dict[str, Any]) -> None:
             try:
                 initialize_intake_workflow(active, intake, workflow_policy)
@@ -1877,6 +1882,27 @@ else:
                     prior = load_replay(key, body, tenant_id, actor_id, operation_id, resource_id=resource_id)
                     if prior is not None:
                         return prior[0], prior[1], True
+                    high_risk = operation_id in {
+                        "requestCandidatePromotion", "decideMatchCase", "mergeProperties", "splitProperty",
+                        "unmergeProperty", "reviewPromotionDecision", "reviewIdentityDecision", "requestIdentityDecisionReversal",
+                    }
+                    high_risk = high_risk or (
+                        operation_id == "proposeCorrection"
+                        and is_identity_affecting_field(body.get("field_path", ""))
+                    )
+                    high_risk = high_risk or (
+                        operation_id == "reopenIntake"
+                        and active.intakes.get(resource_id, {}).get("state") == "QUARANTINED"
+                    )
+                    if high_risk and backlog is not None:
+                        from shared.audit.backlog import (
+                            AuditBacklogBlocked,
+                            AuditBacklogUnavailable,
+                        )
+                        try:
+                            backlog.require_available(tenant_id)
+                        except (AuditBacklogBlocked, AuditBacklogUnavailable) as exc:
+                            raise HTTPException(503, "Canonical audit delivery backpressure is active") from exc
                     result, code = make()
                     digest = fingerprint(body)
                     replay_scope = resource_id or "_collection"

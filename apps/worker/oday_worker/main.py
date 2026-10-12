@@ -145,6 +145,7 @@ class ODayWorker:
 
     def run_once(self) -> bool:
         """Claim and execute the next queued job. Returns True if a job was executed."""
+        self.sample_audit_backlog()
         try:
             job = self.job_queue.claim_next(worker_id=self.worker_id)
         except Exception as exc:
@@ -383,6 +384,24 @@ class ODayWorker:
                     )
             if not executed:
                 time.sleep(1.0)
+
+    def sample_audit_backlog(self):
+        if not self.persistence.is_production:
+            return None
+        from shared.audit.backlog import CanonicalAuditBacklog
+        try:
+            health = CanonicalAuditBacklog(self.persistence.engine).all_tenants()
+            labels = {"service": "oday-worker"}
+            self.telemetry.metrics.set("audit_worm_pending_count", health.pending, labels=labels)
+            self.telemetry.metrics.set("audit_worm_oldest_pending_seconds", health.oldest_seconds, labels=labels)
+            return health
+        except Exception as exc:
+            try:
+                self.telemetry.metrics.increment("audit_worm_backlog_check_failure_count", labels={"service": "oday-worker", "error_class": type(exc).__name__})
+            except Exception:
+                pass
+            self.telemetry.logger.error("Canonical audit backlog observation unavailable", correlation_id="unknown", resource="audit/backlog", error_code=type(exc).__name__)
+            return None
 
     def export_metrics(self) -> dict[str, Any] | None:
         """Export worker metrics snapshot via ProductionMetricsExporter if exact 40-char release SHA is present in environment."""

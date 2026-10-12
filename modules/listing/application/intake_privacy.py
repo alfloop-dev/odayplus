@@ -122,6 +122,20 @@ class IntakePrivacyService:
         self.intake_repository = intake_repository
         self.document_store = document_store
 
+    def _require_audit_health(self, tenant_id):
+        engine = getattr(self.audit_log, "_engine", None)
+        if getattr(engine, "dialect", None) != "postgresql":
+            return
+        from shared.audit.backlog import (
+            AuditBacklogBlocked,
+            AuditBacklogUnavailable,
+            CanonicalAuditBacklog,
+        )
+        try:
+            CanonicalAuditBacklog(engine).require_available(tenant_id)
+        except (AuditBacklogBlocked, AuditBacklogUnavailable) as exc:
+            raise HTTPException(503, "Canonical audit delivery backpressure is active") from exc
+
     def _get_holds_collection(self) -> str:
         return "audit.legal_holds"
 
@@ -285,6 +299,7 @@ class IntakePrivacyService:
                 "Separation of duties: actor cannot approve own legal hold release.",
             )
 
+        self._require_audit_health(tenant_id)
         hold.released_by = principal.subject_id
         hold.released_at = datetime.now(UTC)
         hold.version += 1
@@ -361,6 +376,9 @@ class IntakePrivacyService:
                 DenialCode.SECOND_ACTOR_REQUIRED,
                 "Separation of duties: submitter cannot purge own submission.",
             )
+
+        if not dry_run:
+            self._require_audit_health(tenant_id)
 
         # Check retention
         # We check the resolved policy of the subject data classification
@@ -491,6 +509,8 @@ class IntakePrivacyService:
         if not entity:
             raise HTTPException(status_code=404, detail=f"Subject {subject_id} not found.")
 
+        if sensitive or data_classification.upper() not in {"PUBLIC", "INTERNAL"} or str(entity.get("data_classification", "RESTRICTED")).upper() not in {"PUBLIC", "INTERNAL"}:
+            self._require_audit_health(tenant_id)
         export_id = f"export-{uuid_hex()}"
         watermark = f"watermark:{export_id}:requested_by:{principal.subject_id}:time:{datetime.now(UTC).isoformat()}"
 

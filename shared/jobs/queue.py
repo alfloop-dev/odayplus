@@ -11,6 +11,8 @@ NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES = (
     ".command-receipt",
 )
 
+AUDIT_DELIVERY_JOB_TYPES = ("canonical-audit-delivery", "store-ops-audit-delivery")
+
 
 def is_non_executable_receipt_job_type(job_type: str) -> bool:
     """Return whether a durable queue row is evidence rather than worker work."""
@@ -187,7 +189,10 @@ class InMemoryJobQueue:
         now = datetime.now(UTC)
 
         # Sort by creation time to act as a FIFO queue
-        for record in sorted(self._jobs.values(), key=lambda r: r.created_at):
+        for record in sorted(
+            self._jobs.values(),
+            key=lambda r: (r.job_type not in AUDIT_DELIVERY_JOB_TYPES, r.created_at, r.job_id),
+        ):
             if is_non_executable_receipt_job_type(record.job_type):
                 continue
             is_eligible = record.status == JobStatus.QUEUED or (
@@ -327,7 +332,11 @@ class InMemoryJobQueue:
     def claim_next(self, worker_id: str = "worker-1") -> JobRecord | None:
         with self._reservation_lock:
             now = datetime.now(UTC)
-            for job_id, record in self._jobs.items():
+            for record in sorted(
+                self._jobs.values(),
+                key=lambda r: (r.job_type not in AUDIT_DELIVERY_JOB_TYPES, r.created_at, r.job_id),
+            ):
+                job_id = record.job_id
                 is_eligible = record.status == JobStatus.QUEUED or (
                     record.status == JobStatus.RUNNING
                     and record.lease_expires_at is not None

@@ -15,6 +15,7 @@ from typing import Any
 
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.jobs.queue import (
+    AUDIT_DELIVERY_JOB_TYPES,
     DELIVERY_SETTLED_JOB_STATUSES,
     NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES,
     JobDeliveryState,
@@ -121,13 +122,14 @@ class DurableJobQueue:
                     "SELECT * FROM durable_jobs "
                     "WHERE (status IN (?, ?, ?) OR (status = ? AND leased_until < ?)) "
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "ORDER BY created_at ASC LIMIT 1",
+                    "ORDER BY CASE WHEN job_type IN (?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
                     (
                         JobStatus.QUEUED.value,
                         *_LEGACY_RETRYING_STATUS_VALUES,
                         JobStatus.RUNNING.value,
                         now_str,
                         *(f"%{suffix}" for suffix in NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES),
+                        *AUDIT_DELIVERY_JOB_TYPES,
                     ),
                 )
                 if row is None:
@@ -244,7 +246,7 @@ class DurableJobQueue:
                     "  WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "    AND lease_expires_at < ?)) "
                     "  AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "  ORDER BY created_at "
+                    "  ORDER BY CASE WHEN job_type IN (?, ?) THEN 0 ELSE 1 END, created_at, job_id "
                     "  FOR UPDATE SKIP LOCKED "
                     "  LIMIT 1"
                     ") "
@@ -263,6 +265,7 @@ class DurableJobQueue:
                         JobStatus.RUNNING.value,
                         now_str,
                         *receipt_patterns,
+                        *AUDIT_DELIVERY_JOB_TYPES,
                         JobStatus.RUNNING.value,
                         *_LEGACY_RETRYING_STATUS_VALUES,
                         JobDeliveryState.RETRYING.value,
@@ -279,13 +282,14 @@ class DurableJobQueue:
                     "WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "AND lease_expires_at < ?)) "
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "ORDER BY created_at LIMIT 1",
+                    "ORDER BY CASE WHEN job_type IN (?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
                     (
                         JobStatus.QUEUED.value,
                         *_LEGACY_RETRYING_STATUS_VALUES,
                         JobStatus.RUNNING.value,
                         now_str,
                         *receipt_patterns,
+                        *AUDIT_DELIVERY_JOB_TYPES,
                     ),
                 )
                 if row is None:
