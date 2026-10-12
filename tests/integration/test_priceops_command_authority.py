@@ -142,3 +142,107 @@ def test_alternative_scenario_cannot_approve_different_optimized_prices(context)
     assert response.status_code == 422
     assert service.repository.list_approvals("plan-a") == []
     assert service.repository.get_plan("plan-a").status.value == "pending_approval"
+
+
+def proposal(plan_id="new-plan", *, store_id="store-a", brand_id="brand-a"):
+    return {
+        "plan_id": plan_id, "tenant_id": "tenant-a", "items": [{
+            "item_id": "new-item", "store_id": store_id, "brand_id": brand_id,
+            "machine_type": "dryer", "unit_cost": 30, "current_price": 80,
+            "baseline_demand": 40, "elasticity_value": -1, "confidence": 0.8,
+            "applicable_min_price": 60, "applicable_max_price": 100,
+        }],
+    }
+
+
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize("axis", ["x-store-ids", "x-brand-ids", "x-region-ids", "x-assigned-area-ids", "x-heat-zone-ids"])
+def test_creation_checks_every_scope_axis_before_writes(context, batch, axis):
+    client, service, audit, headers = context
+    body = {"plans": [proposal()]} if batch else proposal()
+    endpoint = "/priceops/optimizer-jobs" if batch else "/priceops/plans"
+    response = client.post(endpoint, headers={**headers, axis: "outside-scope"}, json=body)
+    assert response.status_code == 403
+    assert service.repository.get_plan("new-plan") is None
+    assert not [row for row in audit.list_events() if row.event_type in {"priceops.plan_created.v1", "priceops.optimized.v1"}]
+
+
+def test_mixed_scope_batch_is_rejected_before_creating_valid_first_row(context):
+    client, service, audit, headers = context
+    response = client.post("/priceops/optimizer-jobs", headers={**headers, "x-store-ids": "store-a"}, json={
+        "plans": [proposal("good-first"), proposal("bad-second", store_id="store-b")],
+    })
+    assert response.status_code == 403
+    assert service.repository.get_plan("good-first") is None
+    assert service.repository.get_plan("bad-second") is None
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_creation_replay_is_actor_bound_and_rechecks_current_scope(context, batch):
+    client, service, audit, headers = context
+    body = {"plans": [proposal()]} if batch else proposal()
+    endpoint = "/priceops/optimizer-jobs" if batch else "/priceops/plans"
+    key = {"Idempotency-Key": "creation-intent"}
+    first = client.post(endpoint, headers=key, json=body)
+    assert first.status_code == (202 if batch else 201), first.text
+    replay = client.post(endpoint, headers=key, json=body)
+    assert replay.status_code == first.status_code and replay.json()["created"] is False
+    other = client.post(endpoint, headers={**headers, **key, "x-subject-id": "another-pricer"}, json=body)
+    assert other.status_code == 409
+    narrowed = client.post(endpoint, headers={**headers, **key, "x-store-ids": "store-b"}, json=body)
+    assert narrowed.status_code == 403
+    if batch:
+        job_id = first.json()["job_id"]
+        assert client.get(f"/priceops/optimizer-jobs/{job_id}").status_code == 200
+        assert client.get(f"/priceops/optimizer-jobs/{job_id}", headers={**headers, "x-store-ids": "store-b"}).status_code == 404
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_creation_never_overwrites_existing_or_foreign_plans(context, batch):
+    client, service, audit, _ = context
+    before = service.repository.get_plan("plan-a")
+    body = {"plans": [proposal("good-first"), proposal("plan-a")]} if batch else proposal("plan-a")
+    endpoint = "/priceops/optimizer-jobs" if batch else "/priceops/plans"
+    response = client.post(endpoint, json=body)
+    assert response.status_code == 409
+    assert service.repository.get_plan("plan-a") is before
+    assert service.repository.get_plan("good-first") is None
+    foreign = {"plans": [proposal("plan-b")]} if batch else proposal("plan-b")
+    assert client.post(endpoint, json=foreign).status_code == 404
+    assert service.repository.get_plan("plan-b").tenant_id == "tenant-b"
+
+
+def test_duplicate_batch_ids_fail_before_any_plan_is_created(context):
+    client, service, audit, _ = context
+    response = client.post("/priceops/optimizer-jobs", json={"plans": [proposal(), proposal()]})
+    assert response.status_code == 409
+    assert service.repository.get_plan("new-plan") is None
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_verified_module_scope_restricts_creation(context, monkeypatch, batch):
+    from dataclasses import replace
+
+    from apps.api.oday_api.security import dependencies
+
+    original = dependencies.principal_from_headers
+    def verified_principal(*args, **kwargs):
+        principal = original(*args, **kwargs)
+        return replace(principal, scope=replace(principal.scope, modules=frozenset({"other-module"})))
+    monkeypatch.setattr(dependencies, "principal_from_headers", verified_principal)
+    client, service, audit, _ = context
+    endpoint = "/priceops/optimizer-jobs" if batch else "/priceops/plans"
+    body = {"plans": [proposal()]} if batch else proposal()
+    assert client.post(endpoint, json=body).status_code == 403
+    assert service.repository.get_plan("new-plan") is None
+
+
+@pytest.mark.parametrize("header,value", [("x-assigned-area-ids", "assigned-a"), ("x-heat-zone-ids", "zone-a"), ("x-clearance", "PUBLIC")])
+def test_existing_plan_and_creation_cannot_ignore_restricted_axes_or_clearance(context, header, value):
+    client, service, audit, headers = context
+    scoped = {**headers, header: value}
+    assert client.get("/priceops/plans", headers=scoped).json()["items"] == []
+    assert client.get("/priceops/plans/plan-a/comparison", headers=scoped).status_code == 404
+    assert client.post("/priceops/plans/plan-a/simulate-scenario", headers=scoped, json={"candidate_prices": {"item-plan-a": 80}}).status_code == 404
+    assert client.post("/priceops/plans", headers=scoped, json=proposal()).status_code == 403
+    assert service.repository.get_plan("new-plan") is None

@@ -124,10 +124,13 @@ from modules.priceops.domain.exploration import (
 )
 from modules.priceops.domain.pricing import (
     ApprovalRecord,
+    DecisionWritebackRecord,
     InterventionTreatmentHandoff,
     LabelRegistryEntry,
     ObservationWindow,
+    PlanAlreadyExistsError,
     PlanOptimization,
+    PlanScenarioSimulation,
     PlanSimulation,
     PricingEffectEvaluation,
     PricingExecution,
@@ -1063,6 +1066,8 @@ class DurablePriceOpsRepository:
     """Durable mirror of ``InMemoryPriceOpsRepository``."""
 
     _PLANS = "priceops.plans"
+    _SCENARIOS = "priceops.scenario_simulations"
+    _WRITEBACKS = "priceops.decision_writebacks"
     _SIMULATIONS = "priceops.simulations"
     _OPTIMIZATIONS = "priceops.optimizations"
     _APPROVALS = "priceops.approvals"
@@ -1078,6 +1083,25 @@ class DurablePriceOpsRepository:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    def insert_plan(self, plan: PricingPlan) -> PricingPlan:
+        if not self._store.put_if_absent(self._PLANS, plan.plan_id, plan, group_key=plan.tenant_id):
+            raise PlanAlreadyExistsError("plan id already exists")
+        return plan
+
+    def save_scenario_simulation(self, scenario: PlanScenarioSimulation) -> PlanScenarioSimulation:
+        self._store.put(self._SCENARIOS, scenario.scenario_id, scenario, group_key=scenario.plan_id)
+        return scenario
+
+    def get_scenario_simulation(self, scenario_id: str) -> PlanScenarioSimulation | None:
+        return self._store.get(self._SCENARIOS, scenario_id)
+
+    def save_decision_writeback(self, record: DecisionWritebackRecord) -> DecisionWritebackRecord:
+        self._store.put(self._WRITEBACKS, record.decision_id, record, group_key=record.plan_id)
+        return record
+
+    def list_decision_writebacks(self, plan_id: str) -> list[DecisionWritebackRecord]:
+        return self._store.list_by_group(self._WRITEBACKS, plan_id)
 
     def save_plan(self, plan: PricingPlan) -> PricingPlan:
         self._store.put(self._PLANS, plan.plan_id, plan, group_key=plan.tenant_id)

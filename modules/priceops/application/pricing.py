@@ -176,7 +176,7 @@ class PriceOpsService:
             plan_id=plan_id,
             created_at=created_at,
         )
-        return self.repository.save_plan(plan)
+        return self.repository.insert_plan(plan)
 
     def _validate_exploration_gate(
         self,

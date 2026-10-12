@@ -265,6 +265,13 @@ class PostgresEngine:
         ddl = _MIGRATION_PATH.read_text(encoding="utf-8")
         with self._pool.connection() as connection:
             with connection.transaction():
+                # CREATE IF NOT EXISTS does not serialize concurrent DDL.
+                # The transaction lock covers the entire runtime migration and
+                # releases automatically on commit, rollback or connection loss.
+                connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    ("odayplus:odp_runtime:migration",),
+                )
                 connection.execute(ddl)
 
     def validate_schema(self) -> None:

@@ -52,6 +52,7 @@ else:
         PricingPlanItem,
         UnavailableSimulationResultError,
     )
+    from modules.priceops.domain.pricing import PlanAlreadyExistsError
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionOptimizer
     from modules.priceops.workers.optimizer_worker import (
@@ -210,7 +211,7 @@ else:
     ) -> APIRouter:
         from apps.api.app.routes._common import runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
-        from shared.auth import Action
+        from shared.auth import Action, DataClassification
 
         production_required = production_execution_required(runtime_mode)
         durable_commands_required = (
@@ -291,20 +292,39 @@ else:
                 )
             return "__local__"
 
+        def items_in_scope(items: Any, principal: Any) -> bool:
+            scope = principal.scope
+            return (
+                scope.permits_module("priceops")
+                and scope.permits_classification(DataClassification.CONFIDENTIAL)
+                and scope.permits_assigned_area(None)
+                and scope.permits_heat_zone(None)
+            ) and all(
+                scope.permits_store(item.store_id)
+                and scope.permits_brand(item.brand_id)
+                # Region-restricted callers need a canonical region binding.
+                and scope.permits_region(None)
+                for item in items
+            )
+
         def plan_in_scope(plan: Any, principal: Any) -> bool:
             scope = principal.scope
             if scope.tenant_id and plan.tenant_id != scope.tenant_id:
                 return False
             if durable_commands_required and not scope.tenant_id:
                 return False
-            return scope.permits_module("priceops") and all(
-                scope.permits_store(item.store_id)
-                and scope.permits_brand(item.brand_id)
-                # Pricing items carry no canonical region binding. A region
-                # restricted caller must not inherit access through a guess.
-                and scope.permits_region(None)
-                for item in plan.items
-            )
+            return items_in_scope(plan.items, principal)
+
+        def require_proposal_scope(body: PriceOpsPlanPayload, request: Request) -> None:
+            principal = request.state.operator_principal
+            tenant_id(request, body.tenant_id)
+            if not items_in_scope(body.items, principal):
+                raise HTTPException(status_code=403, detail="pricing proposal outside caller scope")
+            if body.plan_id is not None:
+                existing = service.repository.get_plan(body.plan_id)
+                if existing is not None and not plan_in_scope(existing, principal):
+                    raise HTTPException(status_code=404, detail="plan not found")
+
 
         def require_plan_permission(action: Any) -> Any:
             permission = require_permission("priceops", action, engine=authz_engine)
@@ -329,6 +349,7 @@ else:
         ) -> dict[str, Any]:
             effective_key = body.idempotency_key or idempotency_key
             active_tenant_id = tenant_id(request, body.tenant_id)
+            require_proposal_scope(body, request)
 
             def _execute(_receipt_id: str) -> dict[str, Any]:
                 try:
@@ -338,13 +359,16 @@ else:
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                     ) from exc
                 bindings = [binding for _item, binding in resolved]
-                plan = service.create_plan(
-                    tenant_id=body.tenant_id,
-                    items=[plan_item for plan_item, _binding in resolved],
-                    correlation_id=request.state.correlation_id,
-                    plan_id=body.plan_id,
-                    created_at=_parse_time(body.created_at),
-                )
+                try:
+                    plan = service.create_plan(
+                        tenant_id=body.tenant_id,
+                        items=[plan_item for plan_item, _binding in resolved],
+                        correlation_id=request.state.correlation_id,
+                        plan_id=body.plan_id,
+                        created_at=_parse_time(body.created_at),
+                    )
+                except PlanAlreadyExistsError as exc:
+                    raise HTTPException(status_code=409, detail="plan id already exists") from exc
                 _record_audit(
                     active_audit_log,
                     request,
@@ -364,7 +388,8 @@ else:
                 correlation_id=request.state.correlation_id,
                 key=effective_key,
                 scope="priceops:create_plan",
-                payload=body.model_dump(mode="json"),
+                payload={"verified_actor": request.state.operator_principal.subject_id,
+                         "body": body.model_dump(mode="json")},
                 operation=_execute,
             )
 
@@ -377,7 +402,7 @@ else:
             effective_key = body.idempotency_key or idempotency_key
             active_tenant_id = tenant_id(request, body.plans[0].tenant_id)
             for plan in body.plans:
-                tenant_id(request, plan.tenant_id)
+                require_proposal_scope(plan, request)
 
             def _execute(receipt_id: str) -> dict[str, Any]:
                 try:
@@ -398,14 +423,17 @@ else:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                     ) from exc
-                result = run_priceops_optimizer_batch(
-                    requests=plan_requests,
-                    job_id=receipt_id,
-                    optimized_at=_parse_time(body.optimized_at),
-                    repository=price_repository,
-                    production_optimizer=production_optimizer,
-                    runtime_mode=runtime_mode,
-                )
+                try:
+                    result = run_priceops_optimizer_batch(
+                        requests=plan_requests,
+                        job_id=receipt_id,
+                        optimized_at=_parse_time(body.optimized_at),
+                        repository=price_repository,
+                        production_optimizer=production_optimizer,
+                        runtime_mode=runtime_mode,
+                    )
+                except PlanAlreadyExistsError as exc:
+                    raise HTTPException(status_code=409, detail="batch plan id already exists or is repeated") from exc
                 audit_event = _record_audit(
                     active_audit_log,
                     request,
@@ -430,7 +458,8 @@ else:
                 correlation_id=request.state.correlation_id,
                 key=effective_key,
                 scope="priceops:create_optimizer_job",
-                payload=body.model_dump(mode="json"),
+                payload={"verified_actor": request.state.operator_principal.subject_id,
+                         "body": body.model_dump(mode="json")},
                 operation=_execute,
             )
 
@@ -445,6 +474,13 @@ else:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="optimizer job not found",
                 )
+            plans = result.get("plans", [])
+            if not plans or any(
+                (plan := service.repository.get_plan(row.get("plan_id"))) is None
+                or not plan_in_scope(plan, request.state.operator_principal)
+                for row in plans
+            ):
+                raise HTTPException(status_code=404, detail="optimizer job not found")
             return result
 
         @router.get("/plans", dependencies=[Depends(require_plan_permission(Action.VIEW))])

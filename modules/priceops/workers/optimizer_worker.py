@@ -15,7 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 from modules.priceops.application.pricing import PriceOpsService
-from modules.priceops.domain.pricing import PricingPlanItem
+from modules.priceops.domain.pricing import PlanAlreadyExistsError, PricingPlanItem
 from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionOptimizer
 from modules.priceops.infrastructure.repositories import InMemoryPriceOpsRepository
 
@@ -75,6 +75,12 @@ class PriceOpsOptimizerWorker:
         job_id: str | None = None,
         optimized_at: datetime | None = None,
     ) -> PriceOpsBatchResult:
+        requests = tuple(requests)
+        plan_ids = [request.plan_id for request in requests if request.plan_id is not None]
+        if len(plan_ids) != len(set(plan_ids)) or any(
+            self.service.repository.get_plan(plan_id) is not None for plan_id in plan_ids
+        ):
+            raise PlanAlreadyExistsError("batch plan id already exists or is repeated")
         completed_at = datetime.now(UTC)
         moment = optimized_at or completed_at
         plan_results: list[dict[str, Any]] = []

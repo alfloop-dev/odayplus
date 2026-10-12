@@ -49,6 +49,10 @@ DEFAULT_STOP_CONDITIONS: dict[str, Any] = {
 }
 
 
+class PlanAlreadyExistsError(ValueError):
+    """Exclusive plan creation cannot replace any existing business record."""
+
+
 class PlanStatus(StrEnum):
     CANDIDATE = "candidate"
     SIMULATED = "simulated"
