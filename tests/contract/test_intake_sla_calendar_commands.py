@@ -230,3 +230,18 @@ def test_cached_receipt_rechecks_current_registry_identity_authority(journey, ac
     response = _command(journey, action, key=key, version=version)
     assert response.status_code == 403, response.text
     assert _snapshot(store) == snapshot
+
+
+def test_equivalent_uuid_spelling_cannot_bypass_second_actor_requirement(journey):
+    _, store, _, _, _, _ = journey
+    snapshot = _snapshot(store)
+    response = _command(
+        journey,
+        headers={
+            **HEADERS,
+            "x-subject-id": APPROVER.replace("-", ""),
+            "x-roles": "data_owner,expansion_user",
+        },
+    )
+    assert response.status_code == 403, response.text
+    assert _snapshot(store) == snapshot

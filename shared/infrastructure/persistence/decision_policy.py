@@ -78,6 +78,8 @@ class SqlDecisionPolicyRepository:
 
 
 def _row_to_policy(row: Any) -> DecisionPolicy:
+    # sqlite3.Row supports keys/indexing, but not Mapping.get.
+    row = dict(row)
     return DecisionPolicy(
         policy_version_id=str(row["policy_version_id"]),
         policy_label=str(row["policy_label"]),

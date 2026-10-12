@@ -4,8 +4,8 @@ from pathlib import Path
 
 from alembic import op
 
-revision = "0023"
-down_revision = "0022"
+revision: str = "0023"
+down_revision: str = "0022"
 branch_labels = None
 depends_on = None
 

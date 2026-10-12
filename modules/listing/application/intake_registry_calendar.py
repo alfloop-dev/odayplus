@@ -449,10 +449,10 @@ class RegistryIntakeWorkflowPolicy:
     ) -> str:
         self.authorize_sla_actor(schedule, scope, actor_id)
         policy, _calendar = self._bound(schedule, scope)
-        if policy.approved_by == actor_id:
+        if UUID(policy.approved_by) == UUID(actor_id):
             raise PermissionError("Pause creator must differ from the policy approval account")
         self._account(actor_id, scope)
-        return policy.approved_by
+        return str(UUID(policy.approved_by))
 
     def authorize_sla_actor(
         self, schedule: SlaSchedule, scope: Mapping[str, Any], actor_id: str

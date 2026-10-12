@@ -87,7 +87,7 @@ def change_sla(
         UUID(entry["pause_interval_id"])
         UUID(entry["approved_by"])
         UUID(entry["created_by"])
-        if entry["approved_by"] == entry["created_by"]:
+        if UUID(entry["approved_by"]) == UUID(entry["created_by"]):
             raise IntakeWorkflowUnavailable("Pause approval cannot be self approval")
         intervals.append(
             SlaPauseInterval(
@@ -131,7 +131,7 @@ def change_sla(
         approval = policy.pause_approval_account(schedule, authorized_scope, actor_id)
         UUID(approval)
         UUID(actor_id)
-        if approval == actor_id:
+        if UUID(approval) == UUID(actor_id):
             raise PermissionError("Pause creator must differ from policy approval account")
         if current_time < schedule.started_at:
             raise IntakeWorkflowUnavailable("Pause cannot predate SLA initialization")
