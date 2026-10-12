@@ -978,7 +978,9 @@ def test_live_intake_write_and_idempotency_survive_restart(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "operator-live-restart.sqlite3"
-    headers = _headers("tenant-live-a", idempotency_key="idem-live-a-1")
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+    headers = {**_headers(tenant_id, idempotency_key="idem-live-a-1"),
+               "x-subject-id":"00000000-0000-0000-0000-000000000101"}
     payload = {
         "url": "https://example.com/property/live-a-1",
         "heatZoneId": None,
@@ -1002,7 +1004,7 @@ def test_live_intake_write_and_idempotency_survive_restart(
         with TestClient(reopened_app) as client:
             detail = client.get(
                 f"{BASE}/network-listings/intake/{intake_id}",
-                headers=_headers("tenant-live-a"),
+                headers=headers,
             )
             replay = client.post(
                 f"{BASE}/network-listings/intake/submit",
@@ -1022,26 +1024,32 @@ def test_live_intake_write_and_idempotency_survive_restart(
 def test_live_domain_state_and_idempotency_are_tenant_isolated(
     tmp_path: Path,
 ) -> None:
+    tenant_a_id = "00000000-0000-0000-0000-000000000001"
+    tenant_b_id = "00000000-0000-0000-0000-000000000002"
+    headers_a = {**_headers(tenant_a_id, idempotency_key="shared-key"),
+                 "x-subject-id":"00000000-0000-0000-0000-000000000101"}
+    headers_b = {**_headers(tenant_b_id, idempotency_key="shared-key"),
+                 "x-subject-id":"00000000-0000-0000-0000-000000000102"}
     app, bundle = _live_app(tmp_path / "operator-live-tenants.sqlite3")
     try:
         with TestClient(app) as client:
             tenant_a = client.post(
                 f"{BASE}/network-listings/intake/submit",
-                headers=_headers("tenant-a", idempotency_key="shared-key"),
+                headers=headers_a,
                 json={"url": "https://example.com/property/tenant-a"},
             )
             tenant_b_list = client.get(
                 f"{BASE}/network-listings/intake",
-                headers=_headers("tenant-b"),
+                headers=headers_b,
             )
             tenant_b = client.post(
                 f"{BASE}/network-listings/intake/submit",
-                headers=_headers("tenant-b", idempotency_key="shared-key"),
+                headers=headers_b,
                 json={"url": "https://example.com/property/tenant-b"},
             )
             tenant_a_list = client.get(
                 f"{BASE}/network-listings/intake",
-                headers=_headers("tenant-a"),
+                headers=headers_a,
             )
 
         assert tenant_a.status_code == 200, tenant_a.text
