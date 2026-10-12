@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
 import type { ApiBinding } from "../../../../src/lib/api/binding";
 import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
 import type { Candidate, OperatorHeatZone } from "../../types";
@@ -28,9 +29,17 @@ vi.mock("../ListingRadarPanel", () => ({
   },
 }));
 
-vi.mock("../ReviewPanel", () => ({
-  ReviewPanel: ({ canDecide }: { canDecide: boolean }) => (
-    <div data-testid="review-authority" data-can-decide={String(canDecide)} />
+vi.mock("../ReviewPanel", async (importOriginal) => ({
+  // The workspace counts through the real queue selector; only the panel is stubbed.
+  resolveEffectiveReviews: (await importOriginal<typeof import("../ReviewPanel")>()).resolveEffectiveReviews,
+  ReviewPanel: ({ canDecide, reviews, onDecide }: ComponentProps<typeof import("../ReviewPanel").ReviewPanel>) => (
+    <div data-testid="review-authority" data-can-decide={String(canDecide)}>
+      {canDecide && reviews[0] ? (
+        <button onClick={() => onDecide?.(reviews[0].id, "GO", {
+          reason: "Reviewed", conditions: "", requiredData: "", overrideAck: false,
+        })} type="button">Submit test review decision</button>
+      ) : null}
+    </div>
   ),
 }));
 
@@ -46,6 +55,45 @@ function unavailableBinding<T>(): ApiBinding<T> {
 
 const unavailableCandidates = unavailableBinding<Candidate>();
 const unavailableHeatZones = unavailableBinding<OperatorHeatZone>();
+
+// The canonical envelope (shared/api/errors.py) a guarded read answers with.
+function forbiddenResponse(correlationId: string, resource: string) {
+  const message = `role does not permit view on ${resource}`;
+  return new Response(
+    JSON.stringify({
+      detail: message,
+      error: {
+        code: "forbidden",
+        message,
+        next_action: "Request access for this role or tenant; do not retry as-is.",
+        occurred_at: "2026-10-10T12:17:00.000Z",
+        details: [],
+        correlation_id: correlationId,
+      },
+    }),
+    { status: 403, headers: { "Content-Type": "application/json", "X-Correlation-Id": correlationId } },
+  );
+}
+
+/** Every Network read refused with 403, as the deployed dev answered on 2026-10-10. */
+function stubDeniedNetworkReads() {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const path = String(input);
+    if (path.includes("/network-listings")) return forbiddenResponse("corr-listings-403", "operator_network");
+    if (path.includes("/network-scoring")) return forbiddenResponse("corr-scoring-403", "sitescore");
+    if (path.includes("/network-reviews")) return forbiddenResponse("corr-reviews-403", "sitescore");
+    if (path.includes("/merge-split/proposals")) return forbiddenResponse("corr-proposals-403", "heatzone");
+    if (path.includes("/network-rebalance")) {
+      return new Response(JSON.stringify({ source: "api", stores: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("{}", { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
 
 describe("NetworkFindAreasWorkspace route and gate behavior", () => {
   beforeEach(() => {
@@ -105,6 +153,126 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     navigation.search = "ws=network&tab=review";
     render(<NetworkFindAreasWorkspace activeRoleId={roleId} initialTabId="review" />);
     expect(screen.getByTestId("review-authority")).toHaveAttribute("data-can-decide", canDecide);
+  });
+
+  it.each([
+    ["overview", "network-panel-find-areas", "corr-listings-403"],
+    ["candidates", "network-panel-candidates", "corr-scoring-403"],
+    ["sitescore", "network-panel-sitescore", "corr-scoring-403"],
+    ["review", "review-authority", "corr-reviews-403"],
+    ["merge-split", "heatzone-merge-split-panel", "corr-proposals-403"],
+  ])("presents a received 403 on the %s tab as an authenticated denial", async (tab, panelTestId, correlationId) => {
+    stubDeniedNetworkReads();
+    navigation.search = `ws=network&tab=${tab}`;
+    render(
+      <NetworkFindAreasWorkspace activeRoleId="platform-admin"
+        liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />,
+    );
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "forbidden"));
+    expect(gate).toHaveAttribute("data-status", "error");
+    expect(gate).toHaveTextContent("沒有權限");
+    expect(gate).not.toHaveTextContent("連線失敗");
+    expect(gate).not.toHaveTextContent("無法連到營運資料服務");
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent(correlationId);
+    expect(gate).toHaveTextContent("403");
+    // The refused collection is never rendered as an empty authorized panel.
+    expect(screen.queryByTestId(panelTestId)).toBeNull();
+  });
+
+  it("hands a refused listings read to Listing Radar instead of an empty listing collection", async () => {
+    stubDeniedNetworkReads();
+    render(
+      <NetworkFindAreasWorkspace activeRoleId="platform-admin"
+        liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />,
+    );
+
+    await waitFor(() =>
+      expect(radarProps.calls.at(-1)?.listingsReadFailure).toMatchObject({
+        correlationId: "corr-listings-403",
+        httpStatus: 403,
+        kind: "forbidden",
+      }),
+    );
+    expect(radarProps.calls.at(-1)?.listings).toEqual([]);
+  });
+
+  it("does not manufacture zero counts for collections that were refused", async () => {
+    const fetchMock = stubDeniedNetworkReads();
+    navigation.search = "ws=network&tab=overview";
+    render(
+      <NetworkFindAreasWorkspace activeRoleId="platform-admin"
+        liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />,
+    );
+
+    const state = screen.getByLabelText("展店與店網摘要");
+    await waitFor(() => expect(state).toHaveTextContent("今日新物件（未授權）"));
+    for (const label of ["今日新物件", "進行中候選", "待審 Review"]) {
+      expect(state).toHaveTextContent(`— ${label}（未授權）`);
+      expect(state).not.toHaveTextContent(`0 ${label}`);
+    }
+    // Rebalance really answered 200 with no stores: that zero is authoritative.
+    await waitFor(() => expect(state).toHaveTextContent("0 重配候選"));
+    // Presentation only: nothing was written and no grant was requested.
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init?.method ?? "GET").toBe("GET");
+    }
+    expect(fetchMock.mock.calls.every(([url]) => !/\/(users|roles)\b/.test(String(url)))).toBe(true);
+  });
+
+  it.each(["empty", "denied"])("uses the %s dedicated Review reload's source for count and gate", async (result) => {
+    navigation.search = "ws=network&tab=review";
+    let decided = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      const respond = (body: unknown) => new Response(JSON.stringify(body), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+      if (url.endsWith("/decide")) {
+        decided = true;
+        return respond({});
+      }
+      if (url.endsWith("/network-reviews")) {
+        if (decided && result === "denied") return forbiddenResponse("corr-reviews-reload-403", "sitescore");
+        return respond({ source: "api", reviews: decided ? [] : [{ id: "REV-LIVE-1", status: "pending" }] });
+      }
+      if (url.includes("/network-listings")) return respond({
+        source: "api", heatZones: [], listingSources: [], candidates: [],
+        listings: [{ id: "L-LIVE-1", heatZoneId: "HZ-LIVE-1", status: "new", hardRuleFailures: [] }],
+        siteReviews: ["REV-LIVE-1", "REV-LIVE-2"].map((id) => ({
+          id, candidateId: "CS-LIVE-1", status: "pending", requestedByRoleId: "expansionManager",
+          reviewerRoleIds: ["opsLead"], requestedAt: "2026-10-11T12:00:00Z", reasonRequired: true,
+        })),
+        expansionSteps: [], assistedIntakes: [],
+      });
+      if (url.endsWith("/network-scoring")) return respond({ source: "api", candidates: [] });
+      if (url.endsWith("/network-rebalance")) return respond({ source: "api", stores: [] });
+      return new Response("{}", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager"
+      liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />);
+
+    const state = screen.getByLabelText("展店與店網摘要");
+    await waitFor(() => expect(state).toHaveTextContent("1 今日新物件"));
+    await waitFor(() => expect(state).toHaveTextContent("1 待審 Review"));
+    expect(screen.getByTestId("network-tab-count-5")).toHaveTextContent("1");
+    fireEvent.click(screen.getByRole("button", { name: "Submit test review decision" }));
+    await waitFor(() => expect(state).toHaveTextContent(`${result === "empty" ? 0 : 2} 待審 Review`));
+    const gate = screen.getByTestId("operator-data-unavailable");
+    if (result === "empty") {
+      expect(screen.queryByTestId("network-tab-count-5")).toBeNull();
+      expect(gate).toHaveAttribute("data-status", "empty");
+      expect(gate).not.toHaveAttribute("data-failure-kind");
+    } else {
+      expect(screen.getByTestId("network-tab-count-5")).toHaveTextContent("2");
+      expect(gate).toHaveAttribute("data-failure-kind", "forbidden");
+      expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-reviews-reload-403");
+    }
+    expect(within(state).getByText("待審 Review", { exact: false })).toHaveAttribute("data-count-state", "known");
+    expect(screen.queryByTestId("review-authority")).toBeNull();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   });
 
   it("cold-opens Radar even when every unrelated Network snapshot is unavailable", async () => {

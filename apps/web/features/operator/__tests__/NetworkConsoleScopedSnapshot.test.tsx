@@ -10,9 +10,10 @@
  * but empty scoped snapshot is reported as empty, not as an error or fixtures.
  */
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole } from "../OperatorConsole";
+import { resolveNetworkCountState } from "../NetworkFindAreasWorkspace";
 
 const nav = vi.hoisted(() => ({ search: "ws=network" }));
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
@@ -142,7 +143,28 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-function stubProductionFetch(snapshot: unknown) {
+// The canonical envelope (shared/api/errors.py) of a guarded read refusal.
+function forbiddenResponse(correlationId: string, resource: string) {
+  const message = `role does not permit view on ${resource}`;
+  return new Response(
+    JSON.stringify({
+      detail: message,
+      error: {
+        code: "forbidden",
+        message,
+        next_action: "Request access for this role or tenant; do not retry as-is.",
+        occurred_at: "2026-10-10T12:17:00.000Z",
+        details: [],
+        correlation_id: correlationId,
+      },
+    }),
+    { status: 403, headers: { "Content-Type": "application/json", "X-Correlation-Id": correlationId } },
+  );
+}
+
+const DENIED = Symbol("denied");
+
+function stubProductionFetch(snapshot: unknown, denyScoring = false, reviews?: unknown) {
   const networkListingUrls: URL[] = [];
   const legacyDomainPaths: string[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -150,7 +172,16 @@ function stubProductionFetch(snapshot: unknown) {
     if (url.pathname === "/api/v1/operator/bootstrap") return jsonResponse(liveEnvelope);
     if (url.pathname === "/api/v1/operator/network-listings") {
       networkListingUrls.push(url);
-      return jsonResponse(snapshot);
+      return snapshot === DENIED ? forbiddenResponse("corr-listings-403", "operator_network") : jsonResponse(snapshot);
+    }
+    if (url.pathname === "/api/v1/operator/network-reviews" && reviews !== undefined) {
+      return jsonResponse(reviews);
+    }
+    if ((snapshot === DENIED || denyScoring) && /\/operator\/network-(scoring|reviews)$/.test(url.pathname)) {
+      return forbiddenResponse("corr-scoring-403", "sitescore");
+    }
+    if (url.pathname === "/api/v1/operator/network-rebalance") {
+      return jsonResponse({ source: "api", stores: [] });
     }
     if (/\/(heatzones|listings\/candidates|sitescore)/.test(url.pathname)) {
       legacyDomainPaths.push(url.pathname);
@@ -200,9 +231,9 @@ describe("Network Find Areas in the production Operator Console composition", ()
       }
     }
 
-    const state = screen.getByLabelText("Network Find Areas state");
-    expect(state).toHaveTextContent("2 HeatZones");
-    expect(state).toHaveTextContent("1 listings");
+    const state = screen.getByLabelText("展店與店網摘要");
+    expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("Scoped Zone Two");
+    expect(state).toHaveTextContent("1 今日新物件");
     expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();
     expect(screen.queryByText("fixture data")).toBeNull();
   });
@@ -212,10 +243,16 @@ describe("Network Find Areas in the production Operator Console composition", ()
 
     const { unmount } = render(<OperatorConsole searchParams={{ ws: "network" }} />);
 
-    const state = await screen.findByLabelText("Network Find Areas state");
-    await waitFor(() => expect(state).toHaveTextContent("1 listings"), { timeout: 5000 });
-    expect(state).toHaveTextContent("0 HeatZones");
-    // Find Areas owns the HeatZones, so it alone reports the withheld aggregate as empty.
+    const state = await screen.findByLabelText("展店與店網摘要");
+    await waitFor(() => expect(state).toHaveTextContent("1 今日新物件"), { timeout: 5000 });
+    // Package10 omits whole-zone/average-confidence KPIs, never turns their
+    // withheld disposition into zero; the visible Find Areas gate still names it.
+    expect(state).not.toHaveTextContent(/HeatZones|avg confidence/);
+    expect(resolveNetworkCountState("ready", null, false, true)).toEqual({
+      known: false, label: "未授權", reason: "withheld",
+    });
+    expect(within(state).getByText("今日新物件", { exact: false })).toHaveAttribute("data-count-state", "known");
+    // Find Areas reports the missing aggregate without suppressing authorized rows.
     await waitFor(() =>
       expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty"),
     );
@@ -234,6 +271,81 @@ describe("Network Find Areas in the production Operator Console composition", ()
     expect(screen.queryByText("fixture data")).toBeNull();
   });
 
+  it.each(["candidates", "sitescore"])(
+    "keeps scoped candidate counts independent of withheld zones and the denied %s read",
+    async (tab) => {
+      const snapshot = {
+        ...zonesWithheldSnapshot,
+        candidates: [{
+          id: "CS-SCOPED-1", listingId: "L-SCOPED-1", heatZoneId: "HZ-SCOPED-02",
+          title: "Scoped candidate", address: "Scoped Road 1", status: "ready",
+          score: 82, recommendation: "GO", modelVersion: "v1",
+          datasetSnapshotId: "snapshot-scoped", missingData: [],
+        }],
+        siteReviews: [{
+          id: "REV-SCOPED-1", candidateId: "CS-SCOPED-1", status: "pending",
+          requestedByRoleId: "expansionManager", reviewerRoleIds: ["opsLead"],
+          requestedAt: "2026-10-10T12:17:00Z", reasonRequired: true,
+        }],
+      };
+      stubProductionFetch(snapshot, true);
+      nav.search = `ws=network&tab=${tab}`;
+      render(<OperatorConsole searchParams={{ ws: "network", tab }} />);
+
+      const state = await screen.findByLabelText("展店與店網摘要");
+      await waitFor(() => expect(state).toHaveTextContent("1 進行中候選"), { timeout: 5000 });
+      expect(state).toHaveTextContent("1 今日新物件");
+      expect(state).toHaveTextContent("1 待審 Review");
+      expect(state).not.toHaveTextContent(/HeatZones|avg confidence/);
+      expect(resolveNetworkCountState("ready", null, false, true)).toEqual({
+        known: false, label: "未授權", reason: "withheld",
+      });
+      for (const label of ["今日新物件", "進行中候選", "待審 Review"]) {
+        expect(within(state).getByText(label, { exact: false })).toHaveAttribute("data-count-state", "known");
+      }
+      await waitFor(() =>
+        expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "forbidden"),
+      );
+      expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-scoring-403");
+      // The independently refused scoring binding must not render fabricated score cards.
+      expect(screen.queryByText("Scoped candidate")).toBeNull();
+      for (const [, init] of vi.mocked(fetch).mock.calls) {
+        expect((init as RequestInit | undefined)?.method ?? "GET").toBe("GET");
+      }
+    },
+  );
+
+  it.each(["overview", "review"])(
+    "uses an authorized empty dedicated Review queue instead of projected pending rows on %s",
+    async (tab) => {
+      stubProductionFetch({
+        ...zonesWithheldSnapshot,
+        siteReviews: [{
+          id: "REV-SCOPED-1", candidateId: "CS-SCOPED-1", status: "pending",
+          requestedByRoleId: "expansionManager", reviewerRoleIds: ["opsLead"],
+          requestedAt: "2026-10-10T12:17:00Z", reasonRequired: true,
+        }],
+      }, true, { source: "api", reviews: [] });
+      nav.search = `ws=network&tab=${tab}`;
+      render(<OperatorConsole searchParams={{ ws: "network", tab }} />);
+
+      const state = await screen.findByLabelText("展店與店網摘要");
+      await waitFor(() => expect(state).toHaveTextContent("1 今日新物件"), { timeout: 5000 });
+      await waitFor(() => expect(state).toHaveTextContent("0 待審 Review"));
+      expect(within(state).getByText("待審 Review", { exact: false })).toHaveAttribute("data-count-state", "known");
+      expect(state).not.toHaveTextContent("1 待審 Review");
+      expect(screen.queryByTestId("network-tab-count-5")).toBeNull();
+      if (tab === "review") {
+        expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty");
+        expect(screen.getByTestId("operator-data-unavailable")).not.toHaveAttribute("data-failure-kind");
+        expect(screen.queryByText("REV-SCOPED-1")).toBeNull();
+      }
+      for (const [, init] of vi.mocked(fetch).mock.calls) {
+        expect((init as RequestInit | undefined)?.method ?? "GET").toBe("GET");
+      }
+    },
+  );
+
   it("reports an authorized empty scoped snapshot as empty instead of a binding error", async () => {
     const { legacyDomainPaths, networkListingUrls } = stubProductionFetch(emptyScopedSnapshot);
 
@@ -247,5 +359,68 @@ describe("Network Find Areas in the production Operator Console composition", ()
     expect(networkListingUrls.every((url) => !url.searchParams.has("selectedHeatZoneId"))).toBe(true);
     expect(screen.queryByTestId("network-panel-find-areas")).toBeNull();
     expect(screen.queryByText("fixture data")).toBeNull();
+  });
+
+  it("presents the deployed auditor+platform_admin 403 reads as a denial, not a network failure or zero", async () => {
+    const { legacyDomainPaths } = stubProductionFetch(DENIED);
+
+    const { unmount } = render(<OperatorConsole searchParams={{ ws: "network" }} />);
+
+    // The shell's own loading gate shows first; wait for the Find Areas gate.
+    await waitFor(
+      () => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "forbidden"),
+      { timeout: 5000 },
+    );
+    const gate = screen.getByTestId("operator-data-unavailable");
+    expect(gate).toHaveAttribute("data-status", "error");
+    expect(gate).not.toHaveTextContent("連線失敗");
+    expect(gate).not.toHaveTextContent("瀏覽器無法連到營運資料服務");
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-listings-403");
+
+    const state = screen.getByLabelText("展店與店網摘要");
+    for (const label of ["今日新物件", "進行中候選", "待審 Review"]) {
+      expect(state).toHaveTextContent(`— ${label}（未授權）`);
+      expect(state).not.toHaveTextContent(`0 ${label}`);
+    }
+    await waitFor(() => expect(state).toHaveTextContent("0 重配候選"));
+    // The denial is presented as received: no write, no grant request and no
+    // retry into broader domain reads than the console already makes.
+    for (const [, init] of vi.mocked(fetch).mock.calls) {
+      expect((init as RequestInit | undefined)?.method ?? "GET").toBe("GET");
+    }
+    expect(new Set(legacyDomainPaths).size).toBeLessThanOrEqual(3);
+    unmount();
+
+    nav.search = "ws=network&tab=radar";
+    render(<OperatorConsole searchParams={{ ws: "network", tab: "radar" }} />);
+    const radar = await screen.findByTestId("network-panel-listings", {}, { timeout: 5000 });
+    await waitFor(() =>
+      expect(within(radar).getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "forbidden"),
+      { timeout: 5000 },
+    );
+    expect(radar).not.toHaveTextContent("No listings match the selected filter");
+    expect(radar).not.toHaveTextContent("0 筆");
+    expect(within(radar).queryByTestId("network-listing-table")).toBeNull();
+  }, 20000);
+
+  it("keeps a genuine authorized empty 200 as an authoritative zero", async () => {
+    stubProductionFetch(emptyScopedSnapshot);
+
+    render(<OperatorConsole searchParams={{ ws: "network" }} />);
+
+    const state = await screen.findByLabelText("展店與店網摘要", {}, { timeout: 5000 });
+    await waitFor(() =>
+      expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty"),
+      { timeout: 5000 },
+    );
+    expect(state).toHaveTextContent("0 今日新物件");
+    expect(state).toHaveTextContent("0 進行中候選");
+    expect(state).toHaveTextContent("0 待審 Review");
+    expect(state).not.toHaveTextContent(/HeatZones|avg confidence/);
+    for (const label of ["今日新物件", "進行中候選", "待審 Review"]) {
+      expect(within(state).getByText(label, { exact: false })).toHaveAttribute("data-count-state", "known");
+    }
+    expect(state).not.toHaveTextContent("未授權");
+    expect(screen.getByTestId("operator-data-unavailable")).not.toHaveAttribute("data-failure-kind");
   });
 });

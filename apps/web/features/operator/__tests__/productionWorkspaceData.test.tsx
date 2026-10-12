@@ -11,9 +11,16 @@ import {
   inspectNetworkRebalanceSnapshot,
   inspectNetworkReviewsSnapshot,
   inspectNetworkScoringSnapshot,
+  resolveNetworkCountState,
   resolveNetworkFindAreasLoadState,
   resolveNetworkTabGateState,
 } from "../NetworkFindAreasWorkspace";
+import { resolveGovernanceDecisionAuthority } from "../GovernanceWorkspace";
+import { normalizeGovernanceActionAuthority } from "../governance/governanceLoader";
+import {
+  operatorLoadFailureFromError,
+  operatorLoadFailureFromResponse,
+} from "../operatorDataMode";
 
 afterEach(() => {
   cleanup();
@@ -176,5 +183,91 @@ describe("production workspace data contracts", () => {
     for (const state of ["error", "seed", "empty", "loading"] as const) {
       expect(resolveNetworkFindAreasLoadState(state, 0)).toBe(state);
     }
+  });
+
+  it("classifies a received 403 envelope as an authenticated denial with its correlation ID", async () => {
+    const refused = new Response(
+      JSON.stringify({
+        detail: "role does not permit view on operator_network",
+        error: { code: "forbidden", message: "role does not permit view on operator_network", correlation_id: "corr-real-403" },
+      }),
+      { status: 403, headers: { "Content-Type": "application/json", "X-Correlation-Id": "corr-header" } },
+    );
+    // The label deliberately contains "network": the path must not decide the kind.
+    const failure = await operatorLoadFailureFromResponse(refused, "network-listings", "corr-request");
+    expect(failure).toMatchObject({ correlationId: "corr-real-403", httpStatus: 403, kind: "forbidden" });
+    expect(failure.technicalDetail).toContain("network-listings returned 403 forbidden");
+
+    const bare = await operatorLoadFailureFromResponse(new Response("denied", { status: 403 }), "network-scoring", "corr-request");
+    expect(bare).toMatchObject({ correlationId: "corr-request", httpStatus: 403, kind: "forbidden" });
+
+    const storeOps = await operatorLoadFailureFromResponse(
+      new Response(JSON.stringify({ detail: "STORE_OPS_LIVE_DATA_UNAVAILABLE" }), { status: 503 }),
+      "store-ops",
+    );
+    expect(storeOps).toMatchObject({ httpStatus: 503, kind: "server" });
+
+    expect(operatorLoadFailureFromError(new TypeError("Failed to fetch"), "network-listings").kind).toBe("network");
+  });
+
+  it("only counts collections that were actually read", () => {
+    expect(resolveNetworkCountState("ready", null, false)).toEqual({ known: true });
+    // A scoped row-level 200 cannot turn withheld aggregate counts into zero.
+    expect(resolveNetworkCountState("ready", null, false, true)).toEqual({
+      known: false,
+      label: "未授權",
+      reason: "withheld",
+    });
+    expect(resolveNetworkCountState("ready", null, true, true)).toEqual({ known: true });
+    // An authorized empty 200 is an authoritative zero.
+    expect(resolveNetworkCountState("empty", null, false)).toEqual({ known: true });
+    expect(resolveNetworkCountState("error", { kind: "forbidden", httpStatus: 403 }, false)).toEqual({
+      known: false,
+      label: "未授權",
+      reason: "unread",
+    });
+    expect(resolveNetworkCountState("error", { kind: "server", httpStatus: 503 }, false)).toMatchObject({
+      known: false,
+      label: "無法取得",
+    });
+    expect(resolveNetworkCountState("loading", null, false)).toMatchObject({ known: false, reason: "pending" });
+    expect(resolveNetworkCountState("seed", null, false)).toMatchObject({ known: false, reason: "unread" });
+    expect(resolveNetworkCountState("error", null, true)).toEqual({ known: true });
+  });
+
+  it("derives Governance decision authority from the server, never the persona", () => {
+    const readAdmin = normalizeGovernanceActionAuthority({
+      verified: true,
+      systemRoles: ["auditor", "platform_admin"],
+      decide: false,
+      exportEvidence: false,
+    });
+    expect(resolveGovernanceDecisionAuthority({ callerAllows: true, fixturesAllowed: false, serverAuthority: readAdmin }))
+      .toEqual({ canDecide: false, canExport: false, state: "denied", systemRoles: ["auditor", "platform_admin"] });
+
+    const manager = normalizeGovernanceActionAuthority({
+      verified: true,
+      systemRoles: ["operations_manager"],
+      decide: true,
+      exportEvidence: true,
+    });
+    expect(resolveGovernanceDecisionAuthority({ callerAllows: true, fixturesAllowed: false, serverAuthority: manager }))
+      .toMatchObject({ canDecide: true, canExport: true, state: "granted" });
+    // The caller may narrow but never widen.
+    expect(resolveGovernanceDecisionAuthority({ callerAllows: false, fixturesAllowed: false, serverAuthority: manager }))
+      .toMatchObject({ canDecide: false, state: "denied" });
+
+    // Missing, unverified or malformed authority confirms nothing in production.
+    for (const value of [undefined, null, "yes", { decide: true }, { verified: "true", decide: true }]) {
+      expect(
+        resolveGovernanceDecisionAuthority({
+          callerAllows: true,
+          fixturesAllowed: false,
+          serverAuthority: normalizeGovernanceActionAuthority(value),
+        }),
+      ).toMatchObject({ canDecide: false, canExport: false });
+    }
+    expect(normalizeGovernanceActionAuthority({ verified: true, decide: "true", exportEvidence: 1 }))
+      .toEqual({ verified: true, systemRoles: [], decide: false, exportEvidence: false });
   });
 });

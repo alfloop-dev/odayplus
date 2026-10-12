@@ -998,6 +998,10 @@ export function AssistedIntakeSection({
         busy={busy}
         loadError={loadError}
         loadState={loadState}
+        addDialogRequested={dialog === "add"}
+        onAddDialogClosed={() => {
+          if (dialog === "add") updateUrlState({ dialog: null });
+        }}
         onAddSubmit={handleSubmit}
         onOpenDetail={openDetail}
         onRetryLoad={() => void refresh()}

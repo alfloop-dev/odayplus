@@ -65,6 +65,7 @@ def stack(intake_blank_db: Any) -> Any:
 
     with intake_blank_db.connect(autocommit=True) as conn:
         conn.execute(IDENTITY_MIGRATION.read_text(encoding="utf-8"))
+        conn.execute(Path("infra/db/migrations/000028_identity_invitation_acceptance_budget.sql").read_text(encoding="utf-8"))
     engine = PostgresEngine(intake_blank_db.url(), bootstrap=True, validate_schema=False)
     audit = DurableAuditLog(engine)
     identity = SqlIdentityStore(connection_factory=engine.pooled_connection)
@@ -690,4 +691,66 @@ def test_explicit_scope_updates_are_applied_and_can_be_cleared(stack: Any) -> No
     assert c_scope["modules"] == []
     assert c_scope["brand_ids"] == ["b2"]
     assert c_scope["assigned_area_ids"] == ["area-1"]
+
+
+def test_admin_invite_is_pending_and_credentialless_until_acceptance(stack: Any) -> None:
+    admin_id = _bootstrap_admin(stack)
+    _rotate_password(stack, admin_id)
+    admin = _sign_in(stack, admin_id)
+    response = stack.client.post("/api/v1/operator/users/invite", headers=admin, json={
+        "username": "ops.director", "email": "ops.director@example.invalid",
+        "name": "營運總監", "roles": ["operations_manager"],
+        "scope": {"tenant_id": TENANT, "brand_ids": ["brand-alpha"]}, "reason": "onboarding",
+    })
+    assert response.status_code == 201, response.text
+    issued = response.json()
+    assert issued["status"] == "invited" and len(issued["token"]) == 43
+    assert response.headers["cache-control"] == "no-store"
+    assert "temporary_password" not in issued and "user" not in issued
+    assert _q(stack, "SELECT count(*) FROM identity.accounts") == [(1,)]
+    assert _q(stack, "SELECT count(*) FROM identity.password_credentials") == [(1,)]
+    trail = stack.client.get("/api/v1/operator/users/audit-trail", headers=admin).json()["events"]
+    event = next(e for e in trail if e["event_type"] == "identity.account.invite")
+    assert event["actor"] == admin_id
+    assert event["metadata"]["preset_roles"] == ["operations_manager"]
+    assert event["metadata"]["preset_scope"]["username"] == "ops.director"
+    assert event["metadata"]["reason"] == "onboarding"
+    assert issued["token"] not in str(trail)
+
+
+@pytest.mark.parametrize("override,expected", [
+    ({"username": "@invalid!"}, 422), ({"email": "not-an-email"}, 422),
+    ({"roles": ["super_hacker_role"]}, 422), ({"scope": {"tenant_id": OTHER_TENANT}}, 422),
+    ({"initialPassword": "private-password-value"}, 422), ({"actorName": "forged-admin"}, 422),
+])
+def test_admin_invite_rejects_invalid_inputs_without_echo(stack: Any, override: dict[str, Any], expected: int) -> None:
+    admin_id = _bootstrap_admin(stack)
+    _rotate_password(stack, admin_id)
+    response = stack.client.post("/api/v1/operator/users/invite", headers=_sign_in(stack, admin_id), json={
+        "username": "member.valid", "email": "valid@example.invalid", "roles": ["operations_manager"], **override,
+    })
+    assert response.status_code == expected
+    assert "private-password-value" not in response.text and "forged-admin" not in response.text
+    assert _q(stack, "SELECT count(*) FROM identity.invitations") == [(0,)]
+
+
+def test_non_admin_cannot_invite_user(stack: Any) -> None:
+    admin_id = _bootstrap_admin(stack)
+    _rotate_password(stack, admin_id)
+    ops_id = _invited_account(stack, "ops.member.tester", "operations_manager")
+    _rotate_password(stack, ops_id)
+    ops_headers = _sign_in(stack, ops_id)
+
+    # Operations manager attempts to invite a user
+    refused = stack.client.post(
+        "/api/v1/operator/users/invite",
+        headers=ops_headers,
+        json={
+            "username": "unauthorized.invitee",
+            "email": "unauthorized@example.invalid",
+            "roles": ["regional_supervisor"],
+        },
+    )
+    assert refused.status_code == 403
+
 

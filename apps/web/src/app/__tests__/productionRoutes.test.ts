@@ -115,12 +115,21 @@ describe("canonical production routes", () => {
       "utf8",
     );
 
+    // The Find Areas panel (and with it the map import) lives in its own file.
+    const findAreas = readFileSync(
+      resolve(process.cwd(), "features/operator/network/FindAreasPanel.tsx"),
+      "utf8",
+    );
+
     expect(operator).toContain("./network/networkFindAreasLoader");
     expect(operator).not.toContain('from "./networkFindAreasLoader"');
-    expect(network).toContain('from "./network/HeatZoneMap"');
-    expect(network).toContain('from "./network/mapTypes"');
-    expect(network).not.toContain("../map/HeatZoneMap");
-    expect(network).not.toContain("../expansion/data");
+    expect(network).toContain('from "./network/FindAreasPanel"');
+    expect(findAreas).toContain('import("./HeatZoneMap")');
+    expect(findAreas).toContain('from "./mapTypes"');
+    for (const source of [network, findAreas]) {
+      expect(source).not.toContain("../map/HeatZoneMap");
+      expect(source).not.toContain("../expansion/data");
+    }
   });
 
   it("removes the orphan shared route map and keeps command navigation canonical", () => {
