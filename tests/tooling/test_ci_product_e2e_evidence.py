@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -163,7 +164,31 @@ def test_existing_output_is_not_reused(tmp_path):
 
 
 def test_real_checkout_does_not_relabel_committed_historical_packet(tmp_path):
-    packet = collector.collect_evidence(ROOT, tmp_path / "archive")
+    # Isolate the checkout being tested: ROOT may legitimately contain fresh
+    # outputs after the real producer has run, rather than historical inputs.
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Evidence test",
+            "-c",
+            "user.email=evidence@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "isolated evidence checkout",
+        ],
+        cwd=checkout,
+        check=True,
+    )
+    for relative in [RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH, RECEIPT_PATH]:
+        target = checkout / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((ROOT / relative).read_bytes())
+    packet = collector.collect_evidence(checkout, tmp_path / "archive")
     assert packet["files"] == []
     assert len(packet["omitted"]) == 3
     assert all(x["reason"] == "not this checkout's source/tree" for x in packet["omitted"])
