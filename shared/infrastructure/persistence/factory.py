@@ -83,6 +83,7 @@ class PersistenceBundle:
     outbox_repository: Any = None
     operator_intake_repository: Any = None
     assisted_intake_store: Any = None
+    assisted_intake_workflow_policy: Any = None
     engine: Any = None
     # Auth identity/session stores (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
     # In PostgreSQL mode these are durable (SqlIdentityStore + SessionService);

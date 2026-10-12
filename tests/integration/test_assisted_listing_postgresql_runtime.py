@@ -20,6 +20,7 @@ from shared.infrastructure.persistence.postgresql import (
     _REQUIRED_RELATIONS,
     PostgresEngine,
 )
+from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -199,7 +200,7 @@ def test_postgresql_batch_worker_result_survives_restart_in_live_operator_partit
     apply_upgrade_to_database(database_url)
     _install_canonical_runtime(database_url)
     _configure_production(monkeypatch, tmp_path, database_url)
-    app = create_app(external_provider_validation=_live_provider_validation())
+    app = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     try:
         with TestClient(app) as client:
             enqueued = client.post(
@@ -224,7 +225,7 @@ def test_postgresql_batch_worker_result_survives_restart_in_live_operator_partit
     finally:
         app.state.persistence_bundle.engine.close()
 
-    restarted = create_app(external_provider_validation=_live_provider_validation())
+    restarted = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     try:
         with TestClient(restarted) as client:
             persisted = client.get(path, headers=_headers(ACTOR_ID))
@@ -315,11 +316,12 @@ def test_production_api_boots_with_postgresql_and_fails_on_missing_intake_schema
         RuntimeError,
         match="Assisted Listing Intake schema is incomplete",
     ):
-        create_app(external_provider_validation=_live_provider_validation())
+        create_app(external_provider_validation=_live_provider_validation(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
 
     apply_upgrade_to_database(database_url)
     app = create_app(
         external_provider_validation=_live_provider_validation(),
+        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
     )
     try:
         assert app.state.persistence_bundle.mode == "postgresql"
@@ -341,6 +343,7 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
 
     app = create_app(
         external_provider_validation=_live_provider_validation(),
+        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
     )
     client = TestClient(app)
     submit_key = f"production-submit-{uuid4()}"
@@ -393,6 +396,7 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
 
     restarted = create_app(
         external_provider_validation=_live_provider_validation(),
+        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
     )
     restarted_client = TestClient(restarted)
     try:
@@ -479,3 +483,83 @@ def test_assisted_intake_rejects_stale_multi_instance_write(
     finally:
         first.engine.close()
         second.engine.close()
+
+
+def test_initial_workflow_and_evidence_survive_postgresql_restart(intake_blank_db, monkeypatch, tmp_path):
+    database_url = _database_url(intake_blank_db)
+    apply_upgrade_to_database(database_url)
+    _install_canonical_runtime(database_url)
+    _configure_production(monkeypatch, tmp_path, database_url)
+    policy = SyntheticIntakeWorkflowPolicy()
+    app = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_workflow_policy=policy)
+    key = f"synthetic-workflow-restart-{uuid4()}"
+    body = {"original_url": "https://example.invalid/workflow-restart", "scope": {"tenant_id": TENANT_ID}}
+    try:
+        with TestClient(app) as client:
+            submitted = client.post("/api/v1/intakes/url", json=body, headers=_headers(ACTOR_ID, key=key))
+            assert submitted.status_code == 202, submitted.text
+            intake_id = submitted.json()["intake_id"]
+            detail = client.get(f"/api/v1/intakes/{intake_id}", headers=_headers(ACTOR_ID)).json()
+            assignment_id, sla_id = detail["assignment_id"], detail["sla_instance_id"]
+            assert detail["assignment_status"] == "UNASSIGNED" and detail["sla_state"] == "ON_TRACK"
+            state = app.state.assisted_intake_store
+            state.refresh(TENANT_ID)
+            assert len(state.assignments) == len(state.slas) == 1
+            assert len(state.workflow_audits) == 3 and len(state.workflow_outbox) == 2
+            audit_ids, event_ids = set(state.workflow_audits), set(state.workflow_outbox)
+    finally:
+        app.state.persistence_bundle.engine.close()
+    restarted = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_workflow_policy=policy)
+    try:
+        with TestClient(restarted) as client:
+            detail = client.get(f"/api/v1/intakes/{intake_id}", headers=_headers(ACTOR_ID))
+            assert detail.status_code == 200
+            assert detail.json()["assignment_id"] == assignment_id and detail.json()["sla_instance_id"] == sla_id
+            replay = client.post("/api/v1/intakes/url", json=body, headers=_headers(ACTOR_ID, key=key))
+            assert replay.status_code == 200 and replay.json() == submitted.json()
+            state = restarted.state.assisted_intake_store
+            state.refresh(TENANT_ID)
+            assert set(state.workflow_audits) == audit_ids and set(state.workflow_outbox) == event_ids
+            state.refresh(str(uuid4()))
+            assert not state.intakes and not state.assignments and not state.slas
+            assert not state.workflow_audits and not state.workflow_outbox
+    finally:
+        restarted.state.persistence_bundle.engine.close()
+
+
+def test_partial_database_flush_rolls_back_workflow_and_retry_is_fresh(intake_blank_db, monkeypatch, tmp_path):
+    database_url = _database_url(intake_blank_db)
+    apply_upgrade_to_database(database_url)
+    _install_canonical_runtime(database_url)
+    _configure_production(monkeypatch, tmp_path, database_url)
+    app = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+    store = app.state.assisted_intake_store
+    original_put = store._store.put
+    calls = 0
+
+    def failing_put(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        original_put(*args, **kwargs)
+        if calls == 3:
+            raise RuntimeError("synthetic crash after three SQL writes")
+
+    key = f"synthetic-workflow-flush-{uuid4()}"
+    body = {"original_url": "https://example.invalid/workflow-flush", "scope": {"tenant_id": TENANT_ID}}
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            with monkeypatch.context() as patch:
+                patch.setattr(store._store, "put", failing_put)
+                failed = client.post("/api/v1/intakes/url", json=body, headers=_headers(ACTOR_ID, key=key))
+            assert failed.status_code == 500, failed.text
+            assert calls == 3
+            store.refresh(TENANT_ID)
+            for name in ("intakes", "jobs", "assignments", "slas", "replays", "workflow_audits", "workflow_outbox"):
+                assert not getattr(store, name), name
+            retried = client.post("/api/v1/intakes/url", json=body, headers=_headers(ACTOR_ID, key=key))
+            assert retried.status_code == 202, retried.text
+            store.refresh(TENANT_ID)
+            assert len(store.intakes) == len(store.assignments) == len(store.slas) == len(store.jobs) == len(store.replays) == 1
+            assert len(store.workflow_audits) == 3 and len(store.workflow_outbox) == 2
+    finally:
+        app.state.persistence_bundle.engine.close()

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.app.routes.listings import AssistedIntakeStore
 from apps.api.oday_api.main import create_app
+from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 ACTOR_A = "00000000-0000-0000-0000-000000000101"
@@ -29,7 +30,7 @@ HEADERS_A_REVIEWER = {
 
 
 def test_promotion_api_contract_flow() -> None:
-    app = create_app()
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     client = TestClient(app)
 
     # 1. Submit an intake to /api/v1/intakes/url (resolves to READY)
@@ -165,7 +166,7 @@ def test_promotion_api_contract_flow() -> None:
 
 
 def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> None:
-    app = create_app()
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     client = TestClient(app)
 
     submitted = client.post(

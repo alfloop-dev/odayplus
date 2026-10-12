@@ -15,6 +15,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from apps.api.app.routes.listings import AssistedIntakeStore
 from apps.api.oday_api.main import create_app
 from delivery_toolchain.openapi.generate_assisted_listing_intake_client import ARTIFACT
+from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 TENANT_B = "00000000-0000-0000-0000-000000000002"
@@ -28,7 +29,7 @@ BRAND_X = "00000000-0000-0000-0000-000000000201"
 
 @pytest.fixture(scope="module")
 def workflow_scope_client():
-    app = create_app()
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     client = ContractTestClient(app)
     client.workflow_scope_store = AssistedIntakeStore._instances[-1]
     return client
@@ -314,7 +315,7 @@ HEADERS_B = {
 
 @pytest.fixture
 def client() -> TestClient:
-    app = create_app()
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     return ContractTestClient(app)
 
 
@@ -1947,7 +1948,7 @@ def test_cursor_uses_configured_signing_and_keyset_snapshot_pagination(
 ) -> None:
     signing_key = "cursor-signing-key-for-contract-tests-0001"
     monkeypatch.setenv("ODP_INTAKE_CURSOR_SIGNING_KEY", signing_key)
-    client = ContractTestClient(create_app())
+    client = ContractTestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy()))
 
     submitted_ids = []
     for index in range(3):

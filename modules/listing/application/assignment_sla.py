@@ -270,13 +270,14 @@ class AssignmentSlaService:
         return sla
 
 
-    def get_derived_sla_state(self, schedule: SlaSchedule, current_time: datetime) -> SlaState:
+    @classmethod
+    def get_derived_sla_state(cls, schedule: SlaSchedule, current_time: datetime) -> SlaState:
         """Evaluate authoritative checkpoints, including their exact boundaries."""
         if not isinstance(schedule, SlaSchedule):
             raise DomainValidationError(
                 DenialCode.WORKFLOW_STATE_DENIED, "Resolved SLA schedule is required"
             )
-        current_time = self._aware_time(current_time)
+        current_time = cls._aware_time(current_time)
         if current_time >= schedule.breach_at:
             return SlaState.BREACHED
         elif current_time >= schedule.due_at:
