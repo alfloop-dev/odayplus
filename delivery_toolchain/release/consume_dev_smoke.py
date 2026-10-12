@@ -447,7 +447,7 @@ def _response_cookie_pairs(response: Any) -> tuple[tuple[tuple[str, str], ...], 
     return pairs, ambiguous
 
 
-def _login_reply_canonical(response: Any, kwargs: dict[str, Any], *, issued: bool) -> bool:
+def _login_reply_canonical(response: Any, kwargs: dict[str, Any], *, issued: bool, positive: bool) -> bool:
     """The canonical evaluator's exact predicate for this login reply.
 
     Positive (session issued) and diagnostic (no session) JSON/form replies
@@ -458,7 +458,7 @@ def _login_reply_canonical(response: Any, kwargs: dict[str, Any], *, issued: boo
     from urllib.parse import parse_qs, urlsplit
 
     try:
-        if response.failed:
+        if response.failed or positive != issued:
             return False
         body = kwargs.get("body")
         headers = kwargs.get("headers") or {}
@@ -495,7 +495,11 @@ class _ObservedWeb:
     negative/form logins) is refused locally before the client is called.
     """
     def __init__(self, client: Any, *, execution_id: str, deadline: float, cleanup_deadline: float,
-                 latch: _UncertaintyLatch | None = None) -> None:
+                 latch: _UncertaintyLatch | None = None, login_pair: tuple[str, str] | None = None) -> None:
+        if login_pair is not None and (type(login_pair) is not tuple or len(login_pair) != 2
+                or not all(type(value) is str and value for value in login_pair)):
+            raise ConsumerRefused()
+        self._login_pair = login_pair  # trusted same-pair memory only; None forbids login (API observer)
         self.client = client
         self.execution_id = execution_id
         self.deadline = deadline
@@ -539,6 +543,7 @@ class _ObservedWeb:
             return not self._cleanup_unknown and not self._latch.latched
         finally:
             self._owned.clear()  # Best effort reference release, not zeroization.
+            self._login_pair = None
             self._cleaning = False
 
     def _retain_login_cookies(self, pairs: tuple[tuple[str, str], ...]) -> tuple[bool, bool]:
@@ -566,6 +571,18 @@ class _ObservedWeb:
         return bool(issued), unsafe or len(issued) > 1
 
     def request(self, method: str, path: str, **kwargs: Any) -> Any:
+        if method == "POST" and path == "/login":
+            body = kwargs.get("body")
+            if (self._login_pair is None or type(body) is not dict
+                    or set(body) != {"username", "password", "returnTo"}
+                    or not all(type(body[key]) is str and body[key] for key in body)
+                    or body["returnTo"] != _FORM_RETURN_TO):
+                self._unknown()
+                return gate.HttpResponse(status=0, error="native consumer unbound login refused")
+            # Expected operation comes from trusted request/pair, NEVER whether
+            # the reply happened to issue a cookie. A diagnostic session is an
+            # uncertain effect: keep custody but stop before the next login.
+            positive = (body["username"], body["password"]) == self._login_pair
         cookie, ambiguous = _session_cookie((kwargs.get("headers") or {}).get("cookie", ""))
         if ambiguous:
             # The canonical evaluator joins EVERY response cookie into one header.
@@ -601,7 +618,7 @@ class _ObservedWeb:
                 self._unknown()
             if method == "POST" and path == "/login":
                 if (ambiguous or unsafe
-                        or not _login_reply_canonical(response, kwargs, issued=issued)):
+                        or not _login_reply_canonical(response, kwargs, issued=issued, positive=positive)):
                     self._unknown()
             if method == "POST" and path == "/auth/logout" and state is not None:
                 state["logout_acknowledged"] = (not ambiguous and not response.failed and response.status == 200
@@ -753,7 +770,8 @@ def consume(*, inputs: NativeInputs, environment: dict[str, str], sha: str, dige
             transport_token=inputs.invoker_token), execution_id=inputs.bundle.execution_id,
             deadline=started + 480, cleanup_deadline=started + 540, latch=latch)
         web = _ObservedWeb(gate._web_client(config, correlation), execution_id=inputs.bundle.execution_id,
-                           deadline=started + 480, cleanup_deadline=started + 540, latch=latch)
+                           deadline=started + 480, cleanup_deadline=started + 540, latch=latch,
+                           login_pair=(inputs.bundle.username, inputs.bundle.password))
         # Canonical checks are unchanged; this wrapper also owns unconditional
         # cleanup on every evaluator exit, including early provenance refusal.
         # Never spawn the CLI or populate credential env/per-field fallback.

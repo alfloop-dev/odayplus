@@ -137,6 +137,8 @@ class ExclusivePhaseReceipts:
                http_status: int | None = None, operation: str = "") -> None:
         try:
             if (operation not in {"", "original-login", "target-login", "original-logout", "target-logout",
+                                 "original-logout-1", "original-logout-2", "original-logout-3",
+                                 "target-logout-1", "target-logout-2", "target-logout-3",
                                  "original-observe", "target-observe",
                                  "gate-json-login", "gate-form-login", "gate-invalid-json-login",
                                  "gate-invalid-form-login", "gate-session-logout",
@@ -945,6 +947,34 @@ class TrustedGitHubAdmissionObserver:
         self._download.close()
 
 
+def _safe_owned_login_cookie(header: str) -> str:
+    """Independently validate one field for cleanup custody, not login success."""
+    from http.cookies import SimpleCookie
+
+    try:
+        if type(header) is not str or len(header) > 9000:
+            return ""
+        keys = [part.strip().split("=", 1)[0].lower() for part in header.split(";")]
+        if (keys[0] != "__host-oday_web_session" or len(set(keys)) != len(keys)
+                or not set(keys[1:]) <= {"path", "secure", "httponly", "samesite", "max-age", "expires"}
+                or any(ord(c) < 32 or ord(c) >= 127 for c in header)):
+            return ""
+        parsed = SimpleCookie()
+        parsed.load(header)
+        if set(parsed) != {"__Host-oday_web_session"}:
+            return ""
+        item = parsed["__Host-oday_web_session"]
+        value = item.value
+        if (not item["secure"] or not item["httponly"] or item["path"] != "/"
+                or item["domain"] or item["samesite"].lower() != "lax"
+                or not 0 < len(value) <= 8192
+                or any(ord(c) <= 32 or ord(c) >= 127 or c in ';"\\,' for c in value)):
+            return ""
+        return value
+    except Exception:
+        return ""
+
+
 class RecoveryHTTPRefused(RecoveryRefused):
     """Only original HTTP status, if received, and fail-stop classification.
 
@@ -952,12 +982,14 @@ class RecoveryHTTPRefused(RecoveryRefused):
     No upstream body, cookie, capability or exception text belongs in receipts.
     """
 
-    def __init__(self, *, outcome: str, http_status: int | None, cookie: str = "") -> None:
+    def __init__(self, *, outcome: str, http_status: int | None, cookie: str = "",
+                 cookies: tuple[str, ...] = ()) -> None:
         super().__init__("RECOVERY_HTTPS_ATTEMPT_REFUSED")
         self.outcome, self.http_status = outcome, http_status
-        # Only a newly issued, validated own cookie, retained for cleanup even
-        # when the login body is lost. Never a receipt/report/serialization field.
-        self._cookie = cookie
+        # Bounded private custody survives duplicate/partial login replies.
+        # Keep legacy first-cookie access, NEVER serialize this inventory.
+        self._cookies = tuple(dict.fromkeys(value for value in (cookie, *cookies) if value))[:4]
+        self._cookie = self._cookies[0] if self._cookies else ""
 
     def __reduce_ex__(self, protocol: int):
         raise RecoveryRefused("RECOVERY_HTTP_SERIALIZATION_REFUSED")
@@ -1096,6 +1128,7 @@ class RecoveryHTTPSAttempt:
         raw = tls = connection = response = None
         submitted = False
         issued_cookie = ""
+        issued_cookies: list[str] = []
         try:
             if (method not in {"GET", "POST"} or type(cookie) is not str
                     or not (0 <= len(cookie) <= 8192 if cookie_mode == "login" else 0 < len(cookie) <= 8192)
@@ -1131,28 +1164,17 @@ class RecoveryHTTPSAttempt:
             # Parse the cookie independently BEFORE body/framing validation, so
             # a real own session with a lost body remains eligible for cleanup.
             cookies = response.headers.get_all("Set-Cookie", [])
-            if cookie_mode == "login" and status == 200:
-                from http.cookies import SimpleCookie
-                if len(cookies) != 1 or len(cookies[0]) > 9000:
+            if cookie_mode == "login":
+                # Retain safe distinct values BEFORE multiplicity/status refusal.
+                # The framing cap already bounds headers; inventory is at most4.
+                # Duplicated fields (even identical) remain UNKNOWN, never success.
+                for header in cookies:
+                    value = _safe_owned_login_cookie(header)
+                    if value and value not in issued_cookies and len(issued_cookies) < 4:
+                        issued_cookies.append(value)
+                if len(cookies) != 1 or len(issued_cookies) != 1:
                     raise ValueError
-                parts = cookies[0].split(";")
-                keys = [part.strip().split("=", 1)[0].lower() for part in parts]
-                if (keys[0] != "__host-oday_web_session" or len(set(keys)) != len(keys)
-                        or not set(keys[1:]) <= {"path", "secure", "httponly", "samesite", "max-age", "expires"}
-                        or any(ord(c) < 32 or ord(c) >= 127 for c in cookies[0])):
-                    raise ValueError
-                parsed = SimpleCookie()
-                parsed.load(cookies[0])
-                if set(parsed) != {"__Host-oday_web_session"}:
-                    raise ValueError
-                item = parsed["__Host-oday_web_session"]
-                value = item.value
-                if (not item["secure"] or not item["httponly"] or item["path"] != "/"
-                        or item["domain"] or item["samesite"].lower() != "lax"
-                        or not 0 < len(value) <= 8192
-                        or any(ord(c) <= 32 or ord(c) >= 127 or c in ';"\\,' for c in value)):
-                    raise ValueError
-                issued_cookie = value
+                issued_cookie = issued_cookies[0]
             elif cookies and cookie_mode != "logout":
                 raise ValueError  # no session replacement during own GETs
             lengths = response.headers.get_all("Content-Length", [])
@@ -1191,7 +1213,7 @@ class RecoveryHTTPSAttempt:
             return RecoveryHTTPResult(status, payload, issued_cookie)
         except Exception:
             raise RecoveryHTTPRefused(outcome="unknown" if submitted and method == "POST" else "refused",
-                                      http_status=status, cookie=issued_cookie) from None
+                                      http_status=status, cookie=issued_cookie, cookies=tuple(issued_cookies)) from None
         finally:
             for resource in (response, connection, tls, raw):
                 if resource is not None:
@@ -1463,9 +1485,11 @@ class OwnedSessionHTTPSAttempt(RecoveryHTTPSAttempt):
 
 
 class ForegroundOwnedWebSessions:
-    """Own only two fresh sessions created here, not pre-existing/incident ones.
+    """Own normal original/target sessions, not pre-existing/incident ones.
 
     One original login during preflight, one target login during reconciliation.
+    Ambiguous replies keep at most4 safe values per login for cleanup ONLY;
+    no second login follows failure, so those extra values cannot grant rights.
     Each login/own-logout has an fsynced sub-operation start/terminal inside the
     coordinator's active phase. Missing login reply means UNKNOWN even if no
     cookie was recovered; it never permits another login or blanket revocation.
@@ -1492,6 +1516,8 @@ class ForegroundOwnedWebSessions:
         self._pid, self._original, self._target, self._budget = os.getpid(), original, target, budget
         self._origin, self._address, self._ca = origin, address, ca_pem
         self._cookies = {"original": "", "target": ""}
+        self._extra_cookies: dict[str, tuple[str, ...]] = {"original": (), "target": ()}
+        self._logout_attempted: set[str] = set()
         self._verified: set[str] = set()
         self._attempted: set[str] = set()
         self._stopped = self._closed = self._actions_created = False
@@ -1510,13 +1536,15 @@ class ForegroundOwnedWebSessions:
         return attempt.execute_session(operation, cookie=cookie, deadline=self._budget.call_deadline,
                                        username=username, password=password)
 
-    def _operation(self, role: str, action: str, perform) -> None:
-        operation = f"{role}-{action}"
+    def _operation(self, role: str, action: str, perform, *, ordinal: int = 0) -> None:
+        operation = f"{role}-{action}" + (f"-{ordinal}" if ordinal else "")
         started, terminal = False, False
         status, outcome = None, "refused"
         phase = "cleanup" if action == "logout" else "preflight" if role == "original" else "reconcile"
         try:
             if (self._closed or os.getpid() != self._pid or operation in self._attempted
+                    or type(ordinal) is not int or not 0 <= ordinal <= 3
+                    or (ordinal and (action != "logout" or role not in {"original", "target"}))
                     or (self._stopped and action != "logout") or self._budget._active is None
                     or self._budget._active[0] != phase):
                 raise ValueError
@@ -1536,8 +1564,9 @@ class ForegroundOwnedWebSessions:
             self._stopped = self._budget._stopped = True
             if isinstance(exc, RecoveryHTTPRefused):
                 status, outcome = exc.http_status, exc.outcome
-                if action == "login" and exc._cookie:
-                    self._cookies[role] = exc._cookie  # cleanup ONLY, never validated login
+                if action == "login" and exc._cookies:
+                    self._cookies[role] = exc._cookies[0]  # cleanup ONLY, never validated login
+                    self._extra_cookies[role] = exc._cookies[1:]
             elif started:
                 outcome = "unknown"
             if action == "login" and started:
@@ -1654,21 +1683,22 @@ class ForegroundOwnedWebSessions:
             if gate_sessions is not None:
                 failed = not gate_sessions._cleanup_known_sessions() or failed
             for role in ("target", "original"):
-                cookie = self._cookies[role]
-                if not cookie:
-                    continue
-                def perform(cookie=cookie):
-                    result = self._request("logout", cookie=cookie)
-                    if result.payload.get("ok") is not True:
-                        raise ValueError
-                    revoked = self._request("revoked", cookie=cookie)  # ORIGINAL cookie, not the deletion value
-                    if revoked.payload.get("error", {}).get("code") != "WEB_SESSION_REQUIRED":
-                        raise ValueError
-                    return 401
-                try:
-                    self._operation(role, "logout", perform)
-                except RecoveryActionRefused:
-                    failed = True
+                for ordinal, cookie in enumerate((self._cookies[role], *self._extra_cookies[role])):
+                    if not cookie or cookie in self._logout_attempted:
+                        continue  # same value across roles is NEVER retried
+                    def perform(cookie=cookie):
+                        self._logout_attempted.add(cookie)  # durable start precedes this single effect
+                        result = self._request("logout", cookie=cookie)
+                        if result.payload.get("ok") is not True:
+                            raise ValueError
+                        revoked = self._request("revoked", cookie=cookie)  # ORIGINAL cookie, not deletion value
+                        if revoked.payload.get("error", {}).get("code") != "WEB_SESSION_REQUIRED":
+                            raise ValueError
+                        return 401
+                    try:
+                        self._operation(role, "logout", perform, ordinal=ordinal)
+                    except RecoveryActionRefused:
+                        failed = True
             outcome = self._budget.finish(outcome="unknown" if failed else "completed")
         finally:
             self.close()
@@ -1680,6 +1710,8 @@ class ForegroundOwnedWebSessions:
     def close(self) -> None:
         self._closed = self._stopped = True
         self._cookies = {"original": "", "target": ""}  # NOT logout/zeroization proof
+        self._extra_cookies = {"original": (), "target": ()}
+        self._logout_attempted.clear()
 
 
 class RecoveryActionRefused(RecoveryRefused):

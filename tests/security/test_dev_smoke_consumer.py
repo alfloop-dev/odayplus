@@ -235,7 +235,8 @@ def test_uncertain_session_effect_latches_before_any_later_login_transport(uncer
 
     now = time.monotonic()
     latch = c._UncertaintyLatch()
-    web = c._ObservedWeb(Client(), execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6, latch=latch)
+    web = c._ObservedWeb(Client(), execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6,
+                         latch=latch, login_pair=(_USER, _LOGIN["password"]))
     api = c._ObservedWeb(Api(), execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6, latch=latch)
     owned = {"cookie": f"{_COOKIE}=owned-a"}
     web.request("POST", "/login", body=dict(_LOGIN), headers={})
@@ -294,7 +295,8 @@ def test_real_evaluator_failed_post_logout_revocation_latches_before_form_logins
                                    + "/login?error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin")
     client.routes["form POST /login"] = form_login
     now = time.monotonic()
-    observed = c._ObservedWeb(client, execution_id="offline", deadline=now + 30, cleanup_deadline=now + 35)
+    observed = c._ObservedWeb(client, execution_id="offline", deadline=now + 30, cleanup_deadline=now + 35,
+                              login_pair=(f.USERNAME, f.PASSWORD))
     latched_at: list[int] = []
     original_unknown = observed._unknown
 
@@ -372,7 +374,8 @@ def test_real_evaluator_extra_cookie_latches_and_never_logs_in_again(monkeypatch
                                    + "/login?error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin")
     client.routes["form POST /login"] = form_login
     now = time.monotonic()
-    observed = c._ObservedWeb(client, execution_id="offline", deadline=now + 30, cleanup_deadline=now + 35)
+    observed = c._ObservedWeb(client, execution_id="offline", deadline=now + 30, cleanup_deadline=now + 35,
+                              login_pair=(f.USERNAME, f.PASSWORD))
     clock = f.base.FakeClock()
     checks, report = c.gate.evaluate_gate(f.dev_admin_config(), http=f.base.FakeHttp(f.api_routes()),
         worker_driver=c.gate.ScheduledWorkerDriver(), correlation_id=f.base.CORRELATION_ID,
@@ -412,7 +415,8 @@ def test_ambiguous_cookie_header_latches_locally_and_keeps_single_cleanup(header
     assert c._session_cookie(f"{_COOKIE}=owned-a") == ("owned-a", False)
     assert c._session_cookie("") == ("", False)
     now = time.monotonic()
-    web = c._ObservedWeb(Client(), execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6)
+    web = c._ObservedWeb(Client(), execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6,
+                         login_pair=(_USER, _LOGIN["password"]))
     web.request("POST", "/login", body=dict(_LOGIN), headers={})
     assert not web.uncertainty_latched
     before = list(sent)
@@ -498,7 +502,8 @@ def test_native_urllib_raw_set_cookie_multiplicity_latches_and_owns_every_sessio
     client = c.gate.UrllibHttpClient(c.WEB_ORIGIN, timeout=5, bearer_token="", operator_role="",
                                      operator_subject="", operator_tenant="", correlation_id="corr-offline")
     now = time.monotonic()
-    observed = c._ObservedWeb(client, execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6)
+    observed = c._ObservedWeb(client, execution_id="offline", deadline=now + 5, cleanup_deadline=now + 6,
+                              login_pair=(_USER, _LOGIN["password"]))
     reply = observed.request("POST", "/login", authenticated=False, body=dict(_LOGIN),
                              headers={"origin": c.WEB_ORIGIN}, follow_redirects=False)
     assert len(reply.cookies) <= 1  # the canonical view IS lossy; custody must not trust it
@@ -565,7 +570,8 @@ def test_real_evaluator_noncanonical_form_failure_latches_before_positive_form_l
         return c.gate.HttpResponse(303, location=c.WEB_ORIGIN + "/login?" + query)
     client.routes["form POST /login"] = form_login
     now = time.monotonic()
-    observed = c._ObservedWeb(client, execution_id="offline", deadline=now + 30, cleanup_deadline=now + 35)
+    observed = c._ObservedWeb(client, execution_id="offline", deadline=now + 30, cleanup_deadline=now + 35,
+                              login_pair=(f.USERNAME, f.PASSWORD))
     clock = f.base.FakeClock()
     checks, report = c.gate.evaluate_gate(f.dev_admin_config(), http=f.base.FakeHttp(f.api_routes()),
         worker_driver=c.gate.ScheduledWorkerDriver(), correlation_id=f.base.CORRELATION_ID,
@@ -693,6 +699,8 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
         assert config.bearer_token == "offline-generated-application"
         assert config.api_transport_token == "offline-generated-invoker"
         assert kwargs["http"].client._bearer_token == config.bearer_token
+        assert kwargs["http"]._login_pair is None  # API observer cannot submit credentials
+        assert kwargs["web_http"]._login_pair == (inputs.bundle.username, inputs.bundle.password)
         assert config.dev_admin_password == inputs.bundle.password
         assert not config.bootstrap_admin_password and not config.dev_admin_initial_password
         # Mimic actual audit observation; NOT an authenticated/live receipt.
@@ -1238,7 +1246,8 @@ def test_native_partial_login_body_retains_raw_custody_for_once_only_cleanup(
                                     operator_subject="", operator_tenant="", correlation_id="offline-partial-body")
     now = time.monotonic()
     observed = c._ObservedWeb(client, execution_id="offline",
-        deadline=now + (0.15 if failure == "deadline" else 5), cleanup_deadline=now + 6)
+        deadline=now + (0.15 if failure == "deadline" else 5), cleanup_deadline=now + 6,
+        login_pair=(f.USERNAME, f.PASSWORD))
     # Capture the genuine partial response without persisting cookies/payloads.
     actual_request = client.request
     def inspect_reply(*args, **kwargs):
