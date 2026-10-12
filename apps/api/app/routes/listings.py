@@ -8,7 +8,7 @@ import json
 import os
 import re
 import secrets
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from threading import RLock
@@ -1833,7 +1833,12 @@ else:
             if prior is not None:
                 return prior[0], prior[1], True
             try:
-                with active.transaction():
+                # Intake bootstrap/assignment is one rollback boundary. Other
+                # commands include sagas that intentionally commit FAILED state
+                # before returning a non-2xx business outcome (e.g. SiteScore).
+                atomic_operations = {"submitUrlIntake", "submitIntakeBatch", "commitXlsxBatch", "assignIntake"}
+                unit_of_work = active.transaction() if operation_id in atomic_operations else nullcontext()
+                with unit_of_work:
                     # Memory requests share one locked surface; recheck after
                     # entering it so concurrent same-key submissions converge.
                     prior = load_replay(key, body, tenant_id, actor_id, operation_id, resource_id=resource_id)
