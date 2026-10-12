@@ -162,6 +162,15 @@ def create_growth_sub_router(
     """Return the Growth sub-router wired to a shared GrowthService instance."""
     router = APIRouter(prefix="/growth", tags=["operator-growth"])
 
+    def verified_actor(request: Request) -> tuple[Any, str]:
+        principal = getattr(request.state, "operator_principal", None)
+        if principal is None or not principal.authenticated or not principal.tenant_id:
+            raise HTTPException(status_code=401, detail="AUTHENTICATED_ACTOR_REQUIRED")
+        role = getattr(request.state, "operator_role_id", None)
+        if not role:
+            raise HTTPException(status_code=401, detail="VERIFIED_ROLE_REQUIRED")
+        return principal, role
+
     # Build auth dependency list
     read_deps: list[Any] = []
     if require_view_permission_fn is not None:
@@ -251,6 +260,7 @@ def create_growth_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
+            principal, actor_role = verified_actor(request)
             return resolve_service(request, service, service_resolver).create_action(
                 name=body.name,
                 segment_id=body.segmentId,
@@ -265,8 +275,9 @@ def create_growth_sub_router(
                 rationale=body.rationale,
                 rollback_plan=body.rollbackPlan,
                 source_recommendation_id=body.sourceRecommendationId,
-                actor_role_id=body.actorRoleId or "opsLead",
-                actor_name=body.actorName or _actor_name_from_role(body.actorRoleId),
+                actor_role_id=actor_role,
+                actor_name=principal.subject_id,
+                tenant_id=principal.tenant_id,
                 idempotency_key=idempotency_key,
                 correlation_id=request.state.correlation_id,
             )
@@ -274,6 +285,9 @@ def create_growth_sub_router(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except GrowthPolicyError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+        except GrowthConflict as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
     @router.post("/actions/{action_id}/transition", dependencies=write_deps)
     def transition_action(
@@ -363,12 +377,14 @@ def create_growth_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
+            principal, actor_role = verified_actor(request)
             return resolve_service(
                 request, service, service_resolver
             ).submit_for_approval(
                 action_id=action_id,
-                actor_role_id=body.actorRoleId or "growthLead",
-                actor_name=body.actorName or _actor_name_from_role(body.actorRoleId),
+                actor_role_id=actor_role,
+                actor_name=principal.subject_id,
+                tenant_id=principal.tenant_id,
                 idempotency_key=idempotency_key,
                 correlation_id=request.state.correlation_id,
             )

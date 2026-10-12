@@ -1453,11 +1453,14 @@ function GrowthBuilderModal({
   const [form, setForm] = useState<GrowthBuilderForm>(initialForm);
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const busyRef = useRef(false);
+  const intentRef = useRef<{ signature: string; createKey: string; submitKey: string } | null>(null);
+  const [createdDraft, setCreatedDraft] = useState<Awaited<ReturnType<typeof createGrowthDraft>>>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<ConflictCheck[] | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [checking, setChecking] = useState(false);
-  const close = () => { if (!isSubmitting) router.push(closeHref); };
+  const close = () => { if (!busyRef.current) router.push(closeHref); };
   const panelRef = useModalDialogBehavior({ onClose: close, dismissible: !isSubmitting });
 
   useEffect(() => {
@@ -1509,61 +1512,40 @@ function GrowthBuilderModal({
   };
 
   const handleCreate = async (sendForApproval: boolean) => {
-    if (isSubmitting || (sendForApproval && (blocked || (!fixturesAllowed && conflicts === null)))) {
-      return;
-    }
+    if (busyRef.current || (sendForApproval && !createdDraft && (blocked || (!fixturesAllowed && conflicts === null)))) return;
+    if (createdDraft && !sendForApproval) { close(); return; }
+    busyRef.current = true;
     setIsSubmitting(true);
     setApiError(null);
-
-    const created = await createGrowthDraft({
-      name: form.name,
-      segmentId: form.segmentId,
-      sourceRecommendationId: form.sourceRecommendationId,
-      objective: form.objective,
-      targetLift: parseFloat(form.targetLift) || 0,
-      kind: form.kind,
-      store: form.store,
-      channel: form.channel,
-      budget: parseInt(form.budget, 10) || 0,
-      observationWindow: form.observationWindow,
-      rationale: form.rationale,
-      rollbackPlan: form.rollbackPlan,
-    });
-
-    let approvalId: string | null = null;
-    let submitFailed = false;
-    if (created && sendForApproval) {
-      const submitted = await submitGrowthForApproval({ actionId: created.id });
-      if (submitted) {
-        approvalId = submitted.approval.id;
-      } else {
-        submitFailed = true;
+    const payload = {
+      name: form.name, segmentId: form.segmentId, sourceRecommendationId: form.sourceRecommendationId,
+      objective: form.objective, targetLift: parseFloat(form.targetLift) || 0, kind: form.kind,
+      store: form.store, channel: form.channel, budget: parseInt(form.budget, 10) || 0,
+      observationWindow: form.observationWindow, rationale: form.rationale, rollbackPlan: form.rollbackPlan,
+    };
+    const signature = JSON.stringify(payload);
+    if (!intentRef.current || (!createdDraft && intentRef.current.signature !== signature)) {
+      intentRef.current = { signature, createKey: newIdempotencyKey(), submitKey: newIdempotencyKey() };
+    }
+    const created = createdDraft ?? await createGrowthDraft({ ...payload, idempotencyKey: intentRef.current.createKey });
+    if (!created) {
+      setApiError("尚未確認草稿建立結果。輸入已保留，請重試相同內容以核對結果。");
+      busyRef.current = false;
+      setIsSubmitting(false);
+      return;
+    }
+    setCreatedDraft(created);
+    if (sendForApproval) {
+      const submitted = await submitGrowthForApproval({ actionId: created.id, idempotencyKey: intentRef.current.submitKey });
+      if (!submitted) {
+        setApiError(`草稿 ${created.id} 已建立，但送審尚未確認。可重試送核准，或保留此草稿稍後處理。`);
+        busyRef.current = false;
+        setIsSubmitting(false);
+        return;
       }
     }
-
-    const auditPayload = {
-      action: sendForApproval ? "CREATE_AND_SUBMIT" : "CREATE_DRAFT",
-      kind: form.kind,
-      name: form.name,
-      store: form.store,
-      budget: form.budget,
-      apiResult: created
-        ? { id: created.id, correlationId: created.correlationId }
-        : "api-write-failed",
-      approvalId,
-      timestamp: new Date().toISOString(),
-    };
-    console.log(`[Console Audit] ${JSON.stringify(auditPayload)}`);
-
+    busyRef.current = false;
     setIsSubmitting(false);
-    if (created === null) {
-      setApiError("API 暫時不可用，草稿建立已記錄於本機稽核日誌。");
-      return;
-    }
-    if (submitFailed) {
-      setApiError("草稿已建立，但送審被伺服器衝突閘門拒絕，請回上一步檢查衝突。");
-      return;
-    }
     router.push(closeHref);
   };
 
@@ -1617,7 +1599,7 @@ function GrowthBuilderModal({
         </ol>
 
         {apiError ? (
-          <div className={g.formAlert} data-testid="growth-draft-api-error">
+          <div className={g.formAlert} role="alert" data-testid="growth-draft-api-error">
             <p>{apiError}</p>
           </div>
         ) : null}
@@ -1762,7 +1744,7 @@ function GrowthBuilderModal({
 
           <div className={g.builderFooter}>
             {step > 1 ? (
-              <button type="button" className={g.secondaryAction} onClick={goPrev} disabled={isSubmitting || checking} data-testid="growth-builder-prev">
+              <button type="button" className={g.secondaryAction} onClick={goPrev} disabled={isSubmitting || checking || !!createdDraft} data-testid="growth-builder-prev">
                 ← 上一步
               </button>
             ) : (
@@ -1783,16 +1765,16 @@ function GrowthBuilderModal({
                   disabled={isSubmitting}
                   data-testid="growth-draft-submit"
                 >
-                  {isSubmitting ? "建立中…" : "建立草稿"}
+                  {isSubmitting ? "建立中…" : createdDraft ? "保留草稿" : "建立草稿"}
                 </button>
                 <button
                   type="button"
                   className={g.primaryAction}
                   onClick={() => handleCreate(true)}
-                  disabled={isSubmitting || blocked || (!fixturesAllowed && conflicts === null)}
+                  disabled={isSubmitting || (!createdDraft && (blocked || (!fixturesAllowed && conflicts === null)))}
                   data-testid="growth-draft-submit-approval"
                 >
-                  {isSubmitting ? "送審中…" : "建立並送核准"}
+                  {isSubmitting ? "送審中…" : createdDraft ? "重試送核准" : "建立並送核准"}
                 </button>
               </>
             )}

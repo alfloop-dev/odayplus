@@ -14,8 +14,8 @@
  *
  * Assumes: Next.js dev server running at BASE_URL (default http://localhost:3000).
  * The workspace renders from embedded fixtures when the API is unreachable, so
- * write calls fall back to an offline-labelled console audit. The server-side
- * conflict gate and approval-advances-state behaviour are proven by
+ * writes require an actual acknowledged API response. The create case reloads
+ * the persisted action and its audit binding; server-side replay and gates are proven by
  * tests/contract/test_operator_growth_api.py.
  */
 
@@ -47,14 +47,20 @@ test("Growth workspace renders segments, recommendations, and actions from fixtu
   await expect(itemTable).toContainText("宵夜外送費試點活動");
 
   // 會員分群 tab renders the segment cards.
-  await page.getByTestId("growth-tab-segments").click();
+  await Promise.all([
+    page.waitForURL(url => url.searchParams.get("gtab") === "segments"),
+    page.getByTestId("growth-tab-segments").click(),
+  ]);
   const segmentTable = page.getByTestId("growth-segment-table");
   await expect(segmentTable).toContainText("都會晚餐高潛力組");
   await expect(segmentTable).toContainText("郊區午餐守成組");
   await expect(segmentTable).toContainText("宵夜外送流失組");
 
   // PriceOps tab renders the pricing recommendation table.
-  await page.getByTestId("growth-tab-priceops").click();
+  await Promise.all([
+    page.waitForURL(url => url.searchParams.get("gtab") === "priceops"),
+    page.getByTestId("growth-tab-priceops").click(),
+  ]);
   const recTable = page.getByTestId("growth-recommendation-table");
   await expect(recTable).toContainText("rec-9001");
   await expect(recTable).toContainText("rec-9002");
@@ -132,19 +138,24 @@ test("Five-step builder navigates all steps and emits a create audit on submit",
   await modal.getByTestId("growth-builder-next").click();
   await expect(page.getByTestId("growth-builder-step-5")).toBeVisible();
 
-  const consoleLogs: string[] = [];
-  page.on("console", (msg) => {
-    if (msg.text().includes("[Console Audit]")) consoleLogs.push(msg.text());
-  });
-
+  const responsePromise = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/operator/growth/actions");
   await modal.getByTestId("growth-draft-submit").click();
+  const response = await responsePromise;
+  expect(response.ok()).toBe(true);
+  const created = await response.json();
+  expect(created.status).toBe("DRAFT");
+  expect(created.kind).toBe("winback");
+  expect(created.name).toBe("宵夜外送會員召回改進版");
+  expect(created.audit.correlationId).toBeTruthy();
   await expect(modal).not.toBeVisible();
+  const stored = await page.request.get(`/api/v1/operator/growth/actions/${created.id}`);
+  expect(stored.ok()).toBe(true);
+  const persisted = await stored.json();
+  expect(persisted.id).toBe(created.id);
+  expect(persisted.name).toBe(created.name);
+  expect(persisted.status).toBe("DRAFT");
+  expect(persisted.audit).toEqual(created.audit);
 
-  expect(consoleLogs.length).toBe(1);
-  const parsed = JSON.parse(consoleLogs[0].replace("[Console Audit] ", ""));
-  expect(parsed.action).toBe("CREATE_DRAFT");
-  expect(parsed.kind).toBe("winback");
-  expect(parsed.name).toBe("宵夜外送會員召回改進版");
 });
 
 test("Growth builder can be dismissed without submitting", async ({ page }) => {

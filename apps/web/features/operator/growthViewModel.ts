@@ -402,12 +402,15 @@ function newCorrelationId(): string {
 
 async function apiFetch<T>(
   path: string,
-  options: RequestInit & { correlationId?: string } = {},
+  options: RequestInit & { correlationId?: string; timeoutMs?: number } = {},
 ): Promise<T | null> {
-  const { correlationId, ...fetchOptions } = options;
+  const { correlationId, timeoutMs, ...fetchOptions } = options;
+  const controller = timeoutMs ? new AbortController() : undefined;
+  const timeout = timeoutMs ? setTimeout(() => controller?.abort(), timeoutMs) : undefined;
   try {
     const res = await fetch(`${GROWTH_API_BASE}${path}`, {
       ...fetchOptions,
+      signal: controller?.signal ?? fetchOptions.signal,
       headers: {
         "Content-Type": "application/json",
         "X-Correlation-Id": correlationId ?? newCorrelationId(),
@@ -419,6 +422,8 @@ async function apiFetch<T>(
     return (await res.json()) as T;
   } catch {
     return null;
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
@@ -437,8 +442,9 @@ export async function createGrowthDraft(params: {
   observationWindowDays?: number;
   rationale?: string;
   rollbackPlan?: string;
+  idempotencyKey?: string;
 }): Promise<{ id: string; status: string; kind: string; correlationId: string } | null> {
-  const idempotencyKey = newIdempotencyKey();
+  const idempotencyKey = params.idempotencyKey ?? newIdempotencyKey();
   const correlationId = newCorrelationId();
   const result = await apiFetch<{
     id: string;
@@ -447,6 +453,7 @@ export async function createGrowthDraft(params: {
     correlation_id: string;
   }>("/actions", {
     method: "POST",
+    timeoutMs: 20_000,
     correlationId,
     headers: {
       "Idempotency-Key": idempotencyKey,
@@ -467,7 +474,7 @@ export async function createGrowthDraft(params: {
       rollbackPlan: params.rollbackPlan ?? "",
     }),
   });
-  if (!result) return null;
+  if (!result || typeof result.id !== "string" || !result.id.trim() || result.status !== "DRAFT" || result.kind !== (params.kind ?? "offpeak")) return null;
   return {
     id: result.id,
     status: result.status,
@@ -535,6 +542,7 @@ export async function checkGrowthConflicts(params: {
 /** Submit a DRAFT Growth Action for approval; creates a Govern item. */
 export async function submitGrowthForApproval(params: {
   actionId: string;
+  idempotencyKey?: string;
 }): Promise<{ actionId: string; status: string; approval: GrowthApproval; correlationId: string } | null> {
   const correlationId = newCorrelationId();
   const result = await apiFetch<{
@@ -544,11 +552,12 @@ export async function submitGrowthForApproval(params: {
     correlation_id: string;
   }>(`/actions/${params.actionId}/submit`, {
     method: "POST",
+    timeoutMs: 20_000,
     correlationId,
-    headers: { "Idempotency-Key": newIdempotencyKey() },
+    headers: { "Idempotency-Key": params.idempotencyKey ?? newIdempotencyKey() },
     body: JSON.stringify({}),
   });
-  if (!result) return null;
+  if (!result || result.id !== params.actionId || result.status !== "PENDING_APPROVAL" || !result.approval?.id || result.approval.ref !== params.actionId || result.approval.module !== "Growth" || result.approval.status !== "pending") return null;
   return {
     actionId: result.id,
     status: result.status,

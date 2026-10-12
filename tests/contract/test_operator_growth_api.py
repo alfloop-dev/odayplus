@@ -547,3 +547,101 @@ def test_evidence_below_the_causal_threshold_cannot_close_an_action() -> None:
     fetched = client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()
     assert fetched["status"] != "CLOSED"
     assert fetched["evidenceLevel"] == "L2"
+
+
+@pytest.mark.parametrize("operation", ["create", "submit"])
+def test_growth_draft_commands_refuse_unbound_legacy_replay(operation):
+    from modules.opsboard.application.growth import GrowthConflict, GrowthService
+
+    service = GrowthService()
+    draft = service.create_action(name="Synthetic", segment_id="seg-metro-dinner", objective="Synthetic", target_lift=1)
+    service._state["idempotencyResults"]["synthetic-legacy-command"] = {"id": "unattributable"}
+    before = service.export_state()
+    with pytest.raises(GrowthConflict, match="UNBOUND_LEGACY_REPLAY"):
+        if operation == "create":
+            service.create_action(name="Synthetic", segment_id="seg-metro-dinner", objective="Synthetic", target_lift=1, idempotency_key="synthetic-legacy-command")
+        else:
+            service.submit_for_approval(action_id=draft["id"], idempotency_key="synthetic-legacy-command")
+    assert service.export_state() == before
+
+
+def test_growth_create_request_actor_and_operation_bound_replay():
+    client = _client()
+    body = {"name": "Synthetic retry", "segmentId": "seg-metro-dinner", "objective": "Synthetic", "targetLift": 1, "store": "Synthetic Store", "observationWindow": "Synthetic Window"}
+    headers = _headers(idem="synthetic-create-bound")
+    first = client.post(f"{BASE}/actions", json=body, headers=headers)
+    assert first.status_code == 200, first.text
+    replay = client.post(f"{BASE}/actions", json={**body, "actorName": "forged", "actorRoleId": "forged"}, headers=headers)
+    assert replay.status_code == 200 and replay.json()["idempotentReplay"]
+    assert replay.json()["id"] == first.json()["id"]
+    before = client.get(f"{BASE}/actions", headers=headers).json()["items"]
+    changed = client.post(f"{BASE}/actions", json={**body, "name": "Changed"}, headers=headers)
+    assert changed.status_code == 409 and "IDEMPOTENCY_CONFLICT" in changed.text
+    other_operation = client.post(f"{BASE}/actions/{first.json()['id']}/submit", json={}, headers=headers)
+    assert other_operation.status_code == 409
+    denied = client.post(f"{BASE}/actions", json=body, headers={**headers, "X-Roles": "auditor"})
+    assert denied.status_code == 403
+    assert client.get(f"{BASE}/actions", headers=headers).json()["items"] == before
+    other_actor = client.post(f"{BASE}/actions", json=body, headers={**headers, "X-Subject-Id": "synthetic-other"})
+    assert other_actor.status_code == 200 and not other_actor.json()["idempotentReplay"]
+    assert other_actor.json()["id"] != first.json()["id"]
+
+
+def test_growth_submit_record_and_actor_bound_replay():
+    client = _client()
+    first = _create_draft(client, kind="offpeak", store="Synthetic Store One", window="Synthetic Window")
+    second = _create_draft(client, kind="offpeak", store="Synthetic Store Two", window="Synthetic Window")
+    headers = _headers(idem="synthetic-submit-bound")
+    accepted = client.post(f"{BASE}/actions/{first['id']}/submit", json={}, headers=headers)
+    assert accepted.status_code == 200, accepted.text
+    replay = client.post(f"{BASE}/actions/{first['id']}/submit", json={}, headers=headers)
+    assert replay.status_code == 200 and replay.json()["idempotentReplay"]
+    assert replay.json()["approval"] == accepted.json()["approval"]
+    other_record = client.post(f"{BASE}/actions/{second['id']}/submit", json={}, headers=headers)
+    assert other_record.status_code == 409
+    other_actor = client.post(f"{BASE}/actions/{first['id']}/submit", json={}, headers={**headers, "X-Subject-Id": "synthetic-other"})
+    assert other_actor.status_code == 409 and "only DRAFT" in other_actor.text
+    denied = client.post(f"{BASE}/actions/{first['id']}/submit", json={}, headers={**headers, "X-Roles": "auditor"})
+    assert denied.status_code == 403
+    assert len(client.get(f"{BASE}/approvals", headers=headers).json()["items"]) == 1
+
+
+def test_growth_create_and_submit_audit_use_verified_principal(monkeypatch):
+    from modules.opsboard.application.growth import GrowthService
+
+    events = []
+    original = GrowthService._append_audit_event
+
+    def record(self, **kwargs):
+        event = original(self, **kwargs)
+        events.append(event)
+        return event
+
+    monkeypatch.setattr(GrowthService, "_append_audit_event", record)
+    client = _client()
+    body = {"name": "Synthetic attribution", "segmentId": "seg-metro-dinner", "objective": "Synthetic", "targetLift": 1, "store": "Synthetic Store", "observationWindow": "Synthetic Window", "actorName": "forged", "actorRoleId": "forged"}
+    created = client.post(f"{BASE}/actions", json=body, headers=_headers())
+    assert created.status_code == 200, created.text
+    submitted = client.post(f"{BASE}/actions/{created.json()['id']}/submit", json={"actorName": "forged", "actorRoleId": "forged"}, headers=_headers())
+    assert submitted.status_code == 200, submitted.text
+    assert [e["action"] for e in events] == ["growth.action.created", "growth.action.submitted"]
+    assert all(e["actorName"] == WRITE_HEADERS["X-Subject-Id"] and e["actorRoleId"] != "forged" for e in events)
+    assert submitted.json()["approval"]["requester"] == WRITE_HEADERS["X-Subject-Id"]
+
+
+def test_growth_command_receipts_survive_reload_and_bind_tenant():
+    from modules.opsboard.application.growth import GrowthConflict, GrowthPolicyError, GrowthService
+
+    service = GrowthService(tenant_id="synthetic-tenant")
+    kwargs = dict(name="Synthetic", segment_id="seg-metro-dinner", objective="Synthetic", target_lift=1, store="Synthetic Store", observation_window="Synthetic Window", actor_name="synthetic-actor", tenant_id="synthetic-tenant", idempotency_key="synthetic-durable-create")
+    created = service.create_action(**kwargs)
+    restored = GrowthService(initial_state=service.export_state(), seed_fixtures=False, tenant_id="synthetic-tenant")
+    assert restored.create_action(**kwargs)["id"] == created["id"]
+    with pytest.raises(GrowthPolicyError, match="TENANT_SCOPE_DENIED"):
+        restored.create_action(**{**kwargs, "tenant_id": "other"})
+    submitted = restored.submit_for_approval(action_id=created["id"], actor_name="synthetic-actor", tenant_id="synthetic-tenant", idempotency_key="synthetic-durable-submit")
+    reloaded = GrowthService(initial_state=restored.export_state(), seed_fixtures=False, tenant_id="synthetic-tenant")
+    replay = reloaded.submit_for_approval(action_id=created["id"], actor_name="synthetic-actor", tenant_id="synthetic-tenant", idempotency_key="synthetic-durable-submit")
+    assert replay["idempotentReplay"] and replay["approval"] == submitted["approval"]
+    with pytest.raises(GrowthConflict, match="IDEMPOTENCY_CONFLICT"):
+        reloaded.create_action(**{**kwargs, "budget": 5})

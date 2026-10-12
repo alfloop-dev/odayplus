@@ -67,3 +67,64 @@ for (const width of [1440, 1024, 390]) {
     await expect(page).not.toHaveURL(/builder=/);
   });
 }
+
+
+for (const width of [1440, 1024, 390]) {
+  test(`Growth draft retries uncertain create and submit without duplicating intent at ${width}`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "marketing-manager"));
+    const createKeys: string[] = [];
+    const submitKeys: string[] = [];
+    let release!: () => void;
+    const responseHeld = new Promise<void>(resolve => { release = resolve; });
+    await page.route("**/api/v1/operator/growth/conflicts/check", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ checks: [], blocked: false, reasons: [] }) }));
+    await page.route("**/api/v1/operator/growth/actions", async route => {
+      if (route.request().method() !== "POST") return route.fallback();
+      createKeys.push(route.request().headers()["idempotency-key"]);
+      if (createKeys.length === 1) return route.abort("failed");
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ id: "synthetic-recovery-draft", status: "DRAFT", kind: "offpeak", correlation_id: "synthetic-create" }) });
+    });
+    await page.route("**/api/v1/operator/growth/actions/synthetic-recovery-draft/submit", async route => {
+      submitKeys.push(route.request().headers()["idempotency-key"]);
+      if (submitKeys.length === 1) return route.fulfill({ status: 503, body: "Synthetic lost submission acknowledgement" });
+      await responseHeld;
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ id: "synthetic-recovery-draft", status: "PENDING_APPROVAL", approval: { id: "synthetic-recovery-approval", ref: "synthetic-recovery-draft", module: "Growth", status: "pending" } }) });
+    });
+    await page.goto("/operator?ws=growth&builder=offpeak");
+    const dialog = page.getByRole("dialog", { name: "建立 Growth Action 草稿" });
+    await dialog.getByLabel("活動名稱").fill("Synthetic recovery campaign");
+    for (let i = 0; i < 4; i += 1) await dialog.getByTestId("growth-builder-next").click();
+    await dialog.getByTestId("growth-draft-submit-approval").click();
+    await expect(dialog.getByRole("alert")).toContainText("尚未確認草稿建立結果");
+    await dialog.getByTestId("growth-draft-submit-approval").click();
+    await expect(dialog.getByRole("alert")).toContainText("synthetic-recovery-draft 已建立");
+    await expect(dialog.getByTestId("growth-builder-prev")).toBeDisabled();
+    await expect(dialog.getByTestId("growth-draft-submit")).toHaveText("保留草稿");
+    const partialAxe = await new AxeBuilder({ page }).include('[data-testid="growth-draft-modal"]').analyze();
+    expect(partialAxe.violations).toEqual([]);
+    const evidence = process.env.STORE_OPS_PARITY_EVIDENCE_DIR ?? info.outputDir;
+    await mkdir(evidence, { recursive: true });
+    await page.screenshot({ path: path.join(evidence, `growth-draft-partial-${width}.png`), animations: "disabled" });
+    await dialog.getByTestId("growth-draft-submit-approval").click();
+    await expect(dialog.getByTestId("growth-builder-submit-status")).toBeFocused();
+    await expect(dialog.getByTestId("growth-draft-close")).toBeDisabled();
+    await expect(dialog.getByTestId("growth-draft-submit")).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+    const pendingAxe = await new AxeBuilder({ page }).include('[data-testid="growth-draft-modal"]').analyze();
+    expect(pendingAxe.violations).toEqual([]);
+    await page.screenshot({ path: path.join(evidence, `growth-draft-retry-pending-${width}.png`), animations: "disabled" });
+    release();
+    await expect(dialog).toHaveCount(0);
+    expect(createKeys).toHaveLength(2);
+    expect(submitKeys).toHaveLength(2);
+    expect(createKeys[0]).toBe(createKeys[1]);
+    expect(submitKeys[0]).toBe(submitKeys[1]);
+    expect(createKeys[0]).not.toBe(submitKeys[0]);
+    await writeFile(path.join(evidence, `growth-draft-recovery-${width}.json`), JSON.stringify({
+      width, createAttempts: createKeys.length, submitAttempts: submitKeys.length, createRetryKeyStable: true,
+      submitRetryKeyStable: true, separatePhaseKeys: true, partialAxeViolations: partialAxe.violations,
+      pendingAxeViolations: pendingAxe.violations, scope: "Isolated synthetic browser requests; not deployed UAT",
+    }, null, 2));
+  });
+}

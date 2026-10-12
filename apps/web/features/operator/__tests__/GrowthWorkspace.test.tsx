@@ -288,6 +288,88 @@ describe("GrowthWorkspace API loading", () => {
     expect(routerPush).not.toHaveBeenCalled();
   });
 
+  async function openSyntheticDraft() {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    render(<GrowthWorkspace basePath="/operator" searchParams={{ builder: "offpeak" }} apiData={{
+      availability: "fixture", freshness: FIXTURE_FRESHNESS, fromApi: false,
+      items: GROWTH_ITEMS, recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS,
+    }} />);
+    fireEvent.change(screen.getByRole("dialog").querySelector('input[name="name"]')!, { target: { value: "Synthetic recovery draft" } });
+    fireEvent.click(screen.getByTestId("growth-builder-next"));
+    fireEvent.click(screen.getByTestId("growth-builder-next"));
+    fireEvent.click(screen.getByTestId("growth-builder-next"));
+    await screen.findByTestId("growth-builder-step-4");
+    fireEvent.click(screen.getByTestId("growth-builder-next"));
+  }
+
+  it("reconciles a lost create acknowledgement, then retries only submission of the confirmed draft", async () => {
+    let creates = 0;
+    let submits = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _options?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/conflicts/check")) return new Response(JSON.stringify({ checks: [], blocked: false, reasons: [] }));
+      if (path.endsWith("/actions")) {
+        creates += 1;
+        if (creates === 1) throw new Error("Synthetic lost create acknowledgement");
+        return new Response(JSON.stringify({ id: "synthetic-created", status: "DRAFT", kind: "offpeak", correlation_id: "synthetic-create" }));
+      }
+      submits += 1;
+      if (submits === 1) throw new Error("Synthetic lost submit acknowledgement");
+      return new Response(JSON.stringify({ id: "synthetic-created", status: "PENDING_APPROVAL", approval: { id: "synthetic-approval", ref: "synthetic-created", module: "Growth", status: "pending" } }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await openSyntheticDraft();
+    fireEvent.click(screen.getByTestId("growth-draft-submit-approval"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("尚未確認草稿建立結果"));
+    expect(routerPush).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("growth-draft-submit-approval"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("synthetic-created 已建立"));
+    expect(screen.getByTestId("growth-builder-prev")).toBeDisabled();
+    expect(screen.getByTestId("growth-draft-submit")).toHaveTextContent("保留草稿");
+    expect(screen.getByTestId("growth-draft-submit-approval")).toHaveTextContent("重試送核准");
+    fireEvent.click(screen.getByTestId("growth-draft-submit-approval"));
+    await waitFor(() => expect(routerPush).toHaveBeenCalledTimes(1));
+    expect(creates).toBe(2);
+    expect(submits).toBe(2);
+    const calls = fetchMock.mock.calls.filter(([url]) => !String(url).endsWith("/conflicts/check"));
+    const options = calls.map(call => (call as unknown as [RequestInfo, RequestInit])[1]);
+    expect(new Headers(options[0].headers).get("Idempotency-Key")).toBe(new Headers(options[1].headers).get("Idempotency-Key"));
+    expect(new Headers(options[2].headers).get("Idempotency-Key")).toBe(new Headers(options[3].headers).get("Idempotency-Key"));
+    expect(new Headers(options[1].headers).get("Idempotency-Key")).not.toBe(new Headers(options[2].headers).get("Idempotency-Key"));
+  });
+
+  it("lets the operator retain a confirmed draft without creating or submitting it again", async () => {
+    const writes: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith("/conflicts/check")) return new Response(JSON.stringify({ checks: [], blocked: false, reasons: [] }));
+      writes.push(path);
+      return path.endsWith("/actions")
+        ? new Response(JSON.stringify({ id: "synthetic-kept", status: "DRAFT", kind: "offpeak" }))
+        : new Response("Synthetic unavailable", { status: 503 });
+    }));
+    await openSyntheticDraft();
+    fireEvent.click(screen.getByTestId("growth-draft-submit-approval"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("synthetic-kept 已建立"));
+    fireEvent.click(screen.getByTestId("growth-draft-submit"));
+    expect(routerPush).toHaveBeenCalledTimes(1);
+    expect(writes).toEqual(["/api/v1/operator/growth/actions", "/api/v1/operator/growth/actions/synthetic-kept/submit"]);
+  });
+
+  it("does not accept an approval acknowledgement for another draft", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith("/conflicts/check")) return new Response(JSON.stringify({ checks: [], blocked: false, reasons: [] }));
+      return new Response(JSON.stringify(path.endsWith("/actions")
+        ? { id: "synthetic-requested", status: "DRAFT", kind: "offpeak" }
+        : { id: "other", status: "PENDING_APPROVAL", approval: { id: "other-approval", ref: "other", module: "Growth", status: "pending" } }));
+    }));
+    await openSyntheticDraft();
+    fireEvent.click(screen.getByTestId("growth-draft-submit-approval"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("synthetic-requested 已建立"));
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
   it("preserves the reason and idempotency key after an uncertain response, and keeps an in-flight dialog visible", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
     let settle: (response: Response) => void = () => {};
