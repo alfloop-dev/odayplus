@@ -2083,7 +2083,9 @@ else:
             api,
             create_operator_store_ops_router(
                 repository=store_ops_repo,
+                store_repository=bundle.store_repository,
                 audit_log=audit_log,
+                require_live_data=require_live_data,
             ),
         )
         mount_versioned(

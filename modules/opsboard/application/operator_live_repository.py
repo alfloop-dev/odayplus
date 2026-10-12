@@ -665,6 +665,7 @@ class OperatorLiveRepository:
         )
 
         queue = [
+            *self._store_ops_tasks(sources["store_ops_issues"]),
             *self._alert_tasks(alerts),
             *self._intervention_tasks(interventions),
             *self._listing_tasks(listings),
@@ -732,6 +733,7 @@ class OperatorLiveRepository:
             if any(
                 sections[name].state != "available"
                 for name in (
+                    "storeOpsIssues",
                     "forecastAlerts",
                     "interventions",
                     "listings",
@@ -900,6 +902,45 @@ class OperatorLiveRepository:
                 }
             )
         return rows, self._available(source, rows)
+
+    def _store_ops_tasks(self, issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        tabs = {
+            "new": "triage",
+            "triaged": "assign",
+            "assigned": "actions",
+            "inprogress": "actions",
+            "executed": "outcome",
+            "observing": "outcome",
+            "outcomeready": "outcome",
+            "waitingevidence": "evidence",
+            "waitingapproval": "actions",
+            "escalated": "outcome",
+        }
+        rows = []
+        for issue in issues:
+            status = str(issue.get("status", ""))
+            if status not in tabs or not isinstance(issue.get("id"), str):
+                continue
+            rows.append(
+                {
+                    "id": issue["id"],
+                    "title": str(issue.get("title", "")),
+                    "description": str(issue.get("summary", "")),
+                    "meta": str(issue.get("storeName", "")),
+                    "owner": str(issue.get("ownerName", "")).strip() or "未指派",
+                    "status": status,
+                    "time": str(issue.get("slaDueAt", "")),
+                    "tone": "danger"
+                    if issue.get("severity") == "critical"
+                    else "warning"
+                    if issue.get("severity") == "high"
+                    else "neutral",
+                    "workspace": "store",
+                    "roles": _roles("ops-lead", "cs-lead", "field-lead"),
+                    "target": {"workspace": "store", "entityId": issue["id"], "tab": tabs[status]},
+                }
+            )
+        return rows
 
     def _alert_tasks(self, alerts: list[Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []

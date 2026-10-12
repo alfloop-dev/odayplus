@@ -613,9 +613,9 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       window.sessionStorage.setItem("oday.operator.role", "ops-lead");
     });
     await page.goto("/operator?ws=network");
-    await page.getByTestId("network-tab-1").click();
-
-    await expect(page.getByTestId("intake-no-access")).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /展店與店網/ })).toHaveAttribute("aria-disabled", "true");
+    const denied = await page.request.get("/api/v1/operator/network-listings/intake", { headers: {"x-operator-role": "ops-lead", "x-roles": "operations_manager", "x-subject-id": "synthetic-denied-ops", "x-tenant-id": "tenant-a"} });
+    expect(denied.status()).toBe(403);
     // It must not imply "no submissions exist", and must offer no write action.
     await expect(page.getByTestId("intake-inbox-empty")).toHaveCount(0);
     await expect(page.getByTestId("intake-add-button")).toHaveCount(0);

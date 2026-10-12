@@ -431,7 +431,8 @@ def test_production_routes_gate_only_the_dependency_they_use(
                 headers=operator_headers,
             )
             assert operator.status_code == 200, operator.text
-            assert operator.json()["meta"]["dataMode"] == "live"
+            assert operator.json()["meta"]["dataMode"] == "degraded"
+            assert operator.json()["meta"]["sections"]["storeOpsIssues"]["state"] == "unavailable"
             assert "r4-seed" not in operator.text
 
             history = client.get(

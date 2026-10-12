@@ -157,11 +157,10 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
     await api.dispose();
   });
 
-  test("Operations lead sees read-only review actions (no decision bar)", async ({ page }) => {
-    // operations_manager does not hold sitescore APPROVE. Keep its persona
-    // intact rather than impersonating a reviewer to make the flow succeed.
+  test("PM/audit persona sees read-only review actions (no decision bar)", async ({ page }) => {
+    // R7 admits PM/audit to Network as a read-only decision viewer.
     await page.addInitScript(() => {
-      window.sessionStorage.setItem("oday.operator.role", "ops-lead");
+      window.sessionStorage.setItem("oday.operator.role", "pm-audit");
     });
     await page.goto("/operator?ws=network");
     await expect(page.getByTestId("network-find-areas-workspace")).toBeVisible();

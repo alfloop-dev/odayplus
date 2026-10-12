@@ -20,6 +20,11 @@
  */
 
 import { expect, test } from "@playwright/test";
+import { primeOperatorPersona } from "./_operatorPersona";
+
+test.beforeEach(async ({ page }) => {
+  await primeOperatorPersona(page, "marketing-manager");
+});
 
 // ---------------------------------------------------------------------------
 // 1. Workspace renders all sections

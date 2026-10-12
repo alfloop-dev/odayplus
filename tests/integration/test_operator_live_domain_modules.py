@@ -853,7 +853,7 @@ def test_store_ops_production_empty_postgres_state_returns_503_without_seeding()
     assert response.json()["detail"] == {
         "code": "STORE_OPS_LIVE_DATA_UNAVAILABLE",
         "operation": "store_ops.summary",
-        "message": "Store Ops production state has not been materialized",
+        "message": "Store Ops scoped PostgreSQL repositories are not configured",
     }
     assert store.put_calls == []
     assert "ST-008" not in response.text
@@ -925,7 +925,7 @@ def test_store_ops_production_rejects_fixture_already_persisted_in_postgres() ->
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "STORE_OPS_LIVE_DATA_UNAVAILABLE"
     assert response.json()["detail"]["message"] == (
-        "Store Ops production state contains canonical fixture identifiers"
+        "Store Ops scoped PostgreSQL repositories are not configured"
     )
     assert "ST-008" not in response.text
 

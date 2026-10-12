@@ -9,6 +9,7 @@ file sink that rejects overwrites.
 
 from __future__ import annotations
 
+import json
 import os
 import urllib.parse
 import urllib.request
@@ -80,6 +81,33 @@ class LocalAppendOnlyWormSink:
             payload=event.to_dict(),
         )
 
+    def lookup_audit_event(self, event: Any) -> AuditWormReceipt | None:
+        """Verify an existing immutable object after a delivery interruption."""
+        checksum = sha256_hex(event.to_dict())
+        path = self._root / _object_name(
+            record_type="audit-events",
+            record_id=event.event_id,
+            sequence=event.sequence,
+            checksum=checksum,
+        )
+        if not path.exists():
+            return None
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            envelope.get("record_id") != event.event_id
+            or envelope.get("checksum") != checksum
+            or envelope.get("payload") != event.to_dict()
+        ):
+            raise AuditWormSinkError("existing WORM object does not match the audit event")
+        return AuditWormReceipt(
+            sink_id=self.sink_id,
+            object_uri=path.resolve().as_uri(),
+            record_type="audit-events",
+            record_id=event.event_id,
+            checksum=checksum,
+            written_at=datetime.fromisoformat(envelope["written_at"]),
+        )
+
     def write_retained_evidence(self, record: Any) -> AuditWormReceipt:
         return self._write(
             record_type="retained-evidence",
@@ -118,9 +146,7 @@ class LocalAppendOnlyWormSink:
         try:
             fd = os.open(path, flags, 0o440)
         except FileExistsError as exc:
-            raise AuditWormSinkError(
-                f"WORM object already exists: {path}"
-            ) from exc
+            raise AuditWormSinkError(f"WORM object already exists: {path}") from exc
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(canonical_json(envelope))
             handle.write("\n")
@@ -193,8 +219,7 @@ class GcsWormEvidenceSink:
         token = self._token or _configured_gcs_token()
         if not token:
             raise AuditWormSinkError(
-                "GCS WORM sink requires ODP_AUDIT_WORM_GCS_TOKEN or "
-                "GOOGLE_OAUTH_ACCESS_TOKEN"
+                "GCS WORM sink requires ODP_AUDIT_WORM_GCS_TOKEN or GOOGLE_OAUTH_ACCESS_TOKEN"
             )
         checksum = sha256_hex(payload)
         written_at = datetime.now(UTC)

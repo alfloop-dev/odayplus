@@ -1,4 +1,5 @@
 import { expect, request as playwrightRequest, test } from "@playwright/test";
+import { primeOperatorPersona } from "./_operatorPersona";
 import {
   acquireOperatorBackendLock,
   releaseOperatorBackendLock,
@@ -28,7 +29,8 @@ test.afterAll(() => {
 });
 
 test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ page }) => {
+    await primeOperatorPersona(page, "expansion-manager");
     const api = await apiContext();
     const reset = await api.post("/api/v1/operator/network-listings/reset");
     expect(reset.status()).toBe(200);
@@ -283,12 +285,11 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
   test("a role without listing:UPDATE is offered no merge entry point at all", async ({
     page,
   }) => {
-    // ops-lead maps to operations_manager, which holds no listing grant, so the
-    // console must not offer a merge that the server would refuse — from EITHER
-    // entry point. The detail pane's primary action doubles as a merge button,
-    // so gating only the row-level button still advertises the action.
+    // The R7 audit persona can enter Network and holds listing:VIEW while
+    // lacking listing:UPDATE. Both merge entry points must stay unavailable.
+    await page.setExtraHTTPHeaders({ "x-subject-id": "operator-pm-audit", "x-roles": "auditor", "x-operator-role": "pm-audit", "x-tenant-id": "tenant-a" });
     await page.addInitScript(() => {
-      window.sessionStorage.setItem("oday.operator.role", "ops-lead");
+      window.sessionStorage.setItem("oday.operator.role", "pm-audit");
     });
     await page.goto("/operator?ws=network");
     await page.getByTestId("network-tab-1").click();

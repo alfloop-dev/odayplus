@@ -449,10 +449,8 @@ def test_postgresql_address_store_and_transaction_contracts_are_tenant_scoped(
         assert tenant_b_envelope["meta"]["tenantId"] == tenant_b.tenant_id
         assert tenant_a_envelope["meta"]["recordCounts"]["stores"] == 1
         assert tenant_b_envelope["meta"]["recordCounts"]["stores"] == 1
-        tenant_a_kpis = {item["label"]: item["value"] for item in tenant_a_envelope["kpis"]}
-        tenant_b_kpis = {item["label"]: item["value"] for item in tenant_b_envelope["kpis"]}
-        assert tenant_a_kpis["交易淨額"] == "110.00"
-        assert tenant_b_kpis["交易淨額"] == "220.00"
+        assert tenant_a_envelope["meta"]["recordCounts"]["successfulTransactionNet"] == 110.0
+        assert tenant_b_envelope["meta"]["recordCounts"]["successfulTransactionNet"] == 220.0
         assert store_b.store_id not in str(tenant_a_envelope)
         assert transaction_b.transaction_id not in str(tenant_a_envelope)
 

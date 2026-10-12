@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { openOperatorWorkspace } from "./_operatorPersona";
 
 /**
  * Real-CSS geometry guard for the shared Operator header (audit
@@ -56,7 +57,7 @@ async function measureHeader(page: Page): Promise<HeaderGeometry> {
 }
 
 async function openWorkspace(page: Page, workspace: string) {
-  await page.goto(`/operator?ws=${workspace}`);
+  await openOperatorWorkspace(page, workspace);
   await expect(page.getByTestId("operator-topbar-inner")).toBeVisible();
   await expect(page.locator('[data-testid="operator-console"] > main')).not.toBeEmpty();
 }

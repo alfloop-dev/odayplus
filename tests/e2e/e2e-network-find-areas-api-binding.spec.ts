@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { primeOperatorPersona } from "./_operatorPersona";
 
 /**
  * ODP-FIN-FE-002 — Network Find Areas workspace API binding.
@@ -21,6 +22,7 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
   test.describe.configure({ timeout: 60_000 });
 
   test.beforeEach(async ({ page }) => {
+    await primeOperatorPersona(page, "expansion-manager");
     // Navigate to the operator console and activate the Network workspace.
     await page.goto("/operator");
     // Click the Network tab in the workspace navigation.
