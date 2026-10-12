@@ -186,6 +186,58 @@ def test_full_assisted_intake_stack_applies_and_validates(
     assert missing == []
 
 
+def test_postgresql_batch_worker_result_survives_restart_in_live_operator_partition(
+    intake_blank_db,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Synthetic production-mode wiring: API enqueue → worker → fresh API read."""
+    from apps.worker.oday_worker.main import ODayWorker
+    from shared.jobs.queue import JobStatus
+
+    database_url = _database_url(intake_blank_db)
+    apply_upgrade_to_database(database_url)
+    _install_canonical_runtime(database_url)
+    _configure_production(monkeypatch, tmp_path, database_url)
+    app = create_app(external_provider_validation=_live_provider_validation())
+    try:
+        with TestClient(app) as client:
+            enqueued = client.post(
+                "/api/v1/jobs",
+                json={
+                    "job_type": "batch-listing-intake",
+                    "payload": {"items": [{"item_id": "one", "address_raw": "Synthetic PG address"}]},
+                },
+                headers=_headers(ACTOR_ID),
+            )
+            assert enqueued.status_code == 202, enqueued.text
+            bundle = app.state.persistence_bundle
+            assert ODayWorker(persistence=bundle).run_once()
+            completed = bundle.job_queue.get(enqueued.json()["job_id"])
+            assert completed.status == JobStatus.SUCCEEDED
+            intake_id = completed.payload["receipt"]["items"][0]["result_ref"]
+            path = f"/api/v1/operator/network-listings/intake/{intake_id}"
+            readback = client.get(path, headers=_headers(ACTOR_ID))
+            assert readback.status_code == 200, readback.text
+            assert readback.json()["tenantId"] == TENANT_ID
+            assert readback.json()["submitter"] == ACTOR_ID
+    finally:
+        app.state.persistence_bundle.engine.close()
+
+    restarted = create_app(external_provider_validation=_live_provider_validation())
+    try:
+        with TestClient(restarted) as client:
+            persisted = client.get(path, headers=_headers(ACTOR_ID))
+            assert persisted.status_code == 200, persisted.text
+            assert persisted.json()["id"] == intake_id
+            assert persisted.json()["parsedFields"]["address"]["normalizedValue"] == "Synthetic PG address"
+            foreign = client.get(path, headers={**_headers(ACTOR_ID), "x-tenant-id": str(uuid4())})
+            assert foreign.status_code == 404
+            assert restarted.state.persistence_bundle.operator_intake_repository.get_intake(intake_id) is None
+    finally:
+        restarted.state.persistence_bundle.engine.close()
+
+
 @pytest.mark.requires_postgis  # canonical baseline DDL declares CREATE EXTENSION postgis
 def test_full_stack_composes_after_canonical_migration_and_is_idempotent(
     intake_blank_db,
