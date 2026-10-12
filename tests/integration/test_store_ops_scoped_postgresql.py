@@ -20,6 +20,7 @@ from shared.domain import AddressLocation, Brand, Store, Tenant
 from shared.infrastructure.persistence import PostgresDocumentStore
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
 from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+from tests.integration._gcs_worm_stub import GcsWormProtocolStub
 from tests.integration.test_intake_registry_calendar_postgresql import _bundle, _upgrade
 
 pytestmark = pytest.mark.requires_live_env
@@ -524,3 +525,88 @@ def test_worker_rejects_a_different_sink_without_an_external_write(case):
     )
     with pytest.raises(NonRetryableJobError, match="configured sink"):
         handle_store_ops_audit_delivery(job, case["bundle"])
+
+
+@pytest.fixture
+def gcs_worm_server():
+    server = GcsWormProtocolStub()
+    try:
+        yield server
+    finally:
+        server.close()
+
+
+def _gcs_sink(case, server):
+    from shared.audit.worm import GcsWormEvidenceSink
+
+    sink = GcsWormEvidenceSink(
+        "gs://synthetic-bucket/scoped-audit",
+        token=server.writer_token,
+        recovery_token=server.recovery_token,
+    )
+    server.bind(sink, case["monkeypatch"])
+    return sink
+
+
+def test_postgresql_worker_recovers_a_gcs_lost_response_after_connection_restart(case, gcs_worm_server):
+    from apps.worker.oday_worker.main import ODayWorker
+
+    sink = _gcs_sink(case, gcs_worm_server)
+    case["monkeypatch"].setattr(case["bundle"].audit_log, "_worm_sink", sink)
+    gcs_worm_server.drop_after_create_event_type = "operator.store_ops.issue_transition"
+    response = _transition(case)
+    assert response.status_code == 200, response.text
+    assert response.json()["auditDelivery"]["pending"] == 1
+    original_objects = deepcopy(gcs_worm_server.objects)
+    case["bundle"].engine.close()
+    reopened = _bundle(case["db"], case["monkeypatch"])
+    try:
+        case["monkeypatch"].setattr(reopened.audit_log, "_worm_sink", _gcs_sink(case, gcs_worm_server))
+        repo = DurableStoreOpsRepository(TenantScopedDocumentStore(PostgresDocumentStore(reopened.engine), case["tenant"]))
+        assert repo.get_state()["issues"][0]["status"] == "triaged"
+        worker = ODayWorker(persistence=reopened, worker_id="synthetic-gcs-recovery-worker")
+        assert worker.run_once() is True
+        delivery = repo._store.list_all(COLLECTION)[0]
+        assert delivery["status"] == "delivered"
+        assert delivery["receipt"]["object_uri"].startswith("gs://synthetic-bucket/scoped-audit/")
+        job = reopened.job_queue.get_by_idempotency_key("store-ops-audit:" + case["tenant"] + ":" + delivery["event"].event_id)
+        assert job.status.value == "succeeded"
+        assert gcs_worm_server.objects == original_objects
+        assert len(repo.get_state()["auditEvents"]) == 1
+        assert worker.run_once() is False
+    finally:
+        reopened.engine.close()
+
+
+@pytest.mark.parametrize("fault", ["missing-authority", "forbidden-read", "mismatched-content"])
+def test_postgresql_gcs_recovery_failures_stay_pending_and_retry_safely(case, gcs_worm_server, fault):
+    from apps.worker.oday_worker.main import ODayWorker
+
+    target = _gcs_sink(case, gcs_worm_server)
+    case["monkeypatch"].setattr(case["bundle"].audit_log, "_worm_sink", target)
+    gcs_worm_server.drop_after_create_event_type = "operator.store_ops.issue_transition"
+    assert _transition(case).status_code == 200
+    original_state = case["repo"].get_state()
+    original_objects = deepcopy(gcs_worm_server.objects)
+    delivery = case["repo"]._store.list_all(COLLECTION)[0]
+    key = "store-ops-audit:" + case["tenant"] + ":" + delivery["event"].event_id
+    if fault == "missing-authority":
+        case["monkeypatch"].setattr(target, "_recovery_token", "")
+    elif fault == "forbidden-read":
+        gcs_worm_server.read_status = 403
+    else:
+        gcs_worm_server.read_transform = lambda row: {**row, "payload": {"invalid": True}}
+    worker = ODayWorker(persistence=case["bundle"], worker_id="synthetic-gcs-denial-worker")
+    assert worker.run_once() is True
+    assert case["bundle"].job_queue.get_by_idempotency_key(key).status.value == "queued"
+    assert case["repo"]._store.get(COLLECTION, delivery["event"].event_id)["status"] == "pending"
+    assert case["repo"].get_state() == original_state
+    assert gcs_worm_server.objects == original_objects
+    case["monkeypatch"].setattr(target, "_recovery_token", gcs_worm_server.recovery_token)
+    gcs_worm_server.read_status = None
+    gcs_worm_server.read_transform = None
+    assert worker.run_once() is True
+    assert case["bundle"].job_queue.get_by_idempotency_key(key).status.value == "succeeded"
+    assert case["repo"]._store.get(COLLECTION, delivery["event"].event_id)["status"] == "delivered"
+    assert case["repo"].get_state() == original_state
+    assert gcs_worm_server.objects == original_objects
