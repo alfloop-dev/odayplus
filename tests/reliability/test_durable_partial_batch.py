@@ -1603,7 +1603,7 @@ def test_review_finding_5_crash_replay_preserves_operator_corrections(db_path: s
     from datetime import UTC, datetime, timedelta
 
     bundle = _durable_bundle(db_path)
-    tenant = "tenant-review"
+    tenant = "00000000-0000-0000-0000-000000000001"
     original_address = "台北市大安區1號"
     corrected_address = "台北市大安區99號"
     try:
@@ -1647,7 +1647,7 @@ def test_review_finding_5_crash_replay_preserves_operator_corrections(db_path: s
             risk_summary="Operator checked identity",
             risk_acknowledged=True,
             actor_role_id="expansion_user",
-            actor_name="Review operator",
+            actor_name="00000000-0000-0000-0000-000000000101",
             idempotency_key="review-correction-key",
             correlation_id="review-correction",
         )
@@ -1753,7 +1753,7 @@ def test_review_finding_r1_distinct_engine_stale_worker_cannot_overwrite_correct
 
     old_bundle = _durable_bundle(db_path)
     new_bundle = _durable_bundle(db_path)
-    tenant = "review-r1-tenant"
+    tenant = "00000000-0000-0000-0000-000000000001"
     original_address = "台北市大安區原地址1號"
     corrected_address = "台北市大安區更正地址99號"
 
@@ -1806,7 +1806,7 @@ def test_review_finding_r1_distinct_engine_stale_worker_cannot_overwrite_correct
                     risk_summary="Synthetic identity check",
                     risk_acknowledged=True,
                     actor_role_id="expansion_user",
-                    actor_name="synthetic-review-operator",
+                    actor_name="00000000-0000-0000-0000-000000000101",
                     idempotency_key="synthetic-review-r1-correction",
                     correlation_id="synthetic-review-r1-correction",
                 )
@@ -1936,9 +1936,9 @@ def test_review_finding_r3_r4_scope_and_submitter_preservation(db_path: str) -> 
     from modules.listing.application.intake_authorization import authorize_intake_action
 
     bundle = _durable_bundle(db_path)
-    tenant_id = "scope-tenant"
+    tenant_id = "00000000-0000-0000-0000-000000000001"
     headers_staff = {
-        "x-subject-id": "scope-user",
+        "x-subject-id": "00000000-0000-0000-0000-000000000101",
         "x-roles": "expansion_user",
         "x-tenant-id": tenant_id,
         "x-heat-zone-ids": "HZ-A",
@@ -1947,7 +1947,7 @@ def test_review_finding_r3_r4_scope_and_submitter_preservation(db_path: str) -> 
         "x-assigned-area-ids": "AREA-A",
     }
     headers_other_staff = {
-        "x-subject-id": "other-user",
+        "x-subject-id": "00000000-0000-0000-0000-000000000102",
         "x-roles": "expansion_user",
         "x-tenant-id": tenant_id,
         "x-heat-zone-ids": "HZ-A",
@@ -1956,7 +1956,7 @@ def test_review_finding_r3_r4_scope_and_submitter_preservation(db_path: str) -> 
         "x-assigned-area-ids": "AREA-A",
     }
     headers_wrong_region_staff = {
-        "x-subject-id": "scope-user",
+        "x-subject-id": "00000000-0000-0000-0000-000000000101",
         "x-roles": "expansion_user",
         "x-tenant-id": tenant_id,
         "x-heat-zone-ids": "HZ-A",
@@ -2057,8 +2057,8 @@ def test_review_finding_r3_r4_scope_and_submitter_preservation(db_path: str) -> 
         intake_id = batch_listing_intake_id(tenant_id, job_id, "item-1")
         intake = bundle.operator_intake_repository_for_tenant(tenant_id).get_intake(intake_id)
         assert intake is not None
-        assert intake["submitter"] == "scope-user"
-        assert intake["owner"] == "scope-user"
+        assert intake["submitter"] == "00000000-0000-0000-0000-000000000101"
+        assert intake["owner"] == "00000000-0000-0000-0000-000000000101"
         assert intake["heatZoneId"] == "HZ-A"
         assert intake["regionId"] == "REG-A"
         assert intake["brandId"] == "BRAND-A"
@@ -2077,7 +2077,7 @@ def test_review_finding_r3_r4_scope_and_submitter_preservation(db_path: str) -> 
             risk_summary="Verified",
             risk_acknowledged=True,
             actor_role_id="expansion_user",
-            actor_name="scope-user",
+            actor_name="00000000-0000-0000-0000-000000000101",
             idempotency_key="creator-correct-01",
             correlation_id="creator-correct-01",
         )
