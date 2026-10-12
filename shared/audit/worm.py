@@ -52,10 +52,23 @@ class AuditWormSink(Protocol):
 
     def write_audit_event(self, event: Any) -> AuditWormReceipt: ...
 
+    def write_committed_audit_event(self, event: Any) -> AuditWormReceipt: ...
+
     def write_retained_evidence(self, record: Any) -> AuditWormReceipt: ...
 
 
-class LocalAppendOnlyWormSink:
+def committed_audit_checksum(payload: dict[str, Any]) -> str:
+    return sha256_hex({"schema_version": 2, "transaction_state": "committed", "payload": payload})
+
+
+class _CommittedAuditWriter:
+    def write_committed_audit_event(self, event: Any) -> AuditWormReceipt:
+        # DurableAuditLog invokes ONLY after its SQL/outbox transaction commits.
+        return self._write(record_type="audit-events", record_id=str(event.event_id),
+                           sequence=event.sequence, payload=event.to_dict(), committed=True)
+
+
+class LocalAppendOnlyWormSink(_CommittedAuditWriter):
     """Append-only local sink used for CI and development.
 
     This is not a replacement for production WORM storage. It exists so the
@@ -95,8 +108,9 @@ class LocalAppendOnlyWormSink:
         record_id: str,
         sequence: int | None,
         payload: dict[str, Any],
+        committed: bool = False,
     ) -> AuditWormReceipt:
-        checksum = sha256_hex(payload)
+        checksum = committed_audit_checksum(payload) if committed else sha256_hex(payload)
         written_at = datetime.now(UTC)
         envelope = {
             "record_type": record_type,
@@ -112,6 +126,8 @@ class LocalAppendOnlyWormSink:
             sequence=sequence,
             checksum=checksum,
         )
+        if committed:
+            envelope.update(schema_version=2, transaction_state="committed")
         path = self._root / object_name
         path.parent.mkdir(parents=True, exist_ok=True)
         flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
@@ -134,7 +150,7 @@ class LocalAppendOnlyWormSink:
         )
 
 
-class GcsWormEvidenceSink:
+class GcsWormEvidenceSink(_CommittedAuditWriter):
     """Google Cloud Storage JSON API writer using object-create semantics.
 
     The bucket IAM shape is defined in ``infra/terraform/audit``: product
@@ -189,6 +205,7 @@ class GcsWormEvidenceSink:
         record_id: str,
         sequence: int | None,
         payload: dict[str, Any],
+        committed: bool = False,
     ) -> AuditWormReceipt:
         token = self._token or _configured_gcs_token()
         if not token:
@@ -196,7 +213,7 @@ class GcsWormEvidenceSink:
                 "GCS WORM sink requires ODP_AUDIT_WORM_GCS_TOKEN or "
                 "GOOGLE_OAUTH_ACCESS_TOKEN"
             )
-        checksum = sha256_hex(payload)
+        checksum = committed_audit_checksum(payload) if committed else sha256_hex(payload)
         written_at = datetime.now(UTC)
         envelope = {
             "record_type": record_type,
@@ -212,6 +229,8 @@ class GcsWormEvidenceSink:
             sequence=sequence,
             checksum=checksum,
         )
+        if committed:
+            envelope.update(schema_version=2, transaction_state="committed")
         if self._prefix:
             object_name = f"{self._prefix}/{object_name}"
         endpoint = (

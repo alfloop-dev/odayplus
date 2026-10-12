@@ -52,8 +52,8 @@ from shared.observability import (
     MetricsRegistry,
     MetricType,
     StructuredLogger,
-    new_correlation_id,
 )
+from shared.observability.correlation import request_correlation_id
 
 AUTHENTICATION_EVENT_TYPE = "security.authentication"
 
@@ -96,7 +96,7 @@ class Credentials:
             bearer_token=bearer,
             service_id=headers.get("x-service-id"),
             service_secret=secret.encode("utf-8") if secret else None,
-            correlation_id=headers.get("x-correlation-id"),
+            correlation_id=request_correlation_id(headers["x-correlation-id"]) if headers.get("x-correlation-id") else None,
             source_ip=None,
         )
 
@@ -176,7 +176,7 @@ class AuthenticationBoundary:
     def authenticate(self, credentials: Credentials, *, now: datetime | None = None) -> AuthOutcome:
         """Authenticate ``credentials`` and record the decision."""
 
-        correlation_id = credentials.correlation_id or new_correlation_id()
+        correlation_id = request_correlation_id(credentials.correlation_id)
         moment = now or datetime.now(UTC)
 
         if credentials.bearer_token is not None:

@@ -56,6 +56,7 @@ from shared.auth import (
     default_registry,
     rbac_allows,
 )
+from shared.observability.correlation import request_correlation_id
 
 try:  # pragma: no cover - exercised only when FastAPI is installed
     from fastapi import HTTPException, Request
@@ -763,7 +764,7 @@ def _select_operator_role(
 
 
 def _correlation_id_from_request(request: Request) -> str:  # type: ignore[name-defined]
-    return (
+    return request_correlation_id(
         getattr(request.state, "correlation_id", None)
         or request.headers.get("x-correlation-id")
         or "unknown"

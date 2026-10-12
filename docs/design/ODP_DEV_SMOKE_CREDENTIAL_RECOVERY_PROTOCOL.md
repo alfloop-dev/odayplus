@@ -986,3 +986,27 @@ fresh-job consumption, measured timing or deployment admission. Independent
 native-ingress review, writer exclusion, final operational-plan review and
 finite production measurements remain BEFORE-effects blockers. The diagnostic
 preflight remains an unconditional HOLD; no effect/fresh-job dispatch was added.
+
+### Request namespace / committed WORM boundary (auxiliary, unapproved)
+
+Client correlation headers cannot append to the five server-owned provisioning,
+binding and recovery namespaces. Ingress/credentials/authentication/authorization
+normalize them before any audit; incompatible direct audit appends statically
+refuse. Strict existing ledger validation is unchanged, not a poison-row filter.
+
+Durable audit inserts event and WORM intent in the same outer SQL transaction.
+Only after successful commit/connection return may bounded publication claim an
+intent durably and send a committed envelope. Rollback/commit failure sends none;
+lost transport/receipt/ack remains UNKNOWN/attempted without automatic retry.
+SQL success and a destination sink ID do not establish WORM delivery. New
+expand-only outbox migrations/Alembic0025 are required for WORM-enabled durable
+writers; no historical delivery is backfilled. Pending intents may be explicitly
+flushed; no background executor/CLI or operational authority is introduced.
+
+Version2 committed envelopes bind commit state in their checksum. Bare ledger
+replay and legacy/unmarked WORM restore refuse; trusted maintenance must supply
+and validate committed envelopes through authenticated immutable-sink transport.
+A checksum/JSON marker alone is not authority, permission or proof of a remote
+GitHub201. Existing legacy orphan objects are retained for adjudication, not
+rewritten into committed evidence. See the auxiliary source evidence in
+`audit-commit-boundary-repair.md`; production migration/execution stays blocked.

@@ -62,6 +62,7 @@ def recovery(request: pytest.FixtureRequest) -> Any:
         conn.execute(Path("infra/db/migrations/000012_identity_session_server_secrets.sql").read_text())
         conn.execute(Path("infra/db/migrations/000029_dev_smoke_recovery_capability.sql").read_text())
         conn.execute(Path("infra/db/migrations/000030_dev_smoke_session_fence.sql").read_text())
+        conn.execute(Path("infra/db/migrations/000032_audit_worm_outbox.sql").read_text())
     # Isolated persisted identity fixture; no external DB or credentials.
     for account, username, roles in (
         (PRESERVED_ACCOUNT_ID, "ajoe734", ["auditor", "platform_admin"]),

@@ -1578,7 +1578,10 @@ else:
                     },
                 ) from exc
 
-            correlation_id = getattr(getattr(request, "state", None), "correlation_id", None) or request.headers.get("x-correlation-id") or f"corr-retry-{uuid4().hex[:8]}"
+            correlation_id = CorrelationContext.from_header(
+                getattr(getattr(request, "state", None), "correlation_id", None)
+                or request.headers.get("x-correlation-id") or f"corr-retry-{uuid4().hex[:8]}"
+            ).correlation_id
             audit_log.record(
                 AuditEvent(
                     event_type="job.retry",
