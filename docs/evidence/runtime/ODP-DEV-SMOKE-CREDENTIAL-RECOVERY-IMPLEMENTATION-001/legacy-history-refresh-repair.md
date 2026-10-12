@@ -40,3 +40,14 @@ UNKNOWN remain unchanged; this does not authorize automatic cleanup retry.
 Fresh exact-head measurements/independent review remain required. No source or
 local test receipt constitutes canonical continuation, hosted CI, native custody,
 writer exclusion, production reserves/admission or reviewed execution authority.
+
+First immutable b720a1caf measurements passed11 selections but comprehensive
+serial regression timed out at the unchanged1200s cap, with failure markers
+already present. It is NOT a passing receipt; the full diagnostic remains.
+Focused localization found legacy lifecycle fixtures intentionally bind the old
+creation contract to a disposable tenant while recovery remains separately pinned.
+The projection had incorrectly used the recovery tenant for BOTH namespaces.
+Follow-up selects each namespace's pinned tenant from its OWN owning contract:
+no caller configuration or relaxed check. Current production pins coincide; the
+original lifecycle and isolated legacy-poison controls both pass. The follow-up
+requires new exact-head measurements; no source/test budget or assertion waiver.

@@ -191,6 +191,9 @@ class IdentityUserRoleManagementService:
         ]
 
     def _fixed_recovery_audit(self, tenant: str) -> dict[str, AuditEvent]:
+        from shared.identity.dev_smoke_journal import (
+            TENANT_ID as CREATION_TENANT_ID,
+        )
         from shared.identity.dev_smoke_journal import DevSmokeBindingJournal, ProvisioningJournal
         from shared.identity.dev_smoke_recovery import (
             RECOVERY_BINDING_CORRELATION,
@@ -201,18 +204,18 @@ class IdentityUserRoleManagementService:
             RecoveryJournal,
         )
 
-        if tenant != TENANT_ID:
-            return {}  # no cross-tenant recovery read or metadata exposure
         fixed = {
-            ProvisioningJournal._CORRELATION: (ProvisioningJournal._TYPE, ProvisioningJournal._KEYS),
-            DevSmokeBindingJournal._CORRELATION: (DevSmokeBindingJournal._TYPE, DevSmokeBindingJournal._KEYS),
-            RecoveryJournal._CORRELATION: (RecoveryJournal._TYPE, RecoveryJournal._KEYS),
-            RecoveryCapabilityService._CAP_CORRELATION: (RecoveryCapabilityService._CAP_TYPE, RecoveryCapabilityService._CAP_KEYS),
-            RECOVERY_BINDING_CORRELATION: (RECOVERY_BINDING_TYPE, RECOVERY_BINDING_KEYS),
+            ProvisioningJournal._CORRELATION: (ProvisioningJournal._TYPE, ProvisioningJournal._KEYS, CREATION_TENANT_ID),
+            DevSmokeBindingJournal._CORRELATION: (DevSmokeBindingJournal._TYPE, DevSmokeBindingJournal._KEYS, CREATION_TENANT_ID),
+            RecoveryJournal._CORRELATION: (RecoveryJournal._TYPE, RecoveryJournal._KEYS, TENANT_ID),
+            RecoveryCapabilityService._CAP_CORRELATION: (RecoveryCapabilityService._CAP_TYPE, RecoveryCapabilityService._CAP_KEYS, TENANT_ID),
+            RECOVERY_BINDING_CORRELATION: (RECOVERY_BINDING_TYPE, RECOVERY_BINDING_KEYS, TENANT_ID),
         }
         events: dict[str, AuditEvent] = {}
         try:
-            for correlation, (event_type, keys) in fixed.items():
+            for correlation, (event_type, keys, pinned_tenant) in fixed.items():
+                if tenant != pinned_tenant:
+                    continue  # no other-tenant fixed-correlation read/exposure
                 # Indexed fixed correlations are independent of metadata tenant.
                 # list_events verifies each row's integrity BEFORE we inspect it.
                 # Never let SQL tenant selection hide a quarantine or bad digest.
@@ -220,7 +223,7 @@ class IdentityUserRoleManagementService:
                     meta = event.metadata
                     if (event.correlation_id != correlation or event.event_type != event_type
                             or type(meta) is not dict or set(meta) != keys
-                            or meta.get("tenant_id") != TENANT_ID
+                            or meta.get("tenant_id") != pinned_tenant
                             or meta.get("secret_values_redacted") is not True):
                         raise ValueError
                     events[event.event_id] = event
@@ -258,6 +261,9 @@ class IdentityUserRoleManagementService:
                 # corrupt quarantine/duplicate could leave a valid ACK history
                 # and turn uncertainty into success. Never echo unsafe metadata.
                 from shared.identity.dev_smoke_journal import (
+                    TENANT_ID as CREATION_TENANT_ID,
+                )
+                from shared.identity.dev_smoke_journal import (
                     DevSmokeBindingJournal,
                     ProvisioningJournal,
                 )
@@ -273,8 +279,10 @@ class IdentityUserRoleManagementService:
                            RecoveryJournal._TYPE: RecoveryJournal._KEYS,
                            RecoveryCapabilityService._CAP_TYPE: RecoveryCapabilityService._CAP_KEYS,
                            RECOVERY_BINDING_TYPE: RECOVERY_BINDING_KEYS}[event.event_type]
+                pinned_tenant = (CREATION_TENANT_ID if event.event_type in
+                                 {ProvisioningJournal._TYPE, DevSmokeBindingJournal._TYPE} else TENANT_ID)
                 if (set(meta) != allowed or meta.get("secret_values_redacted") is not True
-                        or meta.get("tenant_id") != TENANT_ID or tenant != TENANT_ID):
+                        or meta.get("tenant_id") != pinned_tenant or tenant != pinned_tenant):
                     raise UserRolePolicyError("RECOVERY_AUDIT_LINEAGE_INVALID")
             if subject_id and subject_id not in {meta.get("subject_id"), meta.get("account_id"), meta.get("target_account_id")}:
                 continue
