@@ -72,6 +72,23 @@ describe("session infrastructure is not absence/revocation", () => {
     expect(await readWebSession(cookie)).toBeNull();
   });
 
+  it("equivalent standard-base64 legacy cookie encoding cannot bypass logout tombstone", async () => {
+    runtime(); const store = new MockSessionStore();
+    store.oidcAccounts.set("offline-alias", { accountId: "offline", subject: "offline" }); setSessionStoreForTests(store);
+    const now = Math.floor(Date.now() / 1000);
+    // Fixture-only IV fixes an alphabet symbol, avoiding probabilistic coverage.
+    vi.spyOn(crypto, "getRandomValues").mockImplementationOnce(<T extends ArrayBufferView | null>(value: T): T => {
+      if (value) new Uint8Array(value.buffer, value.byteOffset, value.byteLength).fill(255); return value;
+    });
+    const cookie = await sealLegacyWebSession({ kind: "web-session", subject: "offline-alias", provider: "oidc",
+      accessToken: "offline-only", issuedAt: now, expiresAt: now + 3600 });
+    const alias = cookie.replace(/-/g, "+").replace(/_/g, "/");
+    expect(alias === cookie).toBe(false);
+    expect((await logout(request(cookie, "/auth/logout"))).status).toBe(200);
+    expect(await readWebSession(alias)).toBeNull();
+    expect(store.sessions.size).toBe(1); expect(store.legacyMigrations.size).toBe(1);
+  });
+
   it("accepted production legacy OIDC cookie cannot remigrate after successful logout", async () => {
     runtime();
     const store = new MockSessionStore();

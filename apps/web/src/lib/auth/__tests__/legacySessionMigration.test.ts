@@ -50,6 +50,20 @@ describe.skipIf(!process.env.ODP_TEST_SESSION_BOUNDARY_DATABASE_URL)("actual iso
     expect((await pool.query("SELECT count(*)::int AS n FROM identity.sessions WHERE session_id = $1", [one!.sid])).rows[0].n).toBe(0);
   });
 
+  it("equivalent cookie encoding after logout/deletion cannot create a second migration or SID", async () => {
+    // Fixture-only IV guarantees a noncanonical equivalent alphabet variant.
+    vi.spyOn(crypto, "getRandomValues").mockImplementationOnce(<T extends ArrayBufferView | null>(value: T): T => {
+      if (value) new Uint8Array(value.buffer, value.byteOffset, value.byteLength).fill(255); return value;
+    });
+    const cookie = await setup(); const a = store(); const first = await readWebSession(cookie, { sessionStore: a });
+    const alias = cookie.replace(/-/g, "+").replace(/_/g, "/"); expect(alias === cookie).toBe(false);
+    setSessionStoreForTests(a); expect((await logout(logoutRequest(cookie))).status).toBe(200);
+    await pool.query("DELETE FROM identity.sessions WHERE session_id=$1", [first!.sid]);
+    expect(await readWebSession(alias, { sessionStore: store() })).toBeNull();
+    expect((await pool.query("SELECT count(*)::int AS n FROM identity.legacy_oidc_session_migrations")).rows[0].n).toBe(1);
+    expect((await pool.query("SELECT count(*)::int AS n FROM identity.sessions WHERE account_id=$1 AND provider='oidc'", [ACCOUNT])).rows[0].n).toBe(0);
+  });
+
   it("bounded absolute lifetime and natural idle expiry cannot renew legacy authority", async () => {
     const cookie = await setup(172800); const a = store();
     const value = await readWebSession(cookie, { sessionStore: a });

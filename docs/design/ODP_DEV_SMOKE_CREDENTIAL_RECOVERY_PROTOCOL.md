@@ -1039,3 +1039,10 @@ another SID. There is no backfill guessing prior random migrations or implicit
 DDL. Actual isolated PG concurrency/rollback/restart/deletion/expiry controls are
 in `session-infrastructure-migration-repair.md`. Production migration and all
 operational permissions remain separately blocked.
+
+Encrypted envelope components must each round-trip exactly through canonical
+unpadded URL-safe Base64 before decryption. Standard-alphabet, explicit-padding
+and pad-bit aliases cannot authenticate as different raw cookie strings and
+bypass the legacy migration digest/tombstone. Existing canonical encoders are
+unchanged. Actual PG logout/deletion/alias controls and equivalent-byte decoder
+controls are in `canonical-cookie-migration-repair.md`; no new operational grant.

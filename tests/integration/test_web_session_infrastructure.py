@@ -14,7 +14,7 @@ from tests.integration.test_dev_smoke_recovery import identity_stack as identity
 from tests.integration.test_dev_smoke_recovery import recovery as recovery
 
 
-@pytest.mark.parametrize("selection", ["concurrent pools/restart", "real deferred commit failure", "lost postcommit validation", "bounded absolute lifetime"])
+@pytest.mark.parametrize("selection", ["concurrent pools/restart", "real deferred commit failure", "lost postcommit validation", "bounded absolute lifetime", "equivalent cookie encoding"])
 def test_production_web_legacy_session_commit_and_revocation(recovery: Any, selection: str) -> None:
     s = recovery
     root = Path(__file__).resolve().parents[2]
