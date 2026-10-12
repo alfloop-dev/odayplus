@@ -54,6 +54,17 @@ async function logout(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  if (hasSessionCookie && !session) {
+    // An unresolvable cookie is NOT proof that its server session was revoked.
+    // AEAD failure can also mean a mismatched healthy-length key on this instance.
+    // Keep no-cookie logout idempotent, but never acknowledge cleanup of a cookie
+    // whose authoritative identity could not be established.
+    return NextResponse.json(
+      { error: { code: "WEB_SESSION_REQUIRED", summary: "A valid web session is required." } },
+      { status: 401, headers: { "cache-control": "no-store" } },
+    );
+  }
+
   if (session && session.sid) {
     const store = getDefaultSessionStore(process.env);
     if (!store && isProductionWebRuntime(process.env)) {

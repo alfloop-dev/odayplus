@@ -1023,3 +1023,19 @@ revocation. Restoration of refresh must not make a successfully revoked cookie
 usable again. Offline handler controls use an explicit memory store, not PG proof;
 see `legacy-history-refresh-repair.md`. Foreground UNKNOWN/once-only intent and all
 operational holds remain unchanged; no automatic cleanup retry is introduced.
+
+Missing production session store or sealing-key setup is explicit availability,
+not absent/revoked session. Cookie-present unresolved logout refuses401/no cookie
+clearance (including wrong healthy-length key); missing infrastructure returns503.
+No-cookie logout remains harmless/idempotent, but a transient /session401 is never
+coupled with logout200 to fake cleanup.
+
+Accepted legacy OIDC cookies now have one durable migration identity under
+expand-only0033/Alembic0026, atomically bound to one session and the authenticated
+active federation. Digest-only mapping retains revocation even when session or
+account rows disappear; it has no cascading FK, purge/reset or remint path.
+Lifetime stays capped8h/original expiry; commit/reply uncertainty cannot choose
+another SID. There is no backfill guessing prior random migrations or implicit
+DDL. Actual isolated PG concurrency/rollback/restart/deletion/expiry controls are
+in `session-infrastructure-migration-repair.md`. Production migration and all
+operational permissions remain separately blocked.

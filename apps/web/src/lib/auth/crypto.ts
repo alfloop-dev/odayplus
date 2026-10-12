@@ -87,6 +87,15 @@ export async function openJson<T>(
     return null;
   }
 
+  // Key/configuration/crypto setup failure is availability, not an invalid
+  // cookie. Keep it outside the untrusted-ciphertext decode catch so logout
+  // cannot acknowledge revocation while the authoritative session stays live.
+  let key: CryptoKey;
+  try {
+    key = await encryptionKey(purpose, explicitSecret);
+  } catch {
+    throw new Error("WEB_AUTH_UNAVAILABLE");
+  }
   try {
     const plaintext = await crypto.subtle.decrypt(
       {
@@ -95,7 +104,7 @@ export async function openJson<T>(
         additionalData: encoder.encode(purpose),
         tagLength: 128,
       },
-      await encryptionKey(purpose, explicitSecret),
+      key,
       base64UrlDecode(ciphertextValue),
     );
     return JSON.parse(decoder.decode(plaintext)) as T;
