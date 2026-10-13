@@ -1069,3 +1069,13 @@ provider binding remain separate. A missing existing local BFF signing configura
 refuses availability instead of trusting a caller SID. Pending/source-repair wording
 above is historic; only fresh matching-head review/receipts may establish current
 local disposition, NEVER canonical/full business/F11 acceptance or live authority.
+
+The invitation/admission follow-up author evidence records six subsequently found
+composition gaps: shared invitation/recovery post-lock scope and OIDC link checks,
+legitimate OIDC-only invitation authority, gate metadata consistency BEFORE target
+selection, ONE validated manifest candidate/digest across registry/images/lease,
+and serving-identity cookie custody BEFORE the final absolute deadline fence. A
+transaction-held shared actor validator retains provider-aware credential rules and
+all fixed-original recovery restrictions; final invitation/audit expiry rollback and
+once-only cleanup/UNKNOWN remain mandatory. These are source repair descriptions,
+NOT independent/canonical/operational acceptance or permission to bypass any HOLD.

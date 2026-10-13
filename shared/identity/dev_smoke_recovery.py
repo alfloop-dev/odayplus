@@ -35,7 +35,7 @@ from .dev_smoke_journal import (
     _aware,
 )
 from .invitation_provenance import invitation_provenance
-from .invitation_service import InvitationService, _scope
+from .invitation_service import InvitationRefused, InvitationService, _scope
 from .password_policy import PasswordPolicy
 
 AUTHORIZATION_ID = "HUMAN-ODP-DEV-SMOKE-RECOVERY-20261011-001"
@@ -154,7 +154,10 @@ class RecoveryJournal:
         if (not isinstance(principal, Principal) or not principal.authenticated
                 or principal.subject_id != PRESERVED_ACCOUNT_ID or principal.tenant_id != TENANT_ID):
             raise RecoveryRefused("RECOVERY_ORIGINAL_ADMIN_REQUIRED")
-        actor, tenant = self._identity._actor(principal)
+        try:
+            actor, tenant = self._identity._actor(principal)
+        except InvitationRefused:
+            raise RecoveryRefused("RECOVERY_ORIGINAL_ADMIN_REQUIRED") from None
         original = self._account(actor)
         if (actor != PRESERVED_ACCOUNT_ID or tenant != TENANT_ID
                 or original["username"] != "ajoe734"

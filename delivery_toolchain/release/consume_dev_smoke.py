@@ -595,6 +595,8 @@ class _ObservedWeb:
             self._unknown()
             return gate.HttpResponse(status=0, error="native consumer ambiguous cookie refused")
         state = self._owned.get(cookie) if cookie else None
+        identity_read = (method == "GET" and path == "/api/v1/platform/release-identity"
+            and self._expected_release is not None and state is not None and not state["logout_attempted"])
         if self._latch.latched and not (state is not None and (
                 (method == "GET" and path in _REVOCATION_READS)
                 or (method == "POST" and path == "/auth/logout" and not state["logout_attempted"]))):
@@ -612,6 +614,11 @@ class _ObservedWeb:
                 pairs, ambiguous = _response_cookie_pairs(response)
                 if method == "POST" and path == "/login":
                     issued, unsafe = self._retain_login_cookies(pairs)
+                elif identity_read and (pairs or ambiguous):
+                    # Recursive reads can lose their response at context exit.
+                    # Known authority custody must survive that final fence.
+                    self._retain_login_cookies(pairs)
+                    self._unknown()
             # Custody above survives the context's final deadline check. Normal
             # response acknowledgement only happens AFTER that check succeeds.
             if ambiguous:
@@ -632,7 +639,7 @@ class _ObservedWeb:
                     identity_cookies, identity_ambiguous = _response_cookie_pairs(identity)
                     if identity_cookies or identity_ambiguous:
                         # A read must not silently transfer/issue cookie custody.
-                        self._retain_login_cookies(identity_cookies)
+                        # Inner read already retained custody BEFORE its fence.
                         self._unknown()
                         return gate.HttpResponse(status=0, error="native serving cookie custody refused")
                     expected = {"release_sha": sha, "web_release_sha": sha,
@@ -670,7 +677,7 @@ class _ObservedWeb:
         except Exception:
             # Lost login, lost own logout, or lost/timed-out post-logout
             # revocation read for an owned cookie: all UNKNOWN, never retried.
-            if (method == "POST" and path == "/login") or (state is not None and state["logout_attempted"]):
+            if identity_read or (method == "POST" and path == "/login") or (state is not None and state["logout_attempted"]):
                 self._unknown()
             return gate.HttpResponse(status=0, error="native consumer bounded request refused")
 

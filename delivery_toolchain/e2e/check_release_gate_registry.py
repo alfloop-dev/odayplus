@@ -223,7 +223,7 @@ def validate_stage_metadata(
             errors.append(f"{label}.{key} must be a non-empty string")
 
     stage = value.get("stage")
-    if stage not in STAGE_CONTRACT:
+    if not isinstance(stage, str) or stage not in STAGE_CONTRACT:
         errors.append(f"{label}.stage must be one of {list(STAGES)}, got: {stage!r}")
         return
     expected_environment, expected_target = STAGE_CONTRACT[stage]

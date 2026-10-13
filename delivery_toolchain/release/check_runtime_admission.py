@@ -220,6 +220,8 @@ def _gate_admission_errors(
             continue
         if gate.get("id") != f"gate-{index}":
             errors.append(f"gates[{index}].id must be gate-{index}; duplicate/substituted gate refused")
+        # Selection itself must not trust contradictory target metadata.
+        validate_stage_metadata(gate, label=f"gates[{index}]", errors=errors)
         if gate.get("admission_target") == environment:
             # SAME canonical gate integrity, not just one surviving pass label.
             # Non-target gates may remain legitimately open: admission is staged.
@@ -227,7 +229,7 @@ def _gate_admission_errors(
             admitting.append(gate)
 
     if not admitting:
-        return [
+        return errors + [
             f"no gate is bound to admission_target {environment!r}; the registry admits "
             "nothing for this environment"
         ]
@@ -292,9 +294,18 @@ def admit_release(
     # staging or production.
     extra.extend(
         error
-        for error in validate_release_admission(manifest, environment=environment)
+        for error in validate_release_admission(manifest, environment=environment, root=root)
         if error not in extra
     )
+    # One VALIDATED object supplies identity for registry, images and lease.
+    # A caller's optional expected digest is only a consistency assertion.
+    effective_digest = manifest.get("manifest_digest") if isinstance(manifest, dict) else None
+    effective_candidate = manifest.get("candidate_sha") if isinstance(manifest, dict) else None
+    if manifest_digest is not None and manifest_digest != effective_digest:
+        extra.append("expected manifest digest does not match the validated manifest")
+    release = registry.get("release") if isinstance(registry, dict) else None
+    if not isinstance(release, dict) or release.get("candidate_sha") != effective_candidate:
+        extra.append("validated manifest candidate_sha does not match registry candidate_sha")
     if component_images:
         # A manifest that failed to load is `None` here, and binding against it
         # reports an error rather than silently skipping the check.
@@ -308,16 +319,12 @@ def admit_release(
             registry,
             release_sha=release_sha,
             environment=environment,
-            expected_manifest_digest=manifest_digest,
+            expected_manifest_digest=effective_digest,
             root=root,
         )
     )
 
-    expected_candidate_sha = None
-    if isinstance(registry, dict):
-        candidate = (registry.get("release") or {}).get("candidate_sha")
-        if isinstance(candidate, str) and SHA_PATTERN.fullmatch(candidate):
-            expected_candidate_sha = candidate
+    expected_candidate_sha = effective_candidate if isinstance(effective_candidate, str) and SHA_PATTERN.fullmatch(effective_candidate) else None
 
     return admit_and_consume(
         lease,
@@ -328,7 +335,7 @@ def admit_release(
         extra_errors=extra,
         expected_task_id=task_id,
         expected_candidate_sha=expected_candidate_sha,
-        expected_manifest_digest=manifest_digest,
+        expected_manifest_digest=effective_digest,
         expected_environment=environment,
         expected_action=allowed_action,
         now=now,

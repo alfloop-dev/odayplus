@@ -109,3 +109,42 @@ def test_all_serving_pair_fields_and_unknown_custody_refuse_before_more_gate_tra
         cookie for method, path, cookie in calls if method == "POST" and path == "/auth/logout"
     ]
     assert len(cookies) == len(set(cookies)) == (2 if field == "extra-cookie" else 1)
+
+
+@pytest.mark.parametrize("body_failed", [False, True])
+def test_serving_extra_cookie_at_final_deadline_keeps_once_only_cleanup(
+    monkeypatch: Any, body_failed: bool,
+) -> None:
+    ticks = [100.0]
+    monkeypatch.setattr(native.time, "monotonic", lambda: ticks[0])
+    calls = []
+
+    class Client:
+        def request(self, method: str, path: str, **kwargs: Any) -> Any:
+            calls.append((method, path, (kwargs.get("headers") or {}).get("cookie")))
+            if path == "/login":
+                return native.gate.HttpResponse(status=200, payload={"ok": True, "subject": "offline-user"},
+                    cookies={native._SESSION_COOKIE: "offline-session-one"})
+            if path == "/api/v1/platform/release-identity":
+                ticks[0] = 110.0  # EXACT work deadline; response cookie already safely known
+                return native.gate.HttpResponse(status=0 if body_failed else 200,
+                    error="sanitized body failure" if body_failed else None,
+                    cookies={native._SESSION_COOKIE: "offline-session-two"})
+            if path == "/auth/logout":
+                return native.gate.HttpResponse(status=200, payload={"ok": True}, cookies={native._SESSION_COOKIE: ""})
+            return native.gate.HttpResponse(status=401)
+
+    web = native._ObservedWeb(Client(), execution_id="offline", deadline=110.0, cleanup_deadline=130.0,
+        login_pair=("offline-user", "offline-password"), expected_release=("a" * 40, "sha256:" + "b" * 64))
+    result = web.request("POST", "/login", body={"username": "offline-user", "password": "offline-password", "returnTo": native._FORM_RETURN_TO},
+        headers={"content-type": "application/json", "origin": native.WEB_ORIGIN})
+    assert result.status == 0 and web.uncertainty_latched and not web.release_identity_verified
+    before = len(calls)
+    web.request("GET", "/api/v1/platform/release-identity")
+    assert len(calls) == before
+    assert not web.cleanup_owned_sessions()
+    cookies = [cookie for method, path, cookie in calls if method == "POST" and path == "/auth/logout"]
+    assert sorted(cookies) == sorted([f"{native._SESSION_COOKIE}=offline-session-one", f"{native._SESSION_COOKIE}=offline-session-two"])
+    assert len(cookies) == len(set(cookies)) == 2
+    assert not web.cleanup_owned_sessions()
+    assert len([x for x in calls if x[:2] == ("POST", "/auth/logout")]) == 2

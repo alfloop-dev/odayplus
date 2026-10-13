@@ -33,6 +33,7 @@ from shared.audit import AuditEvent
 from shared.auth import DataClassification, Principal, Role
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 
+from .admin_authority import AdminAuthorityRefused, checked_admin_authority
 from .credential_service import CredentialService
 from .password_policy import PasswordPolicy
 
@@ -117,25 +118,15 @@ class InvitationService:
         return datetime.fromisoformat(self._engine.query_one("SELECT clock_timestamp() AS now")["now"])
 
     def _actor(self, principal: Principal) -> tuple[str, str]:
-        if not principal.authenticated or Role.PLATFORM_ADMIN not in principal.roles:
+        if not isinstance(principal, Principal) or not principal.authenticated or Role.PLATFORM_ADMIN not in principal.roles:
             raise InvitationRefused("INVITATION_ADMIN_REQUIRED")
-        actor = _uuid(principal.subject_id, "INVITATION_ADMIN_REQUIRED")
         tenant = _uuid(principal.tenant_id, "INVITATION_TENANT_REQUIRED")
-        sid = _uuid(principal.attributes.get("sid"), "INVITATION_SESSION_REQUIRED")
+        _uuid(principal.attributes.get("sid"), "INVITATION_SESSION_REQUIRED")
         self._lock_tenant(tenant)
-        row = self._engine.query_one(
-            "SELECT a.account_id FROM identity.accounts a "
-            "JOIN identity.account_roles r ON r.account_id = a.account_id "
-            "JOIN identity.password_credentials p ON p.account_id = a.account_id "
-            "JOIN identity.sessions s ON s.account_id = a.account_id "
-            "WHERE a.account_id = ? AND a.tenant_id = ? AND a.status = 'active' "
-            "AND r.role = ? AND p.must_change = false AND s.session_id = ? "
-            "AND s.revoked_at IS NULL AND s.idle_expires_at > clock_timestamp() "
-            "AND s.absolute_expires_at > clock_timestamp() FOR SHARE OF a, r, p, s",
-            (actor, tenant, Role.PLATFORM_ADMIN.value, sid),
-        )
-        if row is None:
-            raise InvitationRefused("INVITATION_ADMIN_SESSION_INVALID")
+        try:
+            actor, _ = checked_admin_authority(self._engine, principal, tenant=tenant)
+        except AdminAuthorityRefused:
+            raise InvitationRefused("INVITATION_ADMIN_SESSION_INVALID") from None
         return actor, tenant
 
     def _record(
@@ -271,6 +262,7 @@ class InvitationService:
                 tenant=tenant, now=now, expires_at=expires, roles=issued_roles, scope=issued_scope,
                 reason=reason,
             )
+            self._actor(principal)  # Later target/audit waits cannot outlive authority.
         return InvitationIssued(invitation_id, tenant, expires.isoformat(), event.event_id, token)
 
     def revoke(self, principal: Principal, *, invitation_id: str) -> dict[str, str]:
@@ -294,6 +286,7 @@ class InvitationService:
                 event_type="identity.account.invitation_revoked", actor=actor,
                 invitation_id=invitation_id, tenant=tenant, now=now,
             )
+            self._actor(principal)  # Refusal rolls back identity AND provisional audit.
         return {"status": "revoked", "invitation_id": invitation_id, "audit_event_id": event.event_id}
 
     def _reserve_acceptance(self, invitation_id: str) -> None:

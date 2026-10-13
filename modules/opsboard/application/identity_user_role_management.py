@@ -40,6 +40,7 @@ from uuid import UUID
 
 from shared.audit import AuditEvent
 from shared.auth import DataClassification, Principal, Role
+from shared.identity.admin_authority import AdminAuthorityRefused, checked_admin_authority
 
 from .user_role_management import (
     ROLE_LABELS,
@@ -285,55 +286,10 @@ class IdentityUserRoleManagementService:
         # Called AFTER the blocking tenant lock, inside the mutation transaction.
         # Browser actor names, header roles and a pre-lock principal snapshot are
         # never sufficient authority for an identity mutation.
-        if (not isinstance(principal, Principal) or not principal.authenticated
-                or Role.PLATFORM_ADMIN not in principal.roles or principal.tenant_id != tenant):
-            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED")
-        actor = _uuid_or_none(principal.subject_id)
-        sid = _uuid_or_none(principal.attributes.get("sid"))
-        if actor is None or sid is None:
-            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED")
-        provider = principal.attributes.get("provider")
-        if provider not in {"local_password", "oidc"}:
-            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED")
-        row = self._engine.query_one(
-            "SELECT LEAST(s.idle_expires_at, s.absolute_expires_at) AS deadline FROM identity.accounts a "
-            "JOIN identity.account_roles r ON r.account_id = a.account_id "
-            "JOIN identity.sessions s ON s.account_id = a.account_id "
-            "WHERE a.account_id = ? AND a.tenant_id = ? AND a.status = 'active' "
-            "AND r.role = 'platform_admin' AND s.session_id = ? AND s.provider = ? "
-            "AND s.revoked_at IS NULL AND s.idle_expires_at > clock_timestamp() "
-            "AND s.absolute_expires_at > clock_timestamp() FOR SHARE OF a, r, s",
-            (actor, tenant, sid, provider),
-        )
-        if row is None:
-            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED")
-        password = self._engine.query_one(
-            "SELECT must_change FROM identity.password_credentials WHERE account_id = ? FOR SHARE", (actor,),
-        )
-        if ((password is None and provider == "local_password") or (password is not None and password["must_change"])):
-            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED")
-        if provider == "oidc" and self._engine.query_one(
-            "SELECT account_id FROM identity.federated_identities WHERE account_id = ? AND issuer = ? AND subject = ? FOR SHARE",
-            (actor, principal.attributes.get("iss"), principal.attributes.get("sub")),
-        ) is None:
-            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED")
-        # A dependency's pre-lock scope snapshot is no more authoritative than
-        # its role snapshot. Hold current scope before intentional self-edits.
-        current_scope = self._engine.query_one(
-            "SELECT modules, clearance FROM identity.account_scopes WHERE account_id = ? FOR SHARE", (actor,),
-        )
-        if current_scope is not None:
-            try:
-                modules = current_scope["modules"]
-                if isinstance(modules, str):
-                    modules = json.loads(modules)
-                if (not isinstance(modules, list) or any(not isinstance(v, str) for v in modules)
-                        or (modules and "operator_console" not in modules)
-                        or DataClassification[current_scope["clearance"]] < DataClassification.CONFIDENTIAL):
-                    raise ValueError
-            except (KeyError, TypeError, ValueError):
-                raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED") from None
-        return actor, row["deadline"]
+        try:
+            return checked_admin_authority(self._engine, principal, tenant=tenant)
+        except AdminAuthorityRefused:
+            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED") from None
 
     def _final_actor_time(self, deadline: str) -> None:
         # Held rows prevent concurrent demotion/revocation, NOT natural expiry
