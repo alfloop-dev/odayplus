@@ -1100,4 +1100,8 @@ and all existing caps preserved. Complete-object read and retry checks share bot
 list/zero-item-envelope/tenant validation without waiving distinct mutation grants
 or version fences. Cleanup-only safe cookie retention is independent of strict
 attribute acceptance; observed but unsendable values also keep UNKNOWN sticky.
-These source repairs do not confer acceptance.
+Staff job access requires affirmative stored ownership; no missing-owner fallback.
+Every unsafe cookie-capable shared BFF method verifies Origin before session or
+upstream work. Submitted-request loss before complete header inspection also keeps
+custody UNKNOWN, even when no safe value was recoverable; cleanup cannot infer
+revocation from missing headers. These source repairs do not confer acceptance.

@@ -1340,6 +1340,17 @@ else:
                 authorize_intake_action,
                 intake_resource_in_scope,
             )
+            from shared.auth import Role
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER)
+            if principal.has_role(Role.EXPANSION_USER) and not is_manager:
+                # Missing/unassigned ownership is not affirmative staff authority.
+                # Preserve existing submitter precedence; never claim ownership
+                # on behalf of the requester while reading/retrying a legacy job.
+                submitter = job.payload.get("submitter") or job.payload.get("owner")
+                if (not isinstance(submitter, str) or not submitter.strip()
+                        or submitter in {"system", "unassigned", "SYSTEM", "UNASSIGNED"}
+                        or submitter != principal.subject_id):
+                    raise HTTPException(403, detail="OWNERSHIP_REQUIRED")
             # Both reads and retries address COMPLETE stored objects, never
             # projected collection filters. Empty lists still require envelope
             # scope and role/action authority; malformed lists cannot disappear.
@@ -1387,23 +1398,6 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
-                principal = principal_from_headers(request.headers)
-                from shared.auth import Role
-
-                is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER)
-                is_staff = (
-                    principal.has_role(Role.EXPANSION_USER)
-                    or any(r in ("expansion_user", "expansion-user", "expansionStaff", "expansion-staff") for r in [r.value for r in principal.roles])
-                ) and not is_manager
-
-                if is_staff:
-                    submitter = job.payload.get("submitter") or job.payload.get("owner")
-                    if submitter and submitter != principal.subject_id:
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail="OWNERSHIP_REQUIRED",
-                        )
-
                 _authorize_intake_job_items(job, principal, active_tenant_id, "view")
             elif job.job_type == "external-fetch":
                 from shared.auth import Action, rbac_allows
@@ -1479,22 +1473,6 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
-                from shared.auth import Role
-
-                is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER)
-                is_staff = (
-                    principal.has_role(Role.EXPANSION_USER)
-                    or any(r in ("expansion_user", "expansion-user", "expansionStaff", "expansion-staff") for r in [r.value for r in principal.roles])
-                ) and not is_manager
-
-                if is_staff:
-                    submitter = job.payload.get("submitter") or job.payload.get("owner")
-                    if submitter and submitter != principal.subject_id:
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail="OWNERSHIP_REQUIRED",
-                        )
-
                 _authorize_intake_job_items(job, principal, active_tenant_id, "submit_csv")
             else:
                 principal = principal_from_headers(request.headers)

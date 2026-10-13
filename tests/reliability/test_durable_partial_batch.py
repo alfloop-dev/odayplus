@@ -275,6 +275,7 @@ def test_2_scoped_retry_and_zero_duplication(db_path: str) -> None:
             payload={
                 "tenant_id": tenant_id,
                 "items": items_payload,
+                "submitter": "exp-mgr",  # Fixture is an owned staff submission.
             },
             idempotency_key="batch-test-2-idemp",
         )
@@ -389,6 +390,7 @@ def test_2_full_convergence_subtest(db_path: str) -> None:
             payload={
                 "tenant_id": tenant_id,
                 "items": items_payload,
+                "submitter": "exp-mgr",
             },
             idempotency_key="batch-test-2-converge-idemp",
         )
@@ -575,7 +577,7 @@ def test_4_restart_re_readability_and_cancellation(db_path: str) -> None:
         )
         job_req = JobRequest(
             job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
-            payload={"tenant_id": tenant_id, "items": items_payload},
+            payload={"tenant_id": tenant_id, "items": items_payload, "submitter": "exp-mgr"},
             idempotency_key="restart-test-idemp",
         )
         record, _ = bundle.job_queue.enqueue(job_req, correlation_id="corr-restart")
@@ -884,7 +886,7 @@ def test_5_duplicate_delivery_and_out_of_order(db_path, caplog, delivery_order):
     bundle = _durable_bundle(db_path)
     try:
         tenant = "replay-tenant"
-        request = JobRequest(job_type=BATCH_LISTING_INTAKE_JOB_TYPE, payload={"tenant_id": tenant, "items": [{"item_id": key, "address_raw": "Address " + key} for key in ("X", "Y", "Z")]}, idempotency_key="replay-batch")
+        request = JobRequest(job_type=BATCH_LISTING_INTAKE_JOB_TYPE, payload={"tenant_id": tenant, "submitter": "exp-mgr", "items": [{"item_id": key, "address_raw": "Address " + key} for key in ("X", "Y", "Z")]}, idempotency_key="replay-batch")
         record, created = bundle.job_queue.enqueue(request, correlation_id="replay")
         duplicate, duplicated = bundle.job_queue.enqueue(request, correlation_id="duplicate")
         assert created and not duplicated and duplicate.job_id == record.job_id
@@ -1050,6 +1052,7 @@ def test_6_auth_and_tenant_isolation_guards(db_path: str) -> None:
             job_id,
             JobStatus.PARTIAL,
             payload={
+                **bundle.job_queue.get(job_id).payload,  # Preserve authenticated enqueue ownership.
                 "tenant_id": tenant_a,
                 "receipt": {
                     "items": [
@@ -2111,6 +2114,7 @@ def test_review_finding_r5_pre_execution_cancellation_canonical_envelope(db_path
                 payload={
                     "tenant_id": tenant,
                     "items": [{"item_id": "row-before-start", "address_raw": "synthetic address"}],
+                    "submitter": "exp-mgr",
                 },
                 idempotency_key="synthetic-prestart-idempotency",
             ),

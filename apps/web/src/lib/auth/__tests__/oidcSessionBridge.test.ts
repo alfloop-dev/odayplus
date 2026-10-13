@@ -20,6 +20,7 @@ it.each(["healthy","missing-key"])("OIDC BFF %s proves server SID/token binding,
   const req = new NextRequest("https://ops.oday.plus/api/v1/operator/users",{method:"POST",body:"{}",
     headers:{"x-odp-oidc-session":"attacker-selected-assertion","authorization":"Bearer attacker","x-session-id":"attacker-sid"}});
   req.cookies.set(webSessionCookieName,cookie);
+  req.headers.set("origin", req.nextUrl.origin);  // Actual same-origin mutation fixture.
   const fetchMock = vi.fn(async (_url: URL, init?: RequestInit)=>{
     const headers = new Headers(init?.headers);
     expect(headers.get("authorization")).toBe(`Bearer ${originalToken}`);

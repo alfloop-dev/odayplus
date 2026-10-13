@@ -141,6 +141,38 @@ def test_actual_owned_observation_bad_attributes_keep_custody_unknown(
         assert calls == before
 
 
+def test_actual_observation_header_parse_loss_never_claims_completed_cleanup(
+    owned_sessions, tls_recovery_server, monkeypatch
+):
+    with owned_sessions() as (owner, budget, clock, receipts, p, calls, original, target):
+        budget.begin("preflight")
+        owner.login("original")
+        # B precedes the aggregate cap violation, but getresponse never returns
+        # parsed headers. Its value is NOT claimed recovered or revocable.
+        extra = HEADER + (b"X-Large: " + b"x" * 33000 + b"\r\n") * 2
+        with tls_recovery_server(recovery_http_reply(b'{"ok":true}', extra=extra)) as (
+            origin,
+            ca,
+            requests,
+        ):
+            owner._origin, owner._address, owner._ca = origin, "127.0.0.1", ca
+            with pytest.raises(r.RecoveryActionRefused) as observation:
+                owner.observe_accounts(p)
+            assert len(requests) == 1
+        budget.begin("quarantine")
+        budget.finish(outcome="completed")  # Synthetic fixture progress only.
+        with pytest.raises(r.RecoveryActionRefused) as cleanup:
+            owner.cleanup()
+        assert observation.value.outcome == cleanup.value.outcome == "unknown"
+        assert owner._unknown_login
+        logouts = [cookie for operation, cookie, *_ in calls if operation == "logout"]
+        assert logouts == ["offline-original-cookie"]
+        before = list(calls)
+        with pytest.raises(r.RecoveryRefused):
+            owner.cleanup()
+        assert calls == before
+
+
 @pytest.mark.parametrize("phase", ["ordinary", "cleanup"])
 def test_foreground_canonical_or_cleanup_read_drains_new_cookie_once(
     foreground_gate, monkeypatch, phase

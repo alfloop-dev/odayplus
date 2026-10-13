@@ -10,6 +10,7 @@ import {
 import {
   allowLegacyTrustedHeaders,
   isProductionWebRuntime,
+  verifyCsrfOrigin,
 } from "./runtime";
 import {
   resolveGoogleMetadataIdentityToken,
@@ -129,6 +130,13 @@ export async function proxyApiRequest(
     upstreamTimeoutMs?: number;
   } = {},
 ): Promise<Response> {
+  // Every cookie-capable BFF mutation (including bodyless retries) requires
+  // same-origin evidence BEFORE session/store/provider/body/upstream work.
+  // SameSite cookies alone do not defend against a hostile same-site origin.
+  if (!["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase()) &&
+      !verifyCsrfOrigin(request, environment)) {
+    return authError(403, "WEB_CSRF_REFUSED", "Same-origin request required.");
+  }
   const production = isProductionWebRuntime(environment);
   let session = null;
   try {
