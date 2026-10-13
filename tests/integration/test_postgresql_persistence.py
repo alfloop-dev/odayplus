@@ -249,6 +249,27 @@ def test_postgresql_claim_is_atomic_across_worker_processes() -> None:
         engine.close()
 
 
+def test_applied_bootstrap_does_not_take_ddl_locks_against_active_commands(intake_blank_db: Any) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    url = intake_blank_db.url()
+    first = PostgresEngine(url, validate_schema=False)
+    try:
+        with intake_blank_db.connect(autocommit=False) as connection:
+            connection.execute("LOCK TABLE odp_runtime.durable_jobs IN ROW EXCLUSIVE MODE")
+            # A repeated CREATE INDEX/ALTER TABLE bootstrap used to block here
+            # and deadlock with the command's later document/audit locks.
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(PostgresEngine, url, validate_schema=False)
+                try:
+                    other = future.result(timeout=5)
+                finally:
+                    connection.rollback()
+                other.close()
+    finally:
+        first.close()
+
+
 def test_the_migration_job_provisions_every_relation_the_bundle_requires(
     intake_blank_db: Any,
 ) -> None:
@@ -561,4 +582,3 @@ def test_postgresql_manual_correction_readback_and_rollback(
         assert bundle.audit_log.verify_chain().ok is True
     finally:
         bundle.engine.close()
-

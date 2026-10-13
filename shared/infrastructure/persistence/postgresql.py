@@ -8,6 +8,7 @@ and idempotent runtime-schema bootstrap.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -267,6 +268,7 @@ class PostgresEngine:
         """Apply the PostgreSQL-only runtime migration inside one transaction."""
 
         ddl = _MIGRATION_PATH.read_text(encoding="utf-8")
+        fingerprint = "000008_postgresql_runtime_persistence:sha256:" + hashlib.sha256(ddl.encode("utf-8")).hexdigest()
         with self._pool.connection() as connection:
             with connection.transaction():
                 # CREATE IF NOT EXISTS does not serialize concurrent DDL.
@@ -276,7 +278,27 @@ class PostgresEngine:
                     "SELECT pg_advisory_xact_lock(hashtext(%s))",
                     ("odayplus:odp_runtime:migration",),
                 )
+                registry = connection.execute(
+                    "SELECT to_regclass('odp_runtime.schema_migrations') AS relation"
+                ).fetchone()
+                if registry and registry["relation"] is not None:
+                    applied = connection.execute(
+                        "SELECT migration_id FROM odp_runtime.schema_migrations WHERE migration_id = %s",
+                        (fingerprint,),
+                    ).fetchone()
+                    if applied:
+                        # Even IF NOT EXISTS DDL takes relation locks. Running
+                        # it on each new engine can deadlock against live DML.
+                        # The fingerprint is retained only with the complete
+                        # migration in the same transaction. Schema validation
+                        # still refuses missing production relations.
+                        return
                 connection.execute(ddl)
+                connection.execute(
+                    "INSERT INTO odp_runtime.schema_migrations(migration_id) VALUES (%s) "
+                    "ON CONFLICT (migration_id) DO NOTHING",
+                    (fingerprint,),
+                )
 
     def validate_schema(self) -> None:
         """Fail closed unless runtime tables and canonical production tables exist."""

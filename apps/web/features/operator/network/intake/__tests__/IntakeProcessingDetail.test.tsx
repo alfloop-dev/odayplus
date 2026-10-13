@@ -1,7 +1,7 @@
 import React, { useSyncExternalStore } from "react";
 import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistedIntake, IntakeInboxPage } from "@oday-plus/openapi-client";
 import { OperatorConsole, isIntakeDetailOpen } from "../../../OperatorConsole";
@@ -454,6 +454,74 @@ describe("IntakeProcessingDetail production composition", () => {
 });
 
 describe("AssistedIntakeSection production container", () => {
+  it("restores direct inbox filters on the first API request and preserves other parameters", async () => {
+    const requests: URL[] = [];
+    nav.reset("ws=network&tab=radar&search=台北&savedView=needsReview&page=3&pageSize=25&intakeStage=NEEDS_REVIEW&heatZoneId=HZ-TPE&sortBy=sourceId&sortOrder=asc&extra=a&extra=b");
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost"); requests.push(url);
+      return json({ items: [possibleMatch], total: 60, page: 3, pageSize: 25, counts: { needsReview: 60, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 }, evidenceState: "complete" });
+    }));
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" selectedHeatZoneId="HZ-DEFAULT" />);
+    expect(await screen.findByTestId("intake-inbox-view")).toBeInTheDocument();
+    await waitFor(() => expect(requests.length).toBeGreaterThan(0));
+    expect(screen.getByTestId("intake-page-size-select")).toHaveValue("25");
+    expect(Object.fromEntries(requests[0]!.searchParams)).toMatchObject({ search: "台北", savedView: "needsReview", page: "3", pageSize: "25", intakeStage: "NEEDS_REVIEW", selectedHeatZoneId: "HZ-TPE", sortBy: "sourceId", sortOrder: "asc" });
+    expect(nav.state.replaceCalls).toHaveLength(0);
+    fireEvent.click(screen.getByTestId("intake-view-mode-map"));
+    expect(new URLSearchParams(nav.state.search).getAll("extra")).toEqual(["a", "b"]);
+    expect(new URLSearchParams(nav.state.search).get("viewMode")).toBe("map");
+  });
+
+  it("discards a delayed inbox response after navigation to another filter", async () => {
+    let resolveOld!: (response: Response) => void;
+    nav.reset("search=old");
+    const page = (record: AssistedIntake) => ({ items: [record], total: 1, page: 1, pageSize: 10, counts: { needsReview: 1, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 }, evidenceState: "complete" });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      return url.searchParams.get("search") === "old" ? new Promise<Response>((resolve) => { resolveOld = resolve; }) : Promise.resolve(json(page(intake({ id: "IN-NEW" }))));
+    }));
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" />);
+    await waitFor(() => expect(resolveOld).toBeDefined());
+    fireEvent.change(screen.getByTestId("intake-search-input"), { target: { value: "new" } });
+    expect(await screen.findByTestId("intake-inbox-row-IN-NEW")).toBeInTheDocument();
+    await act(async () => { resolveOld(json(page(intake({ id: "IN-OLD" })))); });
+    expect(screen.queryByTestId("intake-inbox-row-IN-OLD")).toBeNull();
+  });
+
+  it.each(["selected=IN-1&selected=IN-2&dialog=detail", "selected=&dialog=detail"])("refuses an ambiguous direct detail link %s", async (query) => {
+    nav.reset(query);
+    vi.stubGlobal("fetch", vi.fn(async () => json({ items: [possibleMatch], total: 1, page: 1, pageSize: 10, counts: {}, evidenceState: "complete" })));
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" initialSelectedId={possibleMatch.id} />);
+    expect(await screen.findByTestId("intake-direct-detail-error")).toHaveTextContent("連結未指定唯一");
+    expect(screen.queryByTestId("intake-detail-dialog")).toBeNull();
+  });
+
+  it("does not replace a malformed pathname identifier with a valid query record", async () => {
+    nav.reset(`selected=${possibleMatch.id}&dialog=detail`, "/intake/%ZZ");
+    const fetch = vi.fn(async (_input: RequestInfo | URL) => json({ items: [possibleMatch], total: 1, page: 1, pageSize: 10, counts: {}, evidenceState: "complete" }));
+    vi.stubGlobal("fetch", fetch);
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" />);
+    expect(await screen.findByTestId("intake-direct-detail-error")).toHaveTextContent("連結未指定唯一");
+    expect(screen.queryByTestId("intake-detail-dialog")).toBeNull();
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes(`/intake/${possibleMatch.id}`))).toBe(true);
+  });
+
+  it("uses the durable pathname record and remembers the interacted detail section", async () => {
+    nav.reset("selected=IN-OTHER&dialog=detail&extra=a&extra=b", `/intake/${possibleMatch.id}`);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === `/api/v1/operator/network-listings/intake/${possibleMatch.id}`) return json(possibleMatch);
+      if (path.endsWith("/promotion-decision")) return json({ code: "NOT_FOUND" }, 404);
+      return json({ items: [], total: 0, page: 1, pageSize: 10, counts: {}, evidenceState: "complete" });
+    }));
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="subject-1" />);
+    fireEvent.click(await screen.findByTestId("intake-match-evidence-section"));
+    const saved = new URLSearchParams(nav.state.search);
+    expect(saved.get("section")).toBe("identity");
+    expect(saved.get("selected")).toBe(possibleMatch.id);
+    expect(saved.getAll("extra")).toEqual(["a", "b"]);
+  });
+
   it("marks only durable intake detail contexts for the global narrow-width override", () => {
     const detailParams = { ws: "network", tab: "radar", selected: possibleMatch.id, dialog: "detail" };
     expect(isIntakeDetailOpen(detailParams)).toBe(true);
@@ -512,6 +580,8 @@ describe("AssistedIntakeSection production container", () => {
     render(<OperatorConsole searchParams={{ ws: "network", tab: "radar", selected: record.id, dialog: "detail", stage: "NEEDS_REVIEW" }} />);
     expect(await screen.findByTestId("intake-detail-dialog")).toBeInTheDocument();
     expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "收件處理詳情" })).toBeInTheDocument();
   });
 
   it("keeps read-only production controls fail closed", async () => {

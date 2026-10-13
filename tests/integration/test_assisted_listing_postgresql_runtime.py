@@ -67,6 +67,7 @@ _INTAKE_MIGRATION_SCHEMA = "odp_runtime"
 _CANONICAL_STUB_DDL = """
     CREATE SCHEMA IF NOT EXISTS core;
     CREATE SCHEMA IF NOT EXISTS workflow;
+    CREATE SCHEMA IF NOT EXISTS pricing;
     CREATE TABLE IF NOT EXISTS core.tenants (
         tenant_id UUID PRIMARY KEY,
         tenant_name TEXT NOT NULL,
@@ -89,6 +90,13 @@ _CANONICAL_STUB_DDL = """
     CREATE TABLE IF NOT EXISTS workflow.decision_policies (
         policy_version_id VARCHAR(100) PRIMARY KEY
     );
+    -- Relation-only boot stubs for this intake-specific fixture. Canonical
+    -- exploration columns, approvals, budget triggers and FKs are verified
+    -- separately against the full migrations in test_priceops_canonical_gate.
+    CREATE TABLE IF NOT EXISTS workflow.decisions (decision_id UUID PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS workflow.approvals (approval_id UUID PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS pricing.exploration_gates (gate_id UUID PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS pricing.exploration_decisions (decision_id UUID PRIMARY KEY);
 """
 
 _CANONICAL_STUB_RELATIONS = frozenset(

@@ -249,7 +249,7 @@ export function ListingCompareTable({
       </div>
 
       {/* Screen-reader-readable change summary */}
-      <div className={styles.srSummary} data-testid="intake-change-summary" role="region" aria-live="polite">
+      <div className={styles.srSummary} data-testid="intake-change-summary" role="region" aria-label="版本差異摘要" aria-live="polite">
         <strong>變更摘要 (Screen-Reader Summary)：</strong> {changeSummaryText}
       </div>
 

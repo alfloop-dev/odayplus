@@ -16,7 +16,7 @@ import {
 } from "./intakeTypes";
 import { canPerform, canView, isReadOnly, NO_ACCESS_NOTE, READ_ONLY_NOTE } from "./intakePermissions";
 import { type IntakeApiError } from "./intakeClient";
-import { useIntakeInboxQuery, type SavedViewType } from "./useIntakeInboxQuery";
+import { useIntakeInboxQuery, type IntakeInboxFilterState, type SavedViewType } from "./useIntakeInboxQuery";
 
 export function ListingInboxIntakeView({
   activeRoleId,
@@ -32,6 +32,8 @@ export function ListingInboxIntakeView({
   onRetryIntake,
   pageData,
   onQueryChange,
+  queryFilters,
+  onFilterChange,
   addDialogRequested = false,
   onAddDialogClosed,
 }: {
@@ -48,6 +50,8 @@ export function ListingInboxIntakeView({
   onRetryIntake?: (intakeId: string) => void;
   pageData?: IntakeInboxPage;
   onQueryChange?: (query: IntakeInboxQuery) => void;
+  queryFilters?: IntakeInboxFilterState;
+  onFilterChange?: (next: IntakeInboxFilterState) => void;
   /** URL asked for the add dialog (`dialog=add`, e.g. from Find Areas). */
   addDialogRequested?: boolean;
   onAddDialogClosed?: () => void;
@@ -75,14 +79,14 @@ export function ListingInboxIntakeView({
     updateFilters,
     resetFilters,
     toggleSort,
-  } = useIntakeInboxQuery();
+  } = useIntakeInboxQuery(queryFilters && onFilterChange ? { filters: queryFilters, onChange: onFilterChange } : undefined);
   useEffect(() => {
     onQueryChange?.({ ...filters, selectedHeatZoneId: selectedHeatZoneId || filters.heatZoneId || undefined });
   }, [filters, onQueryChange, selectedHeatZoneId]);
   const paginatedRecords = records;
   const totalRecords = pageData?.total ?? records.length;
   const pageCount = Math.max(1, Math.ceil(totalRecords / filters.pageSize));
-  const counts = pageData?.counts ?? { needsReview: 0, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 };
+  const counts = useMemo(() => pageData?.counts ?? { needsReview: 0, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 }, [pageData?.counts]);
 
   const savedViewTabs: { id: SavedViewType; label: string; count: number }[] = useMemo(
     () => [
@@ -344,13 +348,12 @@ export function ListingInboxIntakeView({
                   data-active={isSelected ? "true" : undefined}
                   data-testid={`intake-inbox-row-${record.id}`}
                   onClick={() => onOpenDetail(record.id)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") onOpenDetail(record.id);
-                  }}
                 >
-                  <span className={styles.rowId}>{record.id}</span>
+                  <button type="button" className={styles.rowId} aria-label={`開啟收件 ${record.id}`}
+                    data-testid={`intake-row-open-${record.id}`}
+                    style={{ background: "none", border: 0, padding: 0, textAlign: "left", cursor: "pointer" }}
+                    onClick={(event) => { event.stopPropagation(); onOpenDetail(record.id); }}
+                  >{record.id}</button>
                   <span className={styles.srcChip}>{record.sourceId}</span>
                   <span className={styles.rowUrl} title={`原始 URL: ${record.canonicalUrl}`}>
                     {shortUrl(record.canonicalUrl)}
@@ -433,6 +436,7 @@ export function ListingInboxIntakeView({
               <option value="10">每頁 10 筆</option>
               <option value="20">每頁 20 筆</option>
               <option value="50">每頁 50 筆</option>
+              {![10, 20, 50].includes(filters.pageSize) ? <option value={filters.pageSize}>每頁 {filters.pageSize} 筆</option> : null}
             </select>
 
             <button

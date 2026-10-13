@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { parseUrlState, serializeUrlState } from "./urlState";
+import { parseInboxUrlState, serializeInboxUrlState, type IntakeInboxFilterState } from "./inboxUrlState";
 import type {
   AssistedIntake,
   AssignmentReceipt,
@@ -108,25 +109,32 @@ export function AssistedIntakeSection({
   const urlState = useMemo(() => parseUrlState(searchParams), [searchParams]);
   const durableRouteSelectedId = useMemo(() => {
     const match = /^\/intake\/([^/]+)$/.exec(pathname);
-    return match ? decodeURIComponent(match[1]) : undefined;
+    if (!match) return undefined;
+    try { return decodeURIComponent(match[1]); } catch { return null; }
   }, [pathname]);
 
-  const selectedId =
-    urlState.selectedId ??
-    initialSelectedId ??
-    durableRouteSelectedId ??
-    null;
+  const selectedId = durableRouteSelectedId !== undefined
+    ? durableRouteSelectedId
+    : (searchParams.has("selected") ? urlState.selectedId : initialSelectedId) ?? null;
   const dialog =
-    urlState.dialog ??
-    initialDialog ??
-    (durableRouteSelectedId ? "detail" : null);
+    (searchParams.has("dialog") ? urlState.dialog : initialDialog) ??
+    (durableRouteSelectedId !== undefined ? "detail" : null);
   const fixFieldKey = urlState.fixFieldKey;
   const decisionKind = urlState.decisionKind as any;
   const asgKind = urlState.decisionKind === "transfer" ? "transfer" : urlState.decisionKind === "pause" ? "pause" : null;
 
   const [records, setRecords] = useState<AssistedIntake[]>([]);
   const [pageData, setPageData] = useState<IntakeInboxPage | undefined>();
-  const [inboxQuery, setInboxQuery] = useState<IntakeInboxQuery>({ page: 1, pageSize: 10, sortBy: "updatedAt", sortOrder: "desc" });
+  const queryString = searchParams.toString();
+  const inboxFilters = useMemo(() => ({ ...parseInboxUrlState(new URLSearchParams(queryString)),
+    selectedIntakeId: selectedId }), [queryString, selectedId]);
+  const inboxQuery: IntakeInboxQuery = useMemo(() => ({
+    page: inboxFilters.page, pageSize: inboxFilters.pageSize, search: inboxFilters.search,
+    savedView: inboxFilters.savedView, intakeMethod: inboxFilters.intakeMethod,
+    intakeStage: inboxFilters.intakeStage, matchOutcome: inboxFilters.matchOutcome,
+    slaState: inboxFilters.slaState, sortBy: inboxFilters.sortBy, sortOrder: inboxFilters.sortOrder,
+    selectedHeatZoneId: inboxFilters.heatZoneId || selectedHeatZoneId || undefined,
+  }), [inboxFilters, selectedHeatZoneId]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<IntakeApiError | null>(null);
   const [detailLoadState, setDetailLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -150,32 +158,43 @@ export function AssistedIntakeSection({
     state: "idle" | "loading" | "ready";
   }>({ intakeId: null, state: "idle" });
 
+  const navigationParams = useRef(new URLSearchParams(queryString));
+  const observedQuery = useRef(queryString);
+  if (observedQuery.current !== queryString) {
+    observedQuery.current = queryString;
+    navigationParams.current = new URLSearchParams(queryString);
+  }
   const updateUrlState = useCallback((
     updates: Partial<typeof urlState>,
     historyMode: "push" | "replace" = "replace",
   ) => {
+    const live = parseUrlState(navigationParams.current);
     const nextState = {
-      filters: urlState.filters,
-      sort: urlState.sort,
-      view: urlState.view,
-      selectedId,
-      dialog,
-      activeSection: urlState.activeSection,
-      fixFieldKey: urlState.fixFieldKey,
-      decisionKind: urlState.decisionKind,
-      receiptId: urlState.receiptId,
-      compareTask: urlState.compareTask,
+      ...live,
+      selectedId: durableRouteSelectedId !== undefined ? durableRouteSelectedId
+        : navigationParams.current.has("selected") ? live.selectedId : selectedId,
+      dialog: navigationParams.current.has("dialog") ? live.dialog : dialog,
       ...updates,
     };
-    const newParams = serializeUrlState(nextState, searchParams);
-    router[historyMode](`${pathname}?${newParams.toString()}`);
-  }, [urlState, selectedId, dialog, searchParams, pathname, router]);
+    const newParams = serializeUrlState(nextState, navigationParams.current);
+    navigationParams.current = newParams;
+    const hash = window.location.hash.startsWith("#intake/") ? "" : window.location.hash;
+    router[historyMode](`${pathname}?${newParams.toString()}${hash}`, { scroll: false });
+  }, [selectedId, dialog, pathname, router, durableRouteSelectedId]);
+  const updateInboxFilters = useCallback((next: IntakeInboxFilterState) => {
+    const params = serializeInboxUrlState(next, navigationParams.current);
+    navigationParams.current = params;
+    router.push(`${pathname}?${params.toString()}${window.location.hash}`, { scroll: false });
+  }, [pathname, router]);
 
   const role = getOperatorRole(activeRoleId);
   const client = useMemo(
     () => buildIntakeClient(activeRoleId, sessionSubjectId),
     [activeRoleId, sessionSubjectId],
   );
+  const activeClient = useRef(client);
+  activeClient.current = client;
+  const refreshGeneration = useRef(0);
   // Every submit attempt reuses one key so a network retry cannot double-create.
   const submitKeyRef = useRef<string | null>(null);
   const correctionKeyRef = useRef<string | null>(null);
@@ -192,7 +211,9 @@ export function AssistedIntakeSection({
       return;
     }
     setLoadState("loading");
-    const result = await intakeApi.list(client, { ...inboxQuery, selectedHeatZoneId });
+    const generation = ++refreshGeneration.current;
+    const result = await intakeApi.list(client, inboxQuery);
+    if (generation !== refreshGeneration.current || client !== activeClient.current) return;
     if (result.ok) {
       setRecords((current) => {
         if (dialog !== "detail" || !selectedId) return result.value.items;
@@ -216,28 +237,29 @@ export function AssistedIntakeSection({
     client,
     dialog,
     inboxQuery,
-    selectedHeatZoneId,
     selectedId,
   ]);
 
   useEffect(() => {
     void refresh();
+    return () => { refreshGeneration.current += 1; };
   }, [refresh]);
 
   // Durable deep link: #intake/<id> opens the detail dialog on load, so an
   // operator can leave and come back to the record (design §4 requirement).
   useEffect(() => {
     function openFromHash() {
-      const match = /^#intake\/(.+)$/.exec(window.location.hash);
+      if (durableRouteSelectedId !== undefined || navigationParams.current.has("selected")) return;
+      const match = /^#intake\/([^/]+)$/.exec(window.location.hash);
       if (match) {
-        updateUrlState({ dialog: "detail", selectedId: match[1] });
-        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        try { updateUrlState({ dialog: "detail", selectedId: decodeURIComponent(match[1]) }); }
+        catch { /* A malformed legacy identifier must not select another record. */ }
       }
     }
     openFromHash();
     window.addEventListener("hashchange", openFromHash);
     return () => window.removeEventListener("hashchange", openFromHash);
-  }, [updateUrlState]);
+  }, [updateUrlState, durableRouteSelectedId]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -251,6 +273,7 @@ export function AssistedIntakeSection({
     decisionKeyRef.current = null;
     setPromotionError(null);
     setPromotionReplayed(false);
+    setActionError(null);
   }, [selectedId]);
 
   const selected = records.find((record) => record.id === selectedId) ?? null;
@@ -258,7 +281,7 @@ export function AssistedIntakeSection({
   // A durable detail link may point to a record outside the current inbox
   // page. Resolve that record directly instead of depending on list pagination.
   useEffect(() => {
-    if (dialog !== "detail" || !selectedId) {
+    if (!["detail", "fix", "decide", "assignmentSla"].includes(dialog ?? "") || !selectedId) {
       setDetailLoadState("idle");
       return undefined;
     }
@@ -360,7 +383,7 @@ export function AssistedIntakeSection({
   }, [selected, gateKey, gateSnapshots]);
 
   function closeDialog() {
-    if (durableRouteSelectedId) {
+    if (durableRouteSelectedId !== undefined) {
       router.replace(buildInboxReturnHref({
         ...urlState,
         selectedId,
@@ -386,6 +409,7 @@ export function AssistedIntakeSection({
 
   /** Merge a server response back into the queue; the server is authoritative. */
   function applyRecord(record: AssistedIntake) {
+    if (client !== activeClient.current) return;
     setRecords((current) => {
       const index = current.findIndex((item) => item.id === record.id);
       if (index === -1) return [record, ...current];
@@ -998,10 +1022,11 @@ export function AssistedIntakeSection({
         onOpenDetail={openDetail}
         onRetryLoad={() => void refresh()}
         onRetryIntake={(intakeId) => void handleInboxRetry(intakeId)}
-        onQueryChange={setInboxQuery}
+        queryFilters={inboxFilters}
+        onFilterChange={updateInboxFilters}
         pageData={pageData}
         records={records}
-        selectedHeatZoneId={selectedHeatZoneId}
+        selectedHeatZoneId={inboxQuery.selectedHeatZoneId}
       /> : null}
 
       {/*
@@ -1016,7 +1041,7 @@ export function AssistedIntakeSection({
         </div>
       ) : null}
 
-      {dialog === "detail" && !selected && detailLoadState === "loading" ? (
+      {detailContextOpen && !selected && detailLoadState === "loading" ? (
         <div className={styles.intakeDetailLayer}>
         <div
           aria-live="polite"
@@ -1028,7 +1053,7 @@ export function AssistedIntakeSection({
         </div></div>
       ) : null}
 
-      {dialog === "detail" && !selected && detailLoadState === "error" ? (
+      {detailContextOpen && ((!selected && detailLoadState === "error") || !selectedId) ? (
         <div className={styles.intakeDetailLayer}>
         <div
           className={styles.errorPanel}
@@ -1037,7 +1062,7 @@ export function AssistedIntakeSection({
         >
           <span className={styles.errorSummary}>
             {actionError?.code ?? "ODP-INTAKE-UNAVAILABLE"} ·{" "}
-            {actionError?.summary ?? "後端未提供此收件紀錄。"}
+            {!selectedId ? "連結未指定唯一的收件紀錄，請返回收件匣重新選取。" : actionError?.summary ?? "後端未提供此收件紀錄。"}
           </span>
           <span className={styles.errorNext}>
             {actionError?.nextAction ?? "請重新整理或返回 Listing 收件匣。"}
@@ -1048,6 +1073,8 @@ export function AssistedIntakeSection({
       {detailContextOpen && selected ? (
         <div className={styles.intakeDetailLayer} data-testid="intake-detail-layer">
         <IntakeProcessingDetail
+          activeSection={urlState.activeSection}
+          onSectionChange={(activeSection) => updateUrlState({ activeSection })}
           busy={busy}
           canCorrect={canCorrect}
           canDecide={canDecide}

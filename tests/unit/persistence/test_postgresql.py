@@ -163,6 +163,17 @@ def test_runtime_migration_is_idempotent_by_contract() -> None:
     assert all("ON CONFLICT (migration_id) DO NOTHING" in sql for sql in migration_runs)
 
 
+def test_exact_applied_runtime_fingerprint_skips_locking_ddl() -> None:
+    connection = FakeConnection()
+    connection.responses.extend([[], [{"relation": "odp_runtime.schema_migrations"}], [{"migration_id": "applied"}]])
+    engine, _ = make_engine(connection)
+    engine.apply_runtime_migration()
+    assert not any("CREATE" in sql or "ALTER" in sql for sql, _ in connection.statements)
+    lookup = connection.statements[-1]
+    assert lookup[1][0].startswith("000008_postgresql_runtime_persistence:sha256:")
+    assert connection.transaction_depth == 0
+
+
 def test_schema_validation_fails_closed_when_canonical_relation_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -126,6 +126,16 @@ describe("ListingInboxIntakeView", () => {
     expect(screen.getByTestId("intake-inbox-row-IN-103")).toBeDefined();
   });
 
+  it("provides separate native open and action controls without nesting interactive rows", () => {
+    render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready" onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} records={mockRecords} />);
+    const row = screen.getByTestId("intake-inbox-row-IN-101");
+    expect(row).not.toHaveAttribute("role", "button");
+    expect(screen.getByRole("button", { name: "開啟收件 IN-101" })).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("intake-row-open-IN-101"));
+    expect(mockOnOpenDetail).toHaveBeenCalledExactlyOnceWith("IN-101");
+    expect(screen.getByTestId("intake-row-action-IN-101")).toBeInTheDocument();
+  });
+
   it("sends saved-view filtering to the server contract", async () => {
     const onQueryChange = vi.fn();
     render(

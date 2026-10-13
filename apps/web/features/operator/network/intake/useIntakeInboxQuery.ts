@@ -1,182 +1,53 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { DEFAULT_INBOX_FILTERS, parseInboxUrlState, serializeInboxUrlState, type IntakeInboxFilterState } from "./inboxUrlState";
+export type { IntakeInboxFilterState, SavedViewType, ViewMode } from "./inboxUrlState";
 
-export type SavedViewType = "all" | "needsReview" | "awaitingEntry" | "blocked" | "processing" | "ready";
-export type ViewMode = "list" | "map";
-
-export type IntakeInboxFilterState = {
-  search: string;
-  intakeMethod: string;
-  intakeStage: string;
-  matchOutcome: string;
-  slaState: string;
-  heatZoneId: string;
-  savedView: SavedViewType;
-  viewMode: ViewMode;
-  page: number;
-  pageSize: number;
-  sortBy: string;
-  sortOrder: "asc" | "desc";
-  selectedIntakeId: string | null;
-};
-
-const DEFAULT_FILTERS: IntakeInboxFilterState = {
-  search: "",
-  intakeMethod: "",
-  intakeStage: "",
-  matchOutcome: "",
-  slaState: "",
-  heatZoneId: "",
-  savedView: "all",
-  viewMode: "list",
-  page: 1,
-  pageSize: 10,
-  sortBy: "updatedAt",
-  sortOrder: "desc",
-  selectedIntakeId: null,
-};
-
-function parseUrlQueryParams(): Partial<IntakeInboxFilterState> {
-  if (typeof window === "undefined") return {};
-  const params = new URLSearchParams(window.location.search);
-  const result: Partial<IntakeInboxFilterState> = {};
-
-  if (params.has("search")) result.search = params.get("search") ?? "";
-  if (params.has("intakeMethod")) result.intakeMethod = params.get("intakeMethod") ?? "";
-  if (params.has("intakeStage")) result.intakeStage = params.get("intakeStage") ?? "";
-  if (params.has("matchOutcome")) result.matchOutcome = params.get("matchOutcome") ?? "";
-  if (params.has("slaState")) result.slaState = params.get("slaState") ?? "";
-  if (params.has("heatZoneId")) result.heatZoneId = params.get("heatZoneId") ?? "";
-  if (params.has("savedView")) result.savedView = (params.get("savedView") as SavedViewType) ?? "all";
-  if (params.has("viewMode")) result.viewMode = (params.get("viewMode") as ViewMode) ?? "list";
-
-  const page = parseInt(params.get("page") ?? "", 10);
-  if (!isNaN(page) && page > 0) result.page = page;
-
-  const pageSize = parseInt(params.get("pageSize") ?? "", 10);
-  if (!isNaN(pageSize) && pageSize > 0) result.pageSize = pageSize;
-
-  if (params.has("sortBy")) result.sortBy = params.get("sortBy") ?? "updatedAt";
-  if (params.has("sortOrder")) {
-    const order = params.get("sortOrder");
-    if (order === "asc" || order === "desc") result.sortOrder = order;
-  }
-
-  if (window.location.hash.startsWith("#intake/")) {
-    result.selectedIntakeId = window.location.hash.replace("#intake/", "");
-  }
-
-  return result;
+function currentFilters() {
+  return typeof window === "undefined" ? { ...DEFAULT_INBOX_FILTERS }
+    : parseInboxUrlState(new URLSearchParams(window.location.search), window.location.hash);
 }
 
-function updateUrlQueryParams(state: IntakeInboxFilterState, mode: "push" | "replace") {
-  if (typeof window === "undefined") return;
-  const params = new URLSearchParams(window.location.search);
+type ControlledQuery = { filters: IntakeInboxFilterState; onChange: (next: IntakeInboxFilterState) => void };
 
-  const setOrDelete = (key: string, val: string | number | null) => {
-    if (val !== null && val !== "" && val !== DEFAULT_FILTERS[key as keyof IntakeInboxFilterState]) {
-      params.set(key, String(val));
-    } else {
-      params.delete(key);
-    }
-  };
+export function useIntakeInboxQuery(controlled?: ControlledQuery) {
+  const isControlled = controlled !== undefined;
+  const [local, setLocal] = useState(currentFilters);
+  const filters = controlled?.filters ?? local;
+  const signature = JSON.stringify(filters);
+  const previous = useRef(signature);
+  const current = useRef(filters);
+  if (previous.current !== signature) { current.current = filters; previous.current = signature; }
 
-  setOrDelete("search", state.search);
-  setOrDelete("intakeMethod", state.intakeMethod);
-  setOrDelete("intakeStage", state.intakeStage);
-  setOrDelete("matchOutcome", state.matchOutcome);
-  setOrDelete("slaState", state.slaState);
-  setOrDelete("heatZoneId", state.heatZoneId);
-  setOrDelete("savedView", state.savedView);
-  setOrDelete("viewMode", state.viewMode);
-  setOrDelete("page", state.page);
-  setOrDelete("pageSize", state.pageSize);
-  setOrDelete("sortBy", state.sortBy);
-  setOrDelete("sortOrder", state.sortOrder);
-
-  const newSearch = params.toString();
-  const queryString = newSearch ? `?${newSearch}` : "";
-  const hashString = state.selectedIntakeId ? `#intake/${state.selectedIntakeId}` : "";
-  const newUrl = `${window.location.pathname}${queryString}${hashString}`;
-
-  if (newUrl !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
-    window.history[mode === "push" ? "pushState" : "replaceState"](null, "", newUrl);
-  }
-}
-
-export function useIntakeInboxQuery() {
-  const [filters, setFilters] = useState<IntakeInboxFilterState>(() => ({
-    ...DEFAULT_FILTERS,
-    ...parseUrlQueryParams(),
-  }));
-  const restoringFromHistory = useRef(false);
-  const hasSyncedInitialState = useRef(false);
-
-  // Direct open & back/forward URL restoration support
   useEffect(() => {
-    function handlePopState() {
-      restoringFromHistory.current = true;
-      const parsed = parseUrlQueryParams();
-      setFilters({ ...DEFAULT_FILTERS, ...parsed });
-    }
-    window.addEventListener("popstate", handlePopState);
-    window.addEventListener("hashchange", handlePopState);
-    return () => {
-      window.removeEventListener("popstate", handlePopState);
-      window.removeEventListener("hashchange", handlePopState);
-    };
-  }, []);
+    if (isControlled) return;
+    const restore = () => { const value = currentFilters(); current.current = value; setLocal(value); };
+    window.addEventListener("popstate", restore);
+    window.addEventListener("hashchange", restore);
+    return () => { window.removeEventListener("popstate", restore); window.removeEventListener("hashchange", restore); };
+  }, [isControlled]);
 
-  // Sync state to URL
-  useEffect(() => {
-    if (!hasSyncedInitialState.current) {
-      hasSyncedInitialState.current = true;
-      updateUrlQueryParams(filters, "replace");
-      return;
+  const commit = useCallback((next: IntakeInboxFilterState) => {
+    current.current = next;
+    if (controlled) { controlled.onChange(next); return; }
+    setLocal(next);
+    const params = serializeInboxUrlState(next, new URLSearchParams(window.location.search));
+    const search = params.toString();
+    const href = `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`;
+    if (href !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
+      window.history.pushState(window.history.state, "", href);
     }
-    if (restoringFromHistory.current) {
-      restoringFromHistory.current = false;
-      return;
-    }
-    updateUrlQueryParams(filters, "push");
-  }, [filters]);
+  }, [controlled]);
 
   const updateFilters = useCallback((updates: Partial<IntakeInboxFilterState>) => {
-    setFilters((current) => {
-      const next = { ...current, ...updates };
-      // Reset page to 1 on filter changes unless page is explicitly set
-      if ("search" in updates || "savedView" in updates || "intakeMethod" in updates ||
-          "intakeStage" in updates || "matchOutcome" in updates || "slaState" in updates ||
-          "heatZoneId" in updates) {
-        if (!("page" in updates)) {
-          next.page = 1;
-        }
-      }
-      return next;
-    });
-  }, []);
-
-  const resetFilters = useCallback(() => {
-    setFilters({
-      ...DEFAULT_FILTERS,
-      viewMode: filters.viewMode,
-    });
-  }, [filters.viewMode]);
-
-  const toggleSort = useCallback((column: string) => {
-    setFilters((prev) => {
-      if (prev.sortBy === column) {
-        return { ...prev, sortOrder: prev.sortOrder === "asc" ? "desc" : "asc" };
-      }
-      return { ...prev, sortBy: column, sortOrder: "asc" };
-    });
-  }, []);
-
-  return {
-    filters,
-    updateFilters,
-    resetFilters,
-    toggleSort,
-  };
+    const next = { ...current.current, ...updates };
+    if (["search", "savedView", "intakeMethod", "intakeStage", "matchOutcome", "slaState", "heatZoneId"].some((key) => key in updates) && !("page" in updates)) next.page = 1;
+    commit(next);
+  }, [commit]);
+  const resetFilters = useCallback(() => commit({ ...DEFAULT_INBOX_FILTERS,
+    viewMode: current.current.viewMode, selectedIntakeId: current.current.selectedIntakeId }), [commit]);
+  const toggleSort = useCallback((column: string) => commit({ ...current.current, page: 1, sortBy: column,
+    sortOrder: current.current.sortBy === column && current.current.sortOrder === "asc" ? "desc" : "asc" }), [commit]);
+  return { filters, updateFilters, resetFilters, toggleSort };
 }
