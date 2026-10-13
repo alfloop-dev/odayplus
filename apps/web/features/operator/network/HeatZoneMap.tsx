@@ -85,6 +85,7 @@ const defaultLayers: LayerState = {
 
 const stateFill: Record<HeatZone["state"], [number, number, number, number]> = {
   UNKNOWN: [113, 128, 150, 72],
+  ABSTAINED: [113, 128, 150, 72],
   UNTOUCHED: [49, 130, 206, 72],
   PARTIALLY_ABSORBED: [49, 130, 206, 92],
   SATURATED: [113, 128, 150, 72],
@@ -257,6 +258,10 @@ export function HeatZoneMap({
               "#2f855a",
               "SUPPRESSED_LOW_CONFIDENCE",
               "#c05621",
+              "ABSTAINED",
+              "#718096",
+              "UNKNOWN",
+              "#718096",
               "#3182ce",
             ],
           ],

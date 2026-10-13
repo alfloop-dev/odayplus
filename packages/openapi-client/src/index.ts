@@ -234,14 +234,25 @@ export type ExternalDataFreshnessResponse = {
 
 /**
  * Raw heatzone score row returned by GET /heatzones.
- * Shape mirrors HeatZoneBatchScoreResult.to_dict().
+ * Score producer fields mirror the baseline and V3 to_dict() responses.
+ * V3 may abstain, leaving the overall score null.
  */
 export type HeatZoneScore = {
   /** H3 hex index used as a stable identifier. */
   h3_index: string;
-  score: number;
-  rank: number;
-  unmet_demand: number;
+  score: number | null;
+  priority_rank: number;
+  unmet_demand_score: number;
+  /** Older producer aliases, when present. */
+  rank?: number;
+  unmet_demand?: number;
+  format_fit_score?: number;
+  cannibalization_risk_score?: number;
+  rent_feasibility_score?: number;
+  listing_availability_score?: number;
+  model_version?: string;
+  feature_version?: string;
+  source_snapshot_ids?: string[];
   confidence: number | null;
   state: string;
   [key: string]: unknown;

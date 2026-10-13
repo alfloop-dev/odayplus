@@ -8,7 +8,7 @@ export type HeatZoneFeature = GeoJSON.Feature<GeoJSON.Polygon, HeatZone>;
 
 const states: readonly HeatZone["state"][] = [
   "UNTOUCHED", "PARTIALLY_ABSORBED", "SATURATED", "UNDER_REALIZED",
-  "STILL_EXPANDABLE", "SUPPRESSED_LOW_CONFIDENCE",
+  "STILL_EXPANDABLE", "SUPPRESSED_LOW_CONFIDENCE", "ABSTAINED",
 ];
 
 function value(row: Record<string, unknown>, primary: string, alias?: string): unknown {
@@ -64,6 +64,7 @@ export function projectRecordedHeatZone(row: Record<string, unknown>, zone: Oper
 
 /** Missing factors are not re-created from neighbouring metrics or map position. */
 export function recordedLensPoints(zone: HeatZone, lens: NetworkFindAreasLens): number | null {
+  if (zone.state === "ABSTAINED" || zone.state === "UNKNOWN") return null;
   let factor: number | null;
   switch (lens) {
     case "demand": case "unmet": factor = zone.unmetDemandScore; break;

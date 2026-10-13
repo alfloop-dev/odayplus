@@ -13,6 +13,7 @@ export type HeatZone = {
     | "UNDER_REALIZED"
     | "STILL_EXPANDABLE"
     | "SUPPRESSED_LOW_CONFIDENCE"
+    | "ABSTAINED"
     | "UNKNOWN";
   rank: number;
   listings: number | null;

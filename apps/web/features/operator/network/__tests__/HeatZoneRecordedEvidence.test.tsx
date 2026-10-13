@@ -68,6 +68,22 @@ describe("recorded HeatZone map evidence", () => {
     expect(operatorHeatZoneToMapZone(await load({ ...recorded, score: null })).score).toBeNull();
   });
 
+  it("preserves V3 abstention and does not rank its partially computed factors", async () => {
+    const map = operatorHeatZoneToMapZone(await load({
+      ...recorded, state: "ABSTAINED", score: null, abstained: true, format_fit_score: 0.99,
+    }));
+    expect(map.state).toBe("ABSTAINED");
+    expect(map.score).toBeNull();
+    expect(recordedLensPoints(map, "fit")).toBeNull();
+    expect(recordedLensPoints(map, "demand")).toBeNull();
+  });
+
+  it("keeps an unsupported producer state unknown", async () => {
+    const map = operatorHeatZoneToMapZone(await load({ ...recorded, state: "unregistered-state" }));
+    expect(map.state).toBe("UNKNOWN");
+    expect(recordedLensPoints(map, "fit")).toBeNull();
+  });
+
   it("retains producer provenance and warnings", async () => {
     expect(operatorHeatZoneToMapZone(await load())).toMatchObject({
       modelVersion: recorded.model_version, featureVersion: recorded.feature_version,
