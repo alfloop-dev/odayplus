@@ -42,6 +42,7 @@ export function projectRecordedHeatZone(row: Record<string, unknown>, zone: Oper
     listings: measured(row["active_listing_count"], undefined, true),
     warnings: strings(value(row, "warnings", "risks")), reasons: strings(row["reasons"]),
     modelVersion: text(value(row, "model_version", "modelVersion")),
+    executionMode: row["is_shadow"] === true ? "SHADOW" : text(row["execution_mode"]),
     featureVersion: text(value(row, "feature_version", "featureVersion")),
     featureSnapshotTime: text(value(row, "feature_snapshot_time", "featureSnapshotTime")),
     predictionOriginTime: text(value(row, "prediction_origin_time", "predictionOriginTime")),
@@ -64,7 +65,7 @@ export function projectRecordedHeatZone(row: Record<string, unknown>, zone: Oper
 
 /** Missing factors are not re-created from neighbouring metrics or map position. */
 export function recordedLensPoints(zone: HeatZone, lens: NetworkFindAreasLens): number | null {
-  if (zone.state === "ABSTAINED" || zone.state === "UNKNOWN") return null;
+  if (zone.state === "ABSTAINED" || zone.state === "UNKNOWN" || zone.executionMode?.toUpperCase() === "SHADOW") return null;
   let factor: number | null;
   switch (lens) {
     case "demand": case "unmet": factor = zone.unmetDemandScore; break;
@@ -88,6 +89,7 @@ export function recordedZoneDetailRows(zone: HeatZone) {
     { key: "rentFeasibility", label: "租金可行性", value: percent(zone.rentFeasibility) },
     { key: "listingAvailability", label: "物件供給", value: percent(zone.listingAvailability) },
     { key: "confidence", label: "資料信心", value: percent(zone.confidence) },
+    { key: "executionMode", label: "評估模式", value: zone.executionMode === "SHADOW" ? "影子評估" : zone.executionMode || "未知" },
   ];
 }
 

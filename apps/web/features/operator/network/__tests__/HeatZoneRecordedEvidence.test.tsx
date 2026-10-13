@@ -84,6 +84,14 @@ describe("recorded HeatZone map evidence", () => {
     expect(recordedLensPoints(map, "fit")).toBeNull();
   });
 
+  it.each([{ is_shadow: true }, { execution_mode: "SHADOW" }])("keeps shadow evaluations out of operational lens ranking: %j", async (mode) => {
+    const map = operatorHeatZoneToMapZone(await load({ ...recorded, ...mode }));
+    expect(map.executionMode).toBe("SHADOW");
+    expect(recordedLensPoints(map, "fit")).toBeNull();
+    expect(recordedLensPoints(map, "demand")).toBeNull();
+    expect(map.score).toBe(recorded.score);
+  });
+
   it("retains producer provenance and warnings", async () => {
     expect(operatorHeatZoneToMapZone(await load())).toMatchObject({
       modelVersion: recorded.model_version, featureVersion: recorded.feature_version,

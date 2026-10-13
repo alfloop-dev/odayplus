@@ -20,6 +20,7 @@ export type HeatZone = {
   warnings: string[];
   reasons: string[];
   modelVersion: string;
+  executionMode?: string;
   featureVersion: string;
   featureSnapshotTime: string;
   predictionOriginTime: string;

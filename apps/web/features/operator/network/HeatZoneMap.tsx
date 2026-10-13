@@ -699,6 +699,10 @@ function EvidenceDefinitionList({ freshness, zone }: { freshness: Freshness; zon
         <dd>{zone.modelVersion || "未知"}</dd>
       </div>
       <div>
+        <dt>評估模式</dt>
+        <dd>{zone.executionMode || "未知"}</dd>
+      </div>
+      <div>
         <dt>Feature snapshot</dt>
         <dd>{zone.featureSnapshotTime || "未知"}</dd>
       </div>

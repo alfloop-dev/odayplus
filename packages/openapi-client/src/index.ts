@@ -251,6 +251,9 @@ export type HeatZoneScore = {
   rent_feasibility_score?: number;
   listing_availability_score?: number;
   model_version?: string;
+  execution_mode?: string;
+  is_shadow?: boolean;
+  abstained?: boolean;
   feature_version?: string;
   source_snapshot_ids?: string[];
   confidence: number | null;

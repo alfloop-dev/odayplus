@@ -82,6 +82,7 @@ export function operatorHeatZoneToMapZone(zone: OperatorHeatZone, allowFixtureMe
     warnings: zone.risks,
     reasons: zone.reasons,
     modelVersion: "network-ops-fixture",
+    executionMode: "FIXTURE",
     featureVersion: "operator-fixture-v1",
     featureSnapshotTime: "",
     predictionOriginTime: "",
