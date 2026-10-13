@@ -96,7 +96,7 @@ is attached. The worker samples all provisioned/queued tenant scopes and emits
 bounded pending-count, oldest-age and observation-failure metrics through the
 existing release-bound exporter.
 
-Canonical and Store Ops audit jobs have first priority at the queue's next
+Canonical, Store Ops and durable audit jobs have first priority at the queue's next
 eligible lease/claim. Receipt rows remain nonexecutable; ordinary jobs retain
 their chronological order. This does not interrupt an already-running job or
 prove adequate dedicated-publisher capacity.

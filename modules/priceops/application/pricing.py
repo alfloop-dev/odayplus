@@ -441,7 +441,7 @@ class PriceOpsService:
 
     def approval_actor_blockers(self, plan_id: str, actor_id: str, *, decision: str = "approved") -> list[str]:
         plan = self._require_plan(plan_id)
-        if _normalize_approval_decision(decision) != "approved":
+        if normalize_approval_decision(decision) != "approved":
             return []
         creator = getattr(plan, "created_by", None)
         if creator and creator == actor_id:
@@ -460,7 +460,7 @@ class PriceOpsService:
         approved_at: datetime | None = None,
     ) -> ApprovalRecord:
         plan = self._require_plan(plan_id)
-        normalized_decision = _normalize_approval_decision(decision)
+        normalized_decision = normalize_approval_decision(decision)
         if normalized_decision not in {"approved", "rejected"}:
             raise ApprovalBlockedError("unsupported pricing approval decision")
         if not reason.strip():
@@ -529,7 +529,7 @@ class PriceOpsService:
     ) -> DecisionWritebackRecord:
         plan = self._require_plan(plan_id)
         normalized_decision = (
-            _normalize_approval_decision(decision)
+            normalize_approval_decision(decision)
             if decision.lower() in {"approved", "rejected"}
             else decision.lower()
         )
@@ -1040,7 +1040,7 @@ class PriceOpsService:
         return blockers
 
 
-def _normalize_approval_decision(decision: str) -> str:
+def normalize_approval_decision(decision: str) -> str:
     normalized = decision.strip().lower().replace("-", "_").replace(" ", "_")
     if normalized in {"approve", "approved"}:
         return "approved"
@@ -1058,4 +1058,5 @@ __all__ = [
     "MissingRollbackPlanError",
     "PlanNotFoundError",
     "PriceOpsService",
+    "normalize_approval_decision",
 ]

@@ -17,6 +17,7 @@ from shared.api.idempotency import (
 )
 from shared.api.pagination import page_params, paginate
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.audit.backlog import AuditBacklogBlocked, AuditBacklogUnavailable, DurableAuditBacklog
 from shared.audit.durable_delivery import DurableAuditDelivery
 from shared.infrastructure.persistence.command_receipts import (
     CommandReceiptIncompleteError,
@@ -41,6 +42,7 @@ else:
         PlanNotFoundError,
         PriceOpsService,
         authorize_exploration,
+        normalize_approval_decision,
     )
     from modules.priceops.domain import (
         ExplorationBudgetExceededError,
@@ -258,6 +260,7 @@ else:
         )
 
         def command_store(request: Request) -> TenantScopedCommandReceiptStore:
+            request.state.priceops_production_required = production_required
             active_queue = job_queue
             if active_queue is None:
                 app = request.scope.get("app")
@@ -526,8 +529,14 @@ else:
             active_tenant_id = tenant_id(request, body.plans[0].tenant_id)
             for plan in body.plans:
                 require_proposal_scope(plan, request)
+            active_store = command_store(request)
 
             def _execute(receipt_id: str) -> dict[str, Any]:
+                if any(plan.exploration_gate_id for plan in body.plans):
+                    _require_durable_audit_capacity(
+                        active_store, active_audit_log, active_tenant_id,
+                        production_required=production_required,
+                    )
                 try:
                     plan_requests = [
                         PlanRequest(
@@ -577,7 +586,7 @@ else:
                 return payload
 
             return _guard_creation(
-                command_store(request),
+                active_store,
                 tenant_id=active_tenant_id,
                 correlation_id=request.state.correlation_id,
                 key=effective_key,
@@ -1292,8 +1301,20 @@ else:
             body.actor = principal.subject_id
         if hasattr(body, "actor_id"):
             body.actor_id = principal.subject_id
+        if hasattr(body, "executor"):
+            body.executor = principal.subject_id
 
         def _execute() -> dict[str, Any]:
+            approving = (
+                event_type in {"priceops.approved.v1", "priceops.decision_written_back.v1"}
+                and normalize_approval_decision(getattr(body, "decision", "")) == "approved"
+            )
+            exploring = event_type == "priceops.optimized.v1" and bool(getattr(body, "exploration_gate_id", None))
+            if approving or exploring or event_type == "priceops.activated.v1":
+                _require_durable_audit_capacity(
+                    command_store, audit_log, tenant_id or "__local__",
+                    production_required=getattr(request.state, "priceops_production_required", False),
+                )
             try:
                 result = action()
             except PlanNotFoundError as exc:
@@ -1378,6 +1399,31 @@ else:
         return apply_replay_marker(outcome.value, replayed=outcome.replayed)
 
     _durable_store_required = durable_store_required
+
+    def _require_durable_audit_capacity(
+        command_store: TenantScopedCommandReceiptStore | None,
+        audit_log: Any,
+        tenant_id: str,
+        *,
+        production_required: bool = False,
+    ) -> None:
+        if command_store is None or not command_store.is_durable:
+            return
+        sink = getattr(audit_log, "_worm_sink", None)
+        if sink is None and not production_required:
+            return
+        try:
+            DurableAuditBacklog(
+                command_store.queue._engine, getattr(sink, "sink_id", None),
+            ).require_available(tenant_id)
+            if sink is None:
+                raise AuditBacklogUnavailable("Production pricing requires its external audit sink")
+        except (AuditBacklogBlocked, AuditBacklogUnavailable) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "BACKPRESSURE_ACTIVE", "message": "Audit delivery must recover before this pricing command"},
+                headers={"Retry-After": "30"},
+            ) from exc
 
     def _incomplete_receipt_error(
         exc: CommandReceiptIncompleteError,

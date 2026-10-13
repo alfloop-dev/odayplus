@@ -16,6 +16,8 @@ JOB_TYPE = "durable-audit-delivery"
 
 
 class DurableAuditDelivery:
+    delivery_job_type = JOB_TYPE
+
     def __init__(self, engine: Any, tenant_id: str, queue: Any, sink: Any) -> None:
         if getattr(queue, "_engine", None) is not engine or sink is None:
             raise ValueError("Audit delivery requires a same-engine queue and configured sink")

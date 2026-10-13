@@ -480,6 +480,9 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
     MetricDefinition("audit_worm_pending_count", G, Cat.AUDIT, "Pending canonical WORM deliveries across provisioned and queued tenants", ("service",), min_value=0.0, owner="security-audit"),
     MetricDefinition("audit_worm_oldest_pending_seconds", G, Cat.AUDIT, "Oldest pending canonical WORM delivery age", ("service",), "s", min_value=0.0, owner="security-audit"),
     MetricDefinition("audit_worm_backlog_check_failure_count", C, Cat.ERROR, "Unavailable canonical backlog observations", ("service", "error_class"), min_value=0.0, owner="security-audit"),
+    MetricDefinition("durable_audit_worm_pending_count", G, Cat.AUDIT, "Pending durable WORM deliveries verified against committed audit facts", ("service",), min_value=0.0, owner="security-audit"),
+    MetricDefinition("durable_audit_worm_oldest_pending_seconds", G, Cat.AUDIT, "Oldest pending durable WORM delivery intent age", ("service",), "s", min_value=0.0, owner="security-audit"),
+    MetricDefinition("durable_audit_worm_backlog_check_failure_count", C, Cat.ERROR, "Unavailable durable audit backlog observations", ("service", "error_class"), min_value=0.0, owner="security-audit"),
     MetricDefinition(
         "audit_event_pipeline_lag_seconds",
         H,

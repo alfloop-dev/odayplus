@@ -13,6 +13,7 @@ import json
 from collections.abc import Iterable
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -76,6 +77,14 @@ class DurableAuditLog:
             )
             if existing is not None:
                 return self._row_to_event(existing)
+
+            delivery_job_type = getattr(worm_sink, "delivery_job_type", None)
+            if delivery_job_type:
+                # Bind required asynchronous delivery into the immutable hash.
+                # A missing intent/job must remain observable after deletion.
+                event = replace(event, metadata={
+                    **event.metadata, "audit_delivery_job_type": delivery_job_type,
+                })
 
             last = self._engine.query_one(
                 "SELECT sequence, event_hash FROM durable_audit_events "

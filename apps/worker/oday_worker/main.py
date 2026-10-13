@@ -390,8 +390,10 @@ class ODayWorker:
                 time.sleep(1.0)
 
     def sample_audit_backlog(self):
+        self.sample_durable_audit_backlog()
         if getattr(getattr(self.persistence, "engine", None), "dialect", None) != "postgresql":
             return None
+
         from shared.audit.backlog import CanonicalAuditBacklog
         try:
             health = CanonicalAuditBacklog(self.persistence.engine).all_tenants()
@@ -409,6 +411,37 @@ class ODayWorker:
                     error_code=type(metric_exc).__name__,
                 )
             self.telemetry.logger.error("Canonical audit backlog observation unavailable", correlation_id="unknown", resource="audit/backlog", error_code=type(exc).__name__)
+            return None
+
+    def sample_durable_audit_backlog(self):
+        engine = getattr(self.persistence, "engine", None)
+        if engine is None:
+            return None
+        from shared.audit.backlog import DurableAuditBacklog
+
+        sink = getattr(self.persistence.audit_log, "_worm_sink", None)
+        labels = {"service": "oday-worker"}
+        try:
+            health = DurableAuditBacklog(engine, getattr(sink, "sink_id", None)).all_tenants()
+            self.telemetry.metrics.set("durable_audit_worm_pending_count", health.pending, labels=labels)
+            self.telemetry.metrics.set("durable_audit_worm_oldest_pending_seconds", health.oldest_seconds, labels=labels)
+            return health
+        except Exception as exc:
+            try:
+                self.telemetry.metrics.increment(
+                    "durable_audit_worm_backlog_check_failure_count",
+                    labels={**labels, "error_class": type(exc).__name__},
+                )
+            except Exception as metric_exc:
+                self.telemetry.logger.error(
+                    "Durable audit backlog failure metric unavailable",
+                    correlation_id="unknown", resource="audit/backlog",
+                    error_code=type(metric_exc).__name__,
+                )
+            self.telemetry.logger.error(
+                "Durable audit backlog observation unavailable",
+                correlation_id="unknown", resource="audit/backlog", error_code=type(exc).__name__,
+            )
             return None
 
     def export_metrics(self) -> dict[str, Any] | None:
