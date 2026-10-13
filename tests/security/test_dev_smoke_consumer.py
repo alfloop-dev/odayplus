@@ -490,8 +490,10 @@ def test_native_urllib_raw_set_cookie_multiplicity_latches_and_owns_every_sessio
             if path == "/auth/logout":
                 active.discard(value)
                 cleared = _RAW_SESSION % b""
-                if kind == "logout-duplicate":
-                    # Last-wins view shows a clean deletion; raw shows a new session.
+                if kind == "logout-duplicate" and value == "synthetic-first":
+                    # First logout returns another actual fixture session; its
+                    # own subsequent logout must revoke it, not retry the first.
+                    active.add("synthetic-reissued")
                     cleared = _RAW_SESSION % b"synthetic-reissued" + cleared
                 return Reply(200, json_type + cleared, b'{"ok":true}')
             if path in {"/auth/session", "/api/v1/auth/principal"}:
@@ -521,7 +523,9 @@ def test_native_urllib_raw_set_cookie_multiplicity_latches_and_owns_every_sessio
         assert observed.request("GET", "/api/v1/operator/users", authenticated=False).status == 0
         assert len(sent) == before
         assert observed.cleanup_owned_sessions() is False
-        assert [p for m, p, _ in sent].count("/auth/logout") == 1  # never retried
+        logouts = [cookie for method, path, cookie in sent if path == "/auth/logout"]
+        assert logouts == [f"{_COOKIE}=synthetic-first", f"{_COOKIE}=synthetic-reissued"]
+        assert len(logouts) == len(set(logouts)) == 2 and not active  # each once, no retry
         return
     assert observed.uncertainty_latched  # latched AT the login reply
     expected = ["synthetic-first", "synthetic-second"] if kind == "two-sessions" else ["synthetic-first"]
@@ -648,7 +652,7 @@ def test_plain_env_flags_or_unsigned_jwt_are_not_native_proof(offline_signing_ke
 @pytest.mark.parametrize("failure", [None, "oidc", "source", "admission", "gate", "canonical",
     "canonical-users", "canonical-audit", "canonical-ack", "canonical-principal",
     "canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown",
-    "canonical-duplicate-cookie", "canonical-serving-identity"])
+    "canonical-duplicate-cookie", "canonical-serving-identity", "canonical-read-cookie"])
 def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatch, failure):
     # Entirely MOCKED authority/runtime; no network/live receipt. Proves wiring.
     import httpx
@@ -791,6 +795,17 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                                                    json.dumps(response.payload).encode())
                     return response
             web_class = DuplicateWeb
+        if failure == "canonical-read-cookie":
+            class ReadCookieWeb(f.AdminWeb):
+                issued_read_cookie = False
+                def request(self, method, path, **kwargs):
+                    response = super().request(method, path, **kwargs)
+                    if path == "/auth/session" and response.status == 200 and not self.issued_read_cookie:
+                        self.issued_read_cookie = True
+                        return c.gate.HttpResponse(status=200, payload=response.payload,
+                            cookies={f.SESSION_COOKIE: "synthetic-read-session"})
+                    return response
+            web_class = ReadCookieWeb
         web = web_class(routes)
         def api_client(*args, **kwargs):
             assert kwargs["bearer_token"] == api._bearer_token
@@ -836,10 +851,10 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                     assert any(path == "GET /api/v1/auth/principal" and headers.get("cookie") == cookie
                                for path, headers in web.headers_seen)
             uncertain = {"canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown",
-                         "canonical-duplicate-cookie", "canonical-serving-identity"}
+                         "canonical-duplicate-cookie", "canonical-serving-identity", "canonical-read-cookie"}
             owned_cookies = {f"{f.SESSION_COOKIE}={f.SESSION_VALUE}"}
-            if failure == "canonical-duplicate-cookie":
-                extra = f"{f.SESSION_COOKIE}=synthetic-extra-issued-session"
+            if failure in {"canonical-duplicate-cookie", "canonical-read-cookie"}:
+                extra = f"{f.SESSION_COOKIE}=" + ("synthetic-read-session" if failure == "canonical-read-cookie" else "synthetic-extra-issued-session")
                 owned_cookies.add(extra)
                 assert sorted(cookies) == sorted(owned_cookies)  # BOTH raw sessions logged out once
             if failure in uncertain:
@@ -848,6 +863,7 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                 seen = [path for path, _ in web.headers_seen]
                 latch_at = (seen.index("POST /auth/logout") if failure == "canonical-logout-unknown"
                             else seen.index("GET /api/v1/platform/release-identity") if failure == "canonical-serving-identity"
+                            else next(i for i, (p, h) in enumerate(web.headers_seen) if p == "GET /auth/session" and h.get("cookie") == f"{f.SESSION_COOKIE}={f.SESSION_VALUE}") if failure == "canonical-read-cookie"
                             else [i for i, p in enumerate(seen) if p == "POST /login"][1])
                 after = web.headers_seen[latch_at + 1:]
                 assert all(path in {"GET /auth/session", "GET /api/v1/auth/principal", "POST /auth/logout"}

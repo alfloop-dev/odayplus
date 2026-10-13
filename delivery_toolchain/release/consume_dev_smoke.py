@@ -529,7 +529,15 @@ class _ObservedWeb:
         """
         self._cleaning = True
         try:
-            for cookie, state in self._owned.items():
+            checked: set[str] = set()
+            # A cleanup response can issue another session. Drain the bounded
+            # inventory without mutating a live dict iterator or repeating intent.
+            for _ in range(4):
+                pending = next(((value, state) for value, state in self._owned.items() if value not in checked), None)
+                if pending is None:
+                    break
+                cookie, state = pending
+                checked.add(cookie)
                 headers = {"accept": "application/json", "origin": WEB_ORIGIN,
                            "cookie": f"__Host-oday_web_session={cookie}"}
                 if not state["logout_attempted"]:
@@ -614,9 +622,9 @@ class _ObservedWeb:
                 pairs, ambiguous = _response_cookie_pairs(response)
                 if method == "POST" and path == "/login":
                     issued, unsafe = self._retain_login_cookies(pairs)
-                elif identity_read and (pairs or ambiguous):
-                    # Recursive reads can lose their response at context exit.
-                    # Known authority custody must survive that final fence.
+                elif any(value for _, value in pairs):
+                    # EVERY response, including ordinary and cleanup reads, can
+                    # issue authority. Retain BEFORE any final deadline fence.
                     self._retain_login_cookies(pairs)
                     self._unknown()
             # Custody above survives the context's final deadline check. Normal

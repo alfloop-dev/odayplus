@@ -148,3 +148,30 @@ def test_serving_extra_cookie_at_final_deadline_keeps_once_only_cleanup(
     assert len(cookies) == len(set(cookies)) == 2
     assert not web.cleanup_owned_sessions()
     assert len([x for x in calls if x[:2] == ("POST", "/auth/logout")]) == 2
+
+
+@pytest.mark.parametrize("read", ["/auth/session", "/api/v1/auth/principal"])
+def test_cookie_first_observed_during_cleanup_is_owned_and_drained_once(read: str) -> None:
+    calls = []
+    issued = []
+    class Client:
+        def request(self, method: str, path: str, **kwargs: Any) -> Any:
+            cookie = (kwargs.get("headers") or {}).get("cookie", "")
+            calls.append((method, path, cookie))
+            if path == "/login":
+                return native.gate.HttpResponse(status=200, payload={"ok": True, "subject": "offline-user"},
+                    cookies={native._SESSION_COOKIE: "owned-a"})
+            if path == "/auth/logout":
+                return native.gate.HttpResponse(status=200, payload={"ok": True}, cookies={native._SESSION_COOKIE: ""})
+            if path == read and not issued:
+                issued.append(True)
+                return native.gate.HttpResponse(status=401, cookies={native._SESSION_COOKIE: "owned-b"})
+            return native.gate.HttpResponse(status=401)
+    now = time.monotonic()
+    web = native._ObservedWeb(Client(), execution_id="offline", deadline=now+30, cleanup_deadline=now+60,
+        login_pair=("offline-user", "offline-password"))
+    web.request("POST", "/login", body={"username":"offline-user", "password":"offline-password", "returnTo":native._FORM_RETURN_TO})
+    assert not web.cleanup_owned_sessions() and web.uncertainty_latched
+    assert [cookie for method,path,cookie in calls if path=="/auth/logout"] == [f"{native._SESSION_COOKIE}=owned-a", f"{native._SESSION_COOKIE}=owned-b"]
+    before = len(calls)
+    assert not web.cleanup_owned_sessions() and len(calls) == before

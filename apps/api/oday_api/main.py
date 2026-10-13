@@ -1316,6 +1316,9 @@ else:
         def _authorize_job_access(job: Any, request: Request) -> None:
             from apps.api.oday_api.security.dependencies import principal_from_headers
 
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
             if job.job_type == "forecast":
                 active_tenant_id = forecast_job_tenant(request, action="view")
@@ -1369,23 +1372,16 @@ else:
                                 collection_scope=item_scope,
                                 tenant_id=active_tenant_id,
                             )
-            elif job_tenant:
-                principal = principal_from_headers(request.headers)
-                if not principal.authenticated:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail={
-                            "code": "AUTHENTICATION_REQUIRED",
-                            "message": "Authentication required to read jobs",
-                        },
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
+            elif job.job_type == "external-fetch":
+                from shared.auth import Action, rbac_allows
+                if not rbac_allows(principal, "integration", Action.VIEW):
+                    raise HTTPException(status_code=403, detail={"code": "EXTERNAL_FETCH_VIEW_FORBIDDEN"})
                 active_tenant_id = str(principal.tenant_id or "").strip()
-                if not active_tenant_id or job_tenant != active_tenant_id:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="job not found",
-                    )
+                if not job_tenant or not active_tenant_id or job_tenant != active_tenant_id:
+                    raise HTTPException(status_code=404, detail="job not found")
+            else:
+                # Unknown/tenantless legacy records have no implicit read grant.
+                raise HTTPException(status_code=403, detail={"code": "JOB_TYPE_READ_FORBIDDEN"})
 
         def _authorized_job_response(job: Any, request: Request) -> dict[str, Any]:
             from apps.api.oday_api.security.dependencies import principal_from_headers
@@ -1401,6 +1397,9 @@ else:
             return res
 
         def _get_job_response(job_id: str, request: Request) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            if not principal_from_headers(request.headers).authenticated:
+                raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")

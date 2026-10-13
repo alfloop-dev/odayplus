@@ -1079,3 +1079,12 @@ transaction-held shared actor validator retains provider-aware credential rules 
 all fixed-original recovery restrictions; final invitation/audit expiry rollback and
 once-only cleanup/UNKNOWN remain mandatory. These are source repair descriptions,
 NOT independent/canonical/operational acceptance or permission to bypass any HOLD.
+
+The subsequent job-read/custody author follow-up requires authenticated, tenant-
+bound job-type read permission before record lookup/serialization and enqueue replay;
+unsupported/tenantless records carry no implicit grant. Cookie custody applies to
+EVERY response, including ordinary and cleanup reads, before deadline exit. The
+existing bounded inventory drains newly observed values with one logout per value,
+while UNKNOWN is sticky; no cookie-clearing or later denial substitutes for cleanup.
+These repairs still require fresh exact-head measurements/independent review and
+cannot waive Human/Ops, canonical/operational/full business/F11 acceptance HOLDs.
