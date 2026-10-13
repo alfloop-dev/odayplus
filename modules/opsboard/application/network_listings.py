@@ -9,7 +9,8 @@ Owns the Listing Radar state used by ``/api/v1/operator/network-listings``:
 - R5 human-assisted URL intake (submit/correct/decide/retry/promote).
 
 Persistence is injected, not assumed. The service composes with two optional
-repositories and never reaches into their internals:
+repositories; the durable resolver additionally verifies their SQL engine and
+tenant binding before a mutation:
 
 - ``listing_repository`` for Listing Radar rows.
 - ``intake_repository`` (:class:`AssistedIntakeRepository`) for assisted intake
@@ -35,6 +36,7 @@ import json
 import math
 import uuid
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import wraps
@@ -536,6 +538,31 @@ class NetworkListingService:
         self._load_idempotency_cache()
         self._load_listings()
         self._load_candidates()
+
+    def transaction_scope(self, engine: Any, tenant_id: str):
+        """Bind canonical records and replay metadata to the aggregate's SQL unit.
+
+        A repository on another engine would commit even when the outer
+        aggregate transaction rolls back. Unpartitioned metadata would also
+        defeat this tenant boundary. Refuse either composition before writing.
+        """
+        if self._tenant_id != tenant_id:
+            raise ValueError("Listing service must share the transaction tenant")
+        for repository in (self._listing_repository, self._intakes):
+            store = getattr(repository, "_store", None)
+            if (getattr(store, "engine", None) is not engine
+                    or getattr(store, "tenant_id", None) != tenant_id):
+                raise ValueError("Listing records and metadata must share the tenant SQL engine")
+        workflow_store = getattr(self._intakes, "_canonical", None)
+        if workflow_store is not None and getattr(workflow_store, "_engine", None) is not engine:
+            raise ValueError("Listing intake workflow must share the transaction SQL engine")
+        decisions = self._review_decision_repository
+        if decisions is not None and (
+            getattr(decisions, "engine", None) is not engine
+            or getattr(decisions, "tenant_id", None) != tenant_id
+        ):
+            raise ValueError("Listing review reader must share the tenant SQL engine")
+        return nullcontext()
 
     def _require_actor(self, actor_name: str | None, actor_role_id: str) -> str:
         if not isinstance(actor_name, str) or not actor_name.strip():
