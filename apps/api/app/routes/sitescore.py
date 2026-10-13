@@ -22,7 +22,7 @@ from shared.jobs.queue import InMemoryJobQueue
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, StrictInt
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
 else:
@@ -62,7 +62,7 @@ else:
         action: str
         actor: str = Field(min_length=1)
         reason: str = ""
-        expected_version: int | None = None
+        expected_version: StrictInt | None = None
         expected_actor_subject_id: str | None = None
         expected_tenant_id: str | None = None
 

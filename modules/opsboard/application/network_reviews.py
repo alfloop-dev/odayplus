@@ -1027,7 +1027,9 @@ class NetworkReviewService:
         with self._sitescore_repository.report_guard(existing.candidate_site_id), self._candidate_workflow_service._listing_repository.candidate_guard(existing.candidate_site_id):
             existing = self._decision_repository.get_decision(review_id)
             self.authorize_review_actor(existing, principal, module='sitescore')
-            if expected_version is None or existing.version != expected_version or existing.version < 1:
+            if (isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1
+                    or isinstance(existing.version, bool) or not isinstance(existing.version, int) or existing.version < 1
+                    or existing.version != expected_version):
                 raise NetworkReviewConflict("DECISION_VERSION_CONFLICT")
             _, availability = self._retained_decision_report(existing)
             if availability != "available":
