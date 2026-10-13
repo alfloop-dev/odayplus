@@ -19,6 +19,9 @@ review/retry action; interactive controls are not nested.
 | Field | Contract |
 | --- | --- |
 | `search`, `intakeMethod`, `intakeStage`, `matchOutcome`, `slaState`, `heatZoneId` | Inbox filters. Changing a filter resets `page` to 1. The API's heat-zone query is `selectedHeatZoneId`. |
+| `sourceId`, `submittedBy`, `ownerId`, `assignmentStatus`, `assignedAreaId` | Exact visible IDs/status, not display-name search. `source` remains shell context. |
+| `observedFrom`, `observedTo`, `updatedFrom`, `updatedTo` | Inclusive timezone-bearing ISO 8601 ranges; unknown timestamps do not match. Invalid or reversed ranges are rejected by the API. |
+| `masked`, `restricted`, `retryable` | Unset / `true` / `false`. Explicit false is sent as false; unknown facts do not match false. |
 | `savedView` | `all`, `needsReview`, `awaitingEntry`, `blocked`, `processing`, `ready`. |
 | `viewMode` | `list` or `map`; defaults to `list`. |
 | `page`, `pageSize` | Positive safe integers; page size at most 100. Invalid values use the existing defaults 1 and 10. |
@@ -30,24 +33,24 @@ Legacy `stage`, `outcome`, `hz`, `view`, and known `sort` values are read.
 When an inbox control changes, these aliases become the deterministic long
 fields. Default values are omitted. Unrelated and repeated query parameters
 are preserved, including shell workspace/tab and legacy source context.
-`source` remains navigation context: the current inbox API has no source-ID
-filter, so this change does not claim one.
+`source` remains navigation context; `sourceId` is the distinct server filter.
 An explicit inbox `heatZoneId` takes precedence over the surrounding workspace
 selection; without an explicit inbox value, the workspace selection applies.
+All filter dimensions reset page 1 and survive reload/share/back/forward.
 
-The API currently implements `id`, `sourceId`, `stage`, and `updatedAt`
-ordering. Older `submitted_at_desc`/`due_at_asc` strings and unknown long sort
-keys use that API's existing default. They are not represented as captured
-time or lexical SLA-state order: neither is the requested timestamp. Actual
-submission/deadline sort admission remains a separate API/data requirement.
+The API orders by `id`, `sourceId`, `stage`, `updatedAt`, `submittedAt`,
+`lastObservedAt`, and `dueAt`, with a stable ID tie-breaker and missing values
+last in either direction. Legacy `submitted_at_desc`/`submitted_desc` and
+`due_at_asc` restore the corresponding actual timestamp sort. Source-capture
+time is not substituted for submission/update time, and SLA state is not a
+deadline. Unavailable legacy facts remain unknown.
 
-The wider UI handoff section 8.1 also requires distinct source, submitted-by,
-owner/assignment, last-observed/updated, masked/restricted, and retryable
-filter or saved-view dimensions. The currently supported query fields above
-do not implement all of those dimensions. Preserving an unrelated URL value,
-or matching text through `search`, is not evidence that its required filter
-exists. Their API, canonical data fields, controls, and restoration proofs
-remain open acceptance work.
+The UI handoff section 8.1 dimensions are represented in the existing compact,
+wrapping filter row from the original design. They do not create a new panel or
+disclosure layout. Filters run only after tenant/row authorization and masking;
+counts describe the authorized queue before user filters, while total and
+pagination describe the filtered result. Unknown counts are not shown as zero.
+`retryable=false` requires an explicit false failure value, not an absent failure.
 
 `/intake/{id}` takes precedence over query selection. A legacy
 `#intake/{encoded-id}` is converted using replace navigation when no explicit

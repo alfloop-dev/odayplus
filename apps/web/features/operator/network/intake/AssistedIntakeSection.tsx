@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { parseUrlState, serializeUrlState } from "./urlState";
-import { parseInboxUrlState, serializeInboxUrlState, type IntakeInboxFilterState } from "./inboxUrlState";
+import { parseInboxUrlState, serializeInboxUrlState, toIntakeInboxQuery, type IntakeInboxFilterState } from "./inboxUrlState";
 import type {
   AssistedIntake,
   AssignmentReceipt,
@@ -129,13 +129,7 @@ export function AssistedIntakeSection({
   const queryString = searchParams.toString();
   const inboxFilters = useMemo(() => ({ ...parseInboxUrlState(new URLSearchParams(queryString)),
     selectedIntakeId: selectedId }), [queryString, selectedId]);
-  const inboxQuery: IntakeInboxQuery = useMemo(() => ({
-    page: inboxFilters.page, pageSize: inboxFilters.pageSize, search: inboxFilters.search,
-    savedView: inboxFilters.savedView, intakeMethod: inboxFilters.intakeMethod,
-    intakeStage: inboxFilters.intakeStage, matchOutcome: inboxFilters.matchOutcome,
-    slaState: inboxFilters.slaState, sortBy: inboxFilters.sortBy, sortOrder: inboxFilters.sortOrder,
-    selectedHeatZoneId: inboxFilters.heatZoneId || selectedHeatZoneId || undefined,
-  }), [inboxFilters, selectedHeatZoneId]);
+  const inboxQuery: IntakeInboxQuery = useMemo(() => toIntakeInboxQuery(inboxFilters, selectedHeatZoneId), [inboxFilters, selectedHeatZoneId]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<IntakeApiError | null>(null);
   const [detailLoadState, setDetailLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");

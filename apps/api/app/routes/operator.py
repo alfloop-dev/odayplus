@@ -136,6 +136,8 @@ def create_operator_router(
     netplan_approval_verifier: Any | None = None,
     evidence_store: Any | None = None,
     intake_repository: Any | None = None,
+    intake_workflow_store: Any | None = None,
+    intake_workflow_policy: Any | None = None,
     live_repository: OperatorLiveRepositoryProtocol | None = None,
     fixture_issue_repository: Any | None = None,
     identity_user_role_service: Any | None = None,
@@ -666,6 +668,22 @@ def create_operator_router(
             "governance",
         )
 
+        def live_intake_repository(tenant_id: str) -> Any:
+            legacy = DurableAssistedIntakeRepository(
+                TenantScopedDocumentStore(document_store, tenant_id)
+            )
+            if allow_test_reset:
+                return legacy
+            if intake_workflow_store is None:
+                raise HTTPException(503, "INTAKE_WORKFLOW_STORE_UNAVAILABLE")
+            from shared.infrastructure.persistence.operator_intake_workflow import (
+                OperatorIntakeWorkflowRepository,
+            )
+
+            return OperatorIntakeWorkflowRepository(
+                intake_workflow_store, legacy, tenant_id, intake_workflow_policy,
+            )
+
         listing_resolver = DurableTenantServiceResolver(
             listing_state_repository,
             factory=lambda state, tenant_id: NetworkListingService(
@@ -674,9 +692,7 @@ def create_operator_router(
                     "listing_repository",
                     tenant_id,
                 ),
-                intake_repository=DurableAssistedIntakeRepository(
-                    TenantScopedDocumentStore(document_store, tenant_id)
-                ),
+                intake_repository=live_intake_repository(tenant_id),
                 initial_state=state,
                 # Canonical fixture state may exist only behind the explicit
                 # test-reset gate (ODP_E2E_MODE): production keeps the durable

@@ -469,7 +469,7 @@ describe("IntakeProcessingDetail production composition", () => {
 describe("AssistedIntakeSection production container", () => {
   it("restores direct inbox filters on the first API request and preserves other parameters", async () => {
     const requests: URL[] = [];
-    nav.reset("ws=network&tab=radar&search=台北&savedView=needsReview&page=3&pageSize=25&intakeStage=NEEDS_REVIEW&heatZoneId=HZ-TPE&sortBy=sourceId&sortOrder=asc&extra=a&extra=b");
+    nav.reset("ws=network&tab=radar&search=台北&savedView=needsReview&page=3&pageSize=25&intakeStage=NEEDS_REVIEW&heatZoneId=HZ-TPE&sortBy=sourceId&sortOrder=asc&extra=a&extra=b&source=shell-context&sourceId=source-1&submittedBy=subject-1&ownerId=subject-2&assignmentStatus=CLAIMED&assignedAreaId=area-1&masked=false&restricted=true&retryable=false&observedFrom=2026-10-01T00%3A00%3A00Z&observedTo=2026-10-02T00%3A00%3A00Z&updatedFrom=2026-10-03T00%3A00%3A00Z&updatedTo=2026-10-04T00%3A00%3A00Z");
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), "http://localhost"); requests.push(url);
       return json({ items: [possibleMatch], total: 60, page: 3, pageSize: 25, counts: { needsReview: 60, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 }, evidenceState: "complete" });
@@ -478,11 +478,16 @@ describe("AssistedIntakeSection production container", () => {
     expect(await screen.findByTestId("intake-inbox-view")).toBeInTheDocument();
     await waitFor(() => expect(requests.length).toBeGreaterThan(0));
     expect(screen.getByTestId("intake-page-size-select")).toHaveValue("25");
-    expect(Object.fromEntries(requests[0]!.searchParams)).toMatchObject({ search: "台北", savedView: "needsReview", page: "3", pageSize: "25", intakeStage: "NEEDS_REVIEW", selectedHeatZoneId: "HZ-TPE", sortBy: "sourceId", sortOrder: "asc" });
+    expect(Object.fromEntries(requests[0]!.searchParams)).toMatchObject({ search: "台北", savedView: "needsReview", page: "3", pageSize: "25", intakeStage: "NEEDS_REVIEW", selectedHeatZoneId: "HZ-TPE", sortBy: "sourceId", sortOrder: "asc",
+      sourceId: "source-1", submittedBy: "subject-1", ownerId: "subject-2", assignmentStatus: "CLAIMED", assignedAreaId: "area-1",
+      masked: "false", restricted: "true", retryable: "false", observedFrom: "2026-10-01T00:00:00Z",
+      observedTo: "2026-10-02T00:00:00Z", updatedFrom: "2026-10-03T00:00:00Z", updatedTo: "2026-10-04T00:00:00Z" });
+    expect(requests[0]!.searchParams.has("source")).toBe(false);
     expect(nav.state.replaceCalls).toHaveLength(0);
     fireEvent.click(screen.getByTestId("intake-view-mode-map"));
     expect(new URLSearchParams(nav.state.search).getAll("extra")).toEqual(["a", "b"]);
     expect(new URLSearchParams(nav.state.search).get("viewMode")).toBe("map");
+    expect(new URLSearchParams(nav.state.search).get("source")).toBe("shell-context");
   });
 
   it("discards a delayed inbox response after navigation to another filter", async () => {

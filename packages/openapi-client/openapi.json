@@ -1068,6 +1068,18 @@
         "title": "AssignmentRequest",
         "type": "object"
       },
+      "AssignmentState": {
+        "enum": [
+          "UNASSIGNED",
+          "ASSIGNED",
+          "CLAIMED",
+          "TRANSFERRED",
+          "ESCALATED",
+          "COMPLETED"
+        ],
+        "title": "AssignmentState",
+        "type": "string"
+      },
       "AssignmentStatus": {
         "enum": [
           "ASSIGNED",
@@ -33857,6 +33869,186 @@
               "default": "",
               "title": "Slastate",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "submittedBy",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Submittedby",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ownerId",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Ownerid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignmentStatus",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AssignmentState"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Assignmentstatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignedAreaId",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Assignedareaid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "observedFrom",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "format": "date-time",
+              "title": "Observedfrom"
+            }
+          },
+          {
+            "in": "query",
+            "name": "observedTo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "format": "date-time",
+              "title": "Observedto"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updatedFrom",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "format": "date-time",
+              "title": "Updatedfrom"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updatedTo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "format": "date-time",
+              "title": "Updatedto"
+            }
+          },
+          {
+            "in": "query",
+            "name": "masked",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Masked"
+            }
+          },
+          {
+            "in": "query",
+            "name": "restricted",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Restricted"
+            }
+          },
+          {
+            "in": "query",
+            "name": "retryable",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Retryable"
             }
           },
           {

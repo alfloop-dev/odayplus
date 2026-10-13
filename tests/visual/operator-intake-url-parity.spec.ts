@@ -64,12 +64,26 @@ for (const width of [1440, 1024, 390]) {
       });
       expect(response.ok()).toBe(true); ids.push((await response.json()).id);
     }
-    const query = `ws=network&tab=radar&savedView=needsReview&intakeStage=NEEDS_REVIEW&sortBy=id&sortOrder=asc&pageSize=25&extra=a&extra=b`;
+    expect(record.submittedBy).toBe(headers["x-subject-id"]);
+    const authorizedPage = await request.get(`${api}/api/v1/operator/network-listings/intake`, { headers });
+    expect(authorizedPage.ok()).toBe(true);
+    const visibleRecord = (await authorizedPage.json()).items.find((item: { id: string }) => item.id === record.id);
+    expect(visibleRecord).toBeDefined();
+    expect(typeof visibleRecord.masked).toBe("boolean");
+    const maskedFilter = String(visibleRecord.masked);
+    const query = `ws=network&tab=radar&savedView=needsReview&intakeStage=NEEDS_REVIEW&sortBy=id&sortOrder=asc&pageSize=25&extra=a&extra=b&source=shell-context&sourceId=${encodeURIComponent(record.sourceId)}&submittedBy=${encodeURIComponent(record.submittedBy)}&masked=${maskedFilter}`;
     await page.goto(`/operator?${query}`);
     const row = page.getByTestId(`intake-inbox-row-${record.id}`);
     await expect(row).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("intake-filter-stage")).toHaveValue("NEEDS_REVIEW");
     await expect(page.getByTestId("intake-page-size-select")).toHaveValue("25");
+    await expect(page.getByTestId("intake-filter-source")).toHaveValue(record.sourceId);
+    await expect(page.getByTestId("intake-filter-submitted-by")).toHaveValue(record.submittedBy);
+    await expect(page.getByTestId("intake-filter-masked")).toHaveValue(maskedFilter);
+    await page.reload();
+    await expect(row).toBeVisible();
+    await expect(page.getByTestId("intake-filter-masked")).toHaveValue(maskedFilter);
+    await page.getByTestId("intake-filter-masked").selectOption("");
     await page.getByTestId("intake-tab-all").click();
     await page.getByTestId("intake-filter-stage").selectOption("");
     const rows = page.locator('[data-testid^="intake-inbox-row-"]');
@@ -95,6 +109,9 @@ for (const width of [1440, 1024, 390]) {
     await expect(page).toHaveURL(/section=identity/);
     const share = page.url();
     expect(new URL(share).searchParams.getAll("extra")).toEqual(["a", "b"]);
+    expect(new URL(share).searchParams.get("source")).toBe("shell-context");
+    expect(new URL(share).searchParams.get("sourceId")).toBe(record.sourceId);
+    expect(new URL(share).searchParams.has("masked")).toBe(false);
     await page.reload();
     await expect(page.getByTestId("intake-detail-dialog")).toBeVisible();
     await restoredSection(page);
@@ -133,6 +150,17 @@ for (const width of [1440, 1024, 390]) {
         const rect = element.getBoundingClientRect(); return { id: element.dataset.testid, left: rect.left, right: rect.right };
       }) }));
     expect(inboxGeometry.documentWidth).toBeLessThanOrEqual(width);
+    const paginationTops = await page.getByTestId("intake-pagination").locator("select,button").evaluateAll(
+      (elements) => elements.map((element) => element.getBoundingClientRect().top),
+    );
+    expect(Math.max(...paginationTops) - Math.min(...paginationTops)).toBeLessThan(3);
+    for (const id of ["intake-prev-page", "intake-next-page"]) {
+      const lineCount = await page.getByTestId(id).evaluate((button) => {
+        const range = document.createRange(); range.selectNodeContents(button);
+        return new Set([...range.getClientRects()].map((rect) => rect.top)).size;
+      });
+      expect(lineCount, `${id} must keep its label on one line`).toBe(1);
+    }
     for (const filter of inboxGeometry.filters) { expect(filter.left).toBeGreaterThanOrEqual(0); expect(filter.right).toBeLessThanOrEqual(width); }
     await page.screenshot({ path: path.join(evidence, `intake-url-inbox-${width}.png`), fullPage: true, animations: "disabled" });
     await page.goto(`/intake/${record.id}?${query}&selected=OTHER&dialog=detail&section=audit`);
@@ -144,6 +172,6 @@ for (const width of [1440, 1024, 390]) {
     await page.goto(`/operator?${query}&selected=A&selected=B&dialog=detail`);
     await expect(page.getByTestId("intake-direct-detail-error")).toContainText("連結未指定唯一");
     await expect(page.getByTestId("intake-detail-dialog")).toHaveCount(0);
-    await writeFile(path.join(evidence, `intake-url-${width}.json`), JSON.stringify({ scope: "LOOPBACK_SYNTHETIC_NAVIGATION_NOT_REAL_ROLE_OR_RELEASE_APPROVAL", width, recordId: record.id, sortedRecordIds: ids, share, geometry, inboxGeometry, inboxAxeViolations: inboxAxe.violations, axeViolations: axe.violations, observations, checks: ["direct", "reload", "back", "forward", "fresh-context-share", "actual-three-record-sort", "detail-section", "repeated-unrelated-params", "path-priority", "legacy-hash", "ambiguous-id-refusal"] }, null, 2));
+    await writeFile(path.join(evidence, `intake-url-${width}.json`), JSON.stringify({ scope: "LOOPBACK_SYNTHETIC_NAVIGATION_NOT_REAL_ROLE_OR_RELEASE_APPROVAL", width, recordId: record.id, sortedRecordIds: ids, share, geometry, inboxGeometry, inboxAxeViolations: inboxAxe.violations, axeViolations: axe.violations, observations, checks: ["direct", "reload", "back", "forward", "fresh-context-share", "actual-three-record-sort", "source-submitter-masked-filter-restoration", "detail-section", "repeated-unrelated-params", "path-priority", "legacy-hash", "ambiguous-id-refusal"] }, null, 2));
   });
 }

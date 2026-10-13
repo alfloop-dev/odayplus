@@ -36,7 +36,33 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import wraps
 from typing import Any, Protocol
+
+
+def _atomic_intake_submission(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Keep the workflow, intake and existing actor-bound replay in one unit of work."""
+    @wraps(method)
+    def invoke(self: Any, *args: Any, **kwargs: Any) -> Any:
+        transaction = getattr(self._intakes, "transaction", None)
+        if transaction is None:
+            return method(self, *args, **kwargs)
+        before = copy.deepcopy((self._state, self._idempotency_cache, self._idempotency_bindings))
+        try:
+            with transaction(intake_id=kwargs.get("intake_id")):
+                self._load_intakes()
+                self._load_idempotency_cache()
+                if kwargs.get("intake_id"):
+                    authorize = kwargs.get("authorize_existing")
+                    if authorize is None and not self._seed_fixtures:
+                        raise NetworkListingPolicyError("INTAKE_SCOPE_CONTEXT_REQUIRED")
+                    if authorize is not None:
+                        authorize(_copy(self._listing_intake(kwargs["intake_id"])))
+                return method(self, *args, **kwargs)
+        except BaseException:
+            self._state, self._idempotency_cache, self._idempotency_bindings = before
+            raise
+    return invoke
 
 
 @dataclass(frozen=True)
@@ -922,6 +948,7 @@ class NetworkListingService:
         self._state["assistedIntakes"].append(intake)
 
     def _save_intake(self, intake: dict[str, Any]) -> None:
+        intake["updatedAt"] = _now()
         self._save_intake_to_state(intake)
         self._intakes.save_intake(intake)
 
@@ -1293,6 +1320,7 @@ class NetworkListingService:
         self._save_write(write, result)
         return result
 
+    @_atomic_intake_submission
     def submit_intake(
         self,
         *,
@@ -1339,11 +1367,11 @@ class NetworkListingService:
         self._state.setdefault("assistedIntakes", [])
         for intake in self._state["assistedIntakes"]:
             if intake.get("canonicalUrl") == canon_url:
+                if authorize_existing is not None:
+                    authorize_existing(_copy(intake))
+                elif not self._seed_fixtures:
+                    raise NetworkListingPolicyError("INTAKE_SCOPE_CONTEXT_REQUIRED")
                 if intake.get("stage") in {"NEEDS_REVIEW", "READY", "QUARANTINED", "FAILED", "AWAITING_ASSISTED_ENTRY"}:
-                    if authorize_existing is not None:
-                        authorize_existing(_copy(intake))
-                    elif not self._seed_fixtures:
-                        raise NetworkListingPolicyError("INTAKE_SCOPE_CONTEXT_REQUIRED")
                     # Exact duplicate before retrieval (terminal state idempotency)
                     self._save_write(write, intake)
                     return _copy(intake)
@@ -1354,15 +1382,20 @@ class NetworkListingService:
         intake_id = (
             f"IN-{3001 + len(self._state['assistedIntakes'])}"
             if self._seed_fixtures
-            else f"IN-{uuid.uuid4().hex[:12].upper()}"
+            else str(uuid.uuid4())
         )
 
+        submitted_at = _now()
         intake = {
             "id": intake_id,
             "tenantId": tenant_id,
             "originalUrl": url,
             "canonicalUrl": canon_url,
             "submitter": actor_name,
+            "submittedBy": actor_name,
+            "submittedAt": submitted_at,
+            "updatedAt": submitted_at,
+            "lastObservedAt": None,
             "owner": actor_name,
             "heatZoneId": heat_zone_id,
             "intakeMethod": "URL",
@@ -1397,6 +1430,12 @@ class NetworkListingService:
         elif policy.policy in {"ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED"}:
             intake["stage"] = "AWAITING_ASSISTED_ENTRY"
         elif policy.policy == "APPROVED_RETRIEVAL":
+            prepare_async = getattr(self._intakes, "prepare_async_submission", None)
+            if prepare_async is not None:
+                # A committed durable job owns retrieval/snapshot side effects.
+                # No HTTP or object-store writes occur in submission's SQL unit.
+                prepare_async(job_queue)
+                async_intake = True
             if async_intake and job_queue is not None:
                 intake["stage"] = "SUBMITTED"
                 from shared.jobs.queue import JobRequest
@@ -1412,10 +1451,14 @@ class NetworkListingService:
                     JobRequest(
                         job_type="assisted-listing-intake",
                         payload=payload_to_send,
-                        idempotency_key=idempotency_key,
+                        idempotency_key=(
+                            "intake-submit:" + hashlib.sha256(f"{tenant_id}:{write.key}".encode()).hexdigest()
+                            if prepare_async is not None else idempotency_key
+                        ),
                     ),
                     correlation_id=correlation_id or "system",
                 )
+                intake["jobId"] = job.job_id
             else:
                 intake["stage"] = "RETRIEVING"
                 import json
@@ -1434,6 +1477,7 @@ class NetworkListingService:
                     redacted_raw = redact_sensitive_snapshot(raw_dict)
                     redacted_data = json.dumps(redacted_raw).encode("utf-8")
                     
+                    observed_at = datetime.now(UTC)
                     snapshot_id = snapshot_service.create_snapshot(
                         tenant_id=resolved_tenant_id,
                         intake_id=intake_id,
@@ -1445,7 +1489,7 @@ class NetworkListingService:
                         capture_method="SERVER_RETRIEVAL",
                         retention_class="STANDARD",
                         encryption_key_ref="kms://default-key",
-                        observed_at=datetime.now(UTC),
+                        observed_at=observed_at,
                         captured_at=datetime.now(UTC),
                         bucket="taiwan-snapshots",
                         redacted_data=redacted_data,
@@ -1454,6 +1498,7 @@ class NetworkListingService:
                     intake["stage"] = "PARSING"
                     intake["rawSnapshot"] = redacted_raw
                     intake["snapshotId"] = snapshot_id
+                    intake["lastObservedAt"] = observed_at.isoformat().replace("+00:00", "Z")
                     intake["capturedAt"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
                     
                     from modules.external_data.application.assisted_intake import RetrievalResult
@@ -1558,6 +1603,7 @@ class NetworkListingService:
                 return _copy(intake)
         raise NetworkListingNotFound(f"assisted intake record {intake_id} not found")
 
+    @_atomic_intake_submission
     def correct_intake(
         self,
         *,
@@ -1570,6 +1616,7 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
         actor_name = self._require_actor(actor_name, actor_role_id)
@@ -1675,6 +1722,7 @@ class NetworkListingService:
             }
         }
         intake["auditEvents"].append(audit_evt)
+        intake["version"] = intake.get("version", 0) + 1
         self._save_intake(intake)
         self._save_write(write, intake)
         return _copy(intake)
@@ -1785,6 +1833,12 @@ class NetworkListingService:
             "originalUrl": None,
             "canonicalUrl": None,
             "submitter": actor_name or "批次匯入",
+            # The legacy worker actor_name can be a display label; it does not
+            # establish a verified subject identity.
+            "submittedBy": None,
+            "submittedAt": now,
+            "updatedAt": now,
+            "lastObservedAt": None,
             "owner": actor_name or "批次匯入",
             "heatZoneId": heat_zone_id,
             "regionId": region_id,
@@ -1880,6 +1934,7 @@ class NetworkListingService:
         stored_intake, _ = self._create_intake_if_absent(intake)
         return _copy(stored_intake)
 
+    @_atomic_intake_submission
     def decide_intake(
         self,
         *,
@@ -1892,6 +1947,7 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
         target_listing_id: str | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
@@ -2081,10 +2137,12 @@ class NetworkListingService:
             }
         }
         intake["auditEvents"].append(audit_evt)
+        intake["version"] = intake.get("version", 0) + 1
         self._save_intake(intake)
         self._save_write(write, intake)
         return _copy(intake)
 
+    @_atomic_intake_submission
     def retry_intake(
         self,
         *,
@@ -2095,6 +2153,7 @@ class NetworkListingService:
         job_queue: Any | None = None,
         tenant_id: str | None = None,
         idempotency_key: str | None = None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         actor_name = self._require_actor(actor_name, actor_role_id)
         tenant_id = self._require_tenant(tenant_id)
@@ -2106,29 +2165,48 @@ class NetworkListingService:
         if intake["stage"] not in {"FAILED", "READY", "NEEDS_REVIEW", "AWAITING_ASSISTED_ENTRY"}:
             raise NetworkListingConflict(f"intake {intake_id} is in stage {intake['stage']} and cannot be retried")
 
-        if job_queue is not None and intake.get("idempotencyKey"):
+        prepare_async = getattr(self._intakes, "prepare_async_submission", None)
+        job = None
+        if prepare_async is not None and intake.get("jobId"):
+            prepare_async(job_queue)
+            job = job_queue.get(intake["jobId"])
+            if (job is None or job.payload.get("tenant_id") != tenant_id
+                    or job.payload.get("intake_id") != intake_id):
+                raise NetworkListingPolicyError("INTAKE_JOB_BINDING_REQUIRED")
+        elif prepare_async is None and job_queue is not None and intake.get("idempotencyKey"):
             job = job_queue.get_by_idempotency_key(intake["idempotencyKey"])
-            if job is not None:
-                intake["stage"] = "SUBMITTED"
+        if job is not None:
+            if prepare_async is not None:
+                from shared.jobs.queue import JobStatus
+
+                if job.status not in {JobStatus.FAILED, JobStatus.PARTIAL}:
+                    raise NetworkListingConflict("INTAKE_JOB_NOT_RETRYABLE")
+                if (intake.get("failure") or {}).get("retryable") is False:
+                    raise NetworkListingConflict("INTAKE_FAILURE_NOT_RETRYABLE")
+            intake["stage"] = "SUBMITTED"
+            if prepare_async is not None:
+                job_queue.replay(job.job_id, expected_version=job.version, fence_token=job.fence_token)
+            else:
                 job_queue.replay(job.job_id)
-                audit_evt = {
-                    "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
-                    "occurredAt": _now(),
-                    "actorRoleId": actor_role_id,
-                    "actorName": actor_name,
-                    "action": "intake.retry",
-                    "targetId": intake_id,
-                    "message": f"Replayed async intake job for {intake['originalUrl']}.",
-                    "correlationId": correlation_id,
-                    "metadata": {
-                        "job_id": job.job_id,
-                        "stage": intake["stage"],
-                    }
+            audit_evt = {
+                "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
+                "occurredAt": _now(),
+                "actorRoleId": actor_role_id,
+                "actorName": actor_name,
+                "action": "intake.retry",
+                "targetId": intake_id,
+                "message": f"Replayed async intake job for {intake['originalUrl']}.",
+                "correlationId": correlation_id,
+                "metadata": {
+                    "job_id": job.job_id,
+                    "stage": intake["stage"],
                 }
-                intake["auditEvents"].append(audit_evt)
-                self._save_intake(intake)
-                self._save_write(write, intake)
-                return _copy(intake)
+            }
+            intake["auditEvents"].append(audit_evt)
+            intake["version"] = intake.get("version", 0) + 1
+            self._save_intake(intake)
+            self._save_write(write, intake)
+            return _copy(intake)
 
 
         from modules.external_data.application.assisted_intake import (
@@ -2142,6 +2220,12 @@ class NetworkListingService:
         from modules.external_data.security import redact_sensitive_snapshot
 
         policy = resolve_source_policy(intake["originalUrl"])
+        if prepare_async is not None and policy.policy == "APPROVED_RETRIEVAL":
+            from modules.listing.application.intake_workflow_bootstrap import (
+                IntakeWorkflowUnavailable,
+            )
+
+            raise IntakeWorkflowUnavailable("Canonical retry requires its linked durable retrieval job")
         if policy.quarantines or policy.policy in {"POLICY_UNKNOWN", "SOURCE_BLOCKED"}:
             intake["stage"] = "QUARANTINED"
             intake["matchResult"] = {
@@ -2175,6 +2259,7 @@ class NetworkListingService:
                 redacted_raw = redact_sensitive_snapshot(raw_dict)
                 redacted_data = json.dumps(redacted_raw).encode("utf-8")
                 
+                observed_at = datetime.now(UTC)
                 snapshot_id = snapshot_service.create_snapshot(
                     tenant_id=resolved_tenant_id,
                     intake_id=intake_id,
@@ -2186,12 +2271,13 @@ class NetworkListingService:
                     capture_method="SERVER_RETRIEVAL",
                     retention_class="STANDARD",
                     encryption_key_ref="kms://default-key",
-                    observed_at=datetime.now(UTC),
+                    observed_at=observed_at,
                     captured_at=datetime.now(UTC),
                     bucket="taiwan-snapshots",
                     redacted_data=redacted_data,
                 )
                 
+                intake["lastObservedAt"] = observed_at.isoformat().replace("+00:00", "Z")
                 from modules.external_data.application.assisted_intake import RetrievalResult
                 retrieval = RetrievalResult(
                     snapshot_id=snapshot_id,
@@ -2231,6 +2317,7 @@ class NetworkListingService:
                 }
             }
             intake["auditEvents"].append(audit_evt)
+            intake["version"] = intake.get("version", 0) + 1
             self._save_intake(intake)
             self._save_write(write, intake)
             return _copy(intake)
@@ -2319,6 +2406,7 @@ class NetworkListingService:
             }
         }
         intake["auditEvents"].append(audit_evt)
+        intake["version"] = intake.get("version", 0) + 1
         self._save_intake(intake)
         self._save_write(write, intake)
         return _copy(intake)
@@ -2382,6 +2470,7 @@ class NetworkListingService:
     def save_intake(self, intake: dict[str, Any]) -> None:
         self._save_intake(intake)
 
+    @_atomic_intake_submission
     def promote_intake(
         self,
         *,
@@ -2393,6 +2482,7 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         actor_name = self._require_actor(actor_name, actor_role_id)
         allowed_roles = {
@@ -2495,6 +2585,7 @@ class NetworkListingService:
             }
         }
         intake["auditEvents"].append(audit_evt)
+        intake["version"] = intake.get("version", 0) + 1
         self._save_intake(intake)
 
         result = {

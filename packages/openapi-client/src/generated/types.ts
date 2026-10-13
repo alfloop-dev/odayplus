@@ -197,6 +197,9 @@ export type AssignmentRequest = {
   reason: string;
 };
 
+/** AssignmentState */
+export type AssignmentState = "UNASSIGNED" | "ASSIGNED" | "CLAIMED" | "TRANSFERRED" | "ESCALATED" | "COMPLETED";
+
 /** AssignmentStatus */
 export type AssignmentStatus = "ASSIGNED" | "CLAIMED" | "TRANSFERRED" | "ESCALATED" | "COMPLETED";
 

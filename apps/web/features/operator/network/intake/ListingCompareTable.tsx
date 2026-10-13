@@ -114,7 +114,7 @@ export function ListingCompareTable({
       key: string;
       label: string;
       targetVal: string | number | undefined;
-      subVal: string | number | undefined;
+      subVal: string | number | null | undefined;
     }> = [
       {
         key: "sourceId",

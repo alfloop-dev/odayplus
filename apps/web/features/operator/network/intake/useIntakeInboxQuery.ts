@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { DEFAULT_INBOX_FILTERS, parseInboxUrlState, serializeInboxUrlState, type IntakeInboxFilterState } from "./inboxUrlState";
+import { DEFAULT_INBOX_FILTERS, INBOX_FILTER_KEYS, parseInboxUrlState, serializeInboxUrlState, type IntakeInboxFilterState } from "./inboxUrlState";
 export type { IntakeInboxFilterState, SavedViewType, ViewMode } from "./inboxUrlState";
 
 function currentFilters() {
@@ -42,7 +42,7 @@ export function useIntakeInboxQuery(controlled?: ControlledQuery) {
 
   const updateFilters = useCallback((updates: Partial<IntakeInboxFilterState>) => {
     const next = { ...current.current, ...updates };
-    if (["search", "savedView", "intakeMethod", "intakeStage", "matchOutcome", "slaState", "heatZoneId"].some((key) => key in updates) && !("page" in updates)) next.page = 1;
+    if (INBOX_FILTER_KEYS.some((key) => key in updates) && !("page" in updates)) next.page = 1;
     commit(next);
   }, [commit]);
   const resetFilters = useCallback(() => commit({ ...DEFAULT_INBOX_FILTERS,

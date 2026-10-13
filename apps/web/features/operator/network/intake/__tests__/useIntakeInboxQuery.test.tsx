@@ -1,6 +1,6 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_INBOX_FILTERS } from "../inboxUrlState";
+import { DEFAULT_INBOX_FILTERS, INBOX_FILTER_KEYS } from "../inboxUrlState";
 import { useIntakeInboxQuery } from "../useIntakeInboxQuery";
 
 afterEach(cleanup);
@@ -19,6 +19,14 @@ describe("intake URL navigation ownership", () => {
     expect(window.location.hash).toBe("#other");
     expect(window.history.state).toEqual({ __NA: true, tree: "framework-owned" });
     push.mockRestore(); replace.mockRestore();
+  });
+
+  it.each(INBOX_FILTER_KEYS)("resets server pagination after changing %s while preserving the detail context", (key) => {
+    const change = vi.fn();
+    const { result } = renderHook(() => useIntakeInboxQuery({ filters: { ...DEFAULT_INBOX_FILTERS, page: 4,
+      selectedIntakeId: "record-1" }, onChange: change }));
+    act(() => result.current.updateFilters({ [key]: key === "savedView" ? "blocked" : "" }));
+    expect(change).toHaveBeenCalledWith(expect.objectContaining({ page: 1, selectedIntakeId: "record-1" }));
   });
 
   it("restores popstate and hash navigation without creating another history entry", () => {

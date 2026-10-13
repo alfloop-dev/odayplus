@@ -54,6 +54,7 @@ import type {
   ReasonCommand,
   AssignmentTransferRequest,
   AssignmentTransferTargetPage,
+  AssignmentState,
   AssignmentReceipt,
   AssignmentRequest,
   SlaPauseRequest,
@@ -1928,12 +1929,20 @@ export type AssistedIntake = {
   id: string;
   originalUrl: string;
   canonicalUrl: string;
-  submitter: string;
-  owner: string;
+  submitter: string | null;
+  owner: string | null;
+  submittedBy?: string | null;
+  ownerSubjectId?: string | null;
+  assignedAreaId?: string | null;
+  submittedAt?: string | null;
+  updatedAt?: string | null;
+  lastObservedAt?: string | null;
+  masked?: boolean;
+  restricted?: boolean | null;
   heatZoneId: string | null;
   intakeMethod?: "URL" | "MANUAL" | "CSV" | "APPROVED_FEED";
   stage: IntakeStage;
-  sourceId: string;
+  sourceId: string | null;
   policy: SourcePolicyState;
   policyLabel: string;
   policyReason: string;
@@ -1949,8 +1958,10 @@ export type AssistedIntake = {
   failure?: IntakeFailure | null;
   version: number;
   assignmentId?: string | null;
-  assignmentStatus?: string | null;
+  assignmentVersion?: number | null;
+  assignmentStatus?: AssignmentState | null;
   slaInstanceId?: string | null;
+  slaVersion?: number | null;
   slaState?: string | null;
   slaReceipt?: string | null;
   dueAt?: string | null;
@@ -1966,6 +1977,18 @@ export type IntakeInboxQuery = {
   intakeStage?: string;
   matchOutcome?: string;
   slaState?: string;
+  sourceId?: string;
+  submittedBy?: string;
+  ownerId?: string;
+  assignmentStatus?: AssignmentState;
+  assignedAreaId?: string;
+  observedFrom?: string;
+  observedTo?: string;
+  updatedFrom?: string;
+  updatedTo?: string;
+  masked?: boolean;
+  restricted?: boolean;
+  retryable?: boolean;
   sortBy?: string;
   sortOrder?: "asc" | "desc";
 };

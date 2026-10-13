@@ -1315,7 +1315,9 @@ else:
                 "audit_event_id": audit_event.event_id,
             }
 
-        def _authorize_job_access(job: Any, request: Request) -> None:
+        def _authorize_job_access(
+            job: Any, request: Request, *, intake_action: str = "view",
+        ) -> dict[str, Any] | None:
             from apps.api.oday_api.security.dependencies import principal_from_headers
 
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
@@ -1334,7 +1336,42 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
-            elif job.job_type in ("batch-listing-intake", "assisted-listing-intake"):
+            elif job.job_type == "assisted-listing-intake":
+                active_tenant_id = batch_intake_job_tenant(request, action="view")
+                if not job_tenant or job_tenant != active_tenant_id:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                from modules.listing.application.intake_authorization import authorize_intake_action
+                from shared.infrastructure.persistence.operator_intake_workflow import (
+                    project_operator_intake,
+                )
+
+                store = getattr(request.app.state, "assisted_intake_store", None)
+                if store is None:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_STORE_UNAVAILABLE")
+                store.refresh(active_tenant_id)
+                intake_id = job.payload.get("intake_id")
+                canonical = store.intakes.get(intake_id) if isinstance(intake_id, str) else None
+                if (not isinstance(canonical, dict)
+                        or canonical.get("scope", {}).get("tenant_id") != active_tenant_id):
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                # Payload IDs select the record; only canonical ownership and
+                # complete scope authorize access. Require the reverse binding.
+                intake = project_operator_intake(canonical, store.assignments, store.slas)
+                if intake.get("jobId") != job.job_id:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                resource = {**intake, "scope": canonical.get("scope"),
+                            "submitter": canonical.get("submitted_by")}
+                action = (
+                    "reopen_quarantine"
+                    if intake_action == "reopen_failed" and intake.get("stage") == "QUARANTINED"
+                    else intake_action
+                )
+                authorize_intake_action(
+                    principal_from_headers(request.headers), action, resource=resource,
+                    audit_log=audit_log, correlation_id=request.state.correlation_id,
+                )
+                return intake
+            elif job.job_type == "batch-listing-intake":
                 active_tenant_id = batch_intake_job_tenant(request, action="view")
                 if not job_tenant or job_tenant != active_tenant_id:
                     raise HTTPException(
@@ -1449,6 +1486,84 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
+                if job.job_type == "assisted-listing-intake":
+                    from modules.listing.application.intake_workflow_bootstrap import (
+                        IntakeWorkflowUnavailable,
+                    )
+                    from modules.opsboard.application.network_listings import (
+                        NetworkListingConflict,
+                        NetworkListingNotFound,
+                        NetworkListingPolicyError,
+                        NetworkListingService,
+                    )
+                    from modules.opsboard.application.operator_actor import operator_actor
+                    from shared.infrastructure.persistence.assisted_listing_intake import (
+                        AssistedIntakePersistenceConflict,
+                    )
+                    from shared.infrastructure.persistence.operator_intake_workflow import (
+                        OperatorIntakeWorkflowRepository,
+                    )
+
+                    intake = _authorize_job_access(job, request, intake_action="reopen_failed")
+                    assert intake is not None
+                    # Both established scopes select the sole failed retryable
+                    # item. The shared command enforces its failure policy.
+                    retry_scope = (body.retry_scope if body else "FAILED_ONLY") or "FAILED_ONLY"
+                    if retry_scope not in ("FAILED_ONLY", "FAILED_RETRYABLE_ONLY"):
+                        raise HTTPException(422, f"Invalid retry_scope: {retry_scope}")
+                    legacy_factory = getattr(bundle, "operator_intake_repository_for_tenant", None)
+                    legacy = legacy_factory(active_tenant_id) if callable(legacy_factory) else None
+                    store = getattr(request.app.state, "assisted_intake_store", None)
+                    if legacy is None or store is None:
+                        raise HTTPException(503, "INTAKE_WORKFLOW_STORE_UNAVAILABLE")
+                    policy = (
+                        assisted_intake_workflow_policy
+                        if assisted_intake_workflow_policy is not None
+                        else getattr(bundle, "assisted_intake_workflow_policy", None)
+                    )
+                    def authorize_retry(current: dict[str, Any]) -> None:
+                        from modules.listing.application.intake_authorization import (
+                            authorize_intake_action,
+                        )
+
+                        if current.get("id") != intake["id"] or current.get("jobId") != job_id:
+                            raise HTTPException(404, "job not found")
+                        resource = {**current, "submitter": current.get("submittedBy"),
+                                    "owner": current.get("ownerSubjectId")}
+                        authorize_intake_action(
+                            principal,
+                            "reopen_quarantine" if current.get("stage") == "QUARANTINED" else "reopen_failed",
+                            resource=resource, audit_log=audit_log,
+                            correlation_id=request.state.correlation_id,
+                        )
+
+                    try:
+                        actor = operator_actor(principal)
+                        repository = OperatorIntakeWorkflowRepository(store, legacy, active_tenant_id, policy)
+                        service = NetworkListingService(
+                            intake_repository=repository, seed_fixtures=False, tenant_id=active_tenant_id,
+                        )
+                        result = service.retry_intake(
+                            intake_id=intake["id"], actor_role_id=actor.role_id,
+                            actor_name=actor.subject_id, tenant_id=actor.tenant_id,
+                            correlation_id=request.state.correlation_id,
+                            idempotency_key=request.headers.get("Idempotency-Key"), job_queue=job_queue,
+                            authorize_existing=authorize_retry,
+                        )
+                    except IntakeWorkflowUnavailable as exc:
+                        raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+                    except PermissionError as exc:
+                        raise HTTPException(403, str(exc)) from exc
+                    except NetworkListingNotFound as exc:
+                        raise HTTPException(404, str(exc)) from exc
+                    except (NetworkListingConflict, AssistedIntakePersistenceConflict, JobFenceRejectedError) as exc:
+                        raise HTTPException(409, str(exc)) from exc
+                    except NetworkListingPolicyError as exc:
+                        raise HTTPException(422, str(exc)) from exc
+                    return {
+                        "job_id": result["jobId"], "status": "queued",
+                        "retry_scope": retry_scope, "retried_items_count": 1,
+                    }
                 from modules.listing.application.intake_authorization import authorize_intake_action
                 from shared.auth import Role
 
@@ -2200,6 +2315,12 @@ else:
                 netplan_approval_verifier=netplan_approval_verifier,
                 evidence_store=evidence_store,
                 intake_repository=operator_intake_repository,
+                intake_workflow_store=assisted_intake_store,
+                intake_workflow_policy=(
+                    assisted_intake_workflow_policy
+                    if assisted_intake_workflow_policy is not None
+                    else getattr(bundle, "assisted_intake_workflow_policy", None)
+                ),
                 live_repository=operator_live_repository,
                 fixture_issue_repository=store_ops_repo if not require_live_data else None,
                 require_live_data=require_live_data,

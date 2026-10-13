@@ -1,15 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_INBOX_FILTERS, parseInboxUrlState, serializeInboxUrlState } from "../inboxUrlState";
+import { DEFAULT_INBOX_FILTERS, parseInboxUrlState, serializeInboxUrlState, toIntakeInboxQuery } from "../inboxUrlState";
 
 describe("shareable intake inbox navigation", () => {
   it("restores every API filter, view, pagination and selection from a direct link", () => {
     const query = new URLSearchParams("search=台北&intakeMethod=ASSISTED_ENTRY&intakeStage=READY&matchOutcome=NEW&slaState=BREACHED&heatZoneId=HZ-TPE&savedView=ready&viewMode=map&page=3&pageSize=25&sortBy=sourceId&sortOrder=asc&selected=IN-123");
-    expect(parseInboxUrlState(query)).toEqual({ search: "台北", intakeMethod: "ASSISTED_ENTRY", intakeStage: "READY", matchOutcome: "NEW", slaState: "BREACHED", heatZoneId: "HZ-TPE", savedView: "ready", viewMode: "map", page: 3, pageSize: 25, sortBy: "sourceId", sortOrder: "asc", selectedIntakeId: "IN-123" });
+    expect(parseInboxUrlState(query)).toEqual({ ...DEFAULT_INBOX_FILTERS, search: "台北", intakeMethod: "ASSISTED_ENTRY", intakeStage: "READY", matchOutcome: "NEW", slaState: "BREACHED", heatZoneId: "HZ-TPE", savedView: "ready", viewMode: "map", page: 3, pageSize: 25, sortBy: "sourceId", sortOrder: "asc", selectedIntakeId: "IN-123" });
   });
 
-  it("restores supported legacy sort fields and defaults unsupported timestamp sorts", () => {
+  it("restores legacy sort fields with their actual timestamp semantics", () => {
     expect(parseInboxUrlState(new URLSearchParams("stage=READY&outcome=NEW&hz=HZ-1&view=map&sort=status_asc"))).toMatchObject({ intakeStage: "READY", matchOutcome: "NEW", heatZoneId: "HZ-1", viewMode: "map", sortBy: "stage", sortOrder: "asc" });
-    for (const sort of ["due_at_asc", "submitted_at_desc"]) expect(parseInboxUrlState(new URLSearchParams({ sort }))).toMatchObject({ sortBy: "updatedAt", sortOrder: "desc" });
+    expect(parseInboxUrlState(new URLSearchParams("sort=due_at_asc"))).toMatchObject({ sortBy: "dueAt", sortOrder: "asc" });
+    for (const sort of ["submitted_at_desc", "submitted_desc"]) expect(parseInboxUrlState(new URLSearchParams({ sort }))).toMatchObject({ sortBy: "submittedAt", sortOrder: "desc" });
+  });
+
+  it("round-trips exact identities, tri-state flags and timezone-bearing ranges without changing source context", () => {
+    const dimensions = { sourceId: "source-id", submittedBy: "subject-1", ownerId: "subject-2", assignmentStatus: "CLAIMED",
+      assignedAreaId: "area-7", observedFrom: "2026-10-01T08:00:00+08:00", observedTo: "2026-10-02T00:00:00Z",
+      updatedFrom: "2026-10-03T00:00:00Z", updatedTo: "2026-10-04T00:00:00Z", masked: "false", restricted: "true", retryable: "false" };
+    const params = new URLSearchParams({ ...dimensions, source: "legacy-shell-source", sortBy: "lastObservedAt", page: "3" });
+    const state = parseInboxUrlState(params);
+    expect(state).toMatchObject({ ...dimensions, sortBy: "lastObservedAt", page: 3 });
+    const saved = serializeInboxUrlState(state, params);
+    expect(saved.get("source")).toBe("legacy-shell-source");
+    expect(parseInboxUrlState(saved)).toEqual(state);
+    expect(toIntakeInboxQuery(state, "fallback-area")).toMatchObject({ ...dimensions, masked: false, restricted: true,
+      retryable: false, selectedHeatZoneId: "fallback-area" });
+    expect(toIntakeInboxQuery(DEFAULT_INBOX_FILTERS)).toMatchObject({ masked: undefined, restricted: undefined, retryable: undefined });
+  });
+
+  it("does not coerce arbitrary or conflicting boolean filters into true", () => {
+    const state = parseInboxUrlState(new URLSearchParams("masked=0&restricted=true&restricted=false&retryable=FALSE"));
+    expect(state).toMatchObject({ masked: "", restricted: "", retryable: "" });
   });
 
   it("preserves unrelated repeated values and the surrounding detail context", () => {
