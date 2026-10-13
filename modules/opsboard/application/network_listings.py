@@ -707,6 +707,10 @@ class NetworkListingService:
         meta = self._get_listing_metadata(lst.listing_id)
         if meta:
             res.update(meta)
+            # Supplemental presentation metadata cannot reopen the listing
+            # aggregate's terminal archive, including on a later retry.
+            if str(lst.listing_status).upper() == "ARCHIVED":
+                res["status"] = lst.listing_status
         elif self._seed_fixtures:
             for item in _seed_state(tenant_id=self._tenant_id or "tenant-a")["listings"]:
                 if item["id"] == lst.listing_id:

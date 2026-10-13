@@ -247,6 +247,24 @@ def test_an_instance_created_before_another_writer_can_replay_its_durable_receip
         engine.close()
 
 
+def test_stale_metadata_cannot_reactivate_a_durably_archived_listing(tmp_path):
+    engine = SqliteEngine(tmp_path / "terminal-status-authority.sqlite3")
+    try:
+        service = _durable_service(engine, _service().export_state())
+        first = _archive(service)
+        metadata = service._intakes.get_listing_metadata(SOURCE)
+        # A supplemental metadata writer retains an older presentation label.
+        # The actual listing aggregate still records its terminal archive.
+        service._intakes.save_listing_metadata(SOURCE, {**metadata, "status": "duplicate"})
+        with pytest.raises(NetworkListingConflict, match="LISTING_TERMINAL"):
+            _archive(service, key="attempt-reactivation", reason="Do not replace archive")
+        assert service._listing_repository.get_listing(SOURCE).listing_status == "archived"
+        assert service._intakes.get_listing_metadata(SOURCE)["archivedReason"] == first["listing"]["archivedReason"]
+        assert len(service._intakes.list_idempotency_records()) == 1
+    finally:
+        engine.close()
+
+
 @pytest.mark.parametrize("operation", ["archive", "merge"])
 def test_existing_receipt_is_denied_after_independent_durable_hold_writer(tmp_path, operation):
     engine = SqliteEngine(tmp_path / "replay-new-hold.sqlite3")
