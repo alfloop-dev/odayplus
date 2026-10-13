@@ -1271,11 +1271,14 @@ class NetworkListingService:
 
         write = self._prepare_write("merge", governed_key, actor_name,
                                     {"source_listing_id": source_listing_id, "target_listing_id": target_listing_id, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged}, correlation_id)
-        if write.replayed_response is not None:
-            return write.replayed_response
-
+        if not self._seed_fixtures:
+            self._load_listings()
         source = self._listing(source_listing_id)
         target = self._listing(target_listing_id)
+        if any(record.get("hasLegalHold") or record.get("legalHold") for record in (source, target)):
+            raise NetworkListingConflict("LEGAL_HOLD_CONFLICT")
+        if write.replayed_response is not None:
+            return write.replayed_response
         if source_listing_id == target_listing_id:
             raise NetworkListingConflict("source and target listing must be different")
         # Merge is terminal for the source. Replaying the SAME idempotency key is
@@ -1287,6 +1290,14 @@ class NetworkListingService:
             raise NetworkListingConflict(
                 f"{source_listing_id} is already merged into {merged_into} and cannot be merged again"
             )
+        if str(source.get("status", "")).upper() == "ARCHIVED":
+            raise NetworkListingConflict(f"{source_listing_id} is archived and cannot be merged")
+        if target.get("mergedIntoId"):
+            raise NetworkListingConflict(
+                f"{target_listing_id} is already merged into {target['mergedIntoId']} and cannot receive a merge"
+            )
+        if str(target.get("status", "")).upper() == "ARCHIVED":
+            raise NetworkListingConflict(f"{target_listing_id} is archived and cannot receive a merge")
 
         source_before_status = source.get("status")
         target_before_evidence = list(target.get("sourceEvidence", []))
@@ -1367,10 +1378,21 @@ class NetworkListingService:
 
         write = self._prepare_write("archive", idempotency_key, actor_name,
                                     {"listing_id": listing_id, "reason": reason}, correlation_id)
+        if not self._seed_fixtures:
+            self._load_listings()
+        listing = self._listing(listing_id)
+        if listing.get("hasLegalHold") or listing.get("legalHold"):
+            raise NetworkListingConflict("LEGAL_HOLD_CONFLICT")
+        # A retry keeps its original receipt. A new logical operation cannot
+        # overwrite a terminal record's reason or append another success audit.
         if write.replayed_response is not None:
             return write.replayed_response
-
-        listing = self._listing(listing_id)
+        if str(listing.get("status", "")).upper() == "ARCHIVED":
+            raise NetworkListingConflict(f"{listing_id} is already archived")
+        if listing.get("mergedIntoId"):
+            raise NetworkListingConflict(
+                f"{listing_id} is already merged into {listing['mergedIntoId']} and cannot be archived"
+            )
         before_status = listing.get("status")
 
         listing["status"] = "archived"

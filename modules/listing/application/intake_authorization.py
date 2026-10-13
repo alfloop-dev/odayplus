@@ -172,6 +172,7 @@ def authorize_intake_action(
             "submit_url": Action.CREATE,
             "submit_csv": Action.CREATE,
             "cancel": Action.UPDATE,
+            "archive": Action.UPDATE,
             "correct": Action.UPDATE,
             "decide": Action.UPDATE,
             "merge": Action.UPDATE,
@@ -332,7 +333,7 @@ def authorize_intake_action(
         if not (is_staff or is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
-    elif action == "cancel":
+    elif action in ("cancel", "archive"):
         if is_staff and resource is not None:
             owner = resource.get("owner")
             submitter = resource.get("submitter")
@@ -340,6 +341,8 @@ def authorize_intake_action(
                 _raise_and_audit(status_code=403, detail="OWNERSHIP_REQUIRED")
         if not (is_staff or is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
+        if action == "archive" and has_legal_hold:
+            _raise_and_audit(status_code=409, detail="LEGAL_HOLD_CONFLICT")
 
     elif action == "correct":
         # Check risk acknowledgement for corrections
@@ -377,6 +380,9 @@ def authorize_intake_action(
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
         if not (is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
+
+        if action == "merge" and has_legal_hold:
+            _raise_and_audit(status_code=409, detail="LEGAL_HOLD_CONFLICT")
 
         # Check risk acknowledgement for merge/split/unmerge
         if not risk_summary or not risk_summary.strip():

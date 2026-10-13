@@ -474,7 +474,7 @@ def create_network_listings_sub_router(
 
             authorize_intake_action(
                 principal,
-                "cancel",
+                "archive",
                 resource=listing,
                 has_legal_hold=has_legal_hold,
                 operator_role_id=operator_role_id,
