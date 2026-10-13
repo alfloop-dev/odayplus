@@ -1155,10 +1155,9 @@ else:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_authorization import authorize_intake_action
 
-            # Read authorization is NEVER enqueue authority. Assisted intake
-            # uses its dedicated creation path, not this generic endpoint.
-            if body.job_type not in {"forecast", "external-fetch", "batch-listing-intake"}:
-                raise HTTPException(403, detail={"code": "JOB_TYPE_CREATE_FORBIDDEN"})
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
             payload = body.payload
             idempotency_tenant_id: str | None = None
             idempotency_scope = ""
@@ -1292,6 +1291,10 @@ else:
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail={"code": "RESERVED_IDEMPOTENCY_NAMESPACE"},
                 )
+            # Read authorization is NEVER enqueue authority. Assisted intake
+            # uses its dedicated creation path, not this generic endpoint.
+            if body.job_type not in {"forecast", "external-fetch", "batch-listing-intake"}:
+                raise HTTPException(403, detail={"code": "JOB_TYPE_CREATE_FORBIDDEN"})
             job_request = JobRequest(
                 job_type=body.job_type, payload=payload,
                 idempotency_key=queue_idempotency_key,

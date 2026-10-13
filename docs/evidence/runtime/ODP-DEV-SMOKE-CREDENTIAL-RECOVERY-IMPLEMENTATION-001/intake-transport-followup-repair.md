@@ -42,9 +42,19 @@ foreground ordinary/canonical and cleanup-only new session scenarios; owner actu
 TLS logout new-cookie refusal with two once-only cleanup intents; mixed-role scope
 in-scope positive flat/nested, absent/conflicting scopes and stale idempotent replay
 refusal. Healthy own-session cleanup and repeated/uncertain logout rules unchanged.
-Original whole recovery security suite also passes separately. Every new immutable
-head still needs fresh all selections and independent review; author targeted green
-results never transfer historical coverage or establish canonical acceptance.
+Original whole recovery security suite also passes separately. Immutable eb3454a5c
+all15 original selections passed, comprehensive1175.986s under unchanged1200s cap;
+extra job composition passed, extra partial-batch found five legacy-fixture failures.
+Preserve them: old fixtures expected unregistered generic jobs to be readable and
+creatable. Follow-up keeps every retry/PARTIAL/worker/persistence/denied-audit
+assertion but uses supported external-fetch with actual integration data_owner
+permission and a fixture-only handler (no provider). Unknown generic is explicitly
+refused/no work. Reserved-prefix fixture now supplies authenticated owner; enqueue
+authentication precedes type/shape refusal, while type allowlist still precedes any
+queue call. Foreign supported enqueue expects existing TENANT_SCOPE_MISMATCH403,
+not old unregistered generic's404. No insecure grant restored or denial weakened.
+Every new immutable head still needs fresh all selections and independent review;
+author targeted green results never transfer or establish canonical acceptance.
 
 Prior d204 comprehensive serial hit unchanged1200s cap twice (exit124), both failures
 retained; fifteen other successful receipts include one additional job composition,

@@ -463,14 +463,14 @@ def test_3_orthogonality_and_delivery_state_clear(db_path: str) -> None:
             probe_key = f"ortho-probe-{is_durable}"
             registry = JobRegistry()
             registry.register(
-                "probe-job",
+                "external-fetch",  # Supported read type; this fixture handler never fetches.
                 lambda job, p: (_ for _ in ()).throw(
                     _TransientProbeError("Transient network timeout")
                 ),
             )
             reg_job, _ = bundle.job_queue.enqueue(
                 JobRequest(
-                    job_type="probe-job",
+                    job_type="external-fetch",
                     payload={"tenant_id": "tenant-test"},
                     idempotency_key=probe_key,
                 ),
@@ -524,7 +524,7 @@ def test_3_orthogonality_and_delivery_state_clear(db_path: str) -> None:
             client = TestClient(app)
             api_resp = client.get(
                 f"/jobs/{reg_job.job_id}",
-                headers=_auth_headers("tenant-test"),
+                headers=_auth_headers("tenant-test", role="data_owner"),
             )
             assert api_resp.status_code == 200
             api_job = api_resp.json()
@@ -2223,7 +2223,7 @@ def test_foreground_replay_authorizes_actual_job(db_path, backend):
         legitimate = client.post("/api/v1/jobs", headers=owner, json=request)
         assert legitimate.status_code == 202 and legitimate.json()["created"] is False
         assert legitimate.json()["job_id"] == first.json()["job_id"]
-        reserved = client.post("/api/v1/jobs", json={"job_type": "unregistered", "idempotency_key": "batch-listing-intake:v1:review-tenant:private-key", "payload": {}})
+        reserved = client.post("/api/v1/jobs", headers=owner, json={"job_type": "unregistered", "idempotency_key": "batch-listing-intake:v1:review-tenant:private-key", "payload": {}})
         assert reserved.status_code == 422, reserved.text
         # A pre-existing legacy collision must still authorize the returned
         # record; protecting only newly constructed namespace strings is not enough.
@@ -2379,9 +2379,9 @@ def test_foreground_denied_enqueue_creates_no_work_and_is_audited(db_path, backe
     try:
         client = TestClient(create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log, persistence=bundle))
         cases = [({}, "private-tenant", "denied-anonymous", 401),
-                 (_auth_headers("other-tenant"), "private-tenant", "denied-foreign", 404)]
+                 (_auth_headers("other-tenant", role="data_owner"), "private-tenant", "denied-foreign", 403)]
         for headers, tenant, key, expected in cases:
-            response = client.post("/api/v1/jobs", headers={**headers, "x-correlation-id": key}, json={"job_type": "synthetic-generic", "payload": {"tenant_id": tenant}, "idempotency_key": key})
+            response = client.post("/api/v1/jobs", headers={**headers, "x-correlation-id": key}, json={"job_type": "external-fetch", "payload": {"tenant_id": tenant}, "idempotency_key": key})
             assert response.status_code == expected
             assert bundle.job_queue.get_by_idempotency_key(key) is None
             events = bundle.audit_log.list_events(correlation_id=key)
@@ -2391,11 +2391,13 @@ def test_foreground_denied_enqueue_creates_no_work_and_is_audited(db_path, backe
         denied_batch = client.post("/api/v1/jobs", headers={**_auth_headers("private-tenant", role="auditor"), "x-correlation-id": "denied-batch"}, json={"job_type": BATCH_LISTING_INTAKE_JOB_TYPE, "payload": {"items": [{"item_id": "one", "address_raw": "PRIVATE"}]}})
         assert denied_batch.status_code == 403
         assert bundle.audit_log.list_events(correlation_id="denied-batch")[0].outcome == "denied"
-        accepted = client.post("/api/v1/jobs", headers=_auth_headers("private-tenant"), json={"job_type": "synthetic-generic", "payload": {"tenant_id": "private-tenant"}, "idempotency_key": "allowed-generic"})
+        unknown = client.post("/api/v1/jobs", headers=_auth_headers("private-tenant", role="data_owner"), json={"job_type": "synthetic-generic", "payload": {"tenant_id": "private-tenant"}, "idempotency_key": "forbidden-generic"})
+        assert unknown.status_code == 403 and bundle.job_queue.get_by_idempotency_key("forbidden-generic") is None
+        accepted = client.post("/api/v1/jobs", headers=_auth_headers("private-tenant", role="data_owner"), json={"job_type": "external-fetch", "payload": {"tenant_id": "private-tenant"}, "idempotency_key": "allowed-supported"})
         assert accepted.status_code == 202
         calls = []
         registry = JobRegistry()
-        registry.register("synthetic-generic", lambda job, persistence: calls.append(job.job_id))
+        registry.register("external-fetch", lambda job, persistence: calls.append(job.job_id))  # No external provider.
         worker = ODayWorker(persistence=bundle, registry=registry)
         assert worker.run_once() is True
         assert worker.run_once() is False
