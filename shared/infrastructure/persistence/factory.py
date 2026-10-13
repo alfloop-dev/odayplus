@@ -522,6 +522,7 @@ def _postgres_bundle(
 
     pg_audit_log = DurableAuditLog(engine, worm_sink=resolved_worm_sink)
     pg_manual_corr_repo = DurableManualCorrectionRepository(engine)
+    from shared.infrastructure.persistence.price_exploration import CanonicalPriceExplorationStore
 
     return PersistenceBundle(
         mode="postgresql",
@@ -537,7 +538,9 @@ def _postgres_bundle(
         netplan_repository=DurableNetPlanRepository(store),
         learninghub_repository=DurableLearningHubRepository(store),
         artifact_store=DurableArtifactStore(store),
-        priceops_repository=DurablePriceOpsRepository(store),
+        priceops_repository=DurablePriceOpsRepository(
+            store, canonical_exploration=CanonicalPriceExplorationStore(engine),
+        ),
         sitescore_repository=DurableSiteScoreRepository(store),
         adlift_repository=DurableAdLiftRepository(store),
         store_ops_repository=DurableStoreOpsRepository(store),

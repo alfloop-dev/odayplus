@@ -44521,6 +44521,24 @@
     "/api/v1/priceops/exploration-candidates": {
       "post": {
         "operationId": "generate_exploration_candidates_api_v1_priceops_exploration_candidates_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -44860,6 +44878,9 @@
             },
             "description": "Resource not found"
           },
+          "405": {
+            "description": "Gate mutation requires workflow approval"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -44989,6 +45010,9 @@
               }
             },
             "description": "Resource not found"
+          },
+          "405": {
+            "description": "Gate mutation requires workflow approval"
           },
           "409": {
             "content": {

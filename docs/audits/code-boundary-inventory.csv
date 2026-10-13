@@ -881,6 +881,7 @@ shared/infrastructure/persistence/operator_network_listings.py,product_system,pr
 shared/infrastructure/persistence/operator_shell.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/outbox.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/postgresql.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+shared/infrastructure/persistence/price_exploration.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/integrity.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/jobs/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -1130,6 +1131,7 @@ tests/integration/test_priceops_api.py,verification,verification_only,false,prod
 tests/integration/test_priceops_atomic_commands.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_priceops_audit_backlog.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_priceops_bandit_gating.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_priceops_canonical_gate.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_priceops_canonical_ownership.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_priceops_command_authority.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_priceops_constraints.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

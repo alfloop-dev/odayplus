@@ -98,6 +98,7 @@ class PriceOpsOptimizerWorker:
             self.service.simulate(plan.plan_id, generated_at=moment)
             optimization = self.service.optimize(
                 plan.plan_id,
+                actor=request.created_by or "system",
                 optimized_at=moment,
                 exploration_gate_id=request.exploration_gate_id,
                 exploration_algorithm=request.exploration_algorithm,

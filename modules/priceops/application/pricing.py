@@ -11,6 +11,7 @@ repository.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -197,6 +198,9 @@ class PriceOpsService:
         not reach a production solver and a valid gate must cover the concrete
         plan resources, not just the tenant or a caller-provided scope.
         """
+        canonical = getattr(self.repository, "canonical_exploration", None)
+        if self.production_required and canonical is None:
+            raise ExplorationNotAuthorizedError("Production exploration requires canonical workflow/pricing authorization")
         gate = self.repository.get_gate(gate_id, tenant_id=plan.tenant_id)
         if gate is None:
             raise ExplorationNotAuthorizedError(
@@ -218,6 +222,8 @@ class PriceOpsService:
                 f"({gate.budget_consumed} >= {gate.budget_limit})"
             )
         validate_gate_scope(gate, tenant_id=plan.tenant_id, items=plan.items)
+        if canonical is not None:
+            canonical.validate_items(gate, plan.items)
         return gate
 
     # -- simulation -------------------------------------------------------
@@ -246,6 +252,29 @@ class PriceOpsService:
 
     # -- optimization -----------------------------------------------------
     def optimize(
+        self,
+        plan_id: str,
+        *,
+        actor: str = "system",
+        reason: str = "constrained price optimization",
+        optimized_at: datetime | None = None,
+        exploration_gate_id: str | None = None,
+        exploration_algorithm: str = "THOMPSON_SAMPLING",
+        exploration_seed: int | None = None,
+        exploration_history: Sequence[tuple[float, float]] | None = None,
+    ) -> PlanOptimization:
+        canonical = getattr(self.repository, "canonical_exploration", None)
+        if exploration_gate_id is not None and self.production_required and canonical is None:
+            raise ExplorationNotAuthorizedError("Production exploration requires canonical workflow/pricing authorization")
+        context = canonical.transaction(exploration_gate_id, self._require_plan(plan_id).tenant_id) if canonical is not None and exploration_gate_id is not None else nullcontext()
+        with context:
+            return self._optimize(
+                plan_id, actor=actor, reason=reason, optimized_at=optimized_at,
+                exploration_gate_id=exploration_gate_id, exploration_algorithm=exploration_algorithm,
+                exploration_seed=exploration_seed, exploration_history=exploration_history,
+            )
+
+    def _optimize(
         self,
         plan_id: str,
         *,
@@ -287,6 +316,9 @@ class PriceOpsService:
             solver_version = PRICEOPS_SOLVER_VERSION
 
         if gate is not None:
+            if getattr(self.repository, "canonical_exploration", None) is not None:
+                now = datetime.now(UTC)
+                gate = self._validate_exploration_gate(plan, gate.gate_id, at=now, require_budget=True)
             effective_seed = exploration_seed if exploration_seed is not None else 0
             effective_history = tuple(exploration_history or ())
             bandit_candidates = [
@@ -320,7 +352,10 @@ class PriceOpsService:
                     + ", ".join(unsafe_candidates)
                 )
             total_exploration_cost = sum(
-                candidate.estimated_exploration_cost for candidate in bandit_candidates
+                float(self.repository.canonical_exploration.budget_cost(candidate.estimated_exploration_cost))
+                if getattr(self.repository, "canonical_exploration", None) is not None
+                else candidate.estimated_exploration_cost
+                for candidate in bandit_candidates
             )
             if not gate.has_budget(total_exploration_cost):
                 raise ExplorationNotAuthorizedError(
@@ -329,10 +364,11 @@ class PriceOpsService:
                 )
 
             # Record exploration decisions and deduct budget
+            recorded_decisions = []
             for candidate in bandit_candidates:
-                self.repository.record_exploration_decision(
+                recorded_decisions.append(self.repository.record_exploration_decision(
                     ExplorationDecision(
-                        decision_id=f"pricing-exploration-dec-{uuid4()}",
+                        decision_id=str(uuid4()) if getattr(self.repository, "canonical_exploration", None) is not None else f"pricing-exploration-dec-{uuid4()}",
                         gate_id=gate.gate_id,
                         tenant_id=plan.tenant_id,
                         sku_id=candidate.sku_id,
@@ -342,9 +378,12 @@ class PriceOpsService:
                         budget_consumed=candidate.estimated_exploration_cost,
                         algorithm=candidate.algorithm,
                         created_at=now,
+                        created_by=actor,
                     )
-                )
+                ))
 
+            solver_metadata["exploration_decision_ids"] = [decision.decision_id for decision in recorded_decisions]
+            solver_metadata["exploration_budget_consumed"] = sum(decision.budget_consumed for decision in recorded_decisions)
             solver_metadata["exploration_enabled"] = True
             solver_metadata["gate_id"] = gate.gate_id
             solver_metadata["gate_scope"] = _gate_scope_snapshot(gate)

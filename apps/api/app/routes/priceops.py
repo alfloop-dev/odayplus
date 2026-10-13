@@ -466,6 +466,33 @@ else:
                     "message": "; ".join(blockers),
                 })
 
+        def gate_in_scope(gate: Any, principal: Any) -> bool:
+            scope = principal.scope
+            return (
+                (not scope.tenant_id or gate.tenant_id == scope.tenant_id)
+                and scope.permits_module("priceops")
+                and scope.permits_classification(DataClassification.CONFIDENTIAL)
+                and scope.permits_brand(gate.scope_brand_id)
+                and scope.permits_store(None) and scope.permits_region(None)
+                and scope.permits_assigned_area(None) and scope.permits_heat_zone(None)
+            )
+
+        def require_workflow_gate_write() -> None:
+            if production_required or getattr(price_repository, "canonical_exploration", None) is not None:
+                raise HTTPException(status_code=405, detail={
+                    "code": "WORKFLOW_APPROVAL_REQUIRED",
+                    "message": "Exploration gate creation and revocation use the workflow approval path",
+                }, headers={"Allow": "GET"})
+
+        def require_canonical_exploration() -> Any:
+            canonical = getattr(price_repository, "canonical_exploration", None)
+            if production_required and canonical is None:
+                raise HTTPException(status_code=503, detail={
+                    "code": "PRICEOPS_EXPLORATION_BINDING_REQUIRED",
+                    "message": "Canonical pricing/workflow authorization is unavailable",
+                })
+            return canonical
+
         @router.post("/plans", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_plan_permission(Action.CREATE))])
         def create_plan(
             body: PriceOpsPlanPayload,
@@ -978,7 +1005,10 @@ else:
             at: str | None = Query(default=None),
         ) -> dict[str, Any]:
             tid = tenant_id(request, tenant_id_param)
+            canonical = require_canonical_exploration()
             now = _parse_time(at) or datetime.now(UTC)
+            if production_required or canonical is not None:
+                now = datetime.now(UTC)
             scope = PriceScope(
                 tenant_id=tid,
                 brand_id=brand_id,
@@ -986,7 +1016,10 @@ else:
                 sku_group=sku_group,
             )
             active_gate = service.repository.find_active_gate(scope, at=now)
-            all_gates = service.repository.list_gates(tenant_id=tid)
+            principal = request.state.operator_principal
+            all_gates = [gate for gate in service.repository.list_gates(tenant_id=tid) if gate_in_scope(gate, principal)]
+            if active_gate is not None and not gate_in_scope(active_gate, principal):
+                active_gate = None
             return {
                 "tenant_id": tid,
                 "scope": scope.to_dict(),
@@ -995,7 +1028,7 @@ else:
                 "gates": [g.to_dict() for g in all_gates],
             }
 
-        @router.post("/exploration-gates", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
+        @router.post("/exploration-gates", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_workflow_gate_write), Depends(require_plan_permission(Action.EXECUTE))], responses={405: {"description": "Gate mutation requires workflow approval"}})
         def register_exploration_gate(
             body: PriceOpsExplorationGateRegisterPayload,
             request: Request,
@@ -1033,7 +1066,7 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.post("/exploration-gates/{gate_id}/revoke", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
+        @router.post("/exploration-gates/{gate_id}/revoke", dependencies=[Depends(require_workflow_gate_write), Depends(require_plan_permission(Action.EXECUTE))], responses={405: {"description": "Gate mutation requires workflow approval"}})
         def revoke_exploration_gate(
             gate_id: str,
             body: PriceOpsExplorationGateRevokePayload,
@@ -1066,59 +1099,71 @@ else:
         def generate_exploration_candidates(
             body: PriceOpsExplorationCandidatesPayload,
             request: Request,
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             active_tid = tenant_id(request, body.tenant_id)
+            canonical = require_canonical_exploration()
+            proposal = PriceOpsPlanPayload(tenant_id=body.tenant_id, items=body.items)
+            require_proposal_scope(proposal, request)
+            body.items = proposal.items
+            active_store = command_store(request)
             now = _parse_time(body.at) or datetime.now(UTC)
+            if production_required or canonical is not None:
+                now = datetime.now(UTC)
             scope = PriceScope(
                 tenant_id=active_tid,
                 brand_id=body.scope_brand_id,
                 store_group=body.scope_store_group,
                 sku_group=body.scope_sku_group,
             )
-            try:
-                grant = authorize_exploration(scope, at=now, repository=service.repository)
-            except ExplorationNotAuthorizedError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail={
-                        "code": "EXPLORATION_NOT_AUTHORIZED",
-                        "message": str(exc),
-                        "exploration_enabled": False,
-                    },
-                ) from exc
+            def _execute(_receipt_id: str) -> dict[str, Any]:
+                _require_durable_audit_capacity(active_store, active_audit_log, active_tid,
+                                               production_required=production_required)
+                try:
+                    gate = service.repository.find_active_gate(scope, at=now)
+                    if gate is None:
+                        raise ExplorationNotAuthorizedError("No active canonical exploration authorization")
+                    if not gate_in_scope(gate, request.state.operator_principal):
+                        raise HTTPException(status_code=403, detail="exploration gate outside caller scope")
+                    context = canonical.transaction(gate.gate_id, active_tid) if canonical is not None else nullcontext()
+                    with context:
+                        clock = datetime.now(UTC) if canonical is not None or production_required else now
+                        grant = authorize_exploration(scope, at=clock, repository=service.repository)
+                        if grant.gate_id != gate.gate_id:
+                            raise ExplorationNotAuthorizedError("Exploration authorization changed during preview")
+                        domain_items = [_item_from_payload(item) for item in body.items]
+                        if canonical is not None:
+                            canonical.validate_items(gate, domain_items)
+                        candidates = ExplorationService(repository=service.repository).explorer.generate_candidates(
+                            scope=scope, grant=grant, items=domain_items,
+                            algorithm=body.algorithm, history=body.history, seed=body.seed,
+                        )
+                        quoted_cost = sum(float(canonical.budget_cost(candidate.estimated_exploration_cost)) if canonical is not None
+                                          else candidate.estimated_exploration_cost for candidate in candidates)
+                        if quoted_cost > grant.budget_remaining + 1e-6:
+                            raise ExplorationBudgetExceededError("Candidate set exceeds the authorized remaining budget")
+                        audit = _record_audit(
+                            active_audit_log, request, "priceops.exploration_previewed.v1", "preview",
+                            "priceops/gates/" + gate.gate_id,
+                            {"gate_id": gate.gate_id, "approval_id": gate.approval_id,
+                             "approval_decision_id": gate.approval_decision_id,
+                             "decision_policy_version_id": gate.decision_policy_version_id, "mode": "shadow"},
+                        )
+                        return {"exploration_enabled": True, "grant": grant.to_dict(),
+                                "algorithm": body.algorithm, "mode": "shadow",
+                                "candidates": [candidate.to_dict() for candidate in candidates],
+                                "audit_event_id": audit.event_id, "correlation_id": request.state.correlation_id}
+                except (ExplorationNotAuthorizedError, ExplorationBudgetExceededError, ElasticityInputError, ValueError) as exc:
+                    raise HTTPException(status_code=422, detail={
+                        "code": "EXPLORATION_NOT_AUTHORIZED", "message": str(exc), "exploration_enabled": False,
+                    }) from exc
 
-            explore_service = ExplorationService(repository=service.repository)
-            try:
-                domain_items = [_item_from_payload(item) for item in body.items]
-            except ElasticityInputError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-                ) from exc
-            try:
-                candidates = explore_service.explorer.generate_candidates(
-                    scope=scope,
-                    grant=grant,
-                    items=domain_items,
-                    algorithm=body.algorithm,
-                    history=body.history,
-                    seed=body.seed,
-                )
-            except ExplorationNotAuthorizedError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail={
-                        "code": "EXPLORATION_NOT_AUTHORIZED",
-                        "message": str(exc),
-                        "exploration_enabled": False,
-                    },
-                ) from exc
-            return {
-                "exploration_enabled": True,
-                "grant": grant.to_dict(),
-                "algorithm": body.algorithm,
-                "mode": "shadow",
-                "candidates": [c.to_dict() for c in candidates],
-            }
+            return _guard_creation(
+                active_store, tenant_id=active_tid, correlation_id=request.state.correlation_id,
+                key=idempotency_key, scope="priceops:exploration_preview",
+                payload={"verified_actor": request.state.operator_principal.subject_id,
+                         "body": body.model_dump(mode="json")}, operation=_execute,
+            )
 
         @router.get("/plans/{plan_id}/activation-receipt", dependencies=[Depends(require_plan_permission(Action.VIEW))])
         def get_activation_receipt(
@@ -1359,6 +1404,10 @@ else:
                 audit_action,
                 f"priceops/plans/{plan_id}",
                 {"plan_id": plan_id, **{
+                    key: payload.get("solver_metadata", {})[key]
+                    for key in ("gate_id", "decision_policy_version_id", "exploration_decision_ids", "exploration_budget_consumed")
+                    if key in payload.get("solver_metadata", {})
+                }, **{
                     key: payload[key] for key in (
                         "decision_id", "scenario_id", "selected_scenario_id",
                         "reason", "policy_version", "solver_version",

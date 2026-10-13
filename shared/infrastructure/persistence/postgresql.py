@@ -55,6 +55,10 @@ _REQUIRED_RELATIONS = (
     "core.tenants",
     "core.transactions",
     "workflow.decision_policies",
+    "workflow.decisions",
+    "workflow.approvals",
+    "pricing.exploration_gates",
+    "pricing.exploration_decisions",
 )
 
 

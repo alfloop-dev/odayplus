@@ -1081,8 +1081,9 @@ class DurablePriceOpsRepository:
     _EXPLORATION_DECISIONS = "priceops.exploration_decisions"
     _ACTIVATION_RECEIPTS = "priceops.activation_receipts"
 
-    def __init__(self, store: SqliteDocumentStore) -> None:
+    def __init__(self, store: SqliteDocumentStore, *, canonical_exploration: Any = None) -> None:
         self._store = store
+        self.canonical_exploration = canonical_exploration
 
     def insert_plan(self, plan: PricingPlan) -> PricingPlan:
         if not self._store.put_if_absent(self._PLANS, plan.plan_id, plan, group_key=plan.tenant_id):
@@ -1181,15 +1182,18 @@ class DurablePriceOpsRepository:
         return self._store.get(self._EVALUATIONS, plan_id)
 
     # -- exploration gates and receipts ----------------------------------
-    # These records use the same durable document store as the rest of the
-    # PriceOps aggregate.  The Postgres deployment store implements the same
-    # interface, so production API composition cannot silently fall back to
-    # the process-local gate repository.
+    # Production delegates authority and budget tracking to canonical
+    # pricing/workflow SQL. Explicit local/test repositories retain their
+    # document fixtures; those records cannot authorize production exploration.
     def save_gate(self, gate: ExplorationGate) -> ExplorationGate:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.save_gate(gate)
         self._store.put(self._GATES, gate.gate_id, gate, group_key=gate.tenant_id)
         return gate
 
     def get_gate(self, gate_id: str, tenant_id: str | None = None) -> ExplorationGate | None:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.get_gate(gate_id, tenant_id)
         gate = self._store.get(self._GATES, gate_id)
         if gate is not None and tenant_id is not None and gate.tenant_id != tenant_id:
             return None
@@ -1198,6 +1202,8 @@ class DurablePriceOpsRepository:
     def find_active_gate(
         self, scope: PriceScope, at: datetime | None = None
     ) -> ExplorationGate | None:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.find_active_gate(scope, at)
         now = at or datetime.now(UTC)
         for gate in self.list_gates(tenant_id=scope.tenant_id):
             if scope.matches(gate) and gate.is_valid_at(now) and gate.remaining_budget > 0:
@@ -1205,6 +1211,8 @@ class DurablePriceOpsRepository:
         return None
 
     def list_gates(self, tenant_id: str | None = None) -> list[ExplorationGate]:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.list_gates(tenant_id)
         if tenant_id is not None:
             return self._store.list_by_group(self._GATES, tenant_id)
         return self._store.list_all(self._GATES)
@@ -1212,6 +1220,8 @@ class DurablePriceOpsRepository:
     def revoke_gate(
         self, gate_id: str, tenant_id: str, revoked_at: datetime | None = None
     ) -> ExplorationGate:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.revoke_gate(gate_id, tenant_id, revoked_at)
         gate = self.get_gate(gate_id, tenant_id=tenant_id)
         if gate is None:
             raise LookupError(f"Gate {gate_id} not found for tenant {tenant_id}")
@@ -1242,6 +1252,8 @@ class DurablePriceOpsRepository:
     def record_exploration_decision(
         self, decision: ExplorationDecision
     ) -> ExplorationDecision:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.record_exploration_decision(decision)
         gate = self.get_gate(decision.gate_id, tenant_id=decision.tenant_id)
         if gate is None:
             raise LookupError(
@@ -1293,6 +1305,8 @@ class DurablePriceOpsRepository:
     def list_exploration_decisions(
         self, gate_id: str | None = None
     ) -> list[ExplorationDecision]:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.list_exploration_decisions(gate_id)
         if gate_id is not None:
             return self._store.list_by_group(self._EXPLORATION_DECISIONS, gate_id)
         return self._store.list_all(self._EXPLORATION_DECISIONS)
