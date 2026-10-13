@@ -96,6 +96,8 @@ class JobRequest:
     job_type: str
     payload: dict[str, Any]
     idempotency_key: str | None = None
+    # Internal reservation identity for transaction-owned workflow jobs.
+    job_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -172,7 +174,10 @@ class InMemoryJobQueue:
                 payload=request.payload,
                 correlation_id=correlation_id,
                 idempotency_key=request.idempotency_key,
+                **({"job_id": request.job_id} if request.job_id else {}),
             )
+            if record.job_id in self._jobs:
+                raise ValueError("Job identity is already reserved")
             self._jobs[record.job_id] = record
             if request.idempotency_key:
                 self._idempotency_index[request.idempotency_key] = record.job_id

@@ -108,10 +108,11 @@ cached replay inside the transaction. An orphan decision, scope revocation,
 self-review, wrong tenant or stale version cannot be made valid by an earlier
 successful read. Request, decision, candidate/listing writes, outbox and replay
 must use a consistent transaction owner. Arbitrary persistence failures roll
-back their partial writes. An explicitly classified score-queue failure instead
-retains the candidate and recorded recovery checkpoint; its committed failure
-receipt must remain discoverable after restart without creating a second
-candidate on replay.
+back their partial writes. A failed actual worker attempt retains the candidate
+and recorded recovery checkpoint; its committed failure receipt must remain
+discoverable after restart without creating a second candidate on replay.
+An exception while reserving or committing the job is a transaction failure;
+it cannot manufacture a retained receipt for work that was never accepted.
 
 Required isolated PostgreSQL evidence includes an actual Operator submission,
 correction and resolution command, V1 request, second synthetic actor review,
@@ -139,9 +140,74 @@ dependency, not permission to omit domain events or recorded property identity.
 Producer events use the reviewed complete payload registry, with later schema
 overlays taking precedence over earlier catalog clauses.
 
-The retained SCORE_FAILED checkpoint and a retry receipt do not prove recovery.
-Actual durable scoring dispatch, worker execution, recovery to a completed
-promotion, denial/replay audit coverage, physical property reconciliation and
-cross-listing active-candidate uniqueness require additional evidence. Local
-synthetic score hooks and manually supplied property bindings do not close those
-production criteria.
+## Candidate implementation: actual SiteScore delivery and result commit
+
+The behavior below is implemented and locally tested, but two lifecycle
+semantics remain a release blocker against
+`docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md`:
+the reviewed `SCORE_QUEUED` to `COMPLETED` precondition is worker job
+accepted/committed (line 246), while this candidate waits for a successful
+report commit; the reviewed `SCORE_FAILED` precondition is exhausted budget or
+permanent validation failure (line 247), while this candidate also settles a
+transient inference failure immediately. Schema/enum validation does not approve
+either interpretation. Align the implementation with the reviewed lifecycle,
+or obtain an explicit reviewed contract change, before accepting this workflow.
+
+`workflow.jobs` is authoritative for `intake-sitescore`. The durable delivery
+queue reserves the same UUID and contains only `job_id`, `tenant_id`, and a
+signed `attempt_token`. API receipts read physical job state, reauthorize the
+current parent, and expose only the approved receipt fields. Saving a promotion
+must never construct a successful job projection. A new candidate has no score,
+recommendation or model version until an admitted model result is committed.
+
+API and worker require PostgreSQL and the same transaction engine for workflow,
+listing/candidate, outbox and delivery repositories. Provision
+`ODP_INTAKE_SCORE_ATTEMPT_SIGNING_KEY` through the deployment secret mechanism,
+with at least 32 bytes of secret material. A missing key prevents enqueue or
+execution; inspecting an existing receipt does not need the key. Rotation must
+account for outstanding signed deliveries: this implementation has no key ring
+and does not authorize automatic resigning of existing jobs.
+
+The canonical intake must pin its recorded source policy and snapshot. The live
+SQL source policy must remain enabled, unexpired and legally licensed; the
+snapshot must match the actual tenant/intake/source/candidate lineage.
+`MANUAL_ENTRY` requires recorded manual provenance. Retrieved/parser-derived
+input additionally requires a successful parser run, a current production
+release and exact input/output schema compatibility. Static source defaults,
+fixture snapshots and a display name cannot provide these bindings. The guard
+does not inspect a GCS object or grant source, storage or parser approval.
+
+External inference runs outside locks. Before result persistence the worker
+locks and rereads the parent, candidate, listing, address, authoritative job and
+delivery; validates both leases, fence/version, cancellation, input fingerprint
+and current source admission; then commits reports, prediction lineage,
+candidate changes, promotion completion, audit and delivery acknowledgement in
+one SQL transaction. Report/prediction IDs are stable per job. Heartbeats update
+both job stores and cannot renew an expired canonical lease.
+
+A failed computation moves the actual job to `FAILED` and the promotion to
+`SCORE_FAILED`, preserving the candidate. Manager retry checks current scope,
+version, checkpoint, policy/parser admission and reason, renews the signed
+generation, and reuses the job and candidate IDs. Retry-budget overrides are
+refused because the current request contract has no incident/change reference.
+Repeated expired attempts settle in dead letter at the recorded limit. An old
+attempt whose input changed cannot commit; a fresh delivery claim settles that
+stale checkpoint, after which authorized repair/replay can proceed. Cancellation
+discards the result and settles a fresh claimed delivery without inference.
+
+In this candidate, `SCORE_QUEUED` becomes `COMPLETED` only through successful
+report commit; this timing is subject to the unresolved contract issue above.
+A durable SQL queue is not proof of Cloud Tasks transport. The
+contract's 30-second SiteScore enqueue budget is not an approved inference
+timeout/backoff policy; inference-level hard limits and external transport
+admission still require separate production validation.
+
+Required local proof includes real PostgreSQL enqueue, worker success and
+restart readback; signed-reference tampering; concurrent parent/registry/fence
+changes; lease expiry and heartbeat; cancellation and budget exhaustion;
+failing model admission; atomic storage rollback; and an actual failed-job
+retry reaching a result with the original IDs. Synthetic computation proves
+these boundaries only. Production model approval, live object integrity,
+denial/replay audit delivery, physical property reconciliation, cross-listing
+active-candidate uniqueness, full visual/UAT evidence and release authority
+remain separate acceptance criteria.

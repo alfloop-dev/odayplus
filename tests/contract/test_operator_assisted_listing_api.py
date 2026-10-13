@@ -548,9 +548,34 @@ def test_promote_intake_contract_test() -> None:
             "If-Match": f'W/"{res_data["version"]}"',
         },
     )
-    assert review_resp.status_code == 200, review_resp.text
-    assert review_resp.json()["status"] == "COMPLETED"
-    assert review_resp.json()["candidate_site_id"]
+    assert review_resp.status_code == 503, review_resp.text
+    assert "SCORE_DELIVERY_UNAVAILABLE" in review_resp.text
+    # The declared dependency response must match the actual error envelope,
+    # as well as leaving the pending review and candidate/job state untouched.
+    import json
+
+    from jsonschema import Draft202012Validator
+
+    from delivery_toolchain.openapi.generate_assisted_listing_intake_client import ARTIFACT
+
+    contract = json.loads(ARTIFACT.read_text())
+    response_ref = contract["paths"][
+        "/v1/promotion-decisions/{promotion_decision_id}/actions/review"
+    ]["post"]["responses"]["503"]["$ref"]
+    declared_response = contract["components"]["responses"][response_ref.rsplit("/", 1)[1]]
+    error_schema = {
+        **declared_response["content"]["application/json"]["schema"],
+        "components": contract["components"],
+    }
+    Draft202012Validator(error_schema).validate(review_resp.json())
+    retained = client.get(
+        f"/api/v1/promotion-decisions/{res_data['promotion_decision_id']}",
+        headers=_write_headers("read-pending-after-delivery-unavailable"),
+    )
+    assert retained.status_code == 200, retained.text
+    assert retained.json()["status"] == "PENDING_REVIEW"
+    assert not retained.json().get("candidate_site_id")
+    assert not retained.json().get("site_score_job_id")
 
 
 # --- Risk disclosure contract (ODP-OC-R5-011 review finding P0-2) ---

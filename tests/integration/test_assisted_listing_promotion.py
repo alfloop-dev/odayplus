@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
 from uuid import uuid4
 
 import pytest
@@ -8,13 +7,14 @@ from fastapi.testclient import TestClient
 
 from apps.api.app.routes.listings import V1ListingRepositoryAdapter
 from apps.api.oday_api.main import create_app
-from modules.listing.application.promotion import PromotionScoreQueueError, PromotionService
+from modules.listing.application.promotion import PromotionService
 from modules.listing.domain.intake_states import (
     Actor,
     PrincipalRole,
     TransitionContext,
 )
 from modules.listing.domain.models import ListingDedupKey
+from modules.listing.tests.test_promotion_candidate_gate import _ExplicitTestDispatcher
 from shared.auth import Role
 from shared.domain import AddressLocation, Listing
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
@@ -68,12 +68,9 @@ class _IntakeRepository:
         return self.intake if self.intake["id"] == intake_id else None
 
 
-@pytest.mark.parametrize(
-    ("score_failure", "target_format"),
-    [(False, "FMT-MICRO-STORE"), (True, "FMT-STANDARD-STORE")],
-)
+@pytest.mark.parametrize("target_format", ["FMT-MICRO-STORE", "FMT-STANDARD-STORE"])
 def test_durable_promotion_preserves_requested_format_and_candidate(
-    tmp_path, score_failure, target_format,
+    tmp_path, target_format,
 ) -> None:
     bundle = _durable_bundle(tmp_path / "promotion-score-failure.sqlite3")
     listing = Listing(
@@ -109,14 +106,11 @@ def test_durable_promotion_preserves_requested_format_and_candidate(
     }
     adapter = V1ListingRepositoryAdapter(bundle.listing_repository)
 
-    def fail_score_queue() -> None:
-        raise RuntimeError("ODP_TEST_SCORE_FAILURE")
-
     service = PromotionService(
         promotion_repository=promotions,
         listing_repository=adapter,
         intake_repository=_IntakeRepository(intake),
-        score_queue_hook=fail_score_queue if score_failure else None,
+        score_dispatcher=_ExplicitTestDispatcher(),
     )
     try:
         bundle.listing_repository.save_listing(listing, address, key)
@@ -136,31 +130,32 @@ def test_durable_promotion_preserves_requested_format_and_candidate(
             ),
         )
 
-        with pytest.raises(PromotionScoreQueueError, match="ODP_TEST_SCORE_FAILURE") if score_failure else nullcontext():
-            service.review_promotion(
-                promotion_decision_id=requested["promotion_decision_id"],
-                decision="APPROVE",
-                reason="independent review",
-                risk_acknowledged=True,
-                context=TransitionContext(
-                    actor=Actor(
-                        actor_id="reviewer",
-                        role=PrincipalRole.EXPANSION_MANAGER,
-                        tenant_id="tenant-a",
-                    ),
-                    idempotency_key="review-score-failure",
-                    correlation_id="corr-score-failure",
+        service.review_promotion(
+            promotion_decision_id=requested["promotion_decision_id"],
+            decision="APPROVE",
+            reason="independent review",
+            risk_acknowledged=True,
+            context=TransitionContext(
+                actor=Actor(
+                    actor_id="reviewer",
+                    role=PrincipalRole.EXPANSION_MANAGER,
+                    tenant_id="tenant-a",
                 ),
-            )
+                idempotency_key="review-score-failure",
+                correlation_id="corr-score-failure",
+            ),
+        )
 
         failed = promotions.get_promotion(requested["promotion_decision_id"])
         candidates = bundle.listing_repository.list_candidates()
         assert failed is not None
-        assert failed["status"] == ("SCORE_FAILED" if score_failure else "COMPLETED")
+        assert failed["status"] == "SCORE_QUEUED"
         assert failed["target_format_code"] == target_format
         assert len(candidates) == 1
         assert candidates[0].candidate_site.target_format_code == target_format
-        assert candidates[0].candidate_site.site_status == ("SCORING_FAILED" if score_failure else "ready")
+        assert candidates[0].candidate_site.site_status == "new"
+        assert candidates[0].score is None
+        assert service.score_dispatcher.queue.get(failed["site_score_job_id"]) is not None
         assert candidates[0].listing == listing
         assert candidates[0].address == address
     finally:
@@ -200,7 +195,7 @@ def _synthetic_measured_listing_app():
     return create_app(persistence=bundle), listing, address
 
 
-def test_promotion_saga_golden_flow() -> None:
+def test_poc_promotion_retains_review_until_canonical_delivery_is_available() -> None:
     app, measured_listing, measured_address = _synthetic_measured_listing_app()
     client = TestClient(app)
 
@@ -283,19 +278,16 @@ def test_promotion_saga_golden_flow() -> None:
             "If-Match": f'W/"{result["version"]}"',
         },
     )
-    assert review_resp.status_code == 200, review_resp.text
-    reviewed_data = review_resp.json()
-    assert reviewed_data["status"] == "COMPLETED"
-    assert reviewed_data["reviewer_subject_id"] == "operator-expansion-manager"
-    candidate_id = reviewed_data["candidate_site_id"]
-    assert candidate_id is not None
-
-    # Get candidates to verify it was saved in listing repository
-    cand_resp = client.get("/api/v1/listings/candidates", headers=MANAGER_HEADERS)
-    assert cand_resp.status_code == 200
-    cands = cand_resp.json()["candidates"]
-    candidate = next(c for c in cands if c["candidateSiteId"] == candidate_id)
-    assert candidate["status"] == "CANDIDATE"
+    assert review_resp.status_code == 503, review_resp.text
+    assert "SCORE_DELIVERY_UNAVAILABLE" in review_resp.text
+    current = client.get(f"/api/v1/promotion-decisions/{promo_decision_id}", headers=MANAGER_HEADERS)
+    assert current.status_code == 200, current.text
+    assert current.json()["status"] == "PENDING_REVIEW"
+    assert current.json()["version"] == result["version"]
+    assert not current.json().get("candidate_site_id")
+    assert not current.json().get("site_score_job_id")
+    assert not any(c.candidate_site.listing_id == target_listing_id
+                   for c in app.state.listing_repository.list_candidates())
 
     # 4. Idempotency test (promoting the same intake with same key should return same result)
     replay_resp = client.post(
@@ -316,62 +308,9 @@ def test_promotion_saga_golden_flow() -> None:
     assert replay_resp.status_code == 200, replay_resp.text
     assert replay_resp.json()["promotion_decision_id"] == promo_decision_id
 
-    # 5. Duplicate promotion prevention
-    # If we submit another intake for the same listing, and try to promote it, it should fail
-    # because a candidate already exists for that listing.
-    dup_url = "https://www.synthetic.example/detail-99999999.html"  # distinct intake, same target listing
-    dup_submit_resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
-        json={"url": dup_url, "heatZoneId": "HZ-01"},
-        headers={
-            **STAFF_HEADERS,
-            "X-Correlation-Id": "corr-promote-dup",
-            "Idempotency-Key": "idem-submit-dup",
-        },
-    )
-    assert dup_submit_resp.status_code == 200
-    dup_intake = dup_submit_resp.json()
-    dup_intake_id = dup_intake["id"]
+    # Actual queued promotion, duplicate protection and worker recovery are
+    # covered by the PostgreSQL delivery suite and domain queue tests.
 
-    # Decide the duplicate as revise (resolves it to same target listing L-xxxx)
-    dup_decide_resp = client.post(
-        f"/api/v1/operator/network-listings/intake/{dup_intake_id}/decide",
-        json={
-            "action": "revise",
-            "reason": "Revise listing",
-            "riskSummary": "This revises listing L-xxxx",
-            "riskAcknowledged": True,
-            "actorRoleId": "expansionManager",
-            "targetListingId": target_listing_id,
-        },
-        headers={
-            **MANAGER_HEADERS,
-            "Idempotency-Key": f"idem-decide-{uuid4()}",
-            "X-Correlation-Id": f"corr-decide-{uuid4()}",
-        },
-    )
-    assert dup_decide_resp.status_code == 200
-    dup_intake = dup_decide_resp.json()
-    assert dup_intake["matchResult"]["targetListingId"] == target_listing_id
-
-    # Trying to promote the duplicate listing should fail with 409 Conflict
-    dup_promote_resp = client.post(
-        f"/api/v1/operator/network-listings/intake/{dup_intake_id}/promote",
-        json={
-            "actorRoleId": "expansionUser",
-            "actorName": "operator-expansion-staff",
-            "reason": "Suitable location",
-            "riskSummary": "Creating candidate site",
-            "riskAcknowledged": True,
-        },
-        headers={
-            **STAFF_HEADERS,
-            "X-Correlation-Id": "corr-promote-dup-exec",
-            "Idempotency-Key": "idem-promote-dup-exec",
-        },
-    )
-    assert dup_promote_resp.status_code == 409
-    assert "DUPLICATE_CANDIDATE" in dup_promote_resp.text
 
 
 def test_promotion_saga_segregation_of_duties() -> None:

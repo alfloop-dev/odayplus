@@ -2177,7 +2177,11 @@ def test_intake_actual_action_vocabulary_accepts_authorized_scope(action: str) -
             "heatZoneId": "HZ-01",
             "originalUrl": "https://example.invalid/offline",
             "stage": "READY",
-            "parsedFields": {},
+            "parsedFields": {
+                "address": {"normalizedValue": "Synthetic manual address"},
+                "rent": {"normalizedValue": "54000"},
+                "areaPing": {"normalizedValue": "22"},
+            },
             "auditEvents": [],
             "matchResult": {"targetListingId": "L-2024"},
         }

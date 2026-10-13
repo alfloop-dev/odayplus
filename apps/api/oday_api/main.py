@@ -1139,9 +1139,16 @@ else:
         def _enqueue_job_response(
             body: JobCreatePayload, request: Request, idempotency_key: str | None,
         ) -> dict[str, Any]:
+            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_authorization import authorize_intake_action
 
+            if body.job_type == INTAKE_SITESCORE_JOB_TYPE:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    {"code": "JOB_TYPE_NOT_SUPPORTED", "message": "Score jobs require an independently reviewed promotion"},
+                )
             payload = body.payload
             idempotency_tenant_id: str | None = None
             idempotency_scope = ""
@@ -1318,6 +1325,8 @@ else:
         def _authorize_job_access(
             job: Any, request: Request, *, intake_action: str = "view",
         ) -> dict[str, Any] | None:
+            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+
             from apps.api.oday_api.security.dependencies import principal_from_headers
 
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
@@ -1336,6 +1345,75 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
+            elif job.job_type == INTAKE_SITESCORE_JOB_TYPE:
+                from modules.listing.application.intake_score_delivery import (
+                    IntakeScoreJobRepository,
+                )
+
+                from modules.listing.application.intake_authorization import authorize_intake_action
+                from shared.infrastructure.persistence.operator_intake_workflow import (
+                    project_operator_intake,
+                )
+
+                principal = principal_from_headers(request.headers)
+                if not principal.authenticated:
+                    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
+                active_tenant_id = str(principal.tenant_id or "").strip()
+                if not active_tenant_id or job_tenant != active_tenant_id:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                store = getattr(request.app.state, "assisted_intake_store", None)
+                if store is None or getattr(store, "_engine", None) is not getattr(bundle, "engine", None):
+                    raise HTTPException(503, "SCORE_DELIVERY_UNAVAILABLE")
+                store.refresh(active_tenant_id)
+                from apps.api.app.routes.listings import _raise_score_delivery_http_error
+
+                try:
+                    score_repository = IntakeScoreJobRepository(bundle)
+                    score_job = score_repository.get_job(job.job_id, active_tenant_id)
+                except Exception as exc:
+                    _raise_score_delivery_http_error(exc)
+                    raise
+                if score_job is None:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                from shared.infrastructure.persistence.assisted_listing_intake import (
+                    _STATE_COLLECTIONS,
+                )
+
+                with store.transaction():
+                    bundle.engine.query_one(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                        (f"operator-intake-submission:{active_tenant_id}",),
+                    )
+                    for name, key in (("intakes", "intake_id"), ("promotions", "promotion_decision_id")):
+                        store._read_locked(_STATE_COLLECTIONS[name], f"{active_tenant_id}:{score_job[key]}")
+                    store.refresh(active_tenant_id)
+                    try:
+                        score_job = score_repository.get_job(job.job_id, active_tenant_id)
+                    except Exception as exc:
+                        _raise_score_delivery_http_error(exc)
+                        raise
+                    if score_job is None:
+                        raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                    intake = store.intakes.get(score_job.get("intake_id"))
+                    promotion = store.promotions.get(score_job.get("promotion_decision_id"))
+                    if (not isinstance(intake, dict) or not isinstance(promotion, dict)
+                            or intake.get("scope", {}).get("tenant_id") != active_tenant_id
+                            or intake.get("intake_id") != score_job.get("intake_id")
+                            or promotion.get("promotion_decision_id") != score_job.get("promotion_decision_id")
+                            or promotion.get("tenant_id") != active_tenant_id
+                            or promotion.get("intake_id") != score_job.get("intake_id")
+                            or promotion.get("site_score_job_id") != job.job_id
+                            or not score_job.get("candidate_site_id")
+                            or promotion.get("candidate_site_id") != score_job.get("candidate_site_id")):
+                        raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                    projection = project_operator_intake(intake, store.assignments, store.slas)
+                    authorize_intake_action(
+                        principal, "view",
+                        resource={**projection, "scope": intake["scope"], "submitter": intake.get("submitted_by")},
+                        audit_log=audit_log, correlation_id=request.state.correlation_id,
+                    )
+                    return score_job
+
             elif job.job_type == "assisted-listing-intake":
                 active_tenant_id = batch_intake_job_tenant(request, action="view")
                 if not job_tenant or job_tenant != active_tenant_id:
@@ -1427,9 +1505,17 @@ else:
                     )
 
         def _authorized_job_response(job: Any, request: Request) -> dict[str, Any]:
+            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+
             from apps.api.oday_api.security.dependencies import principal_from_headers
 
-            _authorize_job_access(job, request)
+            authorized_resource = _authorize_job_access(job, request)
+            if job.job_type == INTAKE_SITESCORE_JOB_TYPE:
+                from apps.api.app.routes.listings import JobReceipt, _job_receipt_payload
+
+                # Raw inference inputs and delivery tokens are not a public
+                # job receipt, even for a caller allowed to view the parent.
+                return JobReceipt(**_job_receipt_payload(authorized_resource)).model_dump(mode="json", exclude_none=True)
             res = job.to_dict()
             if "summary" in job.payload and "summary" not in res:
                 res["summary"] = job.payload["summary"]
@@ -1454,6 +1540,8 @@ else:
             body: JobRetryPayload | None,
             request: Request,
         ) -> dict[str, Any]:
+            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from shared.auth import Action, rbac_allows
             from shared.infrastructure.persistence.job_queue import JobFenceRejectedError
@@ -1461,6 +1549,12 @@ else:
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+            if job.job_type == INTAKE_SITESCORE_JOB_TYPE:
+                _authorize_job_access(job, request)
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    {"code": "JOB_TYPE_NOT_SUPPORTED", "message": "Use the versioned score checkpoint retry command"},
+                )
 
             # 1. Auth & Tenant Isolation & RBAC
             job_tenant = str(job.payload.get("tenant_id") or "").strip()

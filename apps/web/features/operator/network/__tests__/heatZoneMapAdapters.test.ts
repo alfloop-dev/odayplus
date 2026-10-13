@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { NetworkListingRadarSnapshot } from "@oday-plus/openapi-client";
 import { buildNetworkFindAreasViewModel } from "../../networkFindAreasViewModel";
-import { operatorListingToMapListing } from "../heatZoneMapAdapters";
+import { operatorCandidateToMapSite, operatorListingToMapListing } from "../heatZoneMapAdapters";
+import type { Candidate } from "../../types";
 
 const manualListing = {
   id: "synthetic-manual-listing",
@@ -58,5 +59,29 @@ describe("Listing map projection with missing measurements", () => {
     expect(operatorListingToMapListing(measuredConfidenceOnly, [], 0).coordinates).toBeNull();
     expect(operatorListingToMapListing(measuredConfidenceOnly, [], 0, true).coordinates).not.toBeNull();
     expect(operatorListingToMapListing(manualListing, [], 0, true).coordinates).toBeNull();
+  });
+});
+
+const candidate: Candidate = {
+  id: "synthetic-candidate", heatZoneId: "HZ-01", title: "Candidate", address: "Recorded address",
+  status: "new", score: null, recommendation: null, modelVersion: null, datasetSnapshotId: null,
+  missingData: [], latitude: 25.04231, longitude: 121.50872, geocodeConfidence: 0.91,
+};
+
+describe("Candidate map location provenance", () => {
+  it("uses the exact recorded point, including measured zero coordinates", () => {
+    expect(operatorCandidateToMapSite(candidate).coordinates).toEqual([121.50872, 25.04231]);
+    expect(operatorCandidateToMapSite({ ...candidate, longitude: 0, latitude: 0 }).coordinates).toEqual([0, 0]);
+  });
+
+  it.each([
+    { latitude: null }, { longitude: undefined }, { latitude: Number.NaN },
+    { longitude: 181 }, { latitude: -91 }, { geocodeConfidence: null },
+  ])("keeps incomplete or invalid evidence off the map (%j)", (missing) => {
+    const result = operatorCandidateToMapSite({ ...candidate, ...missing });
+    expect(result.coordinates).toBeNull();
+    expect(result.geocode).toBe("未定位");
+    expect(result.readiness).toBe("blocked");
+    expect(result.disabledReason).toContain("候選點清單");
   });
 });

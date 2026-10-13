@@ -85,11 +85,12 @@ def _iso(value: datetime) -> str:
 
 def record_workflow_change(store: Any, intake: dict[str, Any], *, resource_type: str,
                            before: dict[str, Any] | None, after: dict[str, Any],
-                           action: str, actor_id: str, result: str = "SUCCEEDED") -> str:
+                           action: str, actor_id: str, result: str = "SUCCEEDED",
+                           service_principal: str = "intake_workflow", correlation_id: str | None = None) -> str:
     """Append transaction-owned audit evidence; never return an unpersisted id."""
     resource_key = {"intake": "intake_id", "assignment": "assignment_id", "sla_instance": "sla_instance_id",
                     "correction": "correction_id", "identity_decision": "decision_id",
-                    "promotion_decision": "promotion_decision_id"}[resource_type]
+                    "promotion_decision": "promotion_decision_id", "job": "job_id"}[resource_type]
     audit_id = str(uuid4())
     after["audit_event_id"] = audit_id
     if resource_type == "sla_instance":
@@ -97,10 +98,10 @@ def record_workflow_change(store: Any, intake: dict[str, Any], *, resource_type:
     audit = {
         "audit_event_id": audit_id, "tenant_id": intake["scope"]["tenant_id"],
         "intake_id": intake["intake_id"], "actor_subject_id": actor_id,
-        "service_principal": "intake_workflow", "action": action,
+        "service_principal": service_principal, "action": action,
         "resource_type": resource_type, "resource_id": after[resource_key],
         "before_value": deepcopy(before), "after_value": deepcopy(after),
-        "result": result, "correlation_id": intake["correlation_id"],
+        "result": result, "correlation_id": correlation_id or intake["correlation_id"],
         "occurred_at": _iso(datetime.now(UTC)), "worm_state": "worm_pending",
     }
     store.workflow_audits[audit_id] = audit

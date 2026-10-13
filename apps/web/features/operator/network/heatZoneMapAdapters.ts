@@ -2,8 +2,8 @@
  * Operator → Map type adapters.
  *
  * These bridge the operator-layer types (OperatorHeatZone, Listing, Candidate)
- * to the expansion-layer types that HeatZoneMap expects. Synthetic/missing
- * fields are derived deterministically from available data.
+ * to the expansion-layer types that HeatZoneMap expects. Candidate locations
+ * preserve recorded address evidence; missing coordinates remain absent.
  *
  * Extracted from NetworkFindAreasWorkspace.tsx under ODP-ENG-FRONTEND-BUILD-001:
  * this layer is pure data mapping with no React or DOM dependency, so keeping it
@@ -147,28 +147,35 @@ export function operatorListingToMapListing(
  */
 export function operatorCandidateToMapSite(
   candidate: Candidate,
-  heatZones: OperatorHeatZone[],
-  index: number,
 ): MapCandidateSite {
-  const coordinates = offsetFromZone(candidate.heatZoneId, heatZones, index, 0.005, 97.3);
+  const confidence = candidate.geocodeConfidence;
+  const longitude = candidate.longitude;
+  const latitude = candidate.latitude;
+  const hasGeocode = typeof confidence === "number" && Number.isFinite(confidence) && confidence > 0;
+  const coordinates: [number, number] | null = hasGeocode
+    && typeof longitude === "number" && Number.isFinite(longitude) && Math.abs(longitude) <= 180
+    && typeof latitude === "number" && Number.isFinite(latitude) && Math.abs(latitude) <= 90
+    ? [longitude, latitude] : null;
   const isReady = candidate.status === "ready" || candidate.status === "pendingreview" || candidate.status === "approved";
   return {
     id: candidate.id,
     address: candidate.address,
     status: candidate.status === "approved" ? "approved"
       : candidate.status === "rejected" ? "rejected"
-      : candidate.status === "scoring" || candidate.status === "pendingreview" ? "scored"
+      : candidate.status === "scored" || candidate.status === "pendingreview" ? "scored"
       : candidate.status === "wait" || candidate.status === "ready" ? "screened"
       : "new",
     heatZoneId: candidate.heatZoneId,
     coordinates,
     heatZoneScore: candidate.score,
     rentArea: "",
-    geocode: "",
+    geocode: coordinates === null ? "未定位" : `${confidence!.toFixed(2)} / operator`,
     feasibility: candidate.missingData.length ? candidate.missingData.join("; ") : "OK",
     listingSource: candidate.listingId ?? "",
-    siteScore: `${candidate.score} / ${candidate.recommendation}`,
-    readiness: isReady ? "ready" : "blocked",
-    disabledReason: candidate.missingData.length ? candidate.missingData.join("; ") : undefined,
+    siteScore: candidate.recommendation === null ? "等待評分"
+      : candidate.score === null ? candidate.recommendation : `${candidate.score} / ${candidate.recommendation}`,
+    readiness: isReady && coordinates !== null ? "ready" : "blocked",
+    disabledReason: coordinates === null ? "尚無已驗證座標，可在候選點清單查看"
+      : candidate.missingData.length ? candidate.missingData.join("; ") : undefined,
   };
 }

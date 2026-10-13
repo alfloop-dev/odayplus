@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -21,6 +22,11 @@ from tests.integration.test_operator_intake_workflow_postgresql import (
 )
 
 pytestmark = pytest.mark.requires_live_env
+
+
+@pytest.fixture(autouse=True)
+def synthetic_score_signing_key(monkeypatch):
+    monkeypatch.setenv("ODP_INTAKE_SCORE_ATTEMPT_SIGNING_KEY", "synthetic-local-score-delivery-test-key-20261013")
 
 
 def _promotion_client(bundle):
@@ -83,6 +89,25 @@ def _ready_intake(db, bundle, client):
     return record, listing_id
 
 
+def _ready_admitted_intake(db, bundle, client):
+    """Explicit synthetic SQL admission for this promotion command suite only."""
+    from tests.integration.test_intake_score_delivery_postgresql import _seed_manual_admission
+
+    intake, listing_id = _ready_intake(db, bundle, client)
+    repo = bundle.listing_repository_for_tenant(TENANT)
+    listing = repo.get_listing(listing_id)
+    object.__setattr__(listing, "snapshot_id", str(uuid4()))
+    object.__setattr__(listing, "feature_snapshot_time", datetime(2026, 10, 9, 8, 0, tzinfo=UTC))
+    address = repo.get_address(listing.address_id)
+    repo.save_listing(listing, address, ListingDedupKey(
+        source_id=listing.source_id, source_listing_id=listing.source_listing_id,
+        normalized_address=address.normalized_address,
+        rent_amount=listing.rent_amount, area_ping=listing.area_ping,
+    ))
+    _seed_manual_admission(db, bundle, intake, listing)
+    return intake, listing_id
+
+
 def _request(client, record, *, key="synthetic-promotion-request", actor=MANAGER, extra_headers=None):
     return client.post(f"/api/v1/intakes/{record['id']}/promotion-requests",
                        json={"target_format_code": "FORMAT-B", "reason": "Synthetic independent review",
@@ -109,14 +134,15 @@ def _snapshot(bundle):
         "listings": repo.list_listings(), "candidates": repo.list_candidates(),
         "events": bundle.outbox_repository.get_unpublished_events(),
         "audit_rows": bundle.engine.query("SELECT audit_event_id,event_sha256,result FROM audit.audit_events ORDER BY audit_event_id"),
-        "delivery_jobs": bundle.engine.query("SELECT job_id,status,version FROM durable_jobs ORDER BY job_id")})
+        "delivery_jobs": bundle.engine.query("SELECT job_id,status,version FROM durable_jobs ORDER BY job_id"),
+        "score_jobs": bundle.engine.query("SELECT job_id,status,version,payload FROM workflow.jobs WHERE job_type='intake-sitescore' ORDER BY job_id")})
 
 
 def test_canonical_promotion_positive_restart_and_replay(bridge_database, monkeypatch):
     bundle = _bundle(bridge_database, monkeypatch)
     try:
         client = _promotion_client(bundle)
-        record, listing_id = _ready_intake(bridge_database, bundle, client)
+        record, listing_id = _ready_admitted_intake(bridge_database, bundle, client)
         requested = _request(client, record)
         assert requested.status_code == 202, requested.text
         decision = requested.json()
@@ -127,12 +153,12 @@ def test_canonical_promotion_positive_restart_and_replay(bridge_database, monkey
         reviewed = _review(client, decision, extra_headers={"x-correlation-id": review_correlation})
         assert reviewed.status_code == 200, reviewed.text
         receipt = reviewed.json()
-        assert receipt["status"] == "COMPLETED"
+        assert receipt["status"] == "SCORE_QUEUED"
         assert receipt["reviewer_subject_id"] == APPROVER
         assert receipt["proposer_subject_id"] == MANAGER
         with bridge_database.connect() as conn:
             for audit_receipt, actor, action in ((decision, MANAGER, "intake.promotion_requested"),
-                                                (receipt, APPROVER, "promotion.completed")):
+                                                (receipt, APPROVER, "promotion.score_queued")):
                 row = conn.execute(
                     "SELECT actor_subject_id,resource_id,action,result,after_value,correlation_id FROM audit.audit_events WHERE audit_event_id=%s",
                     (audit_receipt["audit_event_id"],)).fetchone()
@@ -164,20 +190,23 @@ def test_canonical_promotion_positive_restart_and_replay(bridge_database, monkey
             assert read.status_code == 200 and read.json() == receipt, read.text
         detail = client.get(f"{BASE}/intake/{record['id']}", headers=_headers())
         assert detail.status_code == 200, detail.text
-        assert detail.json()["version"] == 5
+        assert detail.json()["version"] == record["version"] + 2
         assert detail.json()["assignmentId"] == record["assignmentId"]
         assert detail.json()["slaInstanceId"] == record["slaInstanceId"]
         job = client.get(f"/api/v1/jobs/{receipt['site_score_job_id']}/receipt", headers=_reviewer_headers())
         assert job.status_code == 200, job.text
         assert job.json()["job_id"] == receipt["site_score_job_id"]
-        # This checks durable receipt identity, not queue dispatch or worker
-        # success. Promotion completion alone is not proof of either.
-        bundle.assisted_intake_store.refresh(TENANT)
-        stored_job = bundle.assisted_intake_store.jobs[receipt["site_score_job_id"]]
+        assert job.json()["status"] == "QUEUED"
+        from modules.listing.application.intake_score_delivery import IntakeScoreJobRepository
+
+        stored_job = IntakeScoreJobRepository(bundle).get_job(receipt["site_score_job_id"], TENANT)
         assert stored_job["job_id"] == receipt["site_score_job_id"]
         assert stored_job["intake_id"] == record["id"]
         assert stored_job["candidate_site_id"] == receipt["candidate_site_id"]
         assert stored_job["tenant_id"] == TENANT
+        assert bundle.job_queue.get(receipt["site_score_job_id"]) is not None
+        bundle.assisted_intake_store.refresh(TENANT)
+        assert receipt["site_score_job_id"] not in bundle.assisted_intake_store.jobs
         assert _request(client, record).json() == decision
         replayed = _review(client, decision)
         assert replayed.status_code == 200 and replayed.json() == receipt, replayed.text
@@ -191,7 +220,7 @@ def test_operator_promotion_is_visible_to_v1_review(bridge_database, monkeypatch
     bundle = _bundle(bridge_database, monkeypatch)
     try:
         client = _promotion_client(bundle)
-        record, listing_id = _ready_intake(bridge_database, bundle, client)
+        record, listing_id = _ready_admitted_intake(bridge_database, bundle, client)
         requested = client.post(f"{BASE}/intake/{record['id']}/promote",
                                 json={"reason": "Synthetic operator request", "riskSummary": "Synthetic promotion",
                                       "riskAcknowledged": True},
@@ -219,46 +248,33 @@ def test_operator_promotion_is_visible_to_v1_review(bridge_database, monkeypatch
         bundle.engine.close()
 
 
-def test_score_failure_checkpoint_survives_restart_and_replay(bridge_database, monkeypatch):
+def test_queue_transaction_fault_rolls_back_without_fabricated_failure_receipt(bridge_database, monkeypatch):
+    from fastapi.testclient import TestClient
+
     monkeypatch.setenv("CI", "1")
     bundle = _bundle(bridge_database, monkeypatch)
     try:
         client = _promotion_client(bundle)
-        record, _ = _ready_intake(bridge_database, bundle, client)
+        record, _ = _ready_admitted_intake(bridge_database, bundle, client)
         requested = _request(client, record)
         assert requested.status_code == 202, requested.text
         decision = requested.json()
-        failed = _review(client, decision, fault=True)
-        assert failed.status_code == 422 and "ODP_TEST_SCORE_FAILURE" in failed.text, failed.text
+        before = _snapshot(bundle)
+        failed = _review(TestClient(client.app, raise_server_exceptions=False), decision, fault=True)
+        assert failed.status_code == 500, failed.text
+        assert _snapshot(bundle) == before
         bundle.engine.close()
         bundle = _bundle(bridge_database, monkeypatch)
         client = _promotion_client(bundle)
+        assert _snapshot(bundle) == before
         read = client.get(f"/api/v1/promotion-decisions/{decision['promotion_decision_id']}", headers=_reviewer_headers())
-        assert read.status_code == 200 and read.json()["status"] == "SCORE_FAILED", read.text
-        receipt = read.json()
-        with bridge_database.connect() as conn:
-            row = conn.execute("SELECT result,actor_subject_id FROM audit.audit_events WHERE audit_event_id=%s",
-                               (receipt["audit_event_id"],)).fetchone()
-            assert row is not None and (row[0], str(row[1])) == ("FAILED", APPROVER)
-        candidate = bundle.listing_repository_for_tenant(TENANT).list_candidates()[0]
-        assert candidate.candidate_site.candidate_site_id == receipt["candidate_site_id"]
-        assert candidate.candidate_site.site_status == "SCORING_FAILED"
-        before = _snapshot(bundle)
-        replayed = _review(client, decision, fault=True)
-        assert replayed.status_code == 422 and replayed.json() == failed.json()
-        assert replayed.headers["idempotency-replayed"] == "true"
-        assert _snapshot(bundle) == before
-        jid = receipt["site_score_job_id"]
-        job = client.get(f"/api/v1/jobs/{jid}/receipt", headers=_reviewer_headers())
-        assert job.status_code == 200 and job.json()["status"] == "FAILED", job.text
-        retry_headers = {**_reviewer_headers("synthetic-score-job-retry"), "If-Match": job.headers["etag"]}
-        retry_body = {"checkpoint": "SCORE_QUEUED", "reason": "Retry the synthetic score checkpoint"}
-        retried = client.post(f"/api/v1/jobs/{jid}/retry", json=retry_body, headers=retry_headers)
-        assert retried.status_code == 202 and retried.json()["job_id"] == jid, retried.text
-        before = _snapshot(bundle)
-        replayed = client.post(f"/api/v1/jobs/{jid}/retry", json=retry_body, headers=retry_headers)
-        assert replayed.status_code == 202 and replayed.json() == retried.json(), replayed.text
-        assert _snapshot(bundle) == before
+        assert read.status_code == 200 and read.json()["status"] == "PENDING_REVIEW", read.text
+        assert not read.json().get("site_score_job_id")
+        assert not read.json().get("candidate_site_id")
+        # The same command can be retried once the failed transaction recovers.
+        retried = _review(client, decision)
+        assert retried.status_code == 200 and retried.json()["status"] == "SCORE_QUEUED", retried.text
+        assert retried.headers["idempotency-replayed"] == "false"
         assert len(bundle.listing_repository_for_tenant(TENANT).list_candidates()) == 1
     finally:
         bundle.engine.close()
@@ -271,7 +287,7 @@ def test_promotion_persistence_failure_rolls_back_all_artifacts(bridge_database,
     bundle = _bundle(bridge_database, monkeypatch)
     try:
         client = _promotion_client(bundle)
-        record, _ = _ready_intake(bridge_database, bundle, client)
+        record, _ = _ready_admitted_intake(bridge_database, bundle, client)
         if failure != "request_outbox":
             requested = _request(client, record)
             assert requested.status_code == 202, requested.text
@@ -328,7 +344,7 @@ def test_two_replicas_converge_request_and_review_replays(bridge_database, monke
     try:
         client = _promotion_client(bundle)
         other_client = _promotion_client(second)
-        record, _ = _ready_intake(bridge_database, bundle, client)
+        record, _ = _ready_admitted_intake(bridge_database, bundle, client)
         barrier = Barrier(2)
 
         def request(local_client):
@@ -354,7 +370,8 @@ def test_two_replicas_converge_request_and_review_replays(bridge_database, monke
         assert sorted(result.headers["idempotency-replayed"] for result in results) == ["false", "true"]
         state = _snapshot(bundle)
         assert len(state["canonical"]["promotions"]) == 1
-        assert len(state["canonical"]["jobs"]) == 1
+        assert len(state["score_jobs"]) == 1
+        assert state["canonical"]["jobs"] == {}
         assert len(state["candidates"]) == 1
         assert len([e for e in state["events"] if e.event_type == "candidate.created"]) == 1
     finally:
@@ -370,7 +387,7 @@ def test_fresh_parent_scope_is_checked_after_route_read(bridge_database, monkeyp
     second = _bundle(bridge_database, monkeypatch)
     try:
         client = _promotion_client(bundle)
-        record, _ = _ready_intake(bridge_database, bundle, client)
+        record, _ = _ready_admitted_intake(bridge_database, bundle, client)
         if operation == "review":
             requested = _request(client, record)
             assert requested.status_code == 202, requested.text
@@ -406,7 +423,7 @@ def test_missing_recorded_property_cannot_create_promotion_or_artifacts(bridge_d
     bundle = _bundle(bridge_database, monkeypatch)
     try:
         client = _promotion_client(bundle)
-        record, listing_id = _ready_intake(bridge_database, bundle, client)
+        record, listing_id = _ready_admitted_intake(bridge_database, bundle, client)
         repo = bundle.listing_repository_for_tenant(TENANT)
         listing = repo.get_listing(listing_id)
         object.__delattr__(listing, "property_id")
@@ -423,7 +440,7 @@ def test_production_promotion_requires_transaction_bound_outbox(bridge_database,
     bundle = _bundle(bridge_database, monkeypatch)
     try:
         client = _promotion_client(bundle)
-        record, _ = _ready_intake(bridge_database, bundle, client)
+        record, _ = _ready_admitted_intake(bridge_database, bundle, client)
         before = _snapshot(bundle)
         with monkeypatch.context() as patch:
             patch.setattr(client.app.state, "persistence_bundle", replace(bundle, outbox_repository=None))
@@ -438,7 +455,7 @@ def test_unresolved_canonical_match_cannot_use_stale_flat_alias(bridge_database,
     bundle = _bundle(bridge_database, monkeypatch)
     try:
         client = _promotion_client(bundle)
-        record, listing_id = _ready_intake(bridge_database, bundle, client)
+        record, listing_id = _ready_admitted_intake(bridge_database, bundle, client)
         store = bundle.assisted_intake_store
         store.refresh(TENANT)
         parent = store.intakes[record["id"]]

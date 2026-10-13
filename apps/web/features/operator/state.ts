@@ -80,6 +80,10 @@ export const LISTING_TRANSITIONS: Record<ListingStatus, ListingStatus[]> = {
 };
 
 export const CANDIDATE_TRANSITIONS: Record<CandidateStatus, CandidateStatus[]> = {
+  // Worker-owned states are read from the API, never advanced by local state.
+  new: [],
+  scored: [],
+  SCORING_FAILED: [],
   missingdata: ["scoring", "blocked", "rejected"],
   scoring: ["wait", "ready", "rejected", "blocked"],
   wait: ["missingdata", "scoring", "pendingreview", "rejected"],

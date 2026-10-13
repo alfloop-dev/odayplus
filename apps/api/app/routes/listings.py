@@ -698,6 +698,22 @@ else:
         payload["delivery_state"] = delivery_state
         return payload
 
+    def _raise_score_delivery_http_error(error: Exception) -> None:
+        """Map delivery contract denials without disguising storage failures."""
+        from modules.listing.application.intake_score_delivery import (
+            ScoreDeliveryConflict,
+            ScoreDeliveryDenied,
+            ScoreDeliveryUnavailable,
+            ScoreDeliveryValidationError,
+        )
+
+        for error_type, status_code in (
+            (ScoreDeliveryUnavailable, 503), (ScoreDeliveryConflict, 409),
+            (ScoreDeliveryDenied, 403), (ScoreDeliveryValidationError, 422),
+        ):
+            if isinstance(error, error_type):
+                raise HTTPException(status_code, str(error)) from error
+
     class ReasonCommand(BaseModel):
         model_config = ConfigDict(extra="forbid")
         reason: str = Field(..., min_length=3, max_length=4000)
@@ -1362,29 +1378,8 @@ else:
             if self.op_repo and not (parent and parent.get("intake_id")):
                 self.op_repo.save_promotion(promo)
             self.active_store.promotions[promo["promotion_decision_id"]] = promo
-            if promo.get("site_score_job_id"):
-                job_id = promo["site_score_job_id"]
-                job_status = {
-                    "COMPLETED": "SUCCEEDED",
-                    "SCORE_FAILED": "FAILED",
-                }.get(promo.get("status"), "QUEUED")
-                job = self.active_store.jobs.get(job_id)
-                if job is None:
-                    job = {
-                        "job_id": job_id,
-                        "status": job_status,
-                        "checkpoint": "SCORE_QUEUED",
-                        "attempt": 0,
-                        "version": 1,
-                        "correlation_id": promo.get("correlation_id") or str(uuid4()),
-                        "intake_id": promo.get("intake_id"),
-                        "tenant_id": promo.get("tenant_id"),
-                        "candidate_site_id": promo.get("candidate_site_id"),
-                    }
-                    self.active_store.jobs[job_id] = job
-                else:
-                    job["status"] = job_status
-                    job["candidate_site_id"] = promo.get("candidate_site_id")
+            # Score delivery owns its job receipt. A committed promotion only
+            # proves acceptance; it cannot manufacture a worker result.
 
         def list_promotions(self) -> list[dict[str, Any]]:
             by_id = {value["promotion_decision_id"]: value
@@ -1600,6 +1595,10 @@ else:
                 "rent_benchmark_id",
                 "platform_property_id",
                 "platform_observation_id",
+                "prior_90d_cell_net_revenue",
+                "prior_90d_cell_transaction_count",
+                "prior_90d_cell_store_count",
+                "feature_snapshot_time",
             ):
                 val = getattr(listing, attr, None)
                 if val is not None:
@@ -1646,9 +1645,9 @@ else:
                     existing_listing,
                     listing_status=listing_dict.get("status") or existing_listing.listing_status,
                 )
-                for name in ("property_id", "platform_property_id", "listing_obs_id", "platform_observation_id"):
-                    if hasattr(existing_listing, name):
-                        object.__setattr__(updated_listing, name, getattr(existing_listing, name))
+                for name, value in vars(existing_listing).items():
+                    if name not in existing_listing.__dataclass_fields__:
+                        object.__setattr__(updated_listing, name, value)
                 address = self.get_address(existing_listing.address_id)
                 if address is None:
                     raise ValueError(
@@ -1675,14 +1674,17 @@ else:
                     c_dict = {
                         "id": draft.candidate_site.candidate_site_id,
                         "listingId": draft.candidate_site.listing_id,
-                        "heatZoneId": draft.heat_zone_id or "HZ-01",
+                        "heatZoneId": draft.heat_zone_id or None,
                         "title": ((getattr(draft.listing, "source_listing_id", None) or getattr(draft.listing, "source_id", None) or getattr(draft.listing, "listing_id", None)) + " 候選點") if draft.listing else "候選點",
                         "address": draft.address.raw_address if draft.address else "",
+                        "latitude": draft.address.latitude if draft.address else None,
+                        "longitude": draft.address.longitude if draft.address else None,
+                        "geocodeConfidence": draft.address.geocode_confidence if draft.address else None,
                         "status": draft.candidate_site.site_status,
-                        "score": getattr(draft, "score", 68),
-                        "recommendation": getattr(draft, "recommendation", "WAIT"),
-                        "modelVersion": getattr(draft, "model_version", "SiteScore v2.3"),
-                        "datasetSnapshotId": getattr(draft, "dataset_snapshot_id", "FS-20260704-0600"),
+                        "score": getattr(draft, "score", None),
+                        "recommendation": getattr(draft, "recommendation", None),
+                        "modelVersion": getattr(draft, "model_version", None),
+                        "datasetSnapshotId": getattr(draft, "dataset_snapshot_id", None),
                         "missingData": list(getattr(draft, "missing_data", [])),
                         "reviewId": getattr(draft, "review_id", None),
                     }
@@ -1808,6 +1810,62 @@ else:
                 if outbox is None or getattr(outbox, "_engine", None) is not engine:
                     raise HTTPException(503, "PROMOTION_OUTBOX_UNAVAILABLE")
             return outbox
+
+        def score_job_repository(request: Request):
+            """Resolve score authority from the normal persistence composition."""
+            if getattr(getattr(active, "_engine", None), "dialect", None) != "postgresql":
+                return None
+            from modules.listing.application.intake_score_delivery import IntakeScoreJobRepository
+
+            bundle = getattr(request.app.state, "persistence_bundle", None) or getattr(
+                request.app.state, "persistence", None
+            )
+            if bundle is None or getattr(bundle, "engine", None) is not active._engine:
+                raise HTTPException(503, "SCORE_DELIVERY_UNAVAILABLE")
+            try:
+                return IntakeScoreJobRepository(bundle)
+            except Exception as exc:
+                _raise_score_delivery_http_error(exc)
+                raise
+
+        def lookup_job(request: Request, job_id: str, tenant_id: str):
+            score_repository = score_job_repository(request)
+            if score_repository is not None:
+                try:
+                    job = score_repository.get_job(job_id, tenant_id)
+                except Exception as exc:
+                    _raise_score_delivery_http_error(exc)
+                    raise
+                if job is not None:
+                    return job, score_repository
+            job = active.jobs.get(job_id)
+            if job is not None and (
+                job.get("candidate_site_id") or job.get("promotion_decision_id")
+                or job.get("checkpoint") == "SCORE_QUEUED"
+            ):
+                # Old mirrored score receipts have no execution authority. Do
+                # not present or replay their inferred outcome as a real job.
+                raise HTTPException(409, "SCORE_JOB_AUTHORITY_UNAVAILABLE")
+            return job, None
+
+        def score_job_parent(request: Request, job: dict[str, Any], tenant_id: str):
+            if job.get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+            intake = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(
+                job.get("intake_id", "")
+            )
+            promotion = active.promotions.get(job.get("promotion_decision_id"))
+            if (intake is None or not isinstance(promotion, dict)
+                    or intake.get("intake_id") != job.get("intake_id")
+                    or (intake.get("scope") or {}).get("tenant_id") != tenant_id
+                    or promotion.get("promotion_decision_id") != job.get("promotion_decision_id")
+                    or promotion.get("tenant_id") != tenant_id
+                    or promotion.get("intake_id") != job.get("intake_id")
+                    or not job.get("candidate_site_id")
+                    or promotion.get("candidate_site_id") != job.get("candidate_site_id")
+                    or promotion.get("site_score_job_id") != job.get("job_id")):
+                raise HTTPException(409, "SCORE_JOB_BINDING_CONFLICT")
+            return intake
 
         def audit_promotion(request: Request, before: dict[str, Any] | None,
                             after: dict[str, Any], actor_id: str) -> None:
@@ -3192,7 +3250,7 @@ else:
                     "description": "Replay queued from a durable checkpoint",
                     "headers": response_headers("ETag", "Idempotency-Replayed"),
                 },
-                **api_error_responses(403, 409, 422, 428),
+                **api_error_responses(403, 409, 422, 428, 503),
             },
         )
         def retry_job(
@@ -3209,14 +3267,14 @@ else:
                 ..., alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$',
             ),
         ) -> JobReceipt:
-            initial = active.jobs.get(job_id)
+            initial, _ = lookup_job(request, job_id, tenant_id)
             if initial is None:
                 raise HTTPException(404, "job not found")
             if not initial.get("intake_id"):
                 raise HTTPException(409, "DEPENDENCY_CONFLICT: retry job has no linked intake")
-            with promotion_unit(tenant_id, initial["intake_id"]):
+            with promotion_unit(tenant_id, initial["intake_id"], initial.get("promotion_decision_id")):
                 validate_idempotency_key(key)
-                job = active.jobs.get(job_id)
+                job, score_repository = lookup_job(request, job_id, tenant_id)
                 if job is None:
                     raise HTTPException(404, "job not found")
 
@@ -3236,6 +3294,12 @@ else:
                 intake_tenant = intake.get("tenantId") or intake.get("scope", {}).get("tenant_id")
                 if intake_tenant != tenant_id:
                     raise HTTPException(403, "TENANT_SCOPE_DENIED")
+                if score_repository is not None:
+                    intake = score_job_parent(request, job, tenant_id)
+                    # This is a candidate business job. Steward parser/matcher
+                    # authority does not independently authorize score replay.
+                    if not principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE):
+                        raise HTTPException(403, "ROLE_DENIED")
                 operator_role_id = get_operator_role_id(request)
                 correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
@@ -3249,6 +3313,24 @@ else:
                 )
 
                 def make() -> tuple[dict[str, Any], int]:
+                    if score_repository is not None:
+                        require_version(if_match, job["version"])
+                        if body.override_retry_budget:
+                            # This contract has no incident/change reference.
+                            # A risk checkbox cannot supply that approval.
+                            raise HTTPException(422, "RETRY_OVERRIDE_APPROVAL_REQUIRED")
+                        try:
+                            receipt_value = score_repository.retry_score(
+                                job_id, tenant_id=tenant_id, actor_id=actor_id,
+                                expected_version=job["version"], checkpoint=body.checkpoint.value,
+                                reason=body.reason, override_retry_budget=body.override_retry_budget,
+                                risk_acknowledged=body.risk_acknowledged,
+                                correlation_id=correlation_id or str(uuid4()), request_key=key,
+                            )
+                        except Exception as exc:
+                            _raise_score_delivery_http_error(exc)
+                            raise
+                        return _job_receipt_payload(receipt_value), 202
                     if job.get("status") != "FAILED" and job.get("delivery_state") != "DEAD_LETTER" and job.get("status") != "DEAD_LETTER":
                         raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                     if body.checkpoint.value != job.get("checkpoint"):
@@ -3295,7 +3377,7 @@ else:
                     "description": "Authoritative durable job receipt",
                     "headers": response_headers("ETag"),
                 },
-                **api_error_responses(403, 404),
+                **api_error_responses(403, 404, 409, 503),
             },
         )
         def get_job_receipt(
@@ -3304,26 +3386,34 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> JobReceipt:
-            job = active.jobs.get(job_id)
-            if job is None:
+            initial, _ = lookup_job(request, job_id, tenant_id)
+            if initial is None:
                 raise HTTPException(404, "job not found")
-            if job.get("tenant_id") != tenant_id:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            intake = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(
-                job.get("intake_id", "")
-            )
-            if intake is None:
-                raise HTTPException(404, "linked intake not found")
-            authorize_intake_action(
-                get_principal(request),
-                "view",
-                resource=intake_auth_resource(intake),
-                operator_role_id=get_operator_role_id(request),
-                audit_log=active_audit_log,
-                correlation_id=request.headers.get("x-correlation-id"),
-            )
-            response.headers["ETag"] = f'W/"{job["version"]}"'
-            return JobReceipt(**_job_receipt_payload(job))
+            if not initial.get("intake_id"):
+                raise HTTPException(409, "DEPENDENCY_CONFLICT: job has no linked intake")
+            with promotion_unit(tenant_id, initial["intake_id"], initial.get("promotion_decision_id")):
+                job, score_repository = lookup_job(request, job_id, tenant_id)
+                if job is None:
+                    raise HTTPException(404, "job not found")
+                if job.get("tenant_id") != tenant_id:
+                    raise HTTPException(403, "TENANT_SCOPE_DENIED")
+                intake = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(
+                    job.get("intake_id", "")
+                )
+                if intake is None:
+                    raise HTTPException(404, "linked intake not found")
+                if score_repository is not None:
+                    intake = score_job_parent(request, job, tenant_id)
+                authorize_intake_action(
+                    get_principal(request),
+                    "view",
+                    resource=intake_auth_resource(intake),
+                    operator_role_id=get_operator_role_id(request),
+                    audit_log=active_audit_log,
+                    correlation_id=request.headers.get("x-correlation-id"),
+                )
+                response.headers["ETag"] = f'W/"{job["version"]}"'
+                return JobReceipt(**_job_receipt_payload(job))
 
         @router.get(
             "/saved-views",
@@ -4711,7 +4801,7 @@ else:
                     "description": "Review queued",
                     "headers": response_headers("ETag"),
                 },
-                **api_error_responses(403, 409, 422, 428),
+                **api_error_responses(403, 409, 422, 428, 503),
             },
         )
         def review_promotion(
@@ -4800,6 +4890,7 @@ else:
                         intake_repository=V1IntakeRepositoryAdapter(active, request.app.state),
                         outbox_repository=promotion_outbox(request, repository),
                         score_queue_hook=score_queue_hook,
+                        score_dispatcher=score_job_repository(request) if body.decision == ReviewDecision.APPROVE else None,
                     )
 
                     reviewer_actor = Actor(
@@ -4831,16 +4922,21 @@ else:
                         audit_promotion(request, before_promotion, failed, actor_id)
                         return {"detail": str(exc)}, 422
                     except Exception as exc:
+                        _raise_score_delivery_http_error(exc)
                         if "SELF_REVIEW_DENIED" in str(exc):
                             raise HTTPException(403, "SELF_REVIEW_DENIED") from exc
                         if "DUPLICATE_CANDIDATE" in str(exc) or "DEPENDENCY_CONFLICT" in str(exc):
                             raise HTTPException(409, "DUPLICATE_CANDIDATE") from exc
                         if "WORKFLOW_STATE_DENIED" in str(exc):
                             raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
-                        raise HTTPException(422, str(exc)) from exc
+                        if isinstance(exc, (DomainValidationError, ValueError)):
+                            raise HTTPException(422, str(exc)) from exc
+                        raise
 
                     updated["reviewer_subject_id"] = actor_id
                     audit_promotion(request, before_promotion, updated, actor_id)
+                    if updated["status"] == "SCORE_QUEUED":
+                        promo_service.score_dispatcher.seal_enqueue(updated["site_score_job_id"], tenant_id)
                     return updated, 200
 
                 val, code, was_replayed = replay(

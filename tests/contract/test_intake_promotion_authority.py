@@ -153,10 +153,10 @@ def test_successful_review_receipt_does_not_keep_revoked_resource_access(authori
 def test_checkpoint_retry_receipt_is_authorized_again_after_scope_revocation(authority):
     authority.store.jobs[JOB] = {
         "job_id": JOB, "intake_id": INTAKE, "tenant_id": TENANT, "status": "FAILED",
-        "checkpoint": "SCORE_QUEUED", "attempt": 0, "version": 1, "correlation_id": CORRELATION,
+        "checkpoint": "PARSING", "attempt": 0, "version": 1, "correlation_id": CORRELATION,
     }
     headers = {"Idempotency-Key": "synthetic-checkpoint-retry", "If-Match": 'W/"1"'}
-    body = {"checkpoint": "SCORE_QUEUED", "reason": "Synthetic checkpoint recovery"}
+    body = {"checkpoint": "PARSING", "reason": "Synthetic checkpoint recovery"}
     path = f"/api/v1/jobs/{JOB}/retry"
     first = authority.client.post(path, json=body, headers=headers)
     assert first.status_code == 202, first.text
@@ -185,4 +185,24 @@ def test_child_tenant_cannot_authorize_a_parent_without_tenant_evidence(authorit
     before = _snapshot(authority)
     response = _request(authority, "review")
     assert response.status_code == 403, response.text
+    assert _snapshot(authority) == before
+
+
+@pytest.mark.parametrize("operation", ["get", "retry"])
+def test_legacy_score_mirror_is_not_delivery_authority(authority, operation):
+    authority.store.jobs[JOB] = {
+        "job_id": JOB, "intake_id": INTAKE, "tenant_id": TENANT, "status": "FAILED",
+        "checkpoint": "SCORE_QUEUED", "attempt": 0, "version": 1, "correlation_id": CORRELATION,
+    }
+    before = _snapshot(authority)
+    response = (
+        authority.client.get(f"/api/v1/jobs/{JOB}/receipt") if operation == "get"
+        else authority.client.post(
+            f"/api/v1/jobs/{JOB}/retry",
+            json={"checkpoint": "SCORE_QUEUED", "reason": "Synthetic checkpoint recovery"},
+            headers={"Idempotency-Key": "synthetic-legacy-score-retry", "If-Match": 'W/"1"'},
+        )
+    )
+    assert response.status_code == 409, response.text
+    assert "SCORE_JOB_AUTHORITY_UNAVAILABLE" in response.text
     assert _snapshot(authority) == before

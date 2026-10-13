@@ -310,8 +310,18 @@ export type NetPlanScenarioDetail = {
  */
 export type CandidateSiteCard = {
   candidateSiteId: string;
+  listingId?: string | null;
   address: string;
-  geocodeConfidence: number;
+  geocodeConfidence: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  h3Index: string | null;
+  score: number | null;
+  recommendation: string | null;
+  modelVersion: string | null;
+  datasetSnapshotId: string | null;
+  reviewId?: string | null;
+  siteStatus: string;
   rent: number;
   area: number;
   frontage?: number | null;

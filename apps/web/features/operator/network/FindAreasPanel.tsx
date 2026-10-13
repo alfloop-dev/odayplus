@@ -101,8 +101,8 @@ export function FindAreasPanel({
     [listings, heatZones, fixturesAllowed],
   );
   const mapCandidates = useMemo<MapCandidateSite[]>(
-    () => candidates.map((c, i) => operatorCandidateToMapSite(c, heatZones, i)),
-    [candidates, heatZones],
+    () => candidates.map(operatorCandidateToMapSite),
+    [candidates],
   );
   const lensScores = useMemo<HeatZoneLensScore[]>(
     () =>

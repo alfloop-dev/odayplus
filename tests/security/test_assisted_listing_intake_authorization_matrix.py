@@ -183,11 +183,14 @@ def test_self_review_prohibition() -> None:
     assert self_review_resp.status_code == 403
     assert self_review_resp.json()["code"] == "SELF_REVIEW_DENIED"
 
+    # Prove independent review authority using a rejection, which requires no
+    # admitted scoring infrastructure. Actual approved score dispatch is proven
+    # separately against PostgreSQL, not by the in-memory UI fixture.
     independent_review_resp = client.post(
         f"/api/v1/promotion-decisions/{promote_data['promotion_decision_id']}/actions/review",
         json={
-            "decision": "APPROVE",
-            "reason": "獨立覆核通過",
+            "decision": "REJECT",
+            "reason": "獨立覆核：來源尚未通過驗證",
             "risk_acknowledged": True,
         },
         headers={
@@ -197,7 +200,7 @@ def test_self_review_prohibition() -> None:
         },
     )
     assert independent_review_resp.status_code == 200
-    assert independent_review_resp.json()["status"] == "COMPLETED"
+    assert independent_review_resp.json()["status"] == "REJECTED"
 
 
 def test_second_actor_segregation() -> None:

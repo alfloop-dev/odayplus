@@ -63,6 +63,9 @@ export const LISTING_STATUSES = [
 export type ListingStatus = (typeof LISTING_STATUSES)[number];
 
 export const CANDIDATE_STATUSES = [
+  "new",
+  "scored",
+  "SCORING_FAILED",
   "missingdata",
   "scoring",
   "wait",
@@ -309,13 +312,18 @@ export type Candidate = {
   heatZoneId: string;
   title: string;
   address: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  geocodeConfidence?: number | null;
+  h3Index?: string | null;
   status: CandidateStatus;
-  score: number;
-  recommendation: "GO" | "WAIT" | "REJECT";
-  modelVersion: string;
-  datasetSnapshotId: string;
+  score: number | null;
+  confidence?: number | null;
+  recommendation: "GO" | "WAIT" | "REJECT" | "INVESTIGATE" | null;
+  modelVersion: string | null;
+  datasetSnapshotId: string | null;
   missingData: string[];
-  reviewId?: string;
+  reviewId?: string | null;
 };
 
 export type SiteReview = {

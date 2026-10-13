@@ -769,12 +769,13 @@ class NetworkListingService:
             "heatZoneId": cand.heat_zone_id,
             "title": f"{cand.listing.listing_id} 候選點",
             "address": cand.address.raw_address,
-            "status": cand.status.value if hasattr(cand.status, "value") else str(cand.status),
-            "score": 68,
-            "recommendation": "WAIT",
-            "modelVersion": "SiteScore v2.3",
-            "datasetSnapshotId": "FS-20260704-0600",
-            "missingData": [],
+            "status": cand.candidate_site.site_status,
+            "score": cand.score,
+            "recommendation": cand.recommendation,
+            "modelVersion": cand.model_version,
+            "datasetSnapshotId": cand.dataset_snapshot_id,
+            "reviewId": cand.review_id,
+            "missingData": list(cand.feasibility_flags or ()),
             # SiteScore v2 point-in-time contract. These must survive the dict
             # round trip: _sync_candidate_to_repo() rewrites the persisted
             # draft from this dict, so anything omitted here is wiped from an
@@ -788,14 +789,26 @@ class NetworkListingService:
             ),
         }
         meta = self._get_candidate_metadata(cand.candidate_site.candidate_site_id)
-        if meta:
+        if meta and self._seed_fixtures:
             res.update(meta)
-        else:
+        elif meta:
+            # Presentation metadata cannot replace a committed worker result.
+            if meta.get("title"):
+                res["title"] = meta["title"]
+        elif self._seed_fixtures:
             if res["id"] == "CS-1001":
                 res["title"] = "信義松仁候選點"
                 res["score"] = 82
                 res["recommendation"] = "GO"
                 res["reviewId"] = "RV-1001"
+        # Coordinates come only from the persisted candidate address, never
+        # operator presentation metadata or a HeatZone approximation.
+        res.update({
+            "latitude": cand.address.latitude,
+            "longitude": cand.address.longitude,
+            "geocodeConfidence": cand.address.geocode_confidence,
+            "h3Index": cand.address.h3_res_9 or None,
+        })
         return res
 
     def _dict_to_candidate(self, d: dict[str, Any]) -> Any:
@@ -838,6 +851,11 @@ class NetworkListingService:
             heat_zone_id=heat_zone_id,
             listing_source=listing.get("sourceId") or "",
             status=ListingPipelineStatus.CANDIDATE,
+            score=d.get("score"),
+            recommendation=d.get("recommendation"),
+            model_version=d.get("modelVersion"),
+            dataset_snapshot_id=d.get("datasetSnapshotId"),
+            review_id=d.get("reviewId"),
             prior_90d_cell_net_revenue=_optional_number(
                 _first_present(
                     d, "prior90dCellNetRevenue", "prior_90d_cell_net_revenue"
@@ -1103,13 +1121,13 @@ class NetworkListingService:
                 "heatZoneId": listing["heatZoneId"],
                 "title": "信義松仁候選點" if candidate_id == "CS-1001" else f"{listing_id} 候選點",
                 "address": listing["address"],
-                "status": "ready",
-                "score": 82 if candidate_id == "CS-1001" else 68,
-                "recommendation": "GO" if candidate_id == "CS-1001" else "WAIT",
-                "modelVersion": "SiteScore v2.3",
-                "datasetSnapshotId": "FS-20260704-0600",
+                "status": "ready" if self._seed_fixtures else "new",
+                "score": (82 if candidate_id == "CS-1001" else 68) if self._seed_fixtures else None,
+                "recommendation": ("GO" if candidate_id == "CS-1001" else "WAIT") if self._seed_fixtures else None,
+                "modelVersion": "SiteScore v2.3" if self._seed_fixtures else None,
+                "datasetSnapshotId": "FS-20260704-0600" if self._seed_fixtures else listing.get("snapshotId"),
                 "missingData": [],
-                "reviewId": "RV-1001" if candidate_id == "CS-1001" else None,
+                "reviewId": "RV-1001" if self._seed_fixtures and candidate_id == "CS-1001" else None,
                 # Propagate the SiteScore v2 point-in-time contract from the
                 # listing. The prior_90d_cell_* aggregates originate in the
                 # model-ready views (product_ops/modeling/sql/model_ready_views.sql);

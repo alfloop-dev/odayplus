@@ -23,6 +23,7 @@ the canonical SiteScore report service and production model runtime.
 from __future__ import annotations
 
 import copy
+import math
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -32,9 +33,14 @@ from modules.opsboard.application.network_read_scope import (
     scoped_audit_events,
     visible_candidate_ids,
 )
+from modules.sitescore.application.candidate_features import (
+    feature_from_candidate,
+    none_safe_min,
+)
 from modules.sitescore.application.reporting import SiteScoreReportService
-from modules.sitescore.domain.scoring import SiteScoreFeatureInput, SiteScoreReport
+from modules.sitescore.domain.scoring import SiteScoreReport
 from shared.auth import Principal
+from shared.domain.models import MEASUREMENT_MEASURED
 
 MODEL_VERSION = "SiteScore v2.3"
 
@@ -47,11 +53,18 @@ WAIT_THRESHOLD = 60
 GEOCODE_MIN_CONFIDENCE = 0.80
 
 
+def _has_scalar_score(card: dict[str, Any]) -> bool:
+    score = card.get("score")
+    return isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score)
+
+
+def _score_order(card: dict[str, Any]) -> tuple[bool, float, str]:
+    measured = _has_scalar_score(card)
+    return not measured, -card["score"] if measured else 0.0, card["id"]
+
+
 def _none_safe_min(*values: float | None) -> float | None:
-    """Return the minimum if all values are present (non-None), or None if any is absent."""
-    if not values or any(v is None for v in values):
-        return None
-    return min(values)  # type: ignore[type-var]
+    return none_safe_min(*values)
 
 
 # The six required data dimensions the gate enforces before scoring.
@@ -619,22 +632,12 @@ class NetworkScoringService:
         hard_rule_passed = not feasibility_flags
         heat_zone_id = field("heat_zone_id", "")
 
-        feature_snapshot_time = field("feature_snapshot_time")
-        if feature_snapshot_time and feature_snapshot_time.tzinfo is None:
-            feature_snapshot_time = feature_snapshot_time.replace(tzinfo=UTC)
-
-        prior_rev = field("prior_90d_cell_net_revenue")
-        prior_tx = field("prior_90d_cell_transaction_count")
-        prior_st = field("prior_90d_cell_store_count")
-
         tenant_id = (
             self._tenant_id
             or field("tenant_id", "")
             or getattr(candidate, "tenant_id", "")
             or ""
         )
-
-        h3_index = address.h3_res_9 or heat_zone_id or ""
 
         return {
             "id": candidate.candidate_site_id,
@@ -663,38 +666,7 @@ class NetworkScoringService:
                     "note": ", ".join(feasibility_flags),
                 },
             },
-            "canonicalFeature": SiteScoreFeatureInput(
-                candidate_site_id=candidate.candidate_site_id,
-                tenant_id=tenant_id,
-                target_format_code=candidate.target_format_code or "ODAY_G2",
-                feature_snapshot_time=feature_snapshot_time,
-                view_version="candidate-site-view-v2",
-                heat_zone_id=heat_zone_id,
-                h3_index=h3_index,
-                latitude=address.latitude,
-                longitude=address.longitude,
-                geocode_confidence=address.geocode_confidence,
-                prior_90d_cell_net_revenue=prior_rev,
-                prior_90d_cell_transaction_count=prior_tx,
-                prior_90d_cell_store_count=prior_st,
-                monthly_rent=listing.rent_amount,
-                area_ping=listing.area_ping,
-                frontage_m=listing.frontage_m,
-                # ``effective_confidence`` rather than the raw column: a
-                # pre-cutover listing carrying a substituted 1.00 must enter
-                # the gate as unmeasured, not as a perfect measurement.
-                average_confidence=_none_safe_min(
-                    listing.effective_confidence,
-                    address.geocode_confidence,
-                ),
-                data_quality_score=_none_safe_min(
-                    listing.effective_confidence,
-                    address.geocode_confidence,
-                ),
-                source_snapshot_ids=tuple(
-                    value for value in (listing.snapshot_id,) if value
-                ),
-            ),
+            "canonicalFeature": feature_from_candidate(draft, tenant_id=tenant_id),
         }
 
     def _run_canonical_score(self, candidate: dict[str, Any]) -> dict[str, Any]:
@@ -722,14 +694,15 @@ class NetworkScoringService:
 
     @staticmethod
     def _scorecard_from_report(report: SiteScoreReport) -> dict[str, Any]:
-        confidence_score = int(round(report.confidence * 100))
         conditions = list(report.key_negative_factors)
         return {
             "id": report.candidate_site_id,
             "title": report.candidate_site_id,
             "zoneLabel": report.heat_zone_id,
             "heatZoneId": report.heat_zone_id,
-            "score": confidence_score,
+            # SiteScoreReport supplies outcome bands and recommendation, but
+            # no scalar suitability score. Confidence remains its own measure.
+            "score": None,
             "recommendation": report.recommendation.value,
             "modelVersion": report.model_version,
             "datasetSnapshotId": (
@@ -738,7 +711,10 @@ class NetworkScoringService:
                 else ""
             ),
             "generatedAt": report.scored_at.isoformat(),
-            "confidence": report.confidence,
+            "confidence": (
+                report.confidence if report.confidence_status == MEASUREMENT_MEASURED else None
+            ),
+            "confidenceStatus": report.confidence_status,
             "payback": report.payback_p50_months,
             "revenuePath": {
                 "m1": report.m1.to_dict(),
@@ -883,8 +859,9 @@ class NetworkScoringService:
 
     def _sorted_scorecards(self) -> list[dict[str, Any]]:
         scored = [_copy(self._scores[cid]) for cid in self._scores]
-        # Sort by score desc, then id asc for a deterministic tie-break.
-        scored.sort(key=lambda card: (-card["score"], card["id"]))
+        # Recorded numeric scores sort first; absent scores only use stable ID
+        # order and do not create an inferred business rank.
+        scored.sort(key=_score_order)
         return scored
 
     def _candidate_view(self, candidate: dict[str, Any]) -> dict[str, Any]:
@@ -918,10 +895,11 @@ class NetworkScoringService:
         }
 
     def _batch_results(self, scorecards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        ranked = all(_has_scalar_score(card) for card in scorecards)
         return [
             {
-                "rank": index + 1,
-                "priority": f"P{index + 1}",
+                "rank": index + 1 if ranked else None,
+                "priority": f"P{index + 1}" if ranked else None,
                 "id": card["id"],
                 "title": card["title"],
                 "score": card["score"],
@@ -937,9 +915,9 @@ class NetworkScoringService:
     def _compare(self, scorecards: list[dict[str, Any]]) -> dict[str, Any]:
         by_id = {card["id"]: card for card in scorecards}
         selected = [by_id[cid] for cid in self._compare_set if cid in by_id]
-        selected.sort(key=lambda card: (-card["score"], card["id"]))
-
-        best = selected[0] if selected else None
+        selected.sort(key=_score_order)
+        ranked = bool(selected) and all(_has_scalar_score(card) for card in selected)
+        best = selected[0] if ranked else None
         avoid = next(
             (card for card in selected if card["recommendation"] == "REJECT" and (not best or card["id"] != best["id"])),
             None,
@@ -954,19 +932,19 @@ class NetworkScoringService:
         )
 
         metric_defs = [
-            ("sitescore", "SiteScore", lambda c: f"{c['score']} {c['recommendation']}"),
+            ("sitescore", "SiteScore", lambda c: f"{c['score'] if _has_scalar_score(c) else '—'} {c['recommendation']}"),
             ("m12", "M12 P50", lambda c: c["band"].get("p50", "")),
             ("payback", "回本期", lambda c: c["payback"]),
             ("cannibalization", "自家稀釋", lambda c: c["subScores"].get("cannibalization", "")),
             ("competition", "競店壓力", lambda c: c["subScores"].get("competition", "")),
             ("rent", "租金合理性", lambda c: c["subScores"].get("rentReasonableness", "")),
-            ("confidence", "資料信心", lambda c: c["confidence"]),
+            ("confidence", "資料信心", lambda c: c["confidence"] if c["confidence"] is not None else "—"),
         ]
         columns = [
             {
                 "id": card["id"],
                 "title": card["title"],
-                "priority": f"P{index + 1}",
+                "priority": f"P{index + 1}" if ranked else None,
                 "recommendation": card["recommendation"],
                 "score": card["score"],
                 "isBest": bool(best and card["id"] == best["id"]),

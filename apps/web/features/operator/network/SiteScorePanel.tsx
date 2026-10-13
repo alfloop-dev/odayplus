@@ -35,11 +35,14 @@ export function SiteScorePanel({
   busyCandidateId?: string | null;
   candidates: ScoringCandidate[];
   fallbackRows: SiteScoreLabRow[];
-  modelVersion?: string;
+  modelVersion?: string | null;
   onRescore?: (candidateId: string) => void;
   scorecards: ScoreCard[];
 }) {
-  const cards = scorecards.length ? scorecards : fallbackRows.map(fallbackToCard);
+  const cards = scorecards.length ? scorecards : fallbackRows.flatMap((row) => {
+    const card = fallbackToCard(row);
+    return card ? [card] : [];
+  });
   const blocked = candidates.filter((candidate) => !candidate.gate.passed);
   const [mode, setMode] = useState<"single" | "batch">("single");
   const [selectedId, setSelectedId] = useState(cards[0]?.id ?? "");
@@ -68,7 +71,7 @@ export function SiteScorePanel({
           </button>
         </div>
         <span className={styles.muted} data-testid="sitescore-model-meta">
-          {modelVersion ?? "SiteScore v2.3"} · 特徵快照每日 06:00 · 需求／租金／侵蝕／回本四構面
+          {modelVersion ?? cards[0]?.modelVersion ?? "尚無評分模型資訊"} · 需求／租金／侵蝕／回本四構面
         </span>
       </div>
 
@@ -143,12 +146,13 @@ export function SiteScorePanel({
               <tbody>
                 {cards
                   .slice()
-                  .sort((left, right) => right.score - left.score)
+                  .sort((left, right) => left.score === null ? right.score === null ? 0 : 1
+                    : right.score === null ? -1 : right.score - left.score)
                   .map((card, index) => (
                     <tr key={card.id} data-tone={recommendationTone(card.recommendation)}>
-                      <td><span className={styles.priorityPill}>#{index + 1}</span></td>
+                      <td><span className={styles.priorityPill}>{card.score === null ? "—" : `#${index + 1}`}</span></td>
                       <td><strong>{card.title}</strong><small>{card.id}</small></td>
-                      <td>{card.score}</td>
+                      <td>{card.score ?? "未提供"}</td>
                       <td><ToneBadge tone={recommendationTone(card.recommendation)}>{card.recommendation}</ToneBadge></td>
                       <td>{card.band.p50}</td>
                       <td>{card.payback}</td>
@@ -187,9 +191,9 @@ function ScoreReport({
     >
       <header className={styles.scoreCardHead}>
         <div className={styles.scoreIdentity}>
-          <span className={styles.scoreNumber}>{card.score}<small>/ 100</small></span>
+          <span className={styles.scoreNumber}>{card.score === null ? "已評分" : <>{card.score}<small>/ 100</small></>}</span>
           <ToneBadge tone={tone}>{card.recommendation}</ToneBadge>
-          {card.confidence ? <span className={styles.confidenceBadge}>信心 {card.confidence}</span> : null}
+          {card.confidence !== null && card.confidence !== "" ? <span className={styles.confidenceBadge}>信心 {card.confidence}</span> : null}
         </div>
         <div className={styles.scoreReportTitle}>
           <strong>{card.title}</strong>
@@ -210,9 +214,9 @@ function ScoreReport({
         </section>
         <section>
           <dl className={styles.scoreMeta}>
-            <div><dt>回本期</dt><dd>{card.payback}</dd></div>
-            <div><dt>CAPEX 假設</dt><dd>{card.capex}</dd></div>
-            <div><dt>租金假設</dt><dd>{card.rentAssumption}</dd></div>
+            <div><dt>回本期</dt><dd>{typeof card.payback === "number" ? `${card.payback} 個月` : card.payback || "—"}</dd></div>
+            <div><dt>CAPEX 假設</dt><dd>{card.capex ?? "—"}</dd></div>
+            <div><dt>租金假設</dt><dd>{card.rentAssumption ?? "—"}</dd></div>
           </dl>
           {card.drivers.length ? <p className={styles.scoreDrivers}>需求驅動：{card.drivers.join("・")}</p> : null}
         </section>
@@ -262,33 +266,44 @@ function ScoreReport({
 }
 
 function RevenuePath({ card }: { card: ScoreCard }) {
-  const points: Array<[string, number]> = [
+  const values: Array<[string, ScoreCard["revenuePath"]["m1"]]> = [
     ["M1", card.revenuePath.m1],
     ["M3", card.revenuePath.m3],
     ["M6", card.revenuePath.m6],
     ["M12", card.revenuePath.m12],
   ];
-  const max = Math.max(1, ...points.map(([, value]) => value));
+  const points = values.map(([label, interval]) => ({ label, interval,
+    value: typeof interval === "number" ? interval : interval?.p50 ?? null }));
+  const max = Math.max(1, ...points.flatMap(({ value }) => value === null ? [] : [value]));
   return (
     <div className={styles.revenuePath} aria-label="月營收路徑（P50）">
-      {points.map(([label, value]) => (
+      {points.map(({ label, value, interval }) => (
         <div className={styles.revenueBar} key={label}>
           <i aria-hidden="true">
-            <b style={{ height: `${Math.max(6, Math.round((value / max) * 100))}%` }} />
+            {value === null ? null : <b style={{ height: `${Math.max(6, Math.round((value / max) * 100))}%` }} />}
           </i>
           <span>{label}</span>
-          <small>NT${value}K</small>
+          <small
+            title={interval !== null && typeof interval !== "number"
+              ? `${label} P10 ${money(interval.p10)} · P50 ${money(interval.p50)} · P90 ${money(interval.p90)}` : undefined}
+            aria-label={interval !== null && typeof interval !== "number"
+              ? `${label} P10 ${money(interval.p10)} · P50 ${money(interval.p50)} · P90 ${money(interval.p90)}` : undefined}
+          >{value === null ? "—" : typeof interval === "number" ? `NT$${value}K` : money(value)}</small>
         </div>
       ))}
     </div>
   );
 }
 
-function BandTile({ label, value }: { label: string; value: string }) {
+function money(value: number): string {
+  return `NT$${value.toLocaleString("zh-TW", { maximumFractionDigits: 2 })}`;
+}
+
+function BandTile({ label, value }: { label: string; value: string | number }) {
   return (
     <div className={styles.bandTile}>
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong>{typeof value === "number" ? money(value) : value}</strong>
     </div>
   );
 }
@@ -302,7 +317,10 @@ function ToneBadge({ children, tone }: { children: ReactNode; tone: "good" | "wa
 }
 
 // Fixture fallback: adapt a viewModel SiteScoreLabRow into a minimal ScoreCard.
-function fallbackToCard(row: SiteScoreLabRow): ScoreCard {
+function fallbackToCard(row: SiteScoreLabRow): ScoreCard | null {
+  if (row.recommendation === null || !row.modelVersion || !row.datasetSnapshotId) {
+    return null;
+  }
   return {
     id: row.id,
     title: row.title,
@@ -315,7 +333,7 @@ function fallbackToCard(row: SiteScoreLabRow): ScoreCard {
     generatedAt: "",
     confidence: "",
     payback: "",
-    revenuePath: { m1: 0, m3: 0, m6: 0, m12: 0 },
+    revenuePath: { m1: null, m3: null, m6: null, m12: null },
     band: { p10: "—", p50: "—", p90: "—" },
     subScores: {},
     capex: "",

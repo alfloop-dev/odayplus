@@ -54,6 +54,7 @@ from modules.listing.domain.intake_states import (
 from modules.listing.domain.models import ListingDedupKey
 from modules.listing.infrastructure.repositories import InMemoryListingRepository
 from shared.domain import AddressLocation, Listing
+from shared.jobs.queue import InMemoryJobQueue, JobRequest
 
 TENANT = "tenant-a"
 LISTING_ID = "LST-GATE-001"
@@ -266,12 +267,32 @@ class _IntakeRepository:
         return self.intake if intake_id == INTAKE_ID else None
 
 
+class _ExplicitTestDispatcher:
+    """Real in-memory delivery for a domain-only gate test, not production admission."""
+
+    def __init__(self) -> None:
+        self.queue = InMemoryJobQueue()
+
+    def enqueue(self, promotion, *, context):
+        job, _ = self.queue.enqueue(
+            JobRequest(
+                job_type="intake-sitescore",
+                payload={"tenant_id": promotion["tenant_id"],
+                         "candidate_site_id": promotion["candidate_site_id"]},
+                idempotency_key=f"test-promotion:{promotion['promotion_decision_id']}",
+            ),
+            correlation_id=context.correlation_id,
+        )
+        return {"job_id": job.job_id}
+
+
 def _promotion_service(repo: InMemoryListingRepository) -> PromotionService:
-    """The service wired exactly as the v1 API wires it."""
+    """Gate saga with explicitly local delivery; PostgreSQL has separate tests."""
     return PromotionService(
         promotion_repository=_PromotionRepository(),
         listing_repository=V1ListingRepositoryAdapter(repo),
         intake_repository=_IntakeRepository(),
+        score_dispatcher=_ExplicitTestDispatcher(),
     )
 
 
@@ -403,7 +424,7 @@ class TestPromotionSagaFailsClosedOnGeocodeFailure:
 
         # Retrying review now successfully transitions through the saga
         completed = _review(service, requested["promotion_decision_id"], key="review-attempt-2")
-        assert completed["status"] == "COMPLETED"
+        assert completed["status"] == "SCORE_QUEUED"
         assert len(repo.list_candidates()) == 1
 
     def test_missing_address_record_fails_closed_at_review(self) -> None:
@@ -428,7 +449,7 @@ class TestPromotionSagaFailsClosedOnGeocodeFailure:
         assert stored["version"] == requested["version"]
 
 
-class TestPromotionSagaStillCompletesForAGeocodedListing:
+class TestPromotionSagaQueuesAGeocodedListing:
     """The gate has to stay passable, or it is just an outage.
 
     Paired with the class above: together they show the change rejects the
@@ -442,8 +463,36 @@ class TestPromotionSagaStillCompletesForAGeocodedListing:
         requested = _request(service)
         completed = _review(service, requested["promotion_decision_id"])
 
-        assert completed["status"] == "COMPLETED"
+        assert completed["status"] == "SCORE_QUEUED"
         assert len(repo.list_candidates()) == 1
+        candidate = repo.list_candidates()[0]
+        assert candidate.score is None
+        assert candidate.recommendation is None
+        assert candidate.model_version is None
+        assert candidate.review_id is None
+        assert candidate.dataset_snapshot_id == (candidate.listing.snapshot_id or None)
+        delivery = service.score_dispatcher.queue.get(completed["site_score_job_id"])
+        assert delivery is not None
+        assert delivery.payload["candidate_site_id"] == candidate.candidate_site.candidate_site_id
+
+    def test_queued_candidate_still_prevents_a_second_intake_promotion(self) -> None:
+        repo = _seed_repository(geocode_confidence=0.95)
+        service = _promotion_service(repo)
+        decision = _request(service)
+        first = _review(service, decision["promotion_decision_id"])
+        service.intake_repository.get_listing_intake = lambda _: {
+            "id": "IN-SYNTHETIC-SECOND", "tenantId": TENANT,
+            "matchResult": {"targetListingId": LISTING_ID},
+        }
+        with pytest.raises(DomainValidationError, match="DUPLICATE_CANDIDATE"):
+            service.request_promotion(
+                intake_id="IN-SYNTHETIC-SECOND", target_format_code="FORMAT-A",
+                reason="Synthetic duplicate candidate", gate_snapshot_sha256="a" * 64,
+                context=TransitionContext(actor=Actor(actor_id="other-proposer", role=PrincipalRole.EXPANSION_STAFF,
+                                                      tenant_id=TENANT), idempotency_key="second-intake-request"),
+            )
+        assert len(repo.list_candidates()) == 1
+        assert service.score_dispatcher.queue.get(first["site_score_job_id"]) is not None
 
     def test_candidate_carries_the_address_confidence_not_the_listing_one(self) -> None:
         """0.95 from the address, never 1.0 from the listing record.
@@ -459,6 +508,48 @@ class TestPromotionSagaStillCompletesForAGeocodedListing:
 
         candidate = repo.list_candidates()[0]
         assert candidate.address.geocode_confidence == 0.95
+
+    def test_pending_candidate_preserves_measured_features_and_source_snapshot(self) -> None:
+        from datetime import UTC, datetime
+
+        repo = _seed_repository(geocode_confidence=0.95)
+        listing = repo.get_listing(LISTING_ID)
+        values = {
+            "prior_90d_cell_net_revenue": 918000.0,
+            "prior_90d_cell_transaction_count": 1700,
+            "prior_90d_cell_store_count": 4,
+            "feature_snapshot_time": datetime(2026, 10, 8, tzinfo=UTC),
+            "property_id": "synthetic-recorded-property",
+            "listing_obs_id": "synthetic-recorded-observation",
+            "snapshot_id": "synthetic-recorded-source-snapshot",
+        }
+        for name, value in values.items():
+            object.__setattr__(listing, name, value)
+        service = _promotion_service(repo)
+        decision = _request(service)
+        _review(service, decision["promotion_decision_id"])
+        candidate = repo.list_candidates()[0]
+        assert candidate.dataset_snapshot_id == values["snapshot_id"]
+        for name in ("prior_90d_cell_net_revenue", "prior_90d_cell_transaction_count",
+                     "prior_90d_cell_store_count", "feature_snapshot_time"):
+            assert getattr(candidate, name) == values[name]
+            assert getattr(repo.get_listing(LISTING_ID), name) == values[name]
+        assert candidate.property_entity_id == values["property_id"]
+        assert candidate.listing_observation_id == values["listing_obs_id"]
+
+    def test_missing_dispatcher_cannot_approve_or_create_candidate(self) -> None:
+        from modules.listing.application.intake_score_delivery import ScoreDeliveryUnavailable
+
+        repo = _seed_repository(geocode_confidence=0.95)
+        service = _promotion_service(repo)
+        service.score_dispatcher = None
+        decision = _request(service)
+        with pytest.raises(ScoreDeliveryUnavailable):
+            _review(service, decision["promotion_decision_id"])
+        stored = service.promotion_repository.get_promotion(decision["promotion_decision_id"])
+        assert stored["status"] == "PENDING_REVIEW"
+        assert stored["version"] == decision["version"]
+        assert repo.list_candidates() == []
 
 
 class TestAdapterKeepsGeocodeConfidenceDistinct:

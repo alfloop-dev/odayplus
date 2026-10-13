@@ -64,6 +64,7 @@ class DurableJobQueue:
             payload=request.payload,
             correlation_id=correlation_id,
             idempotency_key=request.idempotency_key,
+            **({"job_id": request.job_id} if request.job_id else {}),
         )
         with self._engine.lock:
             result = self._engine.execute(

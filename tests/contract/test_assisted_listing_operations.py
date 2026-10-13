@@ -672,6 +672,13 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert intake_id is not None
     assert receipt["state"] == "SUBMITTED"
 
+    # This is the submission's recorded intake-processing job, not a score
+    # result inferred from a promotion decision.
+    intake_job = client.get(f"/api/v1/jobs/{receipt['job_id']}/receipt", headers=HEADERS_A)
+    assert intake_job.status_code == 200
+    assert intake_job.json()["job_id"] == receipt["job_id"]
+    assert intake_job.json()["status"] == "QUEUED"
+
     # Replay with idempotency key -> returns 200
     resp_replay = client.post("/api/v1/intakes/url", json=payload, headers=headers)
     assert resp_replay.status_code == 200
@@ -1032,25 +1039,28 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
             "If-Match": f'W/"{promo_receipt["version"]}"'
         }
     )
-    assert resp_rev_promo.status_code == 200
-    assert resp_rev_promo.json()["status"] == "COMPLETED"
-    assert resp_rev_promo.json()["candidate_site_id"] is not None
-    assert resp_rev_promo.json()["site_score_job_id"] is not None
+    # This memory fixture has no transaction-bound scoring worker. Production
+    # approval/result delivery is exercised against PostgreSQL in integration.
+    assert resp_rev_promo.status_code == 503
+    unchanged = client.get(f"/api/v1/promotion-decisions/{promo_id}", headers=HEADERS_A)
+    assert unchanged.status_code == 200
+    assert unchanged.json() == resp_get_promo.json()
+    assert unchanged.json()["status"] == "PENDING_REVIEW"
+    assert unchanged.json()["candidate_site_id"] is None
+    assert unchanged.json()["site_score_job_id"] is None
 
-    # 13. getJobReceipt returns the authoritative version/attempt/checkpoint.
-    job_id = resp_rev_promo.json()["site_score_job_id"]
-    resp_get_job = client.get(f"/api/v1/jobs/{job_id}/receipt", headers=HEADERS_A_REVIEWER)
-    assert resp_get_job.status_code == 200
-    assert resp_get_job.json() == {
-        "job_id": job_id,
-        "status": "SUCCEEDED",
-        "delivery_state": None,
-        "checkpoint": "SCORE_QUEUED",
-        "attempt": 0,
-        "version": 1,
-        "correlation_id": resp_rev_promo.json()["correlation_id"],
-    }
-    assert resp_get_job.headers["ETag"] == 'W/"1"'
+    # An independent reviewer can still make a real rejection without a
+    # scoring dispatcher. The response is checked by ContractTestClient.
+    rejected = client.post(
+        f"/api/v1/promotion-decisions/{promo_id}/actions/review",
+        json={"decision": "REJECT", "reason": "Recorded independent review rejection", "risk_acknowledged": True},
+        headers={**HEADERS_A_REVIEWER, "Idempotency-Key": f"idem-reject-promo-{uuid4()}",
+                 "If-Match": unchanged.headers["ETag"]},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "REJECTED"
+    assert rejected.json()["candidate_site_id"] is None
+    assert rejected.json()["site_score_job_id"] is None
 
 
 
@@ -1186,7 +1196,7 @@ def test_expansion_staff_can_retry_their_own_failed_intake(
     assert retried.json()["status"] == "QUEUED"
 
 
-def test_retry_exact_replay_precedes_mutable_ownership_authorization(
+def test_retry_exact_replay_requires_current_ownership_authorization(
     client: TestClient,
 ) -> None:
     staff_headers = {
@@ -1229,8 +1239,9 @@ def test_retry_exact_replay_precedes_mutable_ownership_authorization(
     )
     assert first.status_code == 202
 
-    # Ownership is mutable after acceptance. It must not invalidate replay of
-    # the exact prior command and receipt for the same actor.
+    accepted_job = copy.deepcopy(job)
+    # An immutable receipt is not continuing authorization. Once ownership is
+    # revoked, the same actor cannot use a prior key to disclose or retry it.
     intake["submitted_by"] = ACTOR_C
     intake["assigned_to"] = ACTOR_C
     replayed = client.post(
@@ -1239,8 +1250,8 @@ def test_retry_exact_replay_precedes_mutable_ownership_authorization(
         headers=retry_headers,
     )
 
-    assert replayed.status_code == 202
-    assert replayed.json() == first.json()
+    assert replayed.status_code == 403
+    assert job == accepted_job
 
 
 def test_retry_orphan_job_fails_closed_for_same_tenant_staff(

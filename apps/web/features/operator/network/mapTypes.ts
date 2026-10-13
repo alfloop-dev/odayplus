@@ -75,8 +75,8 @@ export type CandidateSite = {
     | "approved"
     | "opened";
   heatZoneId: string;
-  coordinates: [number, number];
-  heatZoneScore: number;
+  coordinates: [number, number] | null;
+  heatZoneScore: number | null;
   rentArea: string;
   geocode: string;
   feasibility: string;

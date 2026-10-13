@@ -133,7 +133,13 @@ describe("production workspace data contracts", () => {
     // Malformed collections and seed payloads remain refused.
     expect(inspectNetworkListingsSnapshot({ ...listingSnapshot, heatZones: undefined })).toBe("empty");
     expect(inspectNetworkListingsSnapshot({ ...listingSnapshot, source: undefined })).toBe("empty");
-    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, scorecards: [] })).toBe("empty");
+    // A canonical candidate waiting for its worker has no scorecard/ranking.
+    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, source: "canonical", scorecards: [],
+      compare: { columns: [], metrics: [], recommendation: null, empty: true } })).toBe("ready");
+    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, source: "canonical" })).toBe("ready");
+    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, candidates: [], scorecards: [] })).toBe("empty");
+    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, candidates: undefined })).toBe("empty");
+    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, source: "fixture" })).toBe("seed");
     expect(inspectNetworkRebalanceSnapshot({ ...rebalanceSnapshot, stores: [] })).toBe("empty");
     expect(inspectNetworkReviewsSnapshot({ ...reviewsSnapshot, reviews: [] })).toBe("empty");
   });

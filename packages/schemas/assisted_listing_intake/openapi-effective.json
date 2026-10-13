@@ -743,6 +743,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ScoreDeliveryUnavailable"
           }
         },
         "summary": "Retry a job from a durable checkpoint"
@@ -781,6 +784,12 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/JobAuthorityConflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/ScoreDeliveryUnavailable"
           }
         }
       }
@@ -1003,6 +1012,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ScoreDeliveryUnavailable"
           }
         },
         "summary": "Review a promotion decision"
@@ -1867,6 +1879,26 @@
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "ScoreDeliveryUnavailable": {
+        "description": "The canonical job repository or required score-delivery dependency is unavailable; no approval execution or retry is committed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "JobAuthorityConflict": {
+        "description": "A legacy score mirror or inconsistent parent binding cannot supply an authoritative job receipt.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ConflictError"
             }
           }
         }

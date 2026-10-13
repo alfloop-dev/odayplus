@@ -306,10 +306,10 @@ export function inspectNetworkScoringSnapshot(
 ): Extract<OperatorDataAvailability, "ready" | "seed" | "empty"> {
   if (!snapshot) return "empty";
   if (payloadContainsSeedData(snapshot) || isSeedDataSource(snapshot.source)) return "seed";
-  return snapshot.source === "api" &&
-    snapshot.candidates.length > 0 &&
-    snapshot.scorecards.length > 0 &&
-    snapshot.compare.columns.length > 0
+  return (snapshot.source === "api" || snapshot.source === "canonical") &&
+    Array.isArray(snapshot.candidates) && Array.isArray(snapshot.scorecards) &&
+    Array.isArray(snapshot.compare?.columns) &&
+    (snapshot.candidates.length > 0 || snapshot.scorecards.length > 0)
     ? "ready"
     : "empty";
 }

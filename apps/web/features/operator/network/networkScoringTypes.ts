@@ -3,7 +3,7 @@
 // so CandidatePanel / SiteScorePanel / ComparePanel can render the data-gate,
 // scorecards, and Compare recommendation without re-deriving them client-side.
 
-export type ScoreRecommendation = "GO" | "WAIT" | "REJECT";
+export type ScoreRecommendation = "GO" | "WAIT" | "REJECT" | "INVESTIGATE";
 
 export type ScoringGateCheck = {
   key: string;
@@ -42,30 +42,33 @@ export type ScoringCandidate = {
   inCompare: boolean;
 };
 
+export type RevenueValue = number | { p10: number; p50: number; p90: number } | null;
+
 export type ScoreCard = {
   id: string;
   title: string;
   zoneLabel: string;
   heatZoneId: string;
-  score: number;
+  score: number | null;
   recommendation: ScoreRecommendation;
   modelVersion: string;
   datasetSnapshotId: string;
   generatedAt: string;
-  confidence: string;
-  payback: string;
-  revenuePath: { m1: number; m3: number; m6: number; m12: number };
-  band: { p10: string; p50: string; p90: string };
+  confidence: string | number | null;
+  confidenceStatus?: "measured" | "unmeasured";
+  payback: string | number | null;
+  revenuePath: { m1: RevenueValue; m3: RevenueValue; m6: RevenueValue; m12: RevenueValue };
+  band: { p10: string | number; p50: string | number; p90: string | number };
   subScores: {
-    rentReasonableness?: string;
-    cannibalization?: string;
-    competition?: string;
-    demand?: string;
-    poiFit?: string;
-    access?: string;
+    rentReasonableness?: string | number | null;
+    cannibalization?: string | number | null;
+    competition?: string | number | null;
+    demand?: string | number | null;
+    poiFit?: string | number | null;
+    access?: string | number | null;
   };
-  capex: string;
-  rentAssumption: string;
+  capex: string | null;
+  rentAssumption: string | null;
   drivers: string[];
   reasons: string[];
   risks: string[];
@@ -75,24 +78,24 @@ export type ScoreCard = {
 };
 
 export type BatchResultRow = {
-  rank: number;
-  priority: string;
+  rank: number | null;
+  priority: string | null;
   id: string;
   title: string;
-  score: number;
+  score: number | null;
   recommendation: ScoreRecommendation;
-  m12P50: string;
-  payback: string;
-  cannibalization: string;
+  m12P50: string | number;
+  payback: string | number | null;
+  cannibalization: string | number | null;
   inCompare: boolean;
 };
 
 export type CompareColumn = {
   id: string;
   title: string;
-  priority: string;
+  priority: string | null;
   recommendation: ScoreRecommendation;
-  score: number;
+  score: number | null;
   isBest: boolean;
 };
 
@@ -106,7 +109,7 @@ export type CompareRecommendationCard = {
   id: string;
   title: string;
   recommendation: ScoreRecommendation;
-  score: number;
+  score: number | null;
   text: string;
   why?: string[];
 };
@@ -119,7 +122,7 @@ export type CompareRecommendation = {
     priority: string;
     id: string;
     title: string;
-    score: number;
+    score: number | null;
     recommendation: ScoreRecommendation;
   }>;
 };
@@ -132,8 +135,8 @@ export type NetworkScoringCompare = {
 };
 
 export type NetworkScoringSnapshot = {
-  source?: "api" | "fixture";
-  modelVersion: string;
+  source?: "api" | "canonical" | "fixture";
+  modelVersion: string | null;
   candidates: ScoringCandidate[];
   scorecards: ScoreCard[];
   batchResults: BatchResultRow[];

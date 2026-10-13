@@ -144,7 +144,7 @@ export function CandidatePanel({
                   <div className={styles.candidateCardHead}>
                     <span>{row.id}</span>
                     <ToneBadge tone={row.gate.passed ? (row.scored ? tone : "watch") : "risk"}>
-                      {row.scored ? `${row.recommendation} ${row.score}` : row.gate.passed ? "可評分" : "缺資料"}
+                      {row.scored ? [row.recommendation, row.score].filter((value) => value !== null).join(" ") : row.gate.passed ? "可評分" : "缺資料"}
                     </ToneBadge>
                   </div>
                   <h4>{row.title}</h4>
@@ -283,7 +283,7 @@ function GateDetail({
         type="button"
       >
         {candidate.scored
-          ? `已評分 ${candidate.recommendation} ${candidate.score}`
+          ? `已評分 ${candidate.recommendation}${candidate.score === null ? "" : ` ${candidate.score}`}`
           : candidate.gate.passed
             ? "執行 SiteScore"
             : "要求人工確認地址（鎖評分）"}
@@ -314,18 +314,20 @@ function matchesPipelineFilter(candidate: ScoringCandidate, filter: PipelineFilt
 // ScoringCandidate shape when the scoring API is unavailable.
 function fallbackToCandidate(row: CandidatePipelineRow): ScoringCandidate {
   const passed = row.missingData.length === 0;
+  const scored = row.recommendation !== null && Boolean(row.modelVersion)
+    && (row.status === "scored" || row.score !== null);
   return {
     id: row.id,
     heatZoneId: row.heatZoneId,
     title: row.title,
     zoneLabel: row.zoneLabel,
     address: row.address,
-    modelVersion: row.modelVersion,
-    datasetSnapshotId: row.datasetSnapshotId,
+    modelVersion: row.modelVersion ?? "",
+    datasetSnapshotId: row.datasetSnapshotId ?? "",
     stage: row.status,
-    scored: passed,
-    score: passed ? row.score : null,
-    recommendation: passed ? row.recommendation : null,
+    scored,
+    score: scored ? row.score : null,
+    recommendation: scored ? row.recommendation : null,
     reviewId: row.reviewId,
     inCompare: false,
     gate: buildFallbackGate(row, passed),

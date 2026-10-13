@@ -53,6 +53,7 @@ from modules.listing.domain.models import (
     CandidateSiteDraft,
 )
 from modules.listing.infrastructure.repositories import InMemoryListingRepository
+from modules.listing.tests.test_promotion_candidate_gate import _ExplicitTestDispatcher
 from packages.oday_data_product_contracts_client.models.property_observation import (
     BenchmarkFallbackLevel,
     ListingStatus,
@@ -493,6 +494,7 @@ def test_candidate_promotion_saga_with_platform_observations_and_benchmarks() ->
         promotion_repository=promo_repo,
         listing_repository=adapted_listing_repo,
         intake_repository=intake_repo,
+        score_dispatcher=_ExplicitTestDispatcher(),
     )
 
     # 1. Proposer requests promotion
@@ -536,7 +538,7 @@ def test_candidate_promotion_saga_with_platform_observations_and_benchmarks() ->
         risk_acknowledged=True,
         context=review_ctx,
     )
-    assert completed_promo["status"] == "COMPLETED"
+    assert completed_promo["status"] == "SCORE_QUEUED"
 
     # 3. Verify that CandidateSiteDraft in repo captured observation & benchmark fields
     candidates = listing_repo.list_candidates()

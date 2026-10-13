@@ -179,3 +179,34 @@ actions:
     description: Refuse a command whose canonical audit prerequisite is unavailable.
     update:
       '503': {$ref: '#/components/responses/AuditUnavailable'}
+
+  # 2026-10-13 additive score-delivery prerequisite errors. This candidate
+  # delta requires independent review; it records no design/release approval.
+  - target: $.components.responses
+    update:
+      ScoreDeliveryUnavailable:
+        description: The canonical job repository or required score-delivery dependency is unavailable; no approval execution or retry is committed.
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ApiError'}
+      JobAuthorityConflict:
+        description: A legacy score mirror or inconsistent parent binding cannot supply an authoritative job receipt.
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ConflictError'}
+
+  - target: $.paths['/v1/jobs/{job_id}/retry'].post.responses
+    description: Refuse score replay when a required canonical delivery dependency is unavailable.
+    update:
+      '503': {$ref: '#/components/responses/ScoreDeliveryUnavailable'}
+
+  - target: $.paths['/v1/jobs/{job_id}/receipt'].get.responses
+    description: Do not fabricate a receipt from a legacy mirror or an unavailable authoritative job repository.
+    update:
+      '409': {$ref: '#/components/responses/JobAuthorityConflict'}
+      '503': {$ref: '#/components/responses/ScoreDeliveryUnavailable'}
+
+  - target: $.paths['/v1/promotion-decisions/{promotion_decision_id}/actions/review'].post.responses
+    description: Refuse approval execution when a required canonical score-delivery dependency is unavailable; this additive response remains pending independent API review.
+    update:
+      '503': {$ref: '#/components/responses/ScoreDeliveryUnavailable'}
