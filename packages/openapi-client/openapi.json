@@ -5929,6 +5929,51 @@
         "title": "NetworkListingActorPayload",
         "type": "object"
       },
+      "NetworkListingArchivePayload": {
+        "additionalProperties": true,
+        "properties": {
+          "actorName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actorname"
+          },
+          "actorRoleId": {
+            "default": "expansionManager",
+            "title": "Actorroleid",
+            "type": "string"
+          },
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "NetworkListingArchivePayload",
+        "type": "object"
+      },
       "NetworkListingMergePayload": {
         "additionalProperties": true,
         "properties": {
@@ -5947,6 +5992,17 @@
             "default": "expansionManager",
             "title": "Actorroleid",
             "type": "string"
+          },
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
           },
           "reason": {
             "anyOf": [
@@ -5974,6 +6030,17 @@
               }
             ],
             "title": "Risksummary"
+          },
+          "targetIfMatch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetifmatch"
           },
           "targetListingId": {
             "title": "Targetlistingid",
@@ -35127,13 +35194,45 @@
               ],
               "title": "X-Correlation-Id"
             }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
+            }
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NetworkListingActorPayload"
+                "$ref": "#/components/schemas/NetworkListingArchivePayload"
               }
             }
           },
@@ -35418,6 +35517,38 @@
                 }
               ],
               "title": "X-Correlation-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
             }
           }
         ],

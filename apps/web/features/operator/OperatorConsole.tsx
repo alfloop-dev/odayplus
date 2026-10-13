@@ -28,7 +28,7 @@ import {
 } from "./governance/governanceEnvelope";
 import { GrowthWorkspace } from "./GrowthWorkspace";
 import { readGovernanceViewState, serializeGovernanceViewState, type GovernanceViewState } from "./governance/governanceUrlState";
-import { NetworkFindAreasWorkspace } from "./NetworkFindAreasWorkspace";
+import type { NetworkFindAreasWorkspaceProps } from "./NetworkFindAreasWorkspace";
 import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
 import { ISSUE_FIXTURES } from "./fixtures";
 import {
@@ -82,6 +82,14 @@ const GovernanceWorkspace = dynamic<GovernanceWorkspaceProps>(
   {
     ssr: false,
     loading: () => <div aria-live="polite" role="status">治理工作區載入中…</div>,
+  },
+);
+
+const NetworkFindAreasWorkspace = dynamic<NetworkFindAreasWorkspaceProps>(
+  () => import("./NetworkFindAreasWorkspace").then((mod) => mod.NetworkFindAreasWorkspace),
+  {
+    ssr: false,
+    loading: () => <div aria-live="polite" role="status">展店與店網工作區載入中…</div>,
   },
 );
 
@@ -375,6 +383,9 @@ function dataModeBannerCopy(
   fixturesAllowed: boolean,
 ): { detail: string; label: string } {
   if (status === "ready") {
+    if (fixturesAllowed) {
+      return { label: "開發／驗收 API 資料", detail: "目前顯示開發或驗收環境的 API 資料。" };
+    }
     return { label: "Live API", detail: "目前顯示的是經驗證的正式營運資料。" };
   }
   if (fixturesAllowed) {

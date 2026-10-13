@@ -51,7 +51,7 @@ import { ReviewPanel, resolveEffectiveReviews } from "./network/ReviewPanel";
 import { hasRecordedReviewReport, inspectReviewsReadProjection, isReviewPending } from "./network/networkReviewProjection";
 import { NetworkShell } from "./network/NetworkShell";
 import { projectCandidateWorkflow } from "./network/networkWorkflowProjection";
-import { hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, readObject } from "./network/networkReadValidation";
+import { hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, readId, readObject } from "./network/networkReadValidation";
 import { FindAreasPanel } from "./network/FindAreasPanel";
 import { canPerform as canPerformIntake } from "./network/intake/intakePermissions";
 import type { RebalancePanelProps } from "./network/RebalancePanel";
@@ -333,6 +333,38 @@ export function inspectNetworkScoringSnapshot(
     || !Array.isArray(snapshot.compare?.columns)) return "empty";
   if (!hasNetworkScoringRenderShape(snapshot)) return "error";
   return snapshot.candidates.length > 0 || snapshot.scorecards.length > 0 ? "ready" : "empty";
+}
+
+type ScoringWorkflowProvenance = "canonical" | "fixture" | "unknown";
+
+function inspectScoringWorkflowProvenance(snapshot: unknown): ScoringWorkflowProvenance {
+  if (!readObject(snapshot)) return "unknown";
+  // The actual canonical scoring producer owns this marker. It selects the
+  // strict projector; existing shape, generation and exact joins still admit
+  // each observation, so a marker alone cannot assert progress or permission.
+  if (snapshot.source === "canonical") {
+    if (!hasNetworkScoringRenderShape(snapshot)) return "unknown";
+    const associated = (snapshot.candidates as unknown[]).every((row) => {
+      if (!readObject(row)) return false;
+      const evidence = row.readEvidence;
+      const admission = row.currentAdmission;
+      if (Object.prototype.hasOwnProperty.call(row, "readEvidence")
+        && (!readObject(evidence) || evidence.candidateId !== row.id || evidence.listingId !== row.listingId || !readId(evidence.addressId))) return false;
+      if (Object.prototype.hasOwnProperty.call(row, "currentAdmission")
+        && (!readObject(admission) || admission.candidateId !== row.id || admission.listingId !== row.listingId || !readId(admission.addressId)
+          || readObject(evidence) && admission.addressId !== evidence.addressId)) return false;
+      return true;
+    });
+    return associated ? "canonical" : "unknown";
+  }
+  if (snapshot.source !== "api" || !hasNetworkScoringRenderShape(snapshot)) return "unknown";
+  // The actual legacy fixture producer predates these canonical fields.
+  // Presence, including explicit null, cannot silently become fixture data.
+  const hasOwn = (row: unknown, keys: string[]) => readObject(row)
+    && keys.some((key) => Object.prototype.hasOwnProperty.call(row, key));
+  if ((snapshot.candidates as unknown[]).some((row) => hasOwn(row, ["readEvidence", "currentAdmission", "pipelineEvidence"]))
+    || (snapshot.scorecards as unknown[]).some((row) => hasOwn(row, ["reportId", "reportVersion", "sitescoreRunId"]))) return "unknown";
+  return "fixture";
 }
 
 export function inspectNetworkRebalanceSnapshot(
@@ -715,6 +747,7 @@ export function NetworkFindAreasWorkspace({
     setArchiveRequest(null); setArchiveError(null); setArchiveBusy(false);
   }, [navigationContextKey, navigationLocationKey]);
   const [scoringSnapshotValue, setScoringSnapshot] = useState<NetworkScoringSnapshot | null>(null);
+  const [scoringWorkflowProvenance, setScoringWorkflowProvenance] = useState<ScoringWorkflowProvenance>("unknown");
   const scoringSnapshot = scoringNavigationGeneration === navigationContext.current.generation ? scoringSnapshotValue : null;
   const [scoringLoadStateValue, setScoringLoadState] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
@@ -991,6 +1024,7 @@ export function NetworkFindAreasWorkspace({
       const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && generation === navigationContext.current.generation && snapshot) {
         setScoringNavigationGeneration(generation);
+        setScoringWorkflowProvenance(inspectScoringWorkflowProvenance(snapshot));
         const inspection = inspectNetworkScoringSnapshot(snapshot);
         setScoringSnapshot(
           inspection === "ready" || fixturesAllowed && hasNetworkScoringRenderShape(snapshot)
@@ -1175,6 +1209,7 @@ export function NetworkFindAreasWorkspace({
       || navigationContextKey !== navigationContext.current.key || generation !== navigationContext.current.generation) return;
     setScoringNavigationGeneration(generation);
     if (read.ok) {
+      setScoringWorkflowProvenance(inspectScoringWorkflowProvenance(read.snapshot));
       const inspection = inspectNetworkScoringSnapshot(read.snapshot);
       setScoringSnapshot(inspection === "ready" || fixturesAllowed && hasNetworkScoringRenderShape(read.snapshot) ? read.snapshot : null);
       setScoringLoadFailure(null);
@@ -1542,6 +1577,7 @@ export function NetworkFindAreasWorkspace({
         return;
       }
       if (target.kind === "candidate") {
+        if (scoringRead?.ok) setScoringWorkflowProvenance(inspectScoringWorkflowProvenance(scoringRead.snapshot));
         if (!scoringRead?.ok || inspectNetworkScoringSnapshot(scoringRead.snapshot) !== "ready"
           || scoringRead.snapshot.candidates.filter((row) => row.id === target.id).length !== 1
           || !scoringRead.snapshot.candidates.some((row) => row.id === target.id && row.listingId === listingId)) {
@@ -1714,11 +1750,15 @@ export function NetworkFindAreasWorkspace({
     selection: { id: workflowCandidateId, invalid: isCandidateWorkflowTab(activeTab) && !overrideApplies && urlCandidateSelection.invalid },
     currentGeneration: navigationContext.current.generation,
     network: { snapshot: networkSnapshot, status: networkLoadState, generation: networkNavigationGeneration },
-    scoring: { snapshot: scoringSnapshot, status: scoringLoadState, generation: scoringNavigationGeneration },
+    scoring: { snapshot: scoringSnapshot, status: fixturesAllowed && scoringWorkflowProvenance === "unknown" ? "error" : scoringLoadState, generation: scoringNavigationGeneration },
     // Use only the admitted review read from the current access generation.
     reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
   });
-  const expansionSteps = fixturesAllowed
+  // Both snapshots are masked to the current access generation above. A prior
+  // fixture read cannot survive a role/tenant change or a failed current read.
+  const useFixtureWorkflow = fixturesAllowed && scoringWorkflowProvenance === "fixture"
+    && networkSnapshot !== null && scoringSnapshot !== null;
+  const expansionSteps = useFixtureWorkflow
     ? networkSnapshot?.expansionSteps ?? buildFallbackExpansionSteps(
           effectiveSelectedId,
           viewModel.candidatePipeline.some((row) => row.id === "CS-1001"),
@@ -1877,8 +1917,8 @@ export function NetworkFindAreasWorkspace({
         activeTab={activeTab}
         onTabChange={changeActiveTab}
         steps={expansionSteps}
-        workflowNotice={fixturesAllowed ? undefined : workflowProjection.notice}
-        workflowNextAction={fixturesAllowed ? undefined : workflowProjection.nextAction}
+        workflowNotice={useFixtureWorkflow ? undefined : workflowProjection.notice}
+        workflowNextAction={useFixtureWorkflow ? undefined : workflowProjection.nextAction}
         tabCounts={tabCounts}
         tabs={networkTabs}
       >

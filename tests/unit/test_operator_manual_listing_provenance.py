@@ -362,12 +362,24 @@ def test_legacy_convert_unknown_hard_rule_evidence_is_not_a_pass(verdict):
 
 def test_archive_keeps_unknown_hard_rules_unknown():
     state, _ = _legacy_convert_state()
+    # This archive case has no active candidate and supplies the exact scoped
+    # resource authorization now required by the service write boundary.
+    state["candidates"] = []
+    state["listings"][0]["tenantId"] = TENANT
+    state["listings"][0]["version"] = 7
+    state["listings"][0]["hasLegalHold"] = False
     state["listings"][0]["hardRuleFailures"] = None
     state["listings"][0]["sourceEvidence"] = None
+    def authorize_existing(row):
+        assert row["id"] == "measured-listing"
+        assert row["tenantId"] == TENANT
+        assert row["heatZoneId"] == "HZ-02"
     service = NetworkListingService(initial_state=state, seed_fixtures=False, tenant_id=TENANT)
     result = service.archive_listing(listing_id="measured-listing", reason="Recorded archive request",
                                      actor_role_id="site_reviewer", actor_name=ACTOR,
-                                     idempotency_key="archive-unknown", correlation_id="archive-unknown")
+                                     idempotency_key="archive-unknown", correlation_id="archive-unknown",
+                                     if_match='W/"7"',
+                                     authorize_existing=authorize_existing)
     assert result["listing"]["hardRuleFailures"] is None
     assert result["auditEvent"]["metadata"]["hardRuleFailures"] is None
     assert result["auditEvent"]["metadata"]["sourceEvidenceCount"] is None
