@@ -91,6 +91,56 @@ def test_owner_cleanup_logout_new_cookie_is_retained_and_cleaned_once(
         assert logouts == ["offline-original-cookie", COOKIE] and len(logouts) == len(set(logouts))
 
 
+@pytest.mark.parametrize(
+    "attributes,value,retained",
+    [
+        ("Path=/; Secure; SameSite=Lax", COOKIE, True),
+        ("Path=/; Secure; HttpOnly; SameSite=Strict", COOKIE, True),
+        ("Path=/; Secure; HttpOnly; SameSite=Lax", "unsafe,cookie", False),
+    ],
+)
+def test_actual_owned_observation_bad_attributes_keep_custody_unknown(
+    owned_sessions, tls_recovery_server, monkeypatch, attributes, value, retained
+):
+    with owned_sessions() as (owner, budget, clock, receipts, p, calls, original, target):
+        budget.begin("preflight")
+        owner.login("original")
+        header = f"Set-Cookie: __Host-oday_web_session={value}; {attributes}\r\n".encode()
+        with tls_recovery_server(recovery_http_reply(b'{"ok":true}', extra=header)) as (
+            origin,
+            ca,
+            requests,
+        ):
+            owner._origin, owner._address, owner._ca = origin, "127.0.0.1", ca
+            with pytest.raises(r.RecoveryActionRefused):
+                owner.observe_accounts(p)  # Actual observation HTTPS, first release read.
+            assert len(requests) == 1
+        mocked = r.OwnedSessionHTTPSAttempt.execute_session
+
+        def execute(self, operation, **kwargs):
+            if kwargs["cookie"] == COOKIE:
+                calls.append((operation, COOKIE, kwargs["deadline"], "", ""))
+                return (
+                    r.RecoveryHTTPResult(200, {"ok": True})
+                    if operation == "logout"
+                    else r.RecoveryHTTPResult(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
+                )
+            return mocked(self, operation, **kwargs)
+
+        monkeypatch.setattr(r.OwnedSessionHTTPSAttempt, "execute_session", execute)
+        budget.begin("quarantine")
+        budget.finish(outcome="completed")  # Fixture-only phase progress, no authority/effect.
+        with pytest.raises(r.RecoveryActionRefused) as caught:
+            owner.cleanup()
+        assert caught.value.outcome == "unknown" and owner._unknown_login
+        logouts = [cookie for operation, cookie, *_ in calls if operation == "logout"]
+        assert logouts == ["offline-original-cookie", *([COOKIE] if retained else [])]
+        before = list(calls)
+        with pytest.raises(r.RecoveryRefused):
+            owner.cleanup()
+        assert calls == before
+
+
 @pytest.mark.parametrize("phase", ["ordinary", "cleanup"])
 def test_foreground_canonical_or_cleanup_read_drains_new_cookie_once(
     foreground_gate, monkeypatch, phase

@@ -1335,6 +1335,29 @@ else:
                 "audit_event_id": audit_event.event_id,
             }
 
+        def _authorize_intake_job_items(job: Any, principal: Any, tenant_id: str, action: str) -> None:
+            from modules.listing.application.intake_authorization import (
+                authorize_intake_action,
+                intake_resource_in_scope,
+            )
+            # Both reads and retries address COMPLETE stored objects, never
+            # projected collection filters. Empty lists still require envelope
+            # scope and role/action authority; malformed lists cannot disappear.
+            items = []
+            for key in ("items", "rows"):
+                if key not in job.payload:
+                    continue
+                collection = job.payload[key]
+                if not isinstance(collection, list) or any(not isinstance(item, dict) for item in collection):
+                    raise HTTPException(403, detail="JOB_ITEM_SCOPE_INVALID")
+                items.extend(collection)
+            for idx, item in enumerate(items or [job.payload]):
+                item_id = str(item.get("item_id") or f"row-{idx+1:03d}").strip()
+                _, scope = _normalize_batch_item_scope(item, item_id)
+                if scope.get("tenantId") not in {None, tenant_id} or not intake_resource_in_scope(principal, scope):
+                    raise HTTPException(403, detail="SCOPE_DENIED")
+                authorize_intake_action(principal, action, collection_scope=scope, tenant_id=tenant_id)
+
         def _authorize_job_access(job: Any, request: Request) -> None:
             from apps.api.oday_api.security.dependencies import principal_from_headers
 
@@ -1365,7 +1388,6 @@ else:
                         detail="job not found",
                     )
                 principal = principal_from_headers(request.headers)
-                from modules.listing.application.intake_authorization import authorize_intake_action
                 from shared.auth import Role
 
                 is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER)
@@ -1382,27 +1404,7 @@ else:
                             detail="OWNERSHIP_REQUIRED",
                         )
 
-                from modules.listing.application.intake_authorization import (
-                    intake_resource_in_scope,
-                )
-                # This response serializes objects, not scope-projected collection
-                # rows. Mixed OPERATOR_VIEWER roles must not waive missing axes.
-                collections = [job.payload[key] for key in ("items", "rows") if key in job.payload]
-                if not collections:
-                    collections = [[job.payload]]
-                for raw_items in collections:
-                    if not isinstance(raw_items, list):
-                        raise HTTPException(403, detail="JOB_ITEM_SCOPE_INVALID")
-                    for idx, raw_item in enumerate(raw_items):
-                        if not isinstance(raw_item, dict):
-                            raise HTTPException(403, detail="JOB_ITEM_SCOPE_INVALID")
-                        item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
-                        _, item_scope = _normalize_batch_item_scope(raw_item, item_id)
-                        if (item_scope.get("tenantId") not in {None, active_tenant_id}
-                                or not intake_resource_in_scope(principal, item_scope)):
-                            raise HTTPException(403, detail="SCOPE_DENIED")
-                        authorize_intake_action(principal, "view", collection_scope=item_scope,
-                                                tenant_id=active_tenant_id)
+                _authorize_intake_job_items(job, principal, active_tenant_id, "view")
             elif job.job_type == "external-fetch":
                 from shared.auth import Action, rbac_allows
                 if not rbac_allows(principal, "integration", Action.VIEW):
@@ -1477,7 +1479,6 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
-                from modules.listing.application.intake_authorization import authorize_intake_action
                 from shared.auth import Role
 
                 is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER)
@@ -1494,18 +1495,7 @@ else:
                             detail="OWNERSHIP_REQUIRED",
                         )
 
-                raw_items = job.payload.get("items") or job.payload.get("rows") or []
-                if isinstance(raw_items, list):
-                    for idx, raw_item in enumerate(raw_items):
-                        if isinstance(raw_item, dict):
-                            item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
-                            _, item_scope = _normalize_batch_item_scope(raw_item, item_id)
-                            authorize_intake_action(
-                                principal,
-                                "submit_csv",
-                                collection_scope=item_scope,
-                                tenant_id=active_tenant_id,
-                            )
+                _authorize_intake_job_items(job, principal, active_tenant_id, "submit_csv")
             else:
                 principal = principal_from_headers(request.headers)
                 if not principal.authenticated:

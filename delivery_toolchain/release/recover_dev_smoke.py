@@ -947,8 +947,29 @@ class TrustedGitHubAdmissionObserver:
         self._download.close()
 
 
+def _safe_owned_cookie_value(header: str) -> str:
+    """Cleanup custody only: attributes cannot erase a safely sendable value."""
+    from http.cookies import SimpleCookie
+    try:
+        if type(header) is not str:
+            return ""
+        pair = header.split(";", 1)[0]
+        if len(pair) > 9000 or any(ord(c) < 32 or ord(c) >= 127 for c in pair):
+            return ""
+        parsed = SimpleCookie()
+        parsed.load(pair)
+        if set(parsed) != {"__Host-oday_web_session"}:
+            return ""
+        value = parsed["__Host-oday_web_session"].value
+        if not 0 < len(value) <= 8192 or any(ord(c) <= 32 or ord(c) >= 127 or c in ';"\\,' for c in value):
+            return ""
+        return value
+    except Exception:
+        return ""
+
+
 def _safe_owned_login_cookie(header: str) -> str:
-    """Independently validate one field for cleanup custody, not login success."""
+    """Strict login acceptance, separate from cleanup-only value retention."""
     from http.cookies import SimpleCookie
 
     try:
@@ -983,13 +1004,14 @@ class RecoveryHTTPRefused(RecoveryRefused):
     """
 
     def __init__(self, *, outcome: str, http_status: int | None, cookie: str = "",
-                 cookies: tuple[str, ...] = ()) -> None:
+                 cookies: tuple[str, ...] = (), cookie_observed: bool = False) -> None:
         super().__init__("RECOVERY_HTTPS_ATTEMPT_REFUSED")
         self.outcome, self.http_status = outcome, http_status
         # Bounded private custody survives duplicate/partial login replies.
         # Keep legacy first-cookie access, NEVER serialize this inventory.
         self._cookies = tuple(dict.fromkeys(value for value in (cookie, *cookies) if value))[:4]
         self._cookie = self._cookies[0] if self._cookies else ""
+        self._cookie_observed = bool(cookie_observed or self._cookies)
 
     def __reduce_ex__(self, protocol: int):
         raise RecoveryRefused("RECOVERY_HTTP_SERIALIZATION_REFUSED")
@@ -1129,6 +1151,7 @@ class RecoveryHTTPSAttempt:
         submitted = False
         issued_cookie = ""
         issued_cookies: list[str] = []
+        cookie_observed = False
         try:
             if (method not in {"GET", "POST"} or type(cookie) is not str
                     or not (0 <= len(cookie) <= 8192 if cookie_mode == "login" else 0 < len(cookie) <= 8192)
@@ -1164,10 +1187,11 @@ class RecoveryHTTPSAttempt:
             # Parse the cookie independently BEFORE body/framing validation, so
             # a real own session with a lost body remains eligible for cleanup.
             cookies = response.headers.get_all("Set-Cookie", [])
+            cookie_observed = bool(cookies)
             # ALL responses can issue authority, including logout/observations.
             # Keep safe values before framing/body/deadline refusal, not just login.
             for header in cookies:
-                value = _safe_owned_login_cookie(header)
+                value = _safe_owned_cookie_value(header)
                 if value and value not in issued_cookies and len(issued_cookies) < 4:
                     issued_cookies.append(value)
             if cookie_mode == "login":
@@ -1176,7 +1200,9 @@ class RecoveryHTTPSAttempt:
                 # Duplicated fields (even identical) remain UNKNOWN, never success.
                 if len(cookies) != 1 or len(issued_cookies) != 1:
                     raise ValueError
-                issued_cookie = issued_cookies[0]
+                issued_cookie = _safe_owned_login_cookie(cookies[0])
+                if not issued_cookie or issued_cookie != issued_cookies[0]:
+                    raise ValueError
             elif cookies:
                 # Logout may clear its cookie, NEVER issue another authority.
                 from http.cookies import SimpleCookie
@@ -1222,8 +1248,9 @@ class RecoveryHTTPSAttempt:
             _http_remaining(deadline)  # parsing/EOF is not permission beyond expiry
             return RecoveryHTTPResult(status, payload, issued_cookie)
         except Exception:
-            raise RecoveryHTTPRefused(outcome="unknown" if issued_cookies or (submitted and method == "POST") else "refused",
-                                      http_status=status, cookie=issued_cookie, cookies=tuple(issued_cookies)) from None
+            raise RecoveryHTTPRefused(outcome="unknown" if cookie_observed or (submitted and method == "POST") else "refused",
+                                      http_status=status, cookie=issued_cookie, cookies=tuple(issued_cookies),
+                                      cookie_observed=cookie_observed) from None
         finally:
             for resource in (response, connection, tls, raw):
                 if resource is not None:
@@ -1601,7 +1628,7 @@ class ForegroundOwnedWebSessions:
             self._stopped = self._budget._stopped = True
             if isinstance(exc, RecoveryHTTPRefused):
                 status, outcome = exc.http_status, exc.outcome
-                if exc._cookies:
+                if exc._cookie_observed:
                     self._retain_response_cookies(role, exc._cookies)
                     outcome = "unknown"
             elif started:
@@ -1851,7 +1878,7 @@ class SameSessionRecoveryActions:
             self._stopped = True
             if isinstance(exc, RecoveryHTTPRefused):
                 outcome, status = exc.outcome, exc.http_status
-                if exc._cookies:
+                if exc._cookie_observed:
                     self._response_cookies = tuple(dict.fromkeys((*self._response_cookies, *exc._cookies)))[:4]
                     outcome = "unknown"
                     if self._session_owner is not None:

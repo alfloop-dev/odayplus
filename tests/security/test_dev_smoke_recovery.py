@@ -1809,7 +1809,11 @@ def test_real_owned_login_https_csrf_cookie_validation_and_one_attempt(tls_recov
             with pytest.raises(r.RecoveryHTTPRefused) as caught:
                 attempt.execute_session("login", cookie="", username="ajoe734", password="OFFLINE-PASSWORD",
                                         deadline=time.monotonic() + 2)
-            assert caught.value.outcome == "unknown" and caught.value._cookie == ""
+            assert caught.value.outcome == "unknown" and caught.value._cookie == "offline-cookie"
+            assert caught.value._cookies == ("offline-cookie",) and caught.value._cookie_observed
+            # Refused login is not usable authority; safely known value is
+            # nevertheless retained privately for once-only cleanup.
+            assert "offline-cookie" not in str(caught.value) + repr(caught.value)
         else:
             result = attempt.execute_session("login", cookie="", username="ajoe734", password="OFFLINE-PASSWORD",
                                              deadline=time.monotonic() + 2)

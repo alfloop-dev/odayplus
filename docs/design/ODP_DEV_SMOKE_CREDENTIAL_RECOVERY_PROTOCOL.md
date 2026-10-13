@@ -1096,4 +1096,8 @@ cannot substitute for actual object projection. Native requests do not follow
 redirects; both foreground HTTPS paths retain unexpected cookie custody on every
 response before body/deadline refusal. Expanding bounded inventories keep shared
 once-only logout intents and sticky UNKNOWN, with quarantine ordering/durable starts
-and all existing caps preserved. These source repairs do not confer acceptance.
+and all existing caps preserved. Complete-object read and retry checks share both-
+list/zero-item-envelope/tenant validation without waiving distinct mutation grants
+or version fences. Cleanup-only safe cookie retention is independent of strict
+attribute acceptance; observed but unsendable values also keep UNKNOWN sticky.
+These source repairs do not confer acceptance.

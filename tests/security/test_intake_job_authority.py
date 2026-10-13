@@ -28,6 +28,7 @@ from tests.security.test_opsboard_jwks_auth import _jwk, _token
         "missing-store",
         "conflicting-store",
         "replay-store",
+        "replay-in-scope",
     ],
 )
 def test_intake_queue_mutation_and_complete_object_scope(monkeypatch, case):
@@ -39,8 +40,8 @@ def test_intake_queue_mutation_and_complete_object_scope(monkeypatch, case):
     roles = (
         ["auditor"]
         if case == "assisted-enqueue"
-        else ["data_owner", "operator_viewer"]
-        if case == "replay-store"
+        else ["site_reviewer", "operator_viewer"]
+        if case.startswith("replay-")
         else ["auditor", "operator_viewer"]
     )
     scope = {
@@ -75,7 +76,7 @@ def test_intake_queue_mutation_and_complete_object_scope(monkeypatch, case):
             assert response.status_code == 403, response.status_code
             assert not bundle.job_queue._jobs
         else:
-            allowed = case.startswith("in-scope")
+            allowed = case.startswith("in-scope") or case == "replay-in-scope"
             store = "store-A" if allowed else "store-B"
             axis = {"scope": {"store_id": store}} if case.endswith("nested") else {"storeId": store}
             if case == "missing-store":
@@ -89,7 +90,16 @@ def test_intake_queue_mutation_and_complete_object_scope(monkeypatch, case):
                 correlation_id="offline",
             )
             bundle.job_queue._jobs[record.job_id] = record
-            if case == "replay-store":
+            if case.startswith("replay-"):
+                returned = []
+                enqueue = bundle.job_queue.enqueue
+
+                def observed_enqueue(*args, **kwargs):
+                    result = enqueue(*args, **kwargs)
+                    returned.append(result)
+                    return result
+
+                monkeypatch.setattr(bundle.job_queue, "enqueue", observed_enqueue)
                 token = "offline-replay"
                 queue_key = f"batch-listing-intake:v2:{len(TENANT)}:{TENANT}:{len(token)}:{token}"
                 bundle.job_queue._idempotency_index[queue_key] = record.job_id
@@ -101,10 +111,18 @@ def test_intake_queue_mutation_and_complete_object_scope(monkeypatch, case):
                         "payload": {"items": [{"item_id": "safe", "storeId": "store-A"}]},
                     },
                 )
-                assert (
-                    response.status_code == 403
-                    and "offline-other-store-address" not in response.text
-                )
+                assert returned == [(record, False)], "must actually reach the seeded replay"
+                if allowed:
+                    assert response.status_code == 202, response.status_code
+                    assert (
+                        response.json()["created"] is False
+                        and response.json()["job_id"] == record.job_id
+                    )
+                else:
+                    assert (
+                        response.status_code == 403 and response.json()["detail"] == "SCOPE_DENIED"
+                    )
+                    assert "offline-other-store-address" not in response.text
                 assert list(bundle.job_queue._jobs) == [record.job_id]
                 return
             for path in ["/jobs/", "/api/v1/jobs/"]:
