@@ -708,6 +708,16 @@ def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
                 listing["id"] for listing in snapshot.json()["listings"]
             }
             assert {"L-2024", "L-2025", "L-2029", "L-2030"} <= listing_ids
+            assert next(
+                listing for listing in snapshot.json()["listings"] if listing["id"] == "L-2024"
+            )["hardRuleFailures"] == []
+            # The next request reconstructs the aggregate from durable rows;
+            # the seed's recorded pass must survive that round trip.
+            restored = client.get(f"{BASE}/network-listings", headers=headers)
+            assert restored.status_code == 200
+            assert next(
+                listing for listing in restored.json()["listings"] if listing["id"] == "L-2024"
+            )["hardRuleFailures"] == []
 
             converted = client.post(
                 f"{BASE}/network-listings/listings/L-2024/convert",
@@ -717,7 +727,7 @@ def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
                 ),
                 json={"actorRoleId": "expansionManager"},
             )
-            assert converted.status_code == 200
+            assert converted.status_code == 200, converted.text
 
             # The conversion is durable: a fresh request rebuilds the service
             # from persisted state and still sees candidate linkage.
@@ -731,6 +741,7 @@ def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
             )
             assert l2024["status"] == "candidate"
             assert l2024["candidateId"] == "CS-1001"
+            assert l2024["hardRuleFailures"] == []
 
             # Reset stays available behind the gate and restores the canonical
             # seed, discarding the conversion.
@@ -747,6 +758,59 @@ def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
                 if listing["id"] == "L-2024"
             )
             assert l2024_reset.get("candidateId") in (None, "")
+            assert l2024_reset["hardRuleFailures"] == []
+            converted_after_reset = client.post(
+                f"{BASE}/network-listings/listings/L-2024/convert",
+                headers=_headers("tenant-e2e-seeded", idempotency_key="e2e-seed-convert-2"),
+                json={"actorRoleId": "expansionManager"},
+            )
+            assert converted_after_reset.status_code == 200, converted_after_reset.text
+    finally:
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("verdict", [None, ["floor_not_ground_level"]], ids=["unknown", "failed"])
+def test_durable_seed_retains_unapproved_verdict_across_requests_and_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verdict: list[str] | None,
+) -> None:
+    from modules.opsboard.application import network_listings
+
+    original_seed = network_listings._seed_state
+
+    def explicit_seed(**kwargs: Any) -> dict[str, Any]:
+        state = original_seed(**kwargs)
+        next(row for row in state["listings"] if row["id"] == "L-2024")["hardRuleFailures"] = verdict
+        return state
+
+    monkeypatch.setattr(network_listings, "_seed_state", explicit_seed)
+    app, bundle = _live_app(tmp_path / "operator-seed-verdict.sqlite3", allow_test_reset=True)
+    try:
+        with TestClient(app) as client:
+            headers = _headers("tenant-seed-verdict")
+            for phase in ("initial", "reset"):
+                if phase == "reset":
+                    reset = client.post(f"{BASE}/network-listings/reset", headers=headers)
+                    assert reset.status_code == 200
+                # Both initial seed and reconstructed service must expose the
+                # actual null/failure verdict, never an invented pass.
+                for _ in range(2):
+                    snapshot = client.get(f"{BASE}/network-listings", headers=headers)
+                    assert snapshot.status_code == 200
+                    listing = next(
+                        row for row in snapshot.json()["listings"] if row["id"] == "L-2024"
+                    )
+                    assert listing["hardRuleFailures"] == verdict
+                converted = client.post(
+                    f"{BASE}/network-listings/listings/L-2024/convert",
+                    headers=_headers("tenant-seed-verdict", idempotency_key=f"seed-verdict-{phase}"),
+                    json={"actorRoleId": "expansionManager"},
+                )
+                assert converted.status_code == 422, converted.text
+                expected = "HARD_RULE_EVIDENCE_REQUIRED" if verdict is None else "hard-rule failures"
+                assert expected in converted.json()["detail"]
+                after = client.get(f"{BASE}/network-listings", headers=headers)
+                assert after.status_code == 200
+                assert after.json()["candidates"] == []
     finally:
         bundle.engine.close()
 

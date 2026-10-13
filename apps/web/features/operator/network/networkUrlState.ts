@@ -67,3 +67,22 @@ export function buildNetworkTabHref(
     : "";
   return `${pathname}${query ? `?${query}` : ""}${normalizedHash}`;
 }
+
+export const CANDIDATE_SELECTION_PARAM = "candidate";
+
+export function parseCandidateSelection(params: { toString(): string }): { id: string | null; invalid: boolean } {
+  const values = new URLSearchParams(params.toString()).getAll(CANDIDATE_SELECTION_PARAM);
+  if (!values.length) return { id: null, invalid: false };
+  if (!values[0] || values.some((value) => value !== values[0])) return { id: null, invalid: true };
+  return { id: values[0], invalid: false };
+}
+
+/** Candidate and intake selection have separate URL owners. */
+export function candidateNavigationParams(candidateId: string, existing: { toString(): string }): URLSearchParams {
+  const params = new URLSearchParams(existing.toString());
+  for (const key of ["zone", "selected", "dialog", "section", "field", "decision", "receipt", "compare"]) {
+    params.delete(key);
+  }
+  params.set(CANDIDATE_SELECTION_PARAM, candidateId);
+  return params;
+}

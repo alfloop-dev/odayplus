@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -13,7 +13,7 @@ import {
 } from "./fixtures";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DEFAULT_OPERATOR_ROLE_ID, type OperatorRoleId } from "./navigation";
-import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
+import { operatorSecurityHeaders, operatorSubjectId } from "./operatorSecurityHeaders";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
@@ -29,6 +29,9 @@ import {
 import styles from "./networkFindAreas.module.css";
 import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview } from "./types";
 import { ListingRadarPanel } from "./network/ListingRadarPanel";
+import { buildDurableDetailHref } from "./network/intake/AssistedIntakeSection";
+import { parseUrlState } from "./network/intake/urlState";
+import { navigationIncludesTarget, resolveListingNavigation, type ListingNavigationTarget, type RelatedIntake } from "./network/listingNavigation";
 import { ListingMergeDialog, type ListingMergeForm, type ListingMergeRequest } from "./network/ListingMergeDialog";
 import {
   buildListingsClient,
@@ -53,6 +56,9 @@ import type {
 } from "./network/HeatZoneMergeSplitPanel";
 import {
   buildNetworkTabHref,
+  candidateNavigationParams,
+  CANDIDATE_SELECTION_PARAM,
+  parseCandidateSelection,
   parseNetworkTabIndex,
 } from "./network/networkUrlState";
 import type { ExpansionStep } from "./network/ExpansionStepper";
@@ -201,7 +207,7 @@ type NetworkListingsSnapshot = {
   selectedHeatZoneId?: string;
   selectedLens?: NetworkFindAreasLens;
   correlationId?: string;
-  assistedIntakes?: any[];
+  assistedIntakes?: RelatedIntake[];
 };
 
 type NetworkRebalanceSnapshot = {
@@ -565,6 +571,34 @@ export function NetworkFindAreasWorkspace({
   const router = useRouter();
   const searchParams = useSearchParams();
   const fixturesAllowed = operatorFixturesAllowed();
+  // This observed browser context invalidates cached links. Clicks also re-read
+  // the guarded endpoints because the API exposes no client scope/session epoch.
+  const navigationContextKey = JSON.stringify([
+    activeRoleId, operatorSubjectId(activeRoleId),
+    typeof window === "undefined" ? "" : window.sessionStorage.getItem("oday.operator.tenant"),
+  ]);
+  const navigationContext = useRef({ key: navigationContextKey, generation: 0 });
+  if (navigationContext.current.key !== navigationContextKey) {
+    navigationContext.current = { key: navigationContextKey, generation: navigationContext.current.generation + 1 };
+  }
+  const navigationIntent = useRef(0);
+  const networkReadSequence = useRef(0);
+  const scoringReadSequence = useRef(0);
+  const navigationLocationKey = `${pathname}?${searchParams.toString()}`;
+  const navigationLocation = useRef({ key: navigationLocationKey, version: 0, mounted: true });
+  if (navigationLocation.current.key !== navigationLocationKey) {
+    navigationLocation.current = { ...navigationLocation.current, key: navigationLocationKey, version: navigationLocation.current.version + 1 };
+  }
+  useEffect(() => {
+    navigationLocation.current.mounted = true;
+    return () => {
+      navigationLocation.current.mounted = false;
+      navigationIntent.current += 1;
+    };
+  }, []);
+  const [networkNavigationGeneration, setNetworkNavigationGeneration] = useState<number | null>(null);
+  const [scoringNavigationGeneration, setScoringNavigationGeneration] = useState<number | null>(null);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
   const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId]);
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
@@ -594,14 +628,18 @@ export function NetworkFindAreasWorkspace({
   // Acknowledged navigation or same-tab Back/Forward releases the override;
   // tab-only comparison would retain a cleared scope over a restored zone.
   const urlCandidateZoneId = searchParams.get(CANDIDATE_ZONE_PARAM) || null;
+  const urlCandidateSelection = parseCandidateSelection(searchParams);
   const [tabOverride, setTabOverride] = useState<{
     from: number;
     fromZoneId: string | null;
+    fromCandidateQuery: string;
+    candidateId: string | null;
     requested: number;
     candidateZoneId: string | null;
   } | null>(null);
   const overrideApplies = tabOverride !== null && tabOverride.from === urlTab
-    && tabOverride.fromZoneId === urlCandidateZoneId;
+    && tabOverride.fromZoneId === urlCandidateZoneId
+    && tabOverride.fromCandidateQuery === JSON.stringify(searchParams.getAll(CANDIDATE_SELECTION_PARAM));
   const activeTab = overrideApplies ? tabOverride.requested : urlTab;
   // 「查看本區候選點」 scopes the Candidates tab to one HeatZone. The scope is
   // carried in the URL (`zone=<heatZoneId>`) so a reload or back/forward
@@ -613,25 +651,44 @@ export function NetworkFindAreasWorkspace({
         ? tabOverride.candidateZoneId
         : urlCandidateZoneId;
 
+  const selectedCandidateId = activeTab === 2
+    ? overrideApplies ? tabOverride.candidateId : urlCandidateSelection.id : null;
+  const candidateSelectionError = activeTab === 2 && !overrideApplies && urlCandidateSelection.invalid
+    ? "候選點連結包含不一致或空白的選取值。" : null;
+
   useEffect(() => {
     setTabOverride((current) => (current !== null
-      && (current.from !== urlTab || current.fromZoneId !== urlCandidateZoneId) ? null : current));
-  }, [urlTab, urlCandidateZoneId]);
-  const [networkSnapshot, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
+      && (current.from !== urlTab || current.fromZoneId !== urlCandidateZoneId
+        || current.fromCandidateQuery !== JSON.stringify(searchParams.getAll(CANDIDATE_SELECTION_PARAM))) ? null : current));
+  }, [urlTab, urlCandidateZoneId, searchParams]);
+  const [networkSnapshotValue, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
+  const networkSnapshot = networkNavigationGeneration === navigationContext.current.generation ? networkSnapshotValue : null;
   const [networkApiError, setNetworkApiError] = useState<string | null>(null);
-  const [networkLoadFailure, setNetworkLoadFailure] = useState<OperatorLoadFailure | null>(null);
-  const [networkLoadState, setNetworkLoadState] = useState<OperatorDataAvailability>(
+  const [networkLoadFailureValue, setNetworkLoadFailure] = useState<OperatorLoadFailure | null>(null);
+  const networkLoadFailure = networkNavigationGeneration === navigationContext.current.generation ? networkLoadFailureValue : null;
+  const [networkLoadStateValue, setNetworkLoadState] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
   );
+  const networkLoadState: OperatorDataAvailability = networkNavigationGeneration === navigationContext.current.generation || fixturesAllowed
+    ? networkLoadStateValue : "loading";
   const [busyListingId, setBusyListingId] = useState<string | null>(null);
+  useEffect(() => {
+    navigationIntent.current += 1;
+    setBusyListingId(null);
+    setNavigationError(null);
+  }, [navigationContextKey, navigationLocationKey]);
   const [mergeRequest, setMergeRequest] = useState<ListingMergeRequest | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [mergeError, setMergeError] = useState<ListingApiError | null>(null);
-  const [scoringSnapshot, setScoringSnapshot] = useState<NetworkScoringSnapshot | null>(null);
-  const [scoringLoadState, setScoringLoadState] = useState<OperatorDataAvailability>(
+  const [scoringSnapshotValue, setScoringSnapshot] = useState<NetworkScoringSnapshot | null>(null);
+  const scoringSnapshot = scoringNavigationGeneration === navigationContext.current.generation ? scoringSnapshotValue : null;
+  const [scoringLoadStateValue, setScoringLoadState] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
   );
-  const [scoringLoadFailure, setScoringLoadFailure] = useState<OperatorLoadFailure | null>(null);
+  const scoringLoadState: OperatorDataAvailability = scoringNavigationGeneration === navigationContext.current.generation || fixturesAllowed
+    ? scoringLoadStateValue : "loading";
+  const [scoringLoadFailureValue, setScoringLoadFailure] = useState<OperatorLoadFailure | null>(null);
+  const scoringLoadFailure = scoringNavigationGeneration === navigationContext.current.generation ? scoringLoadFailureValue : null;
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
   const [rebalanceSnapshot, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
   const [rebalanceApiError, setRebalanceApiError] = useState<string | null>(null);
@@ -749,22 +806,32 @@ export function NetworkFindAreasWorkspace({
   );
 
   const changeActiveTab = useCallback((tabIndex: number, extraParams?: Record<string, string>) => {
+    navigationIntent.current += 1;
+    setBusyListingId(null);
+    setNavigationError(null);
     setTabOverride({
       from: urlTab,
       fromZoneId: urlCandidateZoneId,
+      fromCandidateQuery: JSON.stringify(searchParams.getAll(CANDIDATE_SELECTION_PARAM)),
+      candidateId: tabIndex === 2 ? extraParams?.[CANDIDATE_SELECTION_PARAM] || null : null,
       requested: tabIndex,
       candidateZoneId: tabIndex === 2 ? extraParams?.[CANDIDATE_ZONE_PARAM] || null : null,
     });
-    const params = new URLSearchParams(searchParams.toString());
+    const exactCandidate = extraParams?.[CANDIDATE_SELECTION_PARAM];
+    const params = exactCandidate
+      ? candidateNavigationParams(exactCandidate, searchParams)
+      : new URLSearchParams(searchParams.toString());
+    params.delete(CANDIDATE_SELECTION_PARAM);
     // The zone scope only lives as long as the navigation that asked for it;
-    // any other tab change (tab bar, stepper, convert) shows every candidate.
+    // any other tab change (tab bar or stepper) shows every candidate.
     params.delete(CANDIDATE_ZONE_PARAM);
     for (const [key, value] of Object.entries(extraParams ?? {})) params.set(key, value);
+    if (exactCandidate) params.set("ws", "network");
     const href = buildNetworkTabHref(
-      pathname,
+      exactCandidate ? "/operator" : pathname,
       tabIndex,
       params,
-      typeof window === "undefined" ? "" : window.location.hash,
+      typeof window === "undefined" || exactCandidate && window.location.hash.startsWith("#intake/") ? "" : window.location.hash,
     );
     router.push(href, { scroll: false });
   }, [pathname, router, searchParams, urlTab, urlCandidateZoneId]);
@@ -807,16 +874,10 @@ export function NetworkFindAreasWorkspace({
     ((liveHeatZones !== undefined && liveHeatZones.source !== "api") ||
       (liveCandidates !== undefined && liveCandidates.source !== "api"));
 
-  const [localSiteReviews, setLocalSiteReviews] = useState<SiteReview[]>(() => siteReviewsEffective);
-  const [localCandidates, setLocalCandidates] = useState<Candidate[]>(() => candidates);
-
-  useEffect(() => {
-    setLocalSiteReviews(siteReviewsEffective);
-  }, [siteReviewsEffective]);
-
-  useEffect(() => {
-    setLocalCandidates(candidates);
-  }, [candidates]);
+  // These are read projections, not editable drafts. Keeping a second state
+  // copy would retain the previous principal's rows for an extra render.
+  const localSiteReviews = siteReviewsEffective;
+  const localCandidates = candidates;
 
   const effectiveLens = activeLens ?? localLens;
   const effectiveSelectedId = selectedHeatZoneId ?? localSelectedId;
@@ -835,10 +896,14 @@ export function NetworkFindAreasWorkspace({
 
   useEffect(() => {
     let cancelled = false;
+    const generation = navigationContext.current.generation;
+    const sequence = ++networkReadSequence.current;
     async function load() {
       const read = await fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId);
+      if (sequence !== networkReadSequence.current) return;
       const snapshot = read.ok ? read.snapshot : null;
-      if (!cancelled && snapshot) {
+      if (!cancelled && generation === navigationContext.current.generation && snapshot) {
+        setNetworkNavigationGeneration(generation);
         const inspection = inspectNetworkListingsSnapshot(snapshot);
         const serverSelectedId = snapshot.selectedHeatZoneId;
         if (
@@ -863,7 +928,8 @@ export function NetworkFindAreasWorkspace({
               ? "fixture"
               : inspection,
         );
-      } else if (!cancelled && !read.ok) {
+      } else if (!cancelled && generation === navigationContext.current.generation && !read.ok) {
+        setNetworkNavigationGeneration(generation);
         // A refused read leaves no snapshot behind: its collections were not
         // read, so nothing below may present them as an authorized result.
         setNetworkSnapshot(null);
@@ -880,14 +946,18 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, effectiveLens, effectiveSelectedId, fixturesAllowed]);
+  }, [activeRoleId, effectiveLens, effectiveSelectedId, fixturesAllowed, navigationContextKey]);
 
   useEffect(() => {
     let cancelled = false;
+    const generation = navigationContext.current.generation;
+    const sequence = ++scoringReadSequence.current;
     async function loadScoring() {
       const read = await fetchNetworkScoringSnapshot(activeRoleId);
+      if (sequence !== scoringReadSequence.current) return;
       const snapshot = read.ok ? read.snapshot : null;
-      if (!cancelled && snapshot) {
+      if (!cancelled && generation === navigationContext.current.generation && snapshot) {
+        setScoringNavigationGeneration(generation);
         const inspection = inspectNetworkScoringSnapshot(snapshot);
         setScoringSnapshot(
           inspection === "ready" || fixturesAllowed
@@ -902,7 +972,9 @@ export function NetworkFindAreasWorkspace({
               ? "fixture"
               : inspection,
         );
-      } else if (!cancelled && !read.ok) {
+      } else if (!cancelled && generation === navigationContext.current.generation && !read.ok) {
+        setScoringSnapshot(null);
+        setScoringNavigationGeneration(generation);
         setScoringLoadFailure(read.failure);
         setScoringLoadState(fixturesAllowed ? "fixture" : "error");
       }
@@ -911,7 +983,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, fixturesAllowed]);
+  }, [activeRoleId, fixturesAllowed, navigationContextKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1041,9 +1113,21 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadScoringSnapshot() {
+    const generation = navigationContext.current.generation;
+    const sequence = ++scoringReadSequence.current;
     const read = await fetchNetworkScoringSnapshot(activeRoleId);
+    if (!navigationLocation.current.mounted || sequence !== scoringReadSequence.current
+      || navigationContextKey !== navigationContext.current.key || generation !== navigationContext.current.generation) return;
+    setScoringNavigationGeneration(generation);
     if (read.ok) {
-      setScoringSnapshot(read.snapshot);
+      const inspection = inspectNetworkScoringSnapshot(read.snapshot);
+      setScoringSnapshot(inspection === "ready" || fixturesAllowed ? read.snapshot : null);
+      setScoringLoadFailure(null);
+      setScoringLoadState(inspection);
+    } else {
+      setScoringSnapshot(null);
+      setScoringLoadFailure(read.failure);
+      setScoringLoadState("error");
     }
   }
 
@@ -1337,17 +1421,28 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadNetworkSnapshot() {
+    const generation = navigationContext.current.generation;
+    const sequence = ++networkReadSequence.current;
     const read = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId);
+    if (!navigationLocation.current.mounted || sequence !== networkReadSequence.current
+      || navigationContextKey !== navigationContext.current.key || generation !== navigationContext.current.generation) return;
+    setNetworkNavigationGeneration(generation);
     if (read.ok) {
-      setNetworkSnapshot(read.snapshot);
+      const inspection = inspectNetworkListingsSnapshot(read.snapshot);
+      setNetworkSnapshot(inspection === "ready" || fixturesAllowed ? read.snapshot : null);
+      setNetworkLoadState(inspection);
       setNetworkApiError(null);
       setNetworkLoadFailure(null);
+    } else {
+      setNetworkSnapshot(null);
+      setNetworkLoadFailure(read.failure);
+      setNetworkLoadState("error");
     }
   }
 
   async function postNetworkListingAction(
     listingId: string,
-    action: "convert" | "merge" | "archive",
+    action: "merge" | "archive",
     body: Record<string, unknown>,
   ) {
     setBusyListingId(listingId);
@@ -1380,10 +1475,92 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
-  async function convertListing(listingId: string) {
-    const payload = await postNetworkListingAction(listingId, "convert", {});
-    if (payload) {
-      changeActiveTab(2);
+  const navigationByListing = new Map((networkSnapshot?.listings ?? []).map((listing) => [
+    listing.id,
+    resolveListingNavigation(listing.id, networkSnapshot,
+      networkLoadState === "ready" && networkNavigationGeneration === navigationContext.current.generation),
+  ]));
+
+  async function navigateListing(listingId: string, target: ListingNavigationTarget) {
+    if (navigationContextKey !== navigationContext.current.key) return;
+    const generation = navigationContext.current.generation;
+    const intent = ++navigationIntent.current;
+    const locationVersion = navigationLocation.current.version;
+    const networkSequence = ++networkReadSequence.current;
+    const scoringSequence = target.kind === "candidate" ? ++scoringReadSequence.current : null;
+    const isCurrentIntent = () => navigationLocation.current.mounted
+      && locationVersion === navigationLocation.current.version
+      && generation === navigationContext.current.generation && intent === navigationIntent.current;
+    setBusyListingId(listingId);
+    setNavigationError(null);
+    try {
+      // These are reads under the current authenticated principal. Cached
+      // relations are previews, not permission to bypass destination reads.
+      const [read, scoringRead] = await Promise.all([
+        fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId),
+        target.kind === "candidate" ? fetchNetworkScoringSnapshot(activeRoleId) : Promise.resolve(null),
+      ]);
+      if (!isCurrentIntent() || networkSequence !== networkReadSequence.current
+        || scoringSequence !== null && scoringSequence !== scoringReadSequence.current) return;
+      if (!read.ok) {
+        setNetworkSnapshot(null);
+        setNetworkNavigationGeneration(generation);
+        setNetworkLoadFailure(read.failure);
+        setNetworkLoadState("error");
+        setNavigationError("無法重新讀取物件關聯，尚未導覽。");
+        return;
+      }
+      const inspection = inspectNetworkListingsSnapshot(read.snapshot);
+      setNetworkLoadFailure(null);
+      setNetworkApiError(null);
+      setNetworkSnapshot(inspection === "ready" ? read.snapshot : null);
+      setNetworkLoadState(inspection);
+      setNetworkNavigationGeneration(generation);
+      const navigation = resolveListingNavigation(listingId, read.snapshot, inspection === "ready");
+      if (!navigationIncludesTarget(navigation, target)) {
+        setNavigationError("關聯已變更或目前不可存取，請重新選擇。");
+        return;
+      }
+      if (target.kind === "candidate") {
+        if (!scoringRead?.ok || inspectNetworkScoringSnapshot(scoringRead.snapshot) !== "ready"
+          || scoringRead.snapshot.candidates.filter((row) => row.id === target.id).length !== 1
+          || !scoringRead.snapshot.candidates.some((row) => row.id === target.id && row.listingId === listingId)) {
+          setScoringSnapshot(null);
+          setScoringNavigationGeneration(generation);
+          if (scoringRead && !scoringRead.ok) setScoringLoadFailure(scoringRead.failure);
+          setScoringLoadState(scoringRead && !scoringRead.ok ? "error" : "empty");
+          setNavigationError("指定候選點目前無法讀取，尚未導覽。");
+          return;
+        }
+        setScoringSnapshot(scoringRead.snapshot);
+        setScoringLoadFailure(null);
+        setScoringLoadState("ready");
+        setScoringNavigationGeneration(generation);
+        changeActiveTab(2, { [CANDIDATE_SELECTION_PARAM]: target.id });
+      } else {
+        const params = new URLSearchParams(searchParams.toString());
+        for (const key of [CANDIDATE_SELECTION_PARAM, CANDIDATE_ZONE_PARAM, "selected", "dialog", "section", "field", "decision", "receipt", "compare"]) params.delete(key);
+        router.push(buildDurableDetailHref(target.id, parseUrlState(params), params), { scroll: false });
+      }
+    } catch (error) {
+      if (isCurrentIntent() && networkSequence === networkReadSequence.current
+        && (scoringSequence === null || scoringSequence === scoringReadSequence.current)) {
+        const failure = operatorLoadFailureFromError(error, "network-listings");
+        setNetworkSnapshot(null);
+        setNetworkNavigationGeneration(generation);
+        setNetworkLoadFailure(failure);
+        setNetworkLoadState("error");
+        setNetworkApiError(failure.technicalDetail ?? "network-listings read failed");
+        if (target.kind === "candidate") {
+          setScoringSnapshot(null);
+          setScoringNavigationGeneration(generation);
+          setScoringLoadFailure(operatorLoadFailureFromError(error, "network-scoring"));
+          setScoringLoadState("error");
+        }
+        setNavigationError("關聯讀取失敗，尚未導覽。請重新載入後再試。");
+      }
+    } finally {
+      if (isCurrentIntent()) setBusyListingId(null);
     }
   }
 
@@ -1530,7 +1707,9 @@ export function NetworkFindAreasWorkspace({
       listings={listingsEffective}
       listingsReadFailure={listingsReadFailure}
       onArchive={archiveListing}
-      onConvert={convertListing}
+      navigationByListing={navigationByListing}
+      navigationError={navigationError}
+      onNavigate={navigateListing}
       onMerge={mergeListing}
       rows={viewModel.listingRadar}
       selectedHeatZoneId={effectiveSelectedId}
@@ -1621,8 +1800,11 @@ export function NetworkFindAreasWorkspace({
         ) : activeTab === 2 ? (
           <CandidatePanel
             busyCandidateId={busyCandidateId}
-            candidates={scoringSnapshot?.candidates ?? []}
-            fallbackRows={fixturesAllowed ? viewModel.candidatePipeline : []}
+            candidates={scoringNavigationGeneration === navigationContext.current.generation ? scoringSnapshot?.candidates ?? [] : []}
+            fallbackRows={fixturesAllowed && !selectedCandidateId ? viewModel.candidatePipeline : []}
+            selectedCandidateId={selectedCandidateId}
+            selectionError={candidateSelectionError}
+            onSelectCandidate={(id) => changeActiveTab(2, { [CANDIDATE_SELECTION_PARAM]: id })}
             onScore={runSiteScore}
             onClearZoneScope={() => changeActiveTab(2)}
             onScoreAll={scoreAllCandidates}

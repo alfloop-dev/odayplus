@@ -43,6 +43,17 @@ class SourcePolicyControl(BaseModel):
     production_enabled: bool
 
 
+class _ReadOnlyBrowserModelRuntime:
+    """Allow durable projections; synthetic inference belongs to the worker."""
+
+    def __init__(self) -> None:
+        self.infer_calls = 0
+
+    def infer(self, **_kwargs: object) -> object:
+        self.infer_calls += 1
+        raise AssertionError("Browser read composition must not perform inference")
+
+
 def create_app():
     database_url = os.environ.get("ODP_SCORE_BROWSER_DATABASE_URL", "")
     if not database_url and os.environ.get("ODP_SCORE_BROWSER_DATABASE_URL_FILE"):
@@ -64,6 +75,7 @@ def create_app():
     scenarios = {}
     observations = {}
     controls = Lock()
+    read_runtime = _ReadOnlyBrowserModelRuntime()
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -84,6 +96,7 @@ def create_app():
         priceops_repository_for_tenant=lambda tenant: bundle._scoped_repository("priceops_repository", tenant),
         intake_workflow_store=bundle.assisted_intake_store,
         intake_workflow_policy=bundle.assisted_intake_workflow_policy,
+        model_runtime=read_runtime,
         live_repository=OperatorLiveRepository(bundle), require_live_data=True,
         persistence_mode="postgresql", provider_mode="live", allow_test_reset=False,
     ), prefix="/api/v1")
@@ -143,11 +156,15 @@ def create_app():
                             "sitescore_run_exists": bool(score_run_id and repository.get_sitescore_run(score_run_id)),
                             "prediction_count": len(repository.get_predictions(prediction_id)) if prediction_id else 0},
                 "audits": audit_rows,
-                "event_types": events, "inferences": observations.get(scenario_id, [])}
+                "event_types": events, "inferences": observations.get(scenario_id, []),
+                "read_model_runtime": {"scope": "SYNTHETIC_READ_ONLY_NO_PRODUCTION_MODEL",
+                                       "infer_calls": read_runtime.infer_calls}}
 
     @app.get("/_synthetic/health")
     def health():
-        return {"scope": SCOPE, "persistence": bundle.mode}
+        return {"scope": SCOPE, "persistence": bundle.mode,
+                "read_model_runtime": {"scope": "SYNTHETIC_READ_ONLY_NO_PRODUCTION_MODEL",
+                                       "infer_calls": read_runtime.infer_calls}}
 
     @app.post("/_synthetic/scenarios", dependencies=[Depends(control)])
     def seed():

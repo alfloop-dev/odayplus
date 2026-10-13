@@ -78,7 +78,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "expansion_user",
         "golden_listing_dataset:v1",
         (
-            "tests/e2e/operator-network-listings.spec.ts::HZ-01 to L-2024 to CS-1001 completes through UI and API",
+            "tests/e2e/operator-network-listings.spec.ts::HZ-01 fixture candidate CS-1001 is selected by read-only L-2024 navigation",
         ),
         "/w/expansion/listings?selected=lst-9003&drawer=listing",
         ("field lineage", "hard_rule", "correlation_id"),

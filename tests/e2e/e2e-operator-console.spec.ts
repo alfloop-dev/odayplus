@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import {
   acquireOperatorBackendLock,
   releaseOperatorBackendLock,
@@ -277,10 +278,15 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
   ).toEqual([]);
 });
 
-test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({
+test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review", async ({
   page,
   request,
 }) => {
+  test.info().annotations.push({
+    type: "scope",
+    description:
+      "Local fixture compatibility, existing-record navigation and remaining Network tabs; canonical PostgreSQL promotion approval is covered by the assisted-intake journey.",
+  });
   // Only this test resets the shared operator listing backend, so the lock is
   // taken here rather than for the whole file. Released by the afterEach below,
   // which is a no-op for the tests that never took it.
@@ -348,13 +354,58 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({
   await expect(page.getByTestId("network-listing-table")).toContainText(
     "L-2030",
   );
-  await page.getByTestId("convert-L-2024").click();
+  // Explicit fixture-only setup retains the legacy API compatibility check.
+  // The following Radar click must only navigate to this existing candidate.
+  const converted = await request.post(
+    `${API_BASE_URL}/api/v1/operator/network-listings/listings/L-2024/convert`,
+    {
+      headers: {
+        "x-subject-id": "operator-expansion-manager",
+        "x-roles": "expansion_user,site_reviewer",
+        "x-operator-role": "expansion-manager",
+        "x-tenant-id": "tenant-a",
+        "X-Correlation-Id": randomUUID(),
+        "Idempotency-Key": `fixture-navigation-${randomUUID()}`,
+      },
+      data: {
+        actorRoleId: "expansion-manager",
+        reason: "Prepare the local synthetic Candidate navigation fixture.",
+        riskAcknowledged: true,
+        riskSummary: "Explicit local fixture setup for existing-record navigation.",
+      },
+    },
+  );
+  expect(converted.status(), await converted.text()).toBe(200);
+  expect(await converted.json()).toMatchObject({
+    listing: { id: "L-2024", status: "candidate", candidateId: "CS-1001" },
+    candidate: { id: "CS-1001", listingId: "L-2024" },
+    candidateCount: 1,
+  });
+  await page.reload();
+  await expect(page.getByTestId("network-panel-listings")).toBeVisible();
+
+  const navigationConversionPosts: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      /\/network-listings\/listings\/[^/]+\/convert$/.test(new URL(request.url()).pathname)
+    ) {
+      navigationConversionPosts.push(request.url());
+    }
+  });
+  await page.getByTestId("listing-navigate-L-2024").click();
+  await expect(page).toHaveURL((url) => url.searchParams.get("candidate") === "CS-1001");
 
   // 候選點 / Candidates
   await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
   await expect(page.getByTestId("network-candidate-table")).toContainText(
     "CS-1001",
   );
+  await expect(page.getByTestId("candidate-row-CS-1001")).toHaveAttribute("data-active", "true");
+  await page.reload();
+  await expect(page).toHaveURL((url) => url.searchParams.get("candidate") === "CS-1001");
+  await expect(page.getByTestId("candidate-row-CS-1001")).toHaveAttribute("data-active", "true");
+  expect(navigationConversionPosts).toEqual([]);
 
   // SiteScore / Score Lab
   await page.getByTestId("network-tab-3").click();

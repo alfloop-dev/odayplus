@@ -10,6 +10,7 @@ import { OperatorDataUnavailableGate } from "../OperatorDataUnavailableGate";
 import styles from "../networkFindAreas.module.css";
 import { AssistedIntakeSection } from "./intake/AssistedIntakeSection";
 import { MERGE_DENIED_NOTE, canMergeListing } from "./listingPermissions";
+import { resolveListingNavigation, type ListingNavigation, type ListingNavigationTarget } from "./listingNavigation";
 
 type NetworkListingDetail = Listing & {
   archivedReason?: string;
@@ -50,7 +51,9 @@ export function ListingRadarPanel({
   listings,
   listingsReadFailure = null,
   onArchive,
-  onConvert,
+  navigationByListing,
+  navigationError,
+  onNavigate,
   onMerge,
   rows,
   selectedHeatZoneId,
@@ -75,7 +78,9 @@ export function ListingRadarPanel({
    */
   listingsReadFailure?: OperatorLoadFailure | null;
   onArchive?: (listingId: string) => void;
-  onConvert?: (listingId: string) => void;
+  navigationByListing?: ReadonlyMap<string, ListingNavigation>;
+  navigationError?: string | null;
+  onNavigate?: (listingId: string, target: ListingNavigationTarget) => void;
   onMerge?: (sourceListingId: string, targetListingId: string) => void;
   rows: ListingRadarRow[];
   selectedHeatZoneId?: string;
@@ -99,6 +104,8 @@ export function ListingRadarPanel({
     visibleRows[0] ??
     rows[0];
   const selectedListing = selectedRow ? listingById.get(selectedRow.id) : undefined;
+  const navigationFor = (id: string) => navigationByListing?.get(id) ?? resolveListingNavigation(id, null, false);
+  const detailNavigation = selectedRow ? navigationFor(selectedRow.id) : null;
   // `mergedIntoId` is the durable terminal marker: a merged source keeps
   // isDuplicate/status "duplicate", so only this field distinguishes "can still
   // be merged" from "already merged". A second click would mint a fresh
@@ -116,6 +123,11 @@ export function ListingRadarPanel({
       selectedRow.status !== "candidate" &&
       !canMergeListing(activeRoleId),
   );
+  const detailLegacyAction = selectedRow && selectedRow.hardRuleStatus === "measured"
+    && selectedRow.status !== "archived" && !detailMergedIntoId && !detailMergeDenied
+    ? selectedRow.id === "L-2029" && (selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId)
+      ? "merge" : selectedRow.id === "L-2030" && selectedRow.hardRuleFailures.length ? "archive" : null
+    : null;
   const visibleListingCount = rows.filter((row) => row.status !== "archived").length;
   const sourceFilterOptions = [
     { id: "all", label: `全部來源 ${visibleListingCount}` },
@@ -146,6 +158,7 @@ export function ListingRadarPanel({
         targetListings={listings.map(toTargetListingData)}
       />
 
+      {navigationError ? <p role="alert">{navigationError}</p> : null}
       {listingsReadFailure ? (
         <OperatorDataUnavailableGate
           failure={listingsReadFailure}
@@ -221,13 +234,7 @@ export function ListingRadarPanel({
                   const evidence = listing?.sourceEvidence ?? [];
                   const isBusy = busyListingId === row.id;
                   const mergeTarget = listing?.duplicateOfId ?? row.duplicateOfId;
-                  const canConvert =
-                    row.id === "L-2024" &&
-                    !row.candidateId &&
-                    !row.isDuplicate &&
-                    row.hardRuleStatus === "measured" &&
-                    row.hardRuleFailures.length === 0 &&
-                    row.status !== "archived";
+                  const navigation = navigationFor(row.id);
                   // Merge needs listing:UPDATE plus the service's actor allowlist;
                   // hiding it for roles that cannot clear both keeps the console
                   // from offering a button that is guaranteed to 403/422. Once
@@ -277,19 +284,18 @@ export function ListingRadarPanel({
                         </small>
                       </div>
                       <div className={styles.rowActions}>
-                        {canConvert ? (
-                          <button
-                            data-testid="convert-L-2024"
-                            disabled={isBusy}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onConvert?.(row.id);
-                            }}
-                            type="button"
-                          >
-                            轉為候選點
-                          </button>
-                        ) : null}
+                        <button
+                          data-testid={`listing-navigate-${row.id}`}
+                          disabled={isBusy || !onNavigate || (!navigation.primary && navigation.state !== "multiple")}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedListingId(row.id);
+                            if (navigation.primary) onNavigate?.(row.id, navigation.primary);
+                          }}
+                          type="button"
+                        >
+                          {navigation.label}
+                        </button>
                         {canMerge && mergeTarget ? (
                           <button
                             data-testid="merge-L-2029"
@@ -316,8 +322,8 @@ export function ListingRadarPanel({
                             封存
                           </button>
                         ) : null}
-                        {!canConvert && !canMerge && !canArchive ? (
-                          <span className={styles.muted}>{isBusy ? "寫入中…" : "查看詳情"}</span>
+                        {!canMerge && !canArchive ? (
+                          <span className={styles.muted}>{isBusy ? "處理中…" : "查看詳情"}</span>
                         ) : null}
                       </div>
                     </article>
@@ -350,34 +356,40 @@ export function ListingRadarPanel({
                   <DetailRow label="重複檢查">{selectedRow.isDuplicate ? `重複 ${selectedRow.duplicateOfId ?? ""}` : "唯一物件"}</DetailRow>
                   <DetailRow label="硬規則">{selectedRow.hardRuleStatus === "unmeasured" ? "硬規則尚未檢核" : selectedListing?.hardRuleSummary ?? (selectedRow.hardRuleFailures.length ? selectedRow.hardRuleFailures.join("; ") : "3/3 通過")}</DetailRow>
                   <DetailRow label="HeatZone">{selectedRow.zoneLabel} · 適配 {selectedListing?.fitScore ?? "—"}</DetailRow>
-                  <DetailRow label="候選點">{selectedRow.candidateId ?? "—"}</DetailRow>
+                  <DetailRow label="候選點">{detailNavigation?.primary?.kind === "candidate" ? detailNavigation.primary.id : "—"}</DetailRow>
                   <DetailRow label="Evidence">{(selectedListing?.sourceEvidence ?? []).join(", ") || "—"}</DetailRow>
                 </dl>
                 <button
                   className={styles.detailPrimaryButton}
                   data-testid="listing-detail-primary"
-                  disabled={
-                    !selectedRow ||
-                    selectedRow.hardRuleStatus === "unmeasured" ||
-                    selectedRow.status === "archived" ||
-                    Boolean(detailMergedIntoId) ||
-                    detailMergeDenied
-                  }
+                  disabled={busyListingId === selectedRow.id || (detailNavigation?.primary ? !onNavigate : !detailLegacyAction)}
                   onClick={() => {
-                    if (!selectedRow || selectedRow.hardRuleStatus === "unmeasured" || detailMergedIntoId || detailMergeDenied) return;
-                    const mergeTarget = selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId;
-                    if (selectedRow.id === "L-2024" && !selectedRow.candidateId && !selectedRow.isDuplicate) {
-                      onConvert?.(selectedRow.id);
-                    } else if (selectedRow.id === "L-2029" && mergeTarget) {
-                      onMerge?.(selectedRow.id, mergeTarget);
-                    } else if (selectedRow.id === "L-2030") {
+                    if (detailNavigation?.primary) {
+                      onNavigate?.(selectedRow.id, detailNavigation.primary);
+                    } else if (detailLegacyAction === "merge") {
+                      onMerge?.(selectedRow.id, (selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId)!);
+                    } else if (detailLegacyAction === "archive") {
                       onArchive?.(selectedRow.id);
                     }
                   }}
                   type="button"
                 >
-                  {detailPrimaryLabel(selectedRow, canMergeListing(activeRoleId), detailMergedIntoId)}
+                  {detailNavigation?.primary || !detailLegacyAction ? detailNavigation?.label : detailPrimaryLabel(selectedRow, canMergeListing(activeRoleId), detailMergedIntoId)}
                 </button>
+                {detailNavigation && detailNavigation.intakes.length > 0 ? (
+                  <div aria-label="關聯收件" data-testid="listing-related-intakes">
+                    {detailNavigation.intakes.map((intake) => (
+                      <button
+                        key={intake.id}
+                        disabled={busyListingId === selectedRow.id || !onNavigate}
+                        onClick={() => onNavigate?.(selectedRow.id, { kind: "intake", id: intake.id })}
+                        type="button"
+                      >
+                        查看收件 {intake.id} · {intake.stage}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
                 {detailMergeDenied ? (
                   <p className={styles.muted} data-testid="listing-detail-merge-denied">
                     {MERGE_DENIED_NOTE}

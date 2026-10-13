@@ -612,8 +612,9 @@ class NetworkListingService:
                     self._state["listings"].append(self._listing_to_dict(lst))
             elif self._seed_fixtures:
                 for lst_dict in self._state["listings"]:
-                    lst_obj, addr_obj, key_obj = self._dict_to_listing(lst_dict)
-                    self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
+                    # Persist the explicit fixture verdict and provenance with
+                    # the row, so the next request reads the same evidence.
+                    self._sync_listing_to_repo(lst_dict["id"])
 
     def _load_candidates(self) -> None:
         if self._listing_repository is not None:
@@ -1036,8 +1037,7 @@ class NetworkListingService:
         if self._listing_repository is not None and self._seed_fixtures:
             self._listing_repository.clear()
             for lst_dict in self._state["listings"]:
-                lst_obj, addr_obj, key_obj = self._dict_to_listing(lst_dict)
-                self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
+                self._sync_listing_to_repo(lst_dict["id"])
 
         return self.snapshot()
 

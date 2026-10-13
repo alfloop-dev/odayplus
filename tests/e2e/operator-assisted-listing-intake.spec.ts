@@ -7,7 +7,7 @@ import {
   type TestInfo,
 } from "@playwright/test";
 
-import { openPgScenario, type PgScenario } from "./_intakeScorePg";
+import { createPgNavigationControl, openPgRadar, openPgScenario, type PgScenario } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,
@@ -286,6 +286,7 @@ test("canonical 3: possible match requires explicit reason and risk acknowledgem
 
 type PgEvidence = PgScenario & {
   scope: string;
+  read_model_runtime: { scope: string; infer_calls: number };
   promotion: { status: string; candidate_site_id: string; site_score_job_id: string } | null;
   job: { job_id: string; status: string; attempt: number; generation: number;
     result: { report_id: string; prediction_run_id: string; sitescore_run_id: string } | null } | null;
@@ -302,6 +303,7 @@ async function pgEvidence(api: APIRequestContext, scenario: PgScenario, info: Te
   expect(response.ok(), await response.text()).toBe(true);
   const value = await response.json() as PgEvidence;
   expect(value.scope).toBe("ISOLATED_SYNTHETIC_PG_BROWSER_NOT_PRODUCTION_ADMISSION");
+  expect(value.read_model_runtime).toEqual({ scope: "SYNTHETIC_READ_ONLY_NO_PRODUCTION_MODEL", infer_calls: 0 });
   await info.attach(label, { body: JSON.stringify(value, null, 2), contentType: "application/json" });
   return value;
 }
@@ -366,7 +368,7 @@ test("canonical 4: independent reviewer completes promotion with durable Candida
   const consoleErrors: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
-  const { api, scenario } = await openPgScenario(page);
+  const { api, scenario } = await openPgScenario(page, { entry: "radar" });
   try {
     await requestPromotion(page);
     await expect(page.getByTestId("promotion-self-review-denied")).toContainText("SELF_REVIEW_DENIED");
@@ -398,6 +400,54 @@ test("canonical 4: independent reviewer completes promotion with durable Candida
       await page.screenshot({ path: screenshot });
       await info.attach(`synthetic-pg-worker-success-${width}`, { path: screenshot, contentType: "image/png" });
     }
+    // The same actual listing now points to the independently approved candidate.
+    // Reads must select that exact candidate, including after reload; no legacy
+    // convert command or arbitrary first-card selection may replace this path.
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const control = await createPgNavigationControl(api);
+    await info.attach("actual-pg-navigation-control", { body: JSON.stringify(control.evidence, null, 2), contentType: "application/json" });
+    expect(control.candidateId).not.toBe(receipt.candidate_site_id);
+    const navigationWrites: string[] = [];
+    const observeNavigation = (request: import("@playwright/test").Request) => {
+      if (request.method() !== "GET" && request.url().includes("/api/v1/")) navigationWrites.push(request.url());
+    };
+    page.on("request", observeNavigation);
+    try {
+      // Select both actual candidates. At least one is not the first row,
+      // regardless of the API's ordering; neither has a fixed fixture ID.
+      for (const [record, candidateId] of [[control.scenario, control.candidateId], [scenario, receipt.candidate_site_id]] as const) {
+        await openPgRadar(page, record);
+        const action = page.getByTestId(`listing-navigate-${record.listing_id}`);
+        await expect(action).toBeEnabled({ timeout: 30_000 });
+        await expect(action).toHaveText("前往候選點");
+        await action.click();
+        await expect(page.getByTestId("network-panel-candidates")).toBeVisible({ timeout: 30_000 });
+        // The panel updates before Next finishes committing its URL transition.
+        await expect(page).toHaveURL((url) => url.pathname === "/operator" && url.searchParams.get("candidate") === candidateId);
+        expect(new URL(page.url()).pathname).toBe("/operator");
+        expect(new URL(page.url()).searchParams.get("candidate")).toBe(candidateId);
+        await expect(page.getByTestId(`candidate-row-${candidateId}`)).toHaveAttribute("data-active", "true");
+        await expect(page.locator('[data-testid^="candidate-row-"][data-active="true"]')).toHaveCount(1);
+        await page.reload();
+        await expect(page).toHaveURL((url) => url.pathname === "/operator" && url.searchParams.get("candidate") === candidateId);
+        await expect(page.getByTestId(`candidate-row-${candidateId}`)).toHaveAttribute("data-active", "true", { timeout: 30_000 });
+        await expect(page.getByTestId("network-candidate-table").locator('[data-testid^="candidate-row-"]')).toHaveCount(2);
+      }
+      expect(navigationWrites).toEqual([]);
+    } finally {
+      page.off("request", observeNavigation);
+    }
+    for (const [width, height] of [[1440, 1000], [1024, 900], [390, 844]]) {
+      await page.setViewportSize({ width, height });
+      const candidate = page.getByTestId(`candidate-row-${receipt.candidate_site_id}`);
+      await candidate.scrollIntoViewIfNeeded();
+      await expect(candidate).toHaveAttribute("data-active", "true");
+      const screenshot = info.outputPath(`synthetic-pg-radar-candidate-${width}.png`);
+      await page.screenshot({ path: screenshot });
+      await info.attach(`synthetic-pg-radar-candidate-${width}`, { path: screenshot, contentType: "image/png" });
+    }
+    const afterNavigation = await pgEvidence(api, scenario, info, "actual-pg-navigation-readonly");
+    assertRealScoredResult(afterNavigation, receipt.candidate_site_id, receipt.site_score_job_id);
     await info.attach("synthetic-pg-browser-console", { body: JSON.stringify({
       scope: "Synthetic fixture with real PostgreSQL and worker; not production UAT", browserErrors, consoleErrors,
     }, null, 2), contentType: "application/json" });

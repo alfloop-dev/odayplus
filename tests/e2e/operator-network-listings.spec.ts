@@ -1,4 +1,5 @@
 import { expect, request as playwrightRequest, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { primeOperatorPersona } from "./_operatorPersona";
 import {
   acquireOperatorBackendLock,
@@ -37,9 +38,17 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await api.dispose();
   });
 
-  test("HZ-01 to L-2024 to CS-1001 completes through UI and API", async ({
+  test("HZ-01 fixture candidate CS-1001 is selected by read-only L-2024 navigation", async ({
     page,
   }) => {
+    // This journey now includes fixture API setup and two durable reloads.
+    // Keep the existing per-assertion deadlines within a whole-case budget.
+    test.setTimeout(60_000);
+    test.info().annotations.push({
+      type: "scope",
+      description:
+        "Local fixture compatibility and existing-record navigation; canonical PostgreSQL promotion approval is covered by the assisted-intake journey.",
+    });
     await page.goto("/operator?ws=network");
     await expect(
       page.getByTestId("network-find-areas-workspace"),
@@ -67,8 +76,47 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     );
     await expect(page.getByTestId("listing-row-L-2024")).toContainText("Clean");
 
-    await page.getByTestId("convert-L-2024").click();
+    // Prepare the existing candidate through the local fixture API. This is
+    // setup for navigation, not evidence of production promotion approval.
+    const fixtureApi = await apiContext();
+    const converted = await fixtureApi.post(
+      "/api/v1/operator/network-listings/listings/L-2024/convert",
+      {
+        headers: {
+          "X-Correlation-Id": randomUUID(),
+          "Idempotency-Key": `fixture-navigation-${randomUUID()}`,
+        },
+        data: {
+          actorRoleId: "expansion-manager",
+          reason: "Prepare the local synthetic Candidate navigation fixture.",
+          riskAcknowledged: true,
+          riskSummary: "Explicit local fixture setup for existing-record navigation.",
+        },
+      },
+    );
+    expect(converted.status(), await converted.text()).toBe(200);
+    expect(await converted.json()).toMatchObject({
+      listing: { id: "L-2024", status: "candidate", candidateId: "CS-1001" },
+      candidate: { id: "CS-1001", listingId: "L-2024" },
+      candidateCount: 1,
+    });
+    await fixtureApi.dispose();
+    await page.reload();
+    await expect(page.getByTestId("network-panel-listings")).toBeVisible();
+
+    const navigationConversionPosts: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        /\/network-listings\/listings\/[^/]+\/convert$/.test(new URL(request.url()).pathname)
+      ) {
+        navigationConversionPosts.push(request.url());
+      }
+    });
+    await page.getByTestId("listing-navigate-L-2024").click();
+    await expect(page).toHaveURL((url) => url.searchParams.get("candidate") === "CS-1001");
     await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
+    await expect(page.getByTestId("candidate-row-CS-1001")).toHaveAttribute("data-active", "true");
     await expect(page.getByTestId("network-candidate-table")).toContainText(
       "CS-1001",
     );
@@ -81,6 +129,10 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await expect(page.getByTestId("network-step-sitescore")).toContainText(
       "next",
     );
+    await page.reload();
+    await expect(page).toHaveURL((url) => url.searchParams.get("candidate") === "CS-1001");
+    await expect(page.getByTestId("candidate-row-CS-1001")).toHaveAttribute("data-active", "true");
+    expect(navigationConversionPosts).toEqual([]);
 
     const api = await apiContext();
     const snapshot = await api.get("/api/v1/operator/network-listings");

@@ -27,7 +27,13 @@ export function CandidatePanel({
   onScoreAll,
   onToggleCompare,
   zoneScope,
+  selectedCandidateId,
+  selectionError,
+  onSelectCandidate,
 }: {
+  selectedCandidateId?: string | null;
+  selectionError?: string | null;
+  onSelectCandidate?: (candidateId: string) => void;
   busyCandidateId?: string | null;
   candidates: ScoringCandidate[];
   fallbackRows: CandidatePipelineRow[];
@@ -48,7 +54,14 @@ export function CandidatePanel({
     () => rows.filter((row) => matchesPipelineFilter(row, pipelineFilter)),
     [pipelineFilter, rows],
   );
-  const selected = filteredRows.find((row) => row.id === selectedId) ?? filteredRows[0] ?? rows[0];
+  const exactSelection = selectedCandidateId !== undefined && selectedCandidateId !== null;
+  const duplicateSelection = exactSelection && candidates.filter((row) => row.id === selectedCandidateId).length > 1;
+  const selected = selectionError || duplicateSelection ? undefined : exactSelection
+    ? filteredRows.find((row) => row.id === selectedCandidateId)
+    : filteredRows.find((row) => row.id === selectedId) ?? filteredRows[0] ?? rows[0];
+  const missingSelection = selectionError ?? (duplicateSelection
+    ? "指定候選點的資料不一致，請重新確認。"
+    : exactSelection && !selected ? "指定候選點目前不在可檢視的清單中；請確認權限或篩選條件。" : null);
   const scoreable = rows.filter((row) => !row.scored && row.gate.passed);
   const pipelineFilters: Array<{ id: PipelineFilter; label: string; count: number }> = [
     { id: "all", label: "全部候選點", count: rows.length },
@@ -59,10 +72,22 @@ export function CandidatePanel({
   ];
 
   useEffect(() => {
-    if (filteredRows.length && !filteredRows.some((row) => row.id === selectedId)) {
+    if (!exactSelection && !selectionError && filteredRows.length && !filteredRows.some((row) => row.id === selectedId)) {
       setSelectedId(filteredRows[0].id);
     }
-  }, [filteredRows, selectedId]);
+  }, [filteredRows, selectedId, exactSelection, selectionError]);
+
+  useEffect(() => {
+    setPipelineFilter("all");
+  }, [selectedCandidateId]);
+
+  if (duplicateSelection) {
+    return (
+      <div className={styles.tabPanel} data-testid="network-panel-candidates" role="tabpanel">
+        <p role="alert" data-testid="candidate-selection-unavailable">{missingSelection}</p>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -139,7 +164,7 @@ export function CandidatePanel({
                   data-testid={`candidate-row-${row.id}`}
                   data-tone={row.scored ? tone : row.gate.passed ? "watch" : "risk"}
                   key={row.id}
-                  onClick={() => setSelectedId(row.id)}
+                  onClick={() => onSelectCandidate ? onSelectCandidate(row.id) : setSelectedId(row.id)}
                 >
                   <div className={styles.candidateCardHead}>
                     <span>{row.id}</span>
@@ -204,13 +229,13 @@ export function CandidatePanel({
             {selected ? (
               <GateDetail candidate={selected} onScore={onScore} busy={busyCandidateId === selected.id} />
             ) : (
-              <div className={styles.emptyState}>No candidate selected</div>
+              <div className={styles.emptyState} data-testid="candidate-selection-unavailable">{missingSelection ?? "No candidate selected"}</div>
             )}
           </aside>
         </div>
       ) : (
         <div className={styles.emptyState} data-testid="candidate-empty">
-          {zoneScope ? `${zoneScope.label} 尚無候選點。` : "No candidates yet"}
+          {missingSelection ?? (zoneScope ? `${zoneScope.label} 尚無候選點。` : "No candidates yet")}
         </div>
       )}
     </div>
