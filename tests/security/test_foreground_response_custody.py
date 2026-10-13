@@ -243,6 +243,80 @@ def test_foreground_gate_actual_header_parser_loss_keeps_cleanup_unknown(
         assert (calls, sessions) == before
 
 
+@pytest.mark.parametrize("phase", ["ordinary", "diagnostic-login"])
+def test_actual_foreground_single_malformed_cookie_refuses_without_http_defects(
+    foreground_gate, tls_recovery_server, monkeypatch, phase
+):
+    import http.client
+    import io
+
+    header = b"Set-Cookie: __Host-oday_web_session\r\n"
+    parsed = http.client.parse_headers(io.BytesIO(header + b"\r\n"))
+    assert not parsed.defects
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
+
+    assert gate._set_cookie_pairs(parsed) == (("", ""),)
+    with foreground_gate() as (
+        driver,
+        actions,
+        owner,
+        budget,
+        p,
+        calls,
+        sessions,
+        original,
+        target,
+        events,
+    ):
+        fake = r._ForegroundGateHTTPSClient._roundtrip
+        triggered, known, gate_logouts = [], set(), []
+        status = 401 if phase == "diagnostic-login" else 200
+        body = b'{"error":{"code":"AUTH_INVALID_CREDENTIALS"}}' if status == 401 else b'{"ok":true}'
+        with tls_recovery_server(recovery_http_reply(body, status=status, extra=header)) as (
+            origin,
+            ca,
+            requests,
+        ):
+
+            def route(client, method, path, **kwargs):
+                cookie = (kwargs.get("headers") or {}).get("cookie", "").partition("=")[2]
+                if not client._api and path == "/auth/logout":
+                    gate_logouts.append(cookie)
+                diagnostic = path == "/login" and (kwargs.get("body") or {}).get(
+                    "password"
+                ) not in {original.password, target.password}
+                ordinary = path == "/auth/session" and cookie
+                if (
+                    not client._api
+                    and not triggered
+                    and budget._active[0] == "gate"
+                    and (diagnostic if phase == "diagnostic-login" else ordinary)
+                ):
+                    triggered.append(len(calls))
+                    known.update(driver._cookies)
+                    known.update(v for v in owner._cookies.values() if v)
+                    actual = r._ForegroundGateHTTPSClient(
+                        driver, api=False, origin=origin, address="127.0.0.1", ca_pem=ca
+                    )
+                    return _ACTUAL_GATE_ROUNDTRIP(actual, method, path, **kwargs)
+                return fake(client, method, path, **kwargs)
+
+            monkeypatch.setattr(r._ForegroundGateHTTPSClient, "_roundtrip", route)
+            with pytest.raises(r.RecoveryRefused):
+                driver.execute(actions)
+            assert triggered and len(requests) == 1
+        result = driver.stop_and_cleanup(actions)
+        assert driver._unknown_login and result["own_session_cleanup"] == "unknown"
+        assert not any(c[2] == "/login" for c in calls[triggered[0] :])
+        logouts = gate_logouts + [
+            cookie for operation, cookie, *_ in sessions if operation == "logout"
+        ]
+        assert known and set(logouts) == known and len(logouts) == len(set(logouts))
+        before = list(calls), list(sessions)
+        driver.stop_and_cleanup(actions)
+        assert (calls, sessions) == before
+
+
 @pytest.mark.parametrize("phase", ["ordinary", "cleanup"])
 def test_foreground_canonical_or_cleanup_read_drains_new_cookie_once(
     foreground_gate, monkeypatch, phase

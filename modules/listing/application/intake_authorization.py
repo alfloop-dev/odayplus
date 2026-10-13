@@ -229,6 +229,10 @@ def authorize_intake_action(
     if not principal.authenticated:
         _raise_and_audit(status_code=401, detail="AUTHENTICATION_REQUIRED")
 
+    # Module restrictions are independent of role and every object axis.
+    if not principal.scope.permits_module("listing"):
+        _raise_and_audit(status_code=403, detail="MODULE_SCOPE_DENIED")
+
     # 2. Tenant Isolation (shared fail-closed guard)
     effective_waiver = waiver or (
         resource.get("waiver")

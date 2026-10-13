@@ -1118,3 +1118,8 @@ Signed temporal claims must be finite; malformed present nbf is not an omitted n
 Forecast jobs also require the authoritative forecastops module. Returned header-
 parser defects remain incomplete custody inspection even if no safe cookie was
 extracted; every transport keeps UNKNOWN through cleanup without enlarging bounds.
+Each supported job type uses a server-owned module decision before creation/read/
+replay/retry. Web OIDC runtime time/identity shapes are validated without coercion;
+compact JWT size/depth are bounded before parsing and malformed inputs are audited
+refusals before JWKS retrieval. A single malformed cookie field is ambiguity, not
+absence: raw pairs retain uncertainty across foreground normal/diagnostic responses.

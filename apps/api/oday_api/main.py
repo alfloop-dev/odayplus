@@ -1008,6 +1008,8 @@ else:
                     },
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+            if not principal.scope.permits_module("integration"):
+                raise HTTPException(403, detail={"code": "JOB_MODULE_FORBIDDEN"})
             if not rbac_allows(principal, "integration", Action.CREATE):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -1046,6 +1048,8 @@ else:
                 if action == "execute"
                 else (Action.CREATE if action == "create" else Action.VIEW)
             )
+            if not principal.scope.permits_module("listing"):
+                raise HTTPException(403, detail={"code": "JOB_MODULE_FORBIDDEN"})
             if not rbac_allows(principal, "listing", required_action):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -1378,6 +1382,10 @@ else:
             if not principal.authenticated:
                 raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
+            module = {"forecast": "forecastops", "external-fetch": "integration",
+                      "batch-listing-intake": "listing", "assisted-listing-intake": "listing"}.get(job.job_type)
+            if module and not principal.scope.permits_module(module):
+                raise HTTPException(403, detail={"code": "JOB_MODULE_FORBIDDEN"})
             if job.job_type == "forecast":
                 active_tenant_id = forecast_job_tenant(request, action="view")
                 if not job_tenant:

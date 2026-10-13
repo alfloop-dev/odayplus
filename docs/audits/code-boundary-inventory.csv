@@ -1213,6 +1213,7 @@ tests/security/test_intake_job_ownership.py,verification,verification_only,false
 tests/security/test_intake_retry_scope.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_job_read_authority.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_jwks_temporal_bounds.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/security/test_jwt_parser_bounds.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_login_throttle_wiring.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_native_redirect_custody.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_native_serving_release_pair.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1230,6 +1231,7 @@ tests/security/test_release_security_gate.py,verification,verification_only,fals
 tests/security/test_release_signing_retry.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_security_acceptance_suite.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_supply_chain_security_gate.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/security/test_supported_job_module_scope.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_tenant_isolation_guard.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_user_role_management.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/smoke/test_foundation_smoke.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

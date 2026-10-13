@@ -2379,6 +2379,15 @@ class _ForegroundGateHTTPSClient:
             pairs = gate._set_cookie_pairs(response.headers)
             headers_inspected = not response.headers.defects
             cookies = {name: value for name, value in pairs if name}
+            if not self._api and any(not name for name, _ in pairs):
+                for name, value in pairs:
+                    if name == "__Host-oday_web_session" and value and value not in owner._cookies:
+                        try:
+                            owner._retain_cookies({name: value})
+                        except ValueError:
+                            pass
+                owner._unknown_login = True
+                raise ValueError  # A malformed field is not an absent cookie.
             if not self._api and path != "/login" and any(value for _, value in pairs):
                 for name, value in pairs:
                     if name == "__Host-oday_web_session" and value and value not in owner._cookies:
@@ -2447,7 +2456,7 @@ class _ForegroundGateHTTPSClient:
                 raise ValueError
             _http_remaining(deadline)
             return gate.HttpResponse(response.status, payload, location=response.headers.get("Location", ""),
-                                     cookies=cookies)
+                                     cookies=cookies, set_cookie_pairs=pairs)
         except Exception:
             if not self._api and submitted and not headers_inspected:
                 owner._unknown_login = True
