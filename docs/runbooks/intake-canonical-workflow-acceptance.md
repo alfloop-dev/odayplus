@@ -87,3 +87,61 @@ Real capture/adapters, privacy/source policy authority, production credentials,
 40-screen/six-role visual signoff, independent review, manual UAT, deployment
 manifest and the nine release authority gates remain separate open criteria.
 This runbook changes no approval record and authorizes no production rollout.
+
+## Promotion continuation acceptance
+
+An Operator submission that has been resolved to a listing must be usable by
+the approved V1 promotion request and independent-review routes. The canonical
+Intake remains authoritative even when an older operator record with the same
+identifier is present. Projection must retain the canonical tenant, scope,
+submitter, current assignment and version while making the recorded listing
+match available to the promotion service. Saving the projection must not replace
+the canonical document with a presentation-only shape.
+
+Both promotion entry points must refer to the same durable decision. A request
+does not itself create a Candidate. An independent, in-scope reviewer must
+approve the current decision, and the resulting Candidate and emitted event
+must retain the requested `target_format_code`.
+
+Current linked-resource authorization must precede both a new mutation and a
+cached replay inside the transaction. An orphan decision, scope revocation,
+self-review, wrong tenant or stale version cannot be made valid by an earlier
+successful read. Request, decision, candidate/listing writes, outbox and replay
+must use a consistent transaction owner. Arbitrary persistence failures roll
+back their partial writes. An explicitly classified score-queue failure instead
+retains the candidate and recorded recovery checkpoint; its committed failure
+receipt must remain discoverable after restart without creating a second
+candidate on replay.
+
+Required isolated PostgreSQL evidence includes an actual Operator submission,
+correction and resolution command, V1 request, second synthetic actor review,
+fresh-process receipt/candidate readback, both-entry-point identity, replay,
+concurrent mutation and rollback. A measured synthetic Listing/Address fixture
+can establish local integration behavior; it cannot establish a live geocoder,
+source admission, production scoring-model approval or real-role UAT.
+
+Manual entry must retain missing measurements as unknown. Creating a listing
+must not manufacture geocode confidence, coordinates, H3 cells, frontage,
+scores, evidence IDs or a passed hard-rule result. A business HeatZone identifier
+is not a geocoded H3 cell. An unmeasured listing may be saved for follow-up, but
+must remain ineligible for promotion until the required evidence exists.
+
+Operator revision preserves the existing Listing and AddressLocation aggregate,
+including source identity, geocode provenance, tenant, revision, precision,
+confidence inputs and recorded extension fields. A correction to rent, area or
+floor does not authorize replacement of unrelated source or location evidence.
+
+Promotion receipts refer to an actual canonical audit row committed with the
+command. The request records pending review; the completed review records its
+success, rejection or committed score failure. The production persistence bundle
+supplies the outbox on the same engine. A missing outbox is an unavailable
+dependency, not permission to omit domain events or recorded property identity.
+Producer events use the reviewed complete payload registry, with later schema
+overlays taking precedence over earlier catalog clauses.
+
+The retained SCORE_FAILED checkpoint and a retry receipt do not prove recovery.
+Actual durable scoring dispatch, worker execution, recovery to a completed
+promotion, denial/replay audit coverage, physical property reconciliation and
+cross-listing active-candidate uniqueness require additional evidence. Local
+synthetic score hooks and manually supplied property bindings do not close those
+production criteria.

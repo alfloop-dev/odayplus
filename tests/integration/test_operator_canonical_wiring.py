@@ -54,8 +54,14 @@ from shared.infrastructure.persistence.operator_network_listings import (
 from shared.infrastructure.persistence.repositories import DurableDecisionStore
 from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 from solver.netplan import NetPlanConstraints
+from tests.intake_registry_fixture import MANAGER
+from tests.integration.test_intake_registry_calendar_postgresql import _bundle as _postgres_bundle
+from tests.integration.test_operator_intake_workflow_postgresql import (
+    bridge_database as bridge_database,
+)
 
 BASE = "/api/v1/operator"
+_CONVERTIBLE_LISTING_ID = "00000000-0000-0000-0000-000000000501"
 
 
 @pytest.fixture(autouse=True)
@@ -138,9 +144,12 @@ class RecordingLiquidityRuntime:
 
 
 class CanonicalHarness:
-    def __init__(self, database_path: Path, runtime: Any | None = None) -> None:
-        self.bundle = _durable_bundle(database_path)
-        self.document_store = SqliteDocumentStore(self.bundle.engine)
+    def __init__(self, database_path: Path | None, runtime: Any | None = None, *, bundle: Any = None) -> None:
+        self.bundle = bundle if bundle is not None else _durable_bundle(database_path)
+        self.document_store = (
+            bundle.assisted_intake_store._store if bundle is not None
+            else SqliteDocumentStore(self.bundle.engine)
+        )
         self.runtime = runtime or RecordingSiteScoreRuntime()
         self.liquidity_runtime = RecordingLiquidityRuntime()
         self.avm_executor = AVMProductionExecutor(
@@ -195,6 +204,8 @@ class CanonicalHarness:
                 audit_log=self.bundle.audit_log,
                 document_store=self.document_store,
                 listing_repository_for_tenant=self.listing,
+                intake_workflow_store=getattr(self.bundle, "assisted_intake_store", None),
+                intake_workflow_policy=getattr(self.bundle, "assisted_intake_workflow_policy", None),
                 sitescore_repository_for_tenant=self.sitescore,
                 sitescore_decision_repository_for_tenant=self.decisions,
                 avm_repository_for_tenant=self.avm,
@@ -214,6 +225,24 @@ class CanonicalHarness:
 
     def close(self) -> None:
         self.bundle.engine.close()
+
+
+def _postgres_listing_harness(database, monkeypatch, runtime=None):
+    """Exercise the production resolver with its required same-engine workflow.
+
+    The older SQLite harness cannot emulate PostgreSQL advisory locks or the
+    canonical registry. Only the listing/candidate cases below use this real
+    database; their SiteScore runtime remains an explicit recording double.
+    """
+    bundle = _postgres_bundle(database, monkeypatch)
+    # This suite persists feature timestamps as datetime objects. The bridge
+    # fixture's local Clock subclass cannot be pickled, and this suite has no
+    # Intake/SLA wall-clock assertions requiring that synthetic clock.
+    monkeypatch.setattr("modules.opsboard.application.network_listings.datetime", datetime)
+    assert bundle.engine.dialect == "postgresql"
+    assert bundle.assisted_intake_store._engine is bundle.engine
+    assert bundle.assisted_intake_workflow_policy is not None
+    return CanonicalHarness(None, runtime, bundle=bundle)
 
 
 def _seed_candidate(harness: CanonicalHarness, tenant_id: str) -> str:
@@ -1195,7 +1224,7 @@ def _seed_convertible_listing(
     harness: CanonicalHarness,
     tenant_id: str,
     *,
-    listing_id: str = "listing-convert-1",
+    listing_id: str = _CONVERTIBLE_LISTING_ID,
     snapshot_time: datetime | None = None,
     prior_revenue: float | None = 180_000.0,
 ) -> None:
@@ -1207,7 +1236,7 @@ def _seed_convertible_listing(
     """
 
     address = AddressLocation(
-        address_id=f"ADDR-{listing_id}",
+        address_id="00000000-0000-0000-0000-000000000601",
         raw_address="台北市信義區松仁路 96 號 1F",
         normalized_address="台北市信義區松仁路96號1F",
         city="台北市",
@@ -1261,8 +1290,9 @@ def _seed_convertible_listing(
     )
 
 
+@pytest.mark.requires_live_env
 def test_operator_convert_carries_point_in_time_contract_into_scoring(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
     """B2: the production writer — not the test — must supply the v2 contract.
 
@@ -1273,13 +1303,13 @@ def test_operator_convert_carries_point_in_time_contract_into_scoring(
     """
 
     runtime = RecordingSiteScoreRuntime()
-    harness = CanonicalHarness(tmp_path / "operator-convert-roundtrip.sqlite3", runtime)
+    harness = _postgres_listing_harness(bridge_database, monkeypatch, runtime)
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
             converted = client.post(
-                f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="convert-live-1"),
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-live-1"),
                 json={"actorRoleId": "expansionManager", "actorName": "Expansion A"},
             )
             assert converted.status_code == 200, converted.text
@@ -1287,7 +1317,7 @@ def test_operator_convert_carries_point_in_time_contract_into_scoring(
 
             scored = client.post(
                 f"{BASE}/network-scoring/candidates/{candidate_id}/score",
-                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="score-convert-1"),
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="score-convert-1"),
                 json={"actorRoleId": "siteReviewer"},
             )
 
@@ -1313,8 +1343,9 @@ def test_operator_convert_carries_point_in_time_contract_into_scoring(
         harness.close()
 
 
+@pytest.mark.requires_live_env
 def test_operator_listing_write_does_not_wipe_candidate_features(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
     """B2 (wipe path): re-syncing a complete candidate must be lossless.
 
@@ -1324,20 +1355,20 @@ def test_operator_listing_write_does_not_wipe_candidate_features(
     """
 
     runtime = RecordingSiteScoreRuntime()
-    harness = CanonicalHarness(tmp_path / "operator-convert-nowipe.sqlite3", runtime)
+    harness = _postgres_listing_harness(bridge_database, monkeypatch, runtime)
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
             first = client.post(
-                f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="convert-nowipe-1"),
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-nowipe-1"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert first.status_code == 200, first.text
             # A second convert re-runs the writer over the existing candidate.
             second = client.post(
-                f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="convert-nowipe-2"),
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-nowipe-2"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert second.status_code == 200, second.text
@@ -1345,7 +1376,7 @@ def test_operator_listing_write_does_not_wipe_candidate_features(
 
             scored = client.post(
                 f"{BASE}/network-scoring/candidates/{candidate_id}/score",
-                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="score-nowipe-1"),
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="score-nowipe-1"),
                 json={"actorRoleId": "siteReviewer"},
             )
 
@@ -1359,8 +1390,9 @@ def test_operator_listing_write_does_not_wipe_candidate_features(
         harness.close()
 
 
+@pytest.mark.requires_live_env
 def test_operator_convert_without_cell_aggregates_still_fails_closed(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
     """Criterion 3 on the production path: a real gap must not be scored.
 
@@ -1368,13 +1400,13 @@ def test_operator_convert_without_cell_aggregates_still_fails_closed(
     revenue was never resolved has to fail closed as a permanent data gap.
     """
 
-    harness = CanonicalHarness(tmp_path / "operator-convert-gap.sqlite3")
+    harness = _postgres_listing_harness(bridge_database, monkeypatch)
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001", prior_revenue=None)
     try:
         with TestClient(harness.app()) as client:
             converted = client.post(
-                f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="convert-gap-1"),
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-gap-1"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert converted.status_code == 200, converted.text
@@ -1382,7 +1414,7 @@ def test_operator_convert_without_cell_aggregates_still_fails_closed(
 
             scored = client.post(
                 f"{BASE}/network-scoring/candidates/{candidate_id}/score",
-                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="score-gap-1"),
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="score-gap-1"),
                 json={"actorRoleId": "siteReviewer"},
             )
 
@@ -1395,6 +1427,7 @@ def test_operator_convert_without_cell_aggregates_still_fails_closed(
         harness.close()
 
 
+@pytest.mark.requires_live_env
 @pytest.mark.parametrize(
     ("heat_zone_id", "label"),
     [
@@ -1405,7 +1438,7 @@ def test_operator_convert_without_cell_aggregates_still_fails_closed(
     ],
 )
 def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
     heat_zone_id: str | None,
     label: str,
 ) -> None:
@@ -1419,13 +1452,13 @@ def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
     rejection happened before persistence, not after a partial write.
     """
 
-    harness = CanonicalHarness(tmp_path / f"operator-heatzone-{label}.sqlite3")
+    harness = _postgres_listing_harness(bridge_database, monkeypatch)
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
             converted = client.post(
-                f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key=f"convert-hz-{label}"),
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key=f"convert-hz-{label}"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert converted.status_code == 200, converted.text
@@ -1462,18 +1495,19 @@ def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
         harness.close()
 
 
+@pytest.mark.requires_live_env
 def test_operator_candidate_write_rejects_missing_heat_zone_key(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
     """M7 (absent key): the original gap must stay closed too."""
 
-    harness = CanonicalHarness(tmp_path / "operator-heatzone-missing.sqlite3")
+    harness = _postgres_listing_harness(bridge_database, monkeypatch)
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
             converted = client.post(
-                f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="convert-hz-missing"),
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-hz-missing"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert converted.status_code == 200, converted.text

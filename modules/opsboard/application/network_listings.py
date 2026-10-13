@@ -32,12 +32,20 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import wraps
 from typing import Any, Protocol
+
+# These bindings are recorded by the property/observation pipeline. The
+# operator adapter carries them through writes; it never derives new IDs.
+_LISTING_LINEAGE_FIELDS = (
+    "property_id", "propertyId", "platform_property_id",
+    "listing_obs_id", "listingObsId", "platform_observation_id",
+)
 
 
 def _atomic_intake_submission(method: Callable[..., Any]) -> Callable[..., Any]:
@@ -290,12 +298,6 @@ def _missing_assisted_entry_fields(values: dict[str, Any]) -> list[str]:
             except (ValueError, TypeError):
                 missing.append(field_name)
     return missing
-
-
-def _optional_float(value: Any, *, default: float) -> float:
-    if value is None or value == "":
-        return default
-    return float(value)
 
 
 def _optional_number(value: Any, cast: Any) -> Any:
@@ -650,23 +652,29 @@ class NetworkListingService:
     def _listing_to_dict(self, lst: Any) -> dict[str, Any]:
         res = {
             "id": lst.listing_id,
+            "addressId": lst.address_id,
             "sourceId": lst.source_id,
             "sourceListingId": lst.source_listing_id,
             "status": lst.listing_status,
-            "rentPerMonth": int(lst.rent_amount),
+            "rentPerMonth": lst.rent_amount,
             "areaPing": lst.area_ping,
             "floor": lst.floor,
-            "frontageMeters": int(lst.frontage_m) if lst.frontage_m else 0,
+            "frontageMeters": lst.frontage_m,
             "listingConfidence": lst.effective_confidence,
             "listingConfidenceProvenance": lst.effective_confidence_provenance,
             # Not lst.confidence. That is extraction confidence -- how sure the
             # parser is about the rent and area it read -- and a listing whose
             # address never resolved would otherwise report a fully-confident
             # geocode to the promotion gate, which is the same fail-open the V1
-            # adapter had. 0.0 until the address below supplies a real value.
-            "geocodeConfidence": 0.0,
+            # adapter had. Unknown until the address supplies a real value.
+            "geocodeConfidence": None,
             "sourceUrl": lst.snapshot_id,
+            "snapshotId": lst.snapshot_id or None,
         }
+        for name in _LISTING_LINEAGE_FIELDS:
+            value = getattr(lst, name, None)
+            if value is not None:
+                res[name] = value
         if self._tenant_id is not None:
             res["tenantId"] = self._tenant_id
         # Carry the persisted geocode through the dict layer. Without this the
@@ -699,44 +707,56 @@ class NetworkListingService:
     def _dict_to_listing(self, d: dict[str, Any]) -> tuple[Any, Any, Any]:
         from modules.listing.domain.models import ListingDedupKey
         from shared.domain.models import AddressLocation, Listing
-        address_id = f"ADDR-{d['id']}"
-        # Confidence and coordinates fail closed. A listing whose geocode was
-        # never resolved must stay at 0.0 so to_sitescore_model_row() rejects
-        # it; defaulting to 1.0 / Taipei city-hall coordinates presented an
-        # ungeocoded listing as a fully-confident point-in-time location.
-        geocode_confidence = _optional_float(d.get("geocodeConfidence"), default=0.0)
-        lst = Listing(
-            listing_id=d["id"],
-            source_listing_id=d["sourceListingId"],
-            source_id=d["sourceId"],
-            listing_status=d["status"],
-            address_id=address_id,
-            rent_amount=float(d["rentPerMonth"]),
-            area_ping=float(d["areaPing"]),
-            floor=d["floor"],
-            frontage_m=float(d.get("frontageMeters") or 0),
-            confidence=_optional_number(d.get("listingConfidence"), float),
-            snapshot_id=d.get("sourceUrl") or "",
+        existing = (
+            self._listing_repository.get_listing(d["id"])
+            if self._listing_repository is not None else None
         )
-        addr = AddressLocation(
-            address_id=address_id,
-            raw_address=d.get("address") or "",
-            normalized_address=d.get("address") or "",
-            latitude=_optional_float(
-                _first_present(d, "latitude", "lat"), default=0.0
-            ),
-            longitude=_optional_float(
-                _first_present(d, "longitude", "lng"), default=0.0
-            ),
-            geocode_confidence=geocode_confidence,
-            h3_res_9=d.get("h3Index") or d.get("h3_index") or d.get("heatZoneId") or "",
-        )
+        changes = {
+            "listing_status": d["status"], "rent_amount": float(d["rentPerMonth"]),
+            "area_ping": float(d["areaPing"]), "floor": d["floor"],
+        }
+        if existing is not None:
+            # Operator decisions edit these supplied facts/status only. The
+            # presentation omits other canonical measurements and exposes
+            # effective confidence, so rebuilding from it would erase source
+            # provenance, utilities, currency and recorded extension fields.
+            lst = replace(existing, **changes)
+            for name, value in vars(existing).items():
+                if name not in existing.__dataclass_fields__:
+                    object.__setattr__(lst, name, _copy(value))
+            address_id = existing.address_id
+        else:
+            address_id = d.get("addressId") or d.get("address_id") or f"ADDR-{d['id']}"
+            lst = Listing(
+                listing_id=d["id"], source_listing_id=d["sourceListingId"], source_id=d["sourceId"],
+                address_id=address_id, **changes,
+                frontage_m=float(d.get("frontageMeters") or 0),
+                confidence=_optional_number(d.get("listingConfidence"), float),
+                snapshot_id=(d.get("snapshotId") if "snapshotId" in d else d.get("sourceUrl")) or "",
+                tenant_id=d.get("tenantId") or self._tenant_id or "",
+            )
+        for name in _LISTING_LINEAGE_FIELDS:
+            value = d.get(name)
+            if value is not None and getattr(lst, name, None) is None:
+                object.__setattr__(lst, name, value)
+        # These commands do not authorize a new geocode or address revision.
+        # Retain the complete recorded address, including its raw text,
+        # precision, revisions and extension provenance, when already present.
+        addr = self._repo_address(address_id)
+        if addr is None:
+            addr = AddressLocation(
+                address_id=address_id, raw_address=d.get("address") or "",
+                normalized_address=d.get("address") or "",
+                latitude=_optional_number(_first_present(d, "latitude", "lat"), float),
+                longitude=_optional_number(_first_present(d, "longitude", "lng"), float),
+                geocode_confidence=_optional_number(d.get("geocodeConfidence"), float),
+                h3_res_9=d.get("h3Index") or d.get("h3_index") or "",
+                tenant_id=d.get("tenantId") or self._tenant_id or "",
+            )
         key = ListingDedupKey(
-            source_id=d["sourceId"],
-            source_listing_id=d["sourceListingId"],
-            normalized_address=d.get("address") or "",
-            rent_amount=float(d["rentPerMonth"]),
-            area_ping=float(d["areaPing"]),
+            source_id=lst.source_id, source_listing_id=lst.source_listing_id,
+            normalized_address=addr.normalized_address,
+            rent_amount=lst.rent_amount, area_ping=lst.area_ping,
         )
         return lst, addr, key
 
@@ -745,6 +765,7 @@ class NetworkListingService:
         res = {
             "id": cand.candidate_site.candidate_site_id,
             "listingId": cand.listing.listing_id,
+            "targetFormatCode": cand.candidate_site.target_format_code,
             "heatZoneId": cand.heat_zone_id,
             "title": f"{cand.listing.listing_id} 候選點",
             "address": cand.address.raw_address,
@@ -790,6 +811,7 @@ class NetworkListingService:
             candidate_site_id=d["id"],
             listing_id=d["listingId"],
             address_id=addr_obj.address_id,
+            target_format_code=d.get("targetFormatCode") or "",
             site_status=d["status"],
         )
         heat_zone_id = d.get("heatZoneId")
@@ -849,6 +871,10 @@ class NetworkListingService:
 
             meta = {
                 "tenantId": listing.get("tenantId"),
+                # Listing.frontage_m retains its legacy numeric absent value;
+                # preserve explicit unknown in the operator presentation.
+                "frontageMeters": listing.get("frontageMeters"),
+                "sourceUrl": listing.get("sourceUrl"),
                 "heatZoneId": listing.get("heatZoneId"),
                 "hardRuleFailures": listing.get("hardRuleFailures"),
                 "hardRuleSummary": listing.get("hardRuleSummary"),
@@ -1990,24 +2016,53 @@ class NetworkListingService:
         effect_summary = f"Manual decision '{action}' recorded for intake {intake_id}."
 
         if action == "create":
-            new_id = f"L-{2031 + len(self._state['listings'])}"
+            missing = _missing_assisted_entry_fields(effective_vals)
+            address = effective_vals.get("address")
+            if not isinstance(address, str) or not address.strip():
+                missing.append("address")
+            for numeric_field in ("rent", "areaPing"):
+                value = effective_vals.get(numeric_field)
+                try:
+                    if isinstance(value, bool) or not math.isfinite(float(value)):
+                        missing.append(numeric_field)
+                except (TypeError, ValueError):
+                    missing.append(numeric_field)
+            if missing:
+                raise NetworkListingPolicyError(
+                    "required assisted-entry fields are missing or invalid: "
+                    + ", ".join(_dedupe(missing))
+                )
+
+            new_id = (
+                f"L-{2031 + len(self._state['listings'])}"
+                if self._seed_fixtures else str(uuid.uuid4())
+            )
+            snapshot_id = intake.get("snapshotId")
             new_listing = {
                 "id": new_id,
+                "addressId": f"ADDR-{new_id}" if self._seed_fixtures else str(uuid.uuid4()),
                 "tenantId": intake["tenantId"],
                 "sourceId": intake["sourceId"],
-                "sourceListingId": effective_vals.get("providerListingId", ""),
-                "heatZoneId": intake["heatZoneId"] or "HZ-01",
-                "address": effective_vals.get("address", ""),
+                "sourceListingId": effective_vals.get("providerListingId") or "",
+                "heatZoneId": intake.get("heatZoneId"),
+                "address": address,
                 "status": "new",
-                "rentPerMonth": effective_vals.get("rent", 0),
-                "areaPing": effective_vals.get("areaPing", 0),
-                "floor": effective_vals.get("floor", ""),
-                "frontageMeters": 5,
-                "geocodeConfidence": 0.9,
-                "hardRuleFailures": [],
-                "hardRuleSummary": "3/3 pass: area, floor, permitted use",
-                "sourceEvidence": [f"EV-{new_id}-RAW", f"EV-{new_id}-GEOCODE"],
-                "fitScore": 70,
+                "rentPerMonth": float(effective_vals["rent"]),
+                "areaPing": float(effective_vals["areaPing"]),
+                "floor": effective_vals.get("floor") or "",
+                # Assisted-entry corrections are source facts, not geocoder
+                # receipts, feasibility verdicts, or scoring measurements.
+                # None of those may be invented by a manual create decision.
+                "frontageMeters": None,
+                "geocodeConfidence": None,
+                "latitude": None,
+                "longitude": None,
+                "h3Index": None,
+                "hardRuleFailures": ["missing_geocode_evidence"],
+                "hardRuleSummary": "尚未檢核；缺少地理編碼證據",
+                "sourceEvidence": [snapshot_id] if snapshot_id else [],
+                "snapshotId": snapshot_id,
+                "fitScore": None,
                 "firstSeenAt": _now(),
                 "sourceUrl": intake["originalUrl"],
             }
@@ -2046,7 +2101,11 @@ class NetworkListingService:
             target["rentPerMonth"] = effective_vals.get("rent", target["rentPerMonth"])
             target["areaPing"] = effective_vals.get("areaPing", target["areaPing"])
             target["floor"] = effective_vals.get("floor", target["floor"])
-            target["sourceEvidence"] = _dedupe(list(target.get("sourceEvidence", [])) + [f"EV-{intake_id}-REVISION"])
+            snapshot_id = intake.get("snapshotId")
+            target["sourceEvidence"] = _dedupe(
+                list(target.get("sourceEvidence") or ())
+                + ([snapshot_id] if snapshot_id else [])
+            )
             target["status"] = "watching"
             self._sync_listing_to_repo(target_id)
             intake["stage"] = "READY"
@@ -2067,9 +2126,13 @@ class NetworkListingService:
             if not target_id:
                 raise NetworkListingConflict("no target listing found for duplicate merge")
             target = self._listing(target_id)
-            before_evidence_count = len(target.get("sourceEvidence", []))
+            before_evidence_count = len(target.get("sourceEvidence") or ())
 
-            target["sourceEvidence"] = _dedupe(list(target.get("sourceEvidence", [])) + [f"EV-{intake_id}-DUPLICATE"])
+            snapshot_id = intake.get("snapshotId")
+            target["sourceEvidence"] = _dedupe(
+                list(target.get("sourceEvidence") or ())
+                + ([snapshot_id] if snapshot_id else [])
+            )
             target["status"] = "watching"
             self._sync_listing_to_repo(target_id)
             intake["stage"] = "READY"
@@ -2532,7 +2595,8 @@ class NetworkListingService:
             promotion_repository=self._intakes,
             listing_repository=self,
             intake_repository=self,
-            outbox_repository=getattr(self._listing_repository, "outbox_repository", None),
+            outbox_repository=(getattr(self._intakes, "outbox_repository", None)
+                               or getattr(self._listing_repository, "outbox_repository", None)),
         )
 
         # 1. Propose

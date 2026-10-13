@@ -95,14 +95,14 @@ export type ListingRadarRow = {
   sourceName: string;
   sourceStatus: ListingSource["status"];
   complianceNote: string;
-  heatZoneId: string;
+  heatZoneId: string | null;
   zoneLabel: string;
   address: string;
   status: Listing["status"];
   statusLabel: string;
   rentLabel: string;
   areaPing: number;
-  geocodeConfidence: number;
+  geocodeConfidence: number | null;
   geocodeConfidenceLabel: string;
   isDuplicate: boolean;
   duplicateOfId?: string;
@@ -538,7 +538,7 @@ function buildListingRadar(
       status: listing.status,
       statusLabel: LISTING_STATUS_LABEL[listing.status] ?? listing.status,
       tone,
-      zoneLabel: zoneLabelById.get(listing.heatZoneId) ?? listing.heatZoneId,
+      zoneLabel: listing.heatZoneId ? zoneLabelById.get(listing.heatZoneId) ?? listing.heatZoneId : "待定位",
     };
   });
 }
@@ -987,7 +987,8 @@ function average(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function formatPercent(value: number) {
+function formatPercent(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "未知";
   return `${Math.round(clamp01(value) * 100)}%`;
 }
 

@@ -1953,7 +1953,11 @@ def test_ready_intake_creates_tenant_bound_listing_surviving_repository_restart(
     repository.save_intake({
         "id": "OFFLINE-DURABLE-INTAKE", "sourceId": "OFFLINE-SOURCE", "tenantId": TENANT,
         "heatZoneId": "HZ-01", "originalUrl": "https://example.invalid/offline",
-        "stage": "READY", "version": 3, "parsedFields": {}, "auditEvents": [],
+        "stage": "READY", "version": 3, "parsedFields": {
+            "address": {"normalizedValue": "Synthetic offline address"},
+            "rent": {"normalizedValue": "54000"},
+            "areaPing": {"normalizedValue": "22.5"},
+        }, "auditEvents": [],
         "matchResult": {"targetListingId": "L-2024"},
     })
     service = NetworkListingService(bundle.listing_repository, repository, tenant_id=TENANT)
@@ -1966,7 +1970,8 @@ def test_ready_intake_creates_tenant_bound_listing_surviving_repository_restart(
         idempotency_key="offline-create", correlation_id="offline-create-corr",
     )
     assert result["stage"] == before["stage"] == "READY"
-    assert result["version"] == before["version"] == 3
+    assert before["version"] == 3
+    assert result["version"] == before["version"] + 1
     target_id = result["matchResult"]["targetListingId"]
     assert target_id not in prior_ids
     bundle.engine.close()
@@ -1974,6 +1979,7 @@ def test_ready_intake_creates_tenant_bound_listing_surviving_repository_restart(
     rebuilt = NetworkListingService(restarted.listing_repository, restarted.operator_intake_repository,
                                     seed_fixtures=False, tenant_id=TENANT)
     saved = rebuilt.get_intake(before["id"])
+    assert saved["version"] == result["version"]
     row = next(row for row in rebuilt.snapshot(tenant_id=TENANT)["listings"] if row["id"] == target_id)
     assert row["tenantId"] == TENANT and row["sourceId"] == before["sourceId"]
     assert saved["matchResult"]["targetListingId"] == target_id

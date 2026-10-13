@@ -100,16 +100,24 @@ export function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
 
 /**
  * Convert an operator Listing to the MapListing type expected by HeatZoneMap.
- * Coordinates are inferred from the associated HeatZone centroid with a small
- * deterministic offset so listings don't stack on top of the zone marker.
+ * Missing geocodes stay unknown. Only an explicit fixture caller may spread
+ * records around a zone centroid for its illustrative map.
  */
 export function operatorListingToMapListing(
   listing: Listing,
   heatZones: OperatorHeatZone[],
   index: number,
+  allowFixtureCoordinates = false,
 ): MapListing {
-  // 137.5° is the golden angle, which spreads successive listings evenly.
-  const coordinates = offsetFromZone(listing.heatZoneId, heatZones, index, 0.003, 137.5);
+  const confidence = listing.geocodeConfidence;
+  const hasGeocode = typeof confidence === "number" && Number.isFinite(confidence) && confidence > 0;
+  const hasCoordinates = typeof listing.longitude === "number" && Number.isFinite(listing.longitude)
+    && typeof listing.latitude === "number" && Number.isFinite(listing.latitude);
+  const coordinates: [number, number] | null = hasGeocode && hasCoordinates
+    ? [listing.longitude!, listing.latitude!]
+    : hasGeocode && allowFixtureCoordinates
+      ? offsetFromZone(listing.heatZoneId ?? "", heatZones, index, 0.003, 137.5)
+      : null;
   return {
     id: listing.id,
     source: listing.sourceId,
@@ -117,13 +125,15 @@ export function operatorListingToMapListing(
     status: listing.status === "hardfail" ? "FAILED_HARD_RULE"
       : listing.status === "duplicate" ? "DUPLICATE"
       : listing.status === "candidate" ? "CANDIDATE"
-      : listing.status === "geocoded" || listing.status === "scored" || listing.status === "watching" ? "GEOCODED"
+      : listing.status === "geocoded" || listing.status === "scored" || listing.status === "watching"
+        ? hasGeocode ? "GEOCODED" : "PARSED"
       : listing.status === "parsed" ? "PARSED"
       : "RAW",
     issue: listing.hardRuleFailures.join("; ") || "",
     rent: listing.rentPerMonth > 0 ? `NT$${listing.rentPerMonth.toLocaleString()}` : "NT$ *** / 月",
     area: `${listing.areaPing} ping`,
-    geocode: `${listing.geocodeConfidence.toFixed(2)} / operator`,
+    geocode: typeof confidence === "number" && Number.isFinite(confidence)
+      ? `${confidence.toFixed(2)} / operator` : "未知",
     duplicate: listing.duplicateOfId ?? "",
     heatZoneId: listing.heatZoneId,
     coordinates,

@@ -40,6 +40,14 @@ def to_status_str(state: PromotionState) -> str:
 _GEOCODE_CONFIDENCE_KEYS = ("geocodeConfidence", "geocode_confidence")
 
 
+class PromotionScoreQueueError(RuntimeError):
+    """A score-queue failure whose durable candidate/checkpoint must be retained.
+
+    Persistence and transaction failures are deliberately not classified as
+    this business outcome; callers must roll those failures back.
+    """
+
+
 def geocode_confidence_of(listing: Any) -> float | None:
     """Return the address geocode confidence, or None when there is no geocode.
 
@@ -112,6 +120,7 @@ class PromotionService:
         listing = self.listing_repository.get_listing(target_listing_id)
         if not listing:
             raise ValueError(f"Listing {target_listing_id} not found")
+        self._property_identity(listing)
 
         # Verify listing status
         if listing.get("status") in {"duplicate", "archived", "expired"}:
@@ -209,7 +218,8 @@ class PromotionService:
                 "promotion_decision_id": promo_id,
                 "intake_id": intake_id,
                 "listing_id": target_listing_id,
-                "status": "REQUESTED",
+                "status": promo_record["status"],
+                "decision_type": promo_record["decision_type"],
                 "version": promo_record["version"],
             },
             tenant_id=context.actor.tenant_id,
@@ -264,6 +274,7 @@ class PromotionService:
             # durable record in PENDING_REVIEW rather than mutating it to APPROVED
             # without a candidate or stranding the promotion mid-saga.
             promotion_address = self._assert_promotable(listing)
+            property_id = self._property_identity(listing)
         else:
             listing = None
             promotion_address = None
@@ -403,11 +414,7 @@ class PromotionService:
                 payback = getattr(score_report, "payback_p50_months", 100.0) or 100.0
                 score_val = int(max(0.0, min(1.0, (120.0 - payback) / 120.0)) * 59)
 
-            prop_ent_id = (
-                listing.get("property_id") or listing.get("propertyId") or listing.get("platform_property_id")
-                if hasattr(listing, "get")
-                else getattr(listing, "property_id", None) or getattr(listing, "platform_property_id", None)
-            )
+            prop_ent_id = property_id
             list_obs_id = (
                 listing.get("listing_obs_id") or listing.get("listingObsId") or listing.get("platform_observation_id")
                 if hasattr(listing, "get")
@@ -452,6 +459,7 @@ class PromotionService:
             candidate_dict = {
                 "id": candidate_id,
                 "listingId": listing_id,
+                "targetFormatCode": promo["target_format_code"],
                 "heatZoneId": h3_val,
                 "title": title_val,
                 "address": address_val,
@@ -504,7 +512,7 @@ class PromotionService:
                     candidate_site_id=candidate_id,
                     listing_id=listing_id,
                     address_id=orig_addr.address_id,
-                    target_format_code="FORMAT-A",
+                    target_format_code=promo["target_format_code"],
                     site_status="ready",
                     created_by=context.actor.actor_id,
                 )
@@ -583,21 +591,15 @@ class PromotionService:
             self.promotion_repository.save_promotion(promo)
 
             # Emit candidate.created event
-            property_id = (
-                listing.get("property_id") or listing.get("propertyId")
-                if hasattr(listing, "get")
-                else getattr(listing, "property_id", None) or getattr(listing, "propertyId", None)
-            )
-            if not property_id:
-                property_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"property-{listing_id}"))
-
             self._emit_event(
                 event_type="candidate.created",
                 payload={
                     "candidate_site_id": candidate_id,
                     "property_id": property_id,
-                    "source_listing_id": listing_id,
-                    "target_format_code": promo.get("target_format_code") or "FORMAT-A",
+                    "listing_id": listing_id,
+                    "promotion_decision_id": promotion_decision_id,
+                    "target_format_code": promo["target_format_code"],
+                    "status": "NEW",
                     "version": 1,
                 },
                 tenant_id=context.actor.tenant_id,
@@ -655,10 +657,14 @@ class PromotionService:
                         if c.get("id") != candidate_id
                     ]
 
-            PromotionStateMachine.transition(promo_agg, PromotionState.FAILED, system_context)
-            promo["status"] = to_status_str(PromotionState.FAILED)
-            promo["version"] = promo_agg.version
-            self.promotion_repository.save_promotion(promo)
+            if promo_agg.status == PromotionState.CANDIDATE_CREATING:
+                PromotionStateMachine.transition(promo_agg, PromotionState.FAILED, system_context)
+                promo["status"] = to_status_str(PromotionState.FAILED)
+                promo["version"] = promo_agg.version
+                self.promotion_repository.save_promotion(promo)
+            # Later persistence/outbox failures are rolled back by the command
+            # transaction. An illegal CANDIDATE_CREATED -> FAILED transition
+            # must not replace the original failure with a workflow denial.
             raise exc
 
         # 2. CANDIDATE_CREATED -> SCORE_QUEUED -> COMPLETED
@@ -672,7 +678,10 @@ class PromotionService:
             self.promotion_repository.save_promotion(promo)
 
             if self.score_queue_hook:
-                self.score_queue_hook()
+                try:
+                    self.score_queue_hook()
+                except Exception as exc:
+                    raise PromotionScoreQueueError(str(exc)) from exc
 
             PromotionStateMachine.transition(promo_agg, PromotionState.COMPLETED, system_context)
             promo["status"] = to_status_str(PromotionState.COMPLETED)
@@ -687,6 +696,9 @@ class PromotionService:
                     "intake_id": promo["intake_id"],
                     "listing_id": promo["listing_id"],
                     "status": "COMPLETED",
+                    "decision_type": promo["decision_type"],
+                    "candidate_site_id": promo["candidate_site_id"],
+                    "site_score_job_id": promo["site_score_job_id"],
                     "version": promo["version"],
                 },
                 tenant_id=context.actor.tenant_id,
@@ -700,25 +712,27 @@ class PromotionService:
             # Scoring failure is recoverable: retain the candidate and listing
             # association, mark the candidate for operator visibility, and let
             # job.replay restart the SCORE_QUEUED checkpoint.
-            for candidate in self.listing_repository.list_candidates():
+            # V1 list projections are detached dictionaries. Persist the
+            # underlying draft rather than mutating a temporary projection.
+            candidate_repository = getattr(self.listing_repository, "repo", self.listing_repository)
+            for candidate in candidate_repository.list_candidates():
                 candidate_key = (
                     candidate.candidate_site.candidate_site_id
                     if hasattr(candidate, "candidate_site")
                     else candidate.get("id")
                 )
-                if candidate_key == candidate_id and hasattr(candidate, "get"):
-                    candidate["status"] = "SCORING_FAILED"
-            underlying_repo = getattr(self.listing_repository, "repo", None)
-            if underlying_repo is not None and hasattr(underlying_repo, "candidates"):
-                from dataclasses import replace
+                if candidate_key != candidate_id:
+                    continue
+                if hasattr(candidate, "candidate_site"):
+                    from dataclasses import replace
 
-                for draft in underlying_repo.candidates:
-                    if draft.candidate_site.candidate_site_id == candidate_id:
-                        draft.candidate_site = replace(
-                            draft.candidate_site,
-                            site_status="SCORING_FAILED",
-                        )
-                        break
+                    candidate.candidate_site = replace(
+                        candidate.candidate_site, site_status="SCORING_FAILED",
+                    )
+                else:
+                    candidate["status"] = "SCORING_FAILED"
+                candidate_repository.save_candidate(candidate)
+                break
 
             PromotionStateMachine.transition(promo_agg, PromotionState.SCORE_FAILED, system_context)
             promo["status"] = to_status_str(PromotionState.SCORE_FAILED)
@@ -727,6 +741,21 @@ class PromotionService:
             raise exc
 
         return promo
+
+    def _property_identity(self, listing: Any) -> str | None:
+        read = listing.get if hasattr(listing, "get") else lambda key: getattr(listing, key, None)
+        value = read("property_id") or read("propertyId") or read("platform_property_id")
+        if self.outbox_repository is not None:
+            # CandidateCreatedV1 names an existing identity. A UUID derived
+            # from a listing ID is not evidence of that identity binding.
+            try:
+                value = str(uuid.UUID(value))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise DomainValidationError(
+                    DenialCode.SOURCE_POLICY_DENIED,
+                    "Candidate promotion requires a recorded property identity",
+                ) from exc
+        return value
 
     def _assert_promotable(self, listing: Any) -> Any | None:
         """Raise unless `listing` still satisfies the candidate gate.

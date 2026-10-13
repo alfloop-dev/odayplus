@@ -16,6 +16,7 @@ from uuid import UUID
 from modules.listing.application.intake_workflow_bootstrap import (
     IntakeWorkflowUnavailable,
     initialize_intake_workflow,
+    record_workflow_change,
 )
 from shared.infrastructure.persistence.assisted_listing_intake import (
     _STATE_COLLECTIONS,
@@ -147,6 +148,12 @@ class OperatorIntakeWorkflowRepository:
         if getattr(job_queue, "_engine", None) is not self._canonical._engine:
             raise IntakeWorkflowUnavailable("Intake retrieval requires the shared durable job queue")
 
+    @property
+    def outbox_repository(self) -> Any:
+        from shared.infrastructure.persistence.outbox import DurableOutboxRepository
+
+        return DurableOutboxRepository(self._canonical._engine)
+
     def _project(self, value: dict[str, Any]) -> dict[str, Any]:
         return project_operator_intake(value, self._canonical.assignments, self._canonical.slas)
 
@@ -233,3 +240,36 @@ class OperatorIntakeWorkflowRepository:
                 return existing, False
             self._save_intake(intake)
             return deepcopy(intake), True
+
+    def get_promotion(self, promotion_id: str) -> dict[str, Any] | None:
+        value = self._canonical.promotions.get(promotion_id)
+        if value is None:
+            value = self._legacy.get_promotion(promotion_id)
+        return deepcopy(value) if value and value.get("tenant_id") == self._tenant_id else None
+
+    def list_promotions(self) -> list[dict[str, Any]]:
+        values = {value["promotion_decision_id"]: value for value in self._legacy.list_promotions()}
+        values.update(self._canonical.promotions)
+        return [deepcopy(value) for value in values.values() if value.get("tenant_id") == self._tenant_id]
+
+    def save_promotion(self, promotion: dict[str, Any]) -> None:
+        if promotion.get("tenant_id") != self._tenant_id:
+            raise PermissionError("Promotion tenant mismatch")
+        if not self._in_transaction:
+            with self.transaction(intake_id=promotion.get("intake_id")):
+                self.save_promotion(promotion)
+            return
+        parent = self._canonical.intakes.get(promotion.get("intake_id"))
+        if parent is None:
+            self._legacy.save_promotion(promotion)
+            return
+        previous = self._canonical.promotions.get(promotion["promotion_decision_id"])
+        evidence_parent = {**parent, "audit": parent.setdefault("audit", []),
+                           "correlation_id": promotion["correlation_id"]}
+        record_workflow_change(
+            self._canonical, evidence_parent, resource_type="promotion_decision",
+            before=deepcopy(previous), after=promotion,
+            action="intake.promotion_requested" if previous is None else "promotion." + promotion["status"].lower(),
+            actor_id=promotion.get("reviewer_subject_id") or promotion.get("reviewer") or promotion["proposer_subject_id"],
+        )
+        self._canonical.promotions[promotion["promotion_decision_id"]] = deepcopy(promotion)

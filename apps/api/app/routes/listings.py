@@ -1324,25 +1324,42 @@ else:
                     raise
 
 
+    def _legacy_operator_repository(active_store, app_state):
+        legacy = getattr(app_state, "operator_intake_repository", None)
+        if getattr(getattr(active_store, "_engine", None), "dialect", None) == "postgresql":
+            from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+            from shared.infrastructure.persistence.operator_network_listings import (
+                DurableAssistedIntakeRepository,
+            )
+
+            # Historical Operator rows use the same tenant partition as the
+            # production Operator factory. Never query another tenant's mirror.
+            tenant_id = active_store._local.tenant_id
+            return DurableAssistedIntakeRepository(TenantScopedDocumentStore(active_store._store, tenant_id))
+        return legacy
+
+
     class V1PromotionRepositoryAdapter:
         def __init__(self, active_store, app_state=None):
             self.active_store = active_store
-            self.op_repo = getattr(app_state, "operator_intake_repository", None)
+            self.op_repo = _legacy_operator_repository(active_store, app_state)
 
         def get_promotion(self, promotion_decision_id: str) -> dict[str, Any] | None:
+            val = self.active_store.promotions.get(promotion_decision_id)
+            if val is not None:
+                val.setdefault("proposer_subject_id", val.get("proposer"))
+                return val
             if self.op_repo:
                 val = self.op_repo.get_promotion(promotion_decision_id)
                 if val:
                     val.setdefault("proposer_subject_id", val.get("proposer"))
                     return val
-            val = self.active_store.promotions.get(promotion_decision_id)
-            if val:
-                val.setdefault("proposer_subject_id", val.get("proposer"))
-            return val
+            return None
 
         def save_promotion(self, promo: dict[str, Any]) -> None:
             promo.setdefault("proposer_subject_id", promo.get("proposer"))
-            if self.op_repo:
+            parent = self.active_store.intakes.get(promo.get("intake_id"))
+            if self.op_repo and not (parent and parent.get("intake_id")):
                 self.op_repo.save_promotion(promo)
             self.active_store.promotions[promo["promotion_decision_id"]] = promo
             if promo.get("site_score_job_id"):
@@ -1370,19 +1387,25 @@ else:
                     job["candidate_site_id"] = promo.get("candidate_site_id")
 
         def list_promotions(self) -> list[dict[str, Any]]:
-            if self.op_repo:
-                values = self.op_repo.list_promotions()
-            else:
-                values = list(self.active_store.promotions.values())
+            by_id = {value["promotion_decision_id"]: value
+                     for value in self.op_repo.list_promotions()} if self.op_repo else {}
+            by_id.update(self.active_store.promotions)
+            values = list(by_id.values())
             for value in values:
                 value.setdefault("proposer_subject_id", value.get("proposer"))
             return values
 
         def get_promotion_for_intake(self, intake_id: str) -> dict[str, Any] | None:
+            parent = self.active_store.intakes.get(intake_id)
+            tenant_id = (parent.get("scope", {}).get("tenant_id") or parent.get("tenantId")) if parent else None
+            canonical_values = [value for value in self.active_store.promotions.values()
+                                if value.get("intake_id") == intake_id
+                                and (tenant_id is None or value.get("tenant_id") == tenant_id)]
             values = [
                 value
-                for value in self.list_promotions()
+                for value in canonical_values or self.list_promotions()
                 if value.get("intake_id") == intake_id
+                and (tenant_id is None or value.get("tenant_id") == tenant_id)
             ]
             if not values:
                 return None
@@ -1398,9 +1421,28 @@ else:
     class V1IntakeRepositoryAdapter:
         def __init__(self, active_store, app_state=None):
             self.active_store = active_store
-            self.op_repo = getattr(app_state, "operator_intake_repository", None)
+            self.op_repo = _legacy_operator_repository(active_store, app_state)
 
         def get_listing_intake(self, intake_id: str) -> dict[str, Any] | None:
+            canonical = self.active_store.intakes.get(intake_id)
+            if canonical is not None:
+                if not canonical.get("intake_id"):
+                    return canonical
+                value = copy.deepcopy(canonical)
+                # Presentation carries the reviewed match; identity, scope and
+                # versions always come from the canonical parent/resources.
+                value["matchResult"] = copy.deepcopy(
+                    canonical.get("operator_presentation", {}).get("matchResult")
+                    if "operator_presentation" in canonical else canonical.get("matchResult")
+                )
+                assignment = self.active_store.assignments.get(canonical.get("assignment_id"))
+                if canonical.get("assignment_id"):
+                    value["assigned_to"] = value["owner"] = None
+                if (assignment and assignment.get("intake_id") == intake_id
+                        and assignment.get("assignment_id") == canonical.get("assignment_id")
+                        and assignment.get("tenant_id") == canonical.get("scope", {}).get("tenant_id")):
+                    value["assigned_to"] = value["owner"] = assignment.get("owner_subject_id")
+                return value
             if self.op_repo:
                 if hasattr(self.op_repo, "intakes"):
                     val = self.op_repo.intakes.get(intake_id)
@@ -1410,12 +1452,20 @@ else:
                     val = self.op_repo._store.get(self.op_repo._INTAKES, intake_id)
                     if val:
                         return val
-            return self.active_store.intakes.get(intake_id)
+            return None
 
         def save_intake(self, intake: dict[str, Any]) -> None:
+            intake_id = intake.get("intake_id") or intake.get("id")
+            canonical = self.active_store.intakes.get(intake_id)
+            if canonical and canonical.get("intake_id"):
+                persisted = copy.deepcopy(intake)
+                if "operator_presentation" in persisted:
+                    persisted.pop("matchResult", None)
+                self.active_store.intakes[intake_id] = persisted
+                return
             if self.op_repo and intake.get("id"):
                 self.op_repo.save_intake(intake)
-            self.active_store.intakes[intake.get("intake_id") or intake.get("id")] = intake
+            self.active_store.intakes[intake_id] = intake
 
     class ListingAdapterWrapper:
         def __init__(self, d: dict[str, Any]):
@@ -1588,32 +1638,17 @@ else:
             listing_id = listing_dict["id"]
             existing_listing = self.repo.get_listing(listing_id)
             if existing_listing:
-                from modules.listing.domain.models import ListingDedupKey
-                from shared.domain.models import Listing
+                from dataclasses import replace
 
-                updated_listing = Listing(
-                    listing_id=existing_listing.listing_id,
-                    source_listing_id=existing_listing.source_listing_id,
-                    source_id=existing_listing.source_id,
+                from modules.listing.domain.models import ListingDedupKey
+
+                updated_listing = replace(
+                    existing_listing,
                     listing_status=listing_dict.get("status") or existing_listing.listing_status,
-                    address_id=existing_listing.address_id,
-                    rent_amount=existing_listing.rent_amount,
-                    currency=existing_listing.currency,
-                    area_ping=existing_listing.area_ping,
-                    floor=existing_listing.floor,
-                    frontage_m=existing_listing.frontage_m,
-                    depth_m=existing_listing.depth_m,
-                    corner_flag=existing_listing.corner_flag,
-                    parking_flag=existing_listing.parking_flag,
-                    utility_electricity_flag=existing_listing.utility_electricity_flag,
-                    utility_drainage_flag=existing_listing.utility_drainage_flag,
-                    utility_gas_flag=existing_listing.utility_gas_flag,
-                    available_from=existing_listing.available_from,
-                    snapshot_id=existing_listing.snapshot_id,
-                    confidence=existing_listing.confidence,
-                    measurement_schema_version=existing_listing.measurement_schema_version,
-                    confidence_status=existing_listing.confidence_status,
                 )
+                for name in ("property_id", "platform_property_id", "listing_obs_id", "platform_observation_id"):
+                    if hasattr(existing_listing, name):
+                        object.__setattr__(updated_listing, name, getattr(existing_listing, name))
                 address = self.get_address(existing_listing.address_id)
                 if address is None:
                     raise ValueError(
@@ -1763,6 +1798,63 @@ else:
         def require_intake_scope(principal: Principal, value: dict[str, Any]) -> None:
             if not intake_resource_in_scope(principal, value):
                 raise HTTPException(403, "SCOPE_DENIED")
+
+        def promotion_outbox(request: Request, repository: Any) -> Any:
+            outbox = getattr(request.app.state, "outbox_repository", None) or getattr(repository, "outbox_repository", None)
+            engine = getattr(active, "_engine", None)
+            if getattr(engine, "dialect", None) == "postgresql":
+                bundle = getattr(request.app.state, "persistence_bundle", None) or getattr(request.app.state, "persistence", None)
+                outbox = getattr(bundle, "outbox_repository", None) or outbox
+                if outbox is None or getattr(outbox, "_engine", None) is not engine:
+                    raise HTTPException(503, "PROMOTION_OUTBOX_UNAVAILABLE")
+            return outbox
+
+        def audit_promotion(request: Request, before: dict[str, Any] | None,
+                            after: dict[str, Any], actor_id: str) -> None:
+            parent = active.intakes.get(after["intake_id"])
+            if not parent or not parent.get("intake_id"):
+                return  # Explicit legacy/POC records have no canonical audit owner.
+            if before is not None:
+                parent["version"] += 1
+                parent["updated_at"] = now()
+            evidence_parent = {
+                **parent, "audit": parent.setdefault("audit", []),
+                "correlation_id": request.headers.get("x-correlation-id") or (
+                    after["correlation_id"] if before is None else str(uuid4())
+                ),
+            }
+            record_workflow_change(
+                active, evidence_parent, resource_type="promotion_decision",
+                before=before, after=after, actor_id=actor_id,
+                action="intake.promotion_requested" if before is None else "promotion." + after["status"].lower(),
+                result="FAILED" if after["status"] == "SCORE_FAILED" else "SUCCEEDED",
+            )
+            V1PromotionRepositoryAdapter(active, request.app.state).save_promotion(after)
+
+        @contextmanager
+        def promotion_unit(tenant_id: str, intake_id: str, promotion_id: str | None = None):
+            """Serialize fresh authority, the saga checkpoint and its receipt."""
+            from shared.infrastructure.persistence.assisted_listing_intake import (
+                _STATE_COLLECTIONS,
+                AssistedIntakePersistenceConflict,
+            )
+
+            try:
+                with active.transaction():
+                    engine = getattr(active, "_engine", None)
+                    if getattr(engine, "dialect", None) == "postgresql":
+                        engine.query_one(
+                            "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                            (f"operator-intake-submission:{tenant_id}",),
+                        )
+                        active._read_locked(_STATE_COLLECTIONS["intakes"], f"{tenant_id}:{intake_id}")
+                        if promotion_id is not None:
+                            active._read_locked(_STATE_COLLECTIONS["promotions"], f"{tenant_id}:{promotion_id}")
+                        active.refresh(tenant_id)
+                    yield
+                    active.flush()
+            except AssistedIntakePersistenceConflict as exc:
+                raise HTTPException(409, "VERSION_CONFLICT: Assisted Intake state changed in another replica") from exc
 
         def linked_intake(value: dict[str, Any]) -> dict[str, Any] | None:
             intake_id = value.get("intake_id")
@@ -3117,93 +3209,81 @@ else:
                 ..., alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$',
             ),
         ) -> JobReceipt:
-            validate_idempotency_key(key)
-            job = active.jobs.get(job_id)
-            if job is None:
+            initial = active.jobs.get(job_id)
+            if initial is None:
                 raise HTTPException(404, "job not found")
+            if not initial.get("intake_id"):
+                raise HTTPException(409, "DEPENDENCY_CONFLICT: retry job has no linked intake")
+            with promotion_unit(tenant_id, initial["intake_id"]):
+                validate_idempotency_key(key)
+                job = active.jobs.get(job_id)
+                if job is None:
+                    raise HTTPException(404, "job not found")
 
-            if job.get("tenant_id") != tenant_id:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            principal = get_principal(request)
-            actor_id = principal.subject_id
+                if job.get("tenant_id") != tenant_id:
+                    raise HTTPException(403, "TENANT_SCOPE_DENIED")
+                principal = get_principal(request)
+                actor_id = principal.subject_id
 
-            # Exact replay is an immutable receipt lookup. It must precede
-            # authorization that depends on mutable intake ownership/state, or
-            # a lost successful response can turn into a later 403.
-            prior = load_replay(
-                key,
-                body.model_dump(),
-                tenant_id,
-                actor_id,
-                "retryJob",
-                resource_id=job_id,
-            )
-            if prior is not None:
-                val, code = prior
+                intake_id = job.get("intake_id")
+                intake = (
+                    V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(intake_id)
+                    if intake_id
+                    else None
+                )
+                if intake is None:
+                    raise HTTPException(409, "DEPENDENCY_CONFLICT: retry job has no linked intake")
+                intake_tenant = intake.get("tenantId") or intake.get("scope", {}).get("tenant_id")
+                if intake_tenant != tenant_id:
+                    raise HTTPException(403, "TENANT_SCOPE_DENIED")
+                operator_role_id = get_operator_role_id(request)
+                correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+                authorize_intake_action(
+                    principal,
+                    "reopen_failed",
+                    resource=intake_auth_resource(intake) if intake is not None else None,
+                    operator_role_id=operator_role_id,
+                    audit_log=active_audit_log,
+                    correlation_id=correlation_id,
+                )
+
+                def make() -> tuple[dict[str, Any], int]:
+                    if job.get("status") != "FAILED" and job.get("delivery_state") != "DEAD_LETTER" and job.get("status") != "DEAD_LETTER":
+                        raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+                    if body.checkpoint.value != job.get("checkpoint"):
+                        raise HTTPException(409, "CHECKPOINT_UNAVAILABLE")
+                    require_version(if_match, job["version"])
+                    job["attempt"] += 1
+                    job["version"] += 1
+                    job["status"] = "QUEUED"
+                    job["delivery_state"] = "RETRYING"
+                    job["checkpoint"] = body.checkpoint.value
+
+                    receipt_val = {
+                        "job_id": job_id,
+                        "status": "QUEUED",
+                        "delivery_state": "RETRYING",
+                        "checkpoint": body.checkpoint.value,
+                        "attempt": job["attempt"],
+                        "version": job["version"],
+                        "correlation_id": job["correlation_id"],
+                    }
+                    return receipt_val, 202
+
+                val, code, was_replayed = replay(
+                    key,
+                    body.model_dump(),
+                    tenant_id,
+                    actor_id,
+                    "retryJob",
+                    make,
+                    resource_id=job_id,
+                )
                 response.status_code = code
                 response.headers["ETag"] = f'W/"{val["version"]}"'
-                response.headers["Idempotency-Replayed"] = "true"
+                response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
                 return JobReceipt(**val)
-
-            intake_id = job.get("intake_id")
-            intake = (
-                V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(intake_id)
-                if intake_id
-                else None
-            )
-            if intake is None:
-                raise HTTPException(409, "DEPENDENCY_CONFLICT: retry job has no linked intake")
-            intake_tenant = intake.get("tenantId") or intake.get("scope", {}).get("tenant_id")
-            if intake_tenant != tenant_id:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED")
-            operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
-
-            authorize_intake_action(
-                principal,
-                "reopen_failed",
-                resource=intake_auth_resource(intake) if intake is not None else None,
-                operator_role_id=operator_role_id,
-                audit_log=active_audit_log,
-                correlation_id=correlation_id,
-            )
-
-            def make() -> tuple[dict[str, Any], int]:
-                if job.get("status") != "FAILED" and job.get("delivery_state") != "DEAD_LETTER" and job.get("status") != "DEAD_LETTER":
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-                if body.checkpoint.value != job.get("checkpoint"):
-                    raise HTTPException(409, "CHECKPOINT_UNAVAILABLE")
-                require_version(if_match, job["version"])
-                job["attempt"] += 1
-                job["version"] += 1
-                job["status"] = "QUEUED"
-                job["delivery_state"] = "RETRYING"
-                job["checkpoint"] = body.checkpoint.value
-
-                receipt_val = {
-                    "job_id": job_id,
-                    "status": "QUEUED",
-                    "delivery_state": "RETRYING",
-                    "checkpoint": body.checkpoint.value,
-                    "attempt": job["attempt"],
-                    "version": job["version"],
-                    "correlation_id": job["correlation_id"],
-                }
-                return receipt_val, 202
-
-            val, code, was_replayed = replay(
-                key,
-                body.model_dump(),
-                tenant_id,
-                actor_id,
-                "retryJob",
-                make,
-                resource_id=job_id,
-            )
-            response.status_code = code
-            response.headers["ETag"] = f'W/"{val["version"]}"'
-            response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
-            return JobReceipt(**val)
 
         @router.get(
             "/jobs/{job_id}/receipt",
@@ -3367,123 +3447,125 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> PromotionDecisionReceipt:
-            intake_repository = V1IntakeRepositoryAdapter(active, request.app.state)
-            current = intake_repository.get_listing_intake(intake_id)
-            if current is None:
-                raise HTTPException(404, "intake not found")
-            current_tenant = current.get("tenantId") or current.get("scope", {}).get("tenant_id")
-            if current_tenant != tenant_id:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+            with promotion_unit(tenant_id, intake_id):
+                intake_repository = V1IntakeRepositoryAdapter(active, request.app.state)
+                current = intake_repository.get_listing_intake(intake_id)
+                if current is None:
+                    raise HTTPException(404, "intake not found")
+                current_tenant = current.get("tenantId") or current.get("scope", {}).get("tenant_id")
+                if current_tenant != tenant_id:
+                    raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            principal = get_principal(request)
-            operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+                principal = get_principal(request)
+                operator_role_id = get_operator_role_id(request)
+                correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
 
-            resource_for_auth = intake_auth_resource(current)
+                resource_for_auth = intake_auth_resource(current)
 
-            authorize_intake_action(
-                principal,
-                "promote",
-                resource=resource_for_auth,
-                risk_acknowledged=body.risk_acknowledged,
-                risk_summary=body.reason,
-                operator_role_id=operator_role_id,
-                audit_log=active_audit_log,
-                correlation_id=correlation_id,
-            )
-
-            actor_id = principal.subject_id
-
-            def make() -> tuple[dict[str, Any], int]:
-                if current.get("state") != "READY" and current.get("stage") != "READY":
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-                require_version(if_match, current["version"])
-
-                from modules.listing.application.promotion import PromotionService
-                from modules.listing.domain.intake_states import (
-                    Actor,
-                    PrincipalRole,
-                    TransitionContext,
-                )
-
-                repository = _repository(request)
-                promo_service = PromotionService(
-                    promotion_repository=V1PromotionRepositoryAdapter(active, request.app.state),
-                    listing_repository=V1ListingRepositoryAdapter(repository),
-                    intake_repository=intake_repository,
-                    outbox_repository=getattr(request.app.state, "outbox_repository", None) or getattr(repository, "outbox_repository", None),
-                )
-
-                proposer_actor = Actor(
-                    actor_id=actor_id,
-                    role=PrincipalRole.EXPANSION_STAFF,
-                    tenant_id=tenant_id,
-                )
-                proposer_context = TransitionContext(
-                    actor=proposer_actor,
-                    idempotency_key=key,
+                authorize_intake_action(
+                    principal,
+                    "promote",
+                    resource=resource_for_auth,
+                    risk_acknowledged=body.risk_acknowledged,
+                    risk_summary=body.reason,
+                    operator_role_id=operator_role_id,
+                    audit_log=active_audit_log,
                     correlation_id=correlation_id,
                 )
 
-                try:
-                    promo_record = promo_service.request_promotion(
-                        intake_id=intake_id,
-                        target_format_code=body.target_format_code,
-                        reason=body.reason,
-                        gate_snapshot_sha256=body.gate_snapshot_sha256,
-                        context=proposer_context,
+                actor_id = principal.subject_id
+
+                def make() -> tuple[dict[str, Any], int]:
+                    if current.get("state") != "READY" and current.get("stage") != "READY":
+                        raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+                    require_version(if_match, current["version"])
+
+                    from modules.listing.application.promotion import PromotionService
+                    from modules.listing.domain.intake_states import (
+                        Actor,
+                        PrincipalRole,
+                        TransitionContext,
                     )
-                except Exception as exc:
-                    exc_str = str(exc)
-                    code_val = str(getattr(exc, "code", ""))
-                    if "DEPENDENCY_CONFLICT" in code_val or "DUPLICATE" in exc_str or "DEPENDENCY" in exc_str:
-                        raise HTTPException(409, "DUPLICATE_CANDIDATE") from exc
-                    if "WORKFLOW_STATE_DENIED" in code_val or "WORKFLOW_STATE" in exc_str:
-                        raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
-                    if "SOURCE_POLICY_DENIED" in code_val or "SOURCE_POLICY_DENIED" in exc_str:
-                        raise HTTPException(422, f"SOURCE_POLICY_DENIED: {exc}") from exc
-                    raise HTTPException(422, str(exc)) from exc
 
-                current["version"] += 1
-                if "auditEvents" in current:
-                    current["updatedAt"] = now()
-                    current["auditEvents"].append({
-                        "id": str(uuid4()),
-                        "occurredAt": now(),
-                        "actorRoleId": operator_role_id or "expansion-manager",
-                        "actorName": actor_id,
-                        "action": "intake.promotion_requested",
-                        "targetId": intake_id,
-                        "message": "Candidate promotion requested for independent review.",
-                        "correlationId": correlation_id,
-                    })
-                else:
-                    current["updated_at"] = now()
-                    current.setdefault("processing_history", []).append({
-                        "transition_id": str(uuid4()),
-                        "from_state": "READY",
-                        "to_state": "READY",
-                        "occurred_at": now(),
-                        "actor": actor_id,
-                        "version_after": current["version"],
-                    })
-                intake_repository.save_intake(current)
+                    repository = _repository(request)
+                    promo_service = PromotionService(
+                        promotion_repository=V1PromotionRepositoryAdapter(active, request.app.state),
+                        listing_repository=V1ListingRepositoryAdapter(repository),
+                        intake_repository=intake_repository,
+                        outbox_repository=promotion_outbox(request, repository),
+                    )
 
-                return promo_record, 202
+                    proposer_actor = Actor(
+                        actor_id=actor_id,
+                        role=PrincipalRole.EXPANSION_STAFF,
+                        tenant_id=tenant_id,
+                    )
+                    proposer_context = TransitionContext(
+                        actor=proposer_actor,
+                        idempotency_key=key,
+                        correlation_id=correlation_id,
+                    )
 
-            val, code, was_replayed = replay(
-                key,
-                body.model_dump(),
-                tenant_id,
-                actor_id,
-                "requestCandidatePromotion",
-                make,
-                resource_id=intake_id,
-            )
-            response.status_code = code
-            response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
-            response.headers["ETag"] = f'W/"{val["version"]}"'
-            return PromotionDecisionReceipt(**val)
+                    try:
+                        promo_record = promo_service.request_promotion(
+                            intake_id=intake_id,
+                            target_format_code=body.target_format_code,
+                            reason=body.reason,
+                            gate_snapshot_sha256=body.gate_snapshot_sha256,
+                            context=proposer_context,
+                        )
+                    except Exception as exc:
+                        exc_str = str(exc)
+                        code_val = str(getattr(exc, "code", ""))
+                        if "DEPENDENCY_CONFLICT" in code_val or "DUPLICATE" in exc_str or "DEPENDENCY" in exc_str:
+                            raise HTTPException(409, "DUPLICATE_CANDIDATE") from exc
+                        if "WORKFLOW_STATE_DENIED" in code_val or "WORKFLOW_STATE" in exc_str:
+                            raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
+                        if "SOURCE_POLICY_DENIED" in code_val or "SOURCE_POLICY_DENIED" in exc_str:
+                            raise HTTPException(422, f"SOURCE_POLICY_DENIED: {exc}") from exc
+                        raise HTTPException(422, str(exc)) from exc
+
+                    current["version"] += 1
+                    if "auditEvents" in current:
+                        current["updatedAt"] = now()
+                        current["auditEvents"].append({
+                            "id": str(uuid4()),
+                            "occurredAt": now(),
+                            "actorRoleId": operator_role_id or "expansion-manager",
+                            "actorName": actor_id,
+                            "action": "intake.promotion_requested",
+                            "targetId": intake_id,
+                            "message": "Candidate promotion requested for independent review.",
+                            "correlationId": correlation_id,
+                        })
+                    else:
+                        current["updated_at"] = now()
+                        current.setdefault("processing_history", []).append({
+                            "transition_id": str(uuid4()),
+                            "from_state": "READY",
+                            "to_state": "READY",
+                            "occurred_at": now(),
+                            "actor": actor_id,
+                            "version_after": current["version"],
+                        })
+                    intake_repository.save_intake(current)
+                    audit_promotion(request, None, promo_record, actor_id)
+
+                    return promo_record, 202
+
+                val, code, was_replayed = replay(
+                    key,
+                    body.model_dump(),
+                    tenant_id,
+                    actor_id,
+                    "requestCandidatePromotion",
+                    make,
+                    resource_id=intake_id,
+                )
+                response.status_code = code
+                response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
+                response.headers["ETag"] = f'W/"{val["version"]}"'
+                return PromotionDecisionReceipt(**val)
 
         @router.get(
             "/intakes/{intake_id}/promotion-decision",
@@ -3550,12 +3632,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> PromotionDecisionReceipt:
-            op_repo = getattr(request.app.state, "operator_intake_repository", None)
-            val = None
-            if op_repo:
-                val = op_repo.get_promotion(promotion_decision_id)
-            if val is None:
-                val = active.promotions.get(promotion_decision_id)
+            val = V1PromotionRepositoryAdapter(active, request.app.state).get_promotion(promotion_decision_id)
             if val is None:
                 raise HTTPException(404, "promotion decision not found")
 
@@ -3564,16 +3641,9 @@ else:
 
             principal = get_principal(request)
             intake = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(val.get("intake_id", ""))
-            resource = (
-                intake_auth_resource(intake)
-                if intake is not None
-                else {
-                    "tenant_id": tenant_id,
-                    "scope": val.get("scope", {}),
-                    "owner": val.get("proposer"),
-                    "submitter": val.get("proposer"),
-                }
-            )
+            if intake is None:
+                raise HTTPException(403, "SCOPE_DENIED")
+            resource = intake_auth_resource(intake)
             authorize_intake_action(
                 principal,
                 "view",
@@ -4653,122 +4723,137 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> PromotionDecisionReceipt:
-            validate_idempotency_key(key)
-            op_repo = getattr(request.app.state, "operator_intake_repository", None)
-            current = None
-            if op_repo:
-                current = op_repo.get_promotion(promotion_decision_id)
-            if current is None:
-                current = active.promotions.get(promotion_decision_id)
-            if current is None:
+            initial = V1PromotionRepositoryAdapter(active, request.app.state).get_promotion(promotion_decision_id)
+            if initial is None:
                 raise HTTPException(404, "promotion decision not found")
+            with promotion_unit(tenant_id, initial["intake_id"], promotion_decision_id):
+                validate_idempotency_key(key)
+                current = V1PromotionRepositoryAdapter(active, request.app.state).get_promotion(promotion_decision_id)
+                if current is None:
+                    raise HTTPException(404, "promotion decision not found")
 
-            if current.get("tenant_id") != tenant_id:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+                if current.get("tenant_id") != tenant_id:
+                    raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            intake = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(current["intake_id"])
-            intake_tenant = intake.get("scope", {}).get("tenant_id") or intake.get("scope", {}).get("tenantId") if intake else None
-            if intake and intake_tenant and intake_tenant != tenant_id:
-                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+                intake = V1IntakeRepositoryAdapter(active, request.app.state).get_listing_intake(current["intake_id"])
+                intake_tenant = (intake.get("tenantId") or intake.get("scope", {}).get("tenant_id")) if intake else None
+                if intake is not None and intake_tenant != tenant_id:
+                    raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
-            principal = get_principal(request)
-            if intake is not None:
+                principal = get_principal(request)
+                if intake is None:
+                    raise HTTPException(403, "SCOPE_DENIED")
                 require_intake_scope(principal, intake)
-            operator_role_id = get_operator_role_id(request)
-            actor_id = principal.subject_id
+                operator_role_id = get_operator_role_id(request)
+                actor_id = principal.subject_id
 
-            if current.get("proposer") == actor_id:
-                raise HTTPException(403, "SELF_REVIEW_DENIED")
+                if (current.get("proposer_subject_id") or current.get("proposer")) == actor_id:
+                    raise HTTPException(403, "SELF_REVIEW_DENIED")
 
-            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
-                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
-            )
-            if not is_manager:
-                raise HTTPException(403, "ROLE_DENIED")
-
-            if not body.reason or not body.reason.strip():
-                raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
-            if not body.risk_acknowledged:
-                raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
-
-            def make() -> tuple[dict[str, Any], int]:
-                if current.get("status") != "PENDING_REVIEW":
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-                require_version(if_match, current["version"])
-
-                from modules.listing.application.promotion import PromotionService
-                from modules.listing.domain.intake_states import (
-                    Actor,
-                    PrincipalRole,
-                    TransitionContext,
+                is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                    "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
                 )
+                if not is_manager:
+                    raise HTTPException(403, "ROLE_DENIED")
 
-                repository = _repository(request)
-                test_fault = request.headers.get("x-odp-test-fault")
-                score_queue_hook = None
-                if test_fault:
-                    import os
+                if not body.reason or not body.reason.strip():
+                    raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk summary is required")
+                if not body.risk_acknowledged:
+                    raise HTTPException(422, "RISK_ACKNOWLEDGEMENT_REQUIRED: risk acknowledgement is required")
 
-                    if os.getenv("CI") != "1":
-                        raise HTTPException(403, "TEST_CONTROL_DENIED")
-                    if test_fault != "score-failure":
-                        raise HTTPException(422, "UNKNOWN_TEST_FAULT")
+                before_promotion = copy.deepcopy(current)
 
-                    def fail_score_queue() -> None:
-                        raise RuntimeError("ODP_TEST_SCORE_FAILURE")
+                def make() -> tuple[dict[str, Any], int]:
+                    if current.get("status") != "PENDING_REVIEW":
+                        raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+                    require_version(if_match, current["version"])
 
-                    score_queue_hook = fail_score_queue
-
-                promo_service = PromotionService(
-                    promotion_repository=V1PromotionRepositoryAdapter(active, request.app.state),
-                    listing_repository=V1ListingRepositoryAdapter(repository),
-                    intake_repository=V1IntakeRepositoryAdapter(active, request.app.state),
-                    outbox_repository=getattr(request.app.state, "outbox_repository", None) or getattr(repository, "outbox_repository", None),
-                    score_queue_hook=score_queue_hook,
-                )
-
-                reviewer_actor = Actor(
-                    actor_id=actor_id,
-                    role=PrincipalRole.EXPANSION_MANAGER,
-                    tenant_id=tenant_id,
-                )
-                reviewer_context = TransitionContext(
-                    actor=reviewer_actor,
-                    idempotency_key=key,
-                    correlation_id=request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id"),
-                )
-
-                decision_str = "APPROVE" if body.decision == ReviewDecision.APPROVE else "REJECT"
-
-                try:
-                    updated = promo_service.review_promotion(
-                        promotion_decision_id=promotion_decision_id,
-                        decision=decision_str,
-                        reason=body.reason,
-                        risk_acknowledged=body.risk_acknowledged,
-                        context=reviewer_context,
+                    from modules.listing.application.promotion import (
+                        PromotionScoreQueueError,
+                        PromotionService,
                     )
-                except Exception as exc:
-                    if "SELF_REVIEW_DENIED" in str(exc):
-                        raise HTTPException(403, "SELF_REVIEW_DENIED") from exc
-                    if "DUPLICATE_CANDIDATE" in str(exc) or "DEPENDENCY_CONFLICT" in str(exc):
-                        raise HTTPException(409, "DUPLICATE_CANDIDATE") from exc
-                    if "WORKFLOW_STATE_DENIED" in str(exc):
-                        raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
-                    raise HTTPException(422, str(exc)) from exc
+                    from modules.listing.domain.intake_states import (
+                        Actor,
+                        PrincipalRole,
+                        TransitionContext,
+                    )
 
-                updated["reviewer_subject_id"] = actor_id
-                return updated, 200
+                    repository = _repository(request)
+                    test_fault = request.headers.get("x-odp-test-fault")
+                    score_queue_hook = None
+                    if test_fault:
+                        import os
 
-            val, code, was_replayed = replay(
-                key,
-                body.model_dump(),
-                tenant_id,
-                actor_id,
-                "reviewPromotionDecision",
-                make,
-                resource_id=promotion_decision_id,
-            )
+                        if os.getenv("CI") != "1":
+                            raise HTTPException(403, "TEST_CONTROL_DENIED")
+                        if test_fault != "score-failure":
+                            raise HTTPException(422, "UNKNOWN_TEST_FAULT")
+
+                        def fail_score_queue() -> None:
+                            raise RuntimeError("ODP_TEST_SCORE_FAILURE")
+
+                        score_queue_hook = fail_score_queue
+
+                    promo_service = PromotionService(
+                        promotion_repository=V1PromotionRepositoryAdapter(active, request.app.state),
+                        listing_repository=V1ListingRepositoryAdapter(repository),
+                        intake_repository=V1IntakeRepositoryAdapter(active, request.app.state),
+                        outbox_repository=promotion_outbox(request, repository),
+                        score_queue_hook=score_queue_hook,
+                    )
+
+                    reviewer_actor = Actor(
+                        actor_id=actor_id,
+                        role=PrincipalRole.EXPANSION_MANAGER,
+                        tenant_id=tenant_id,
+                    )
+                    reviewer_context = TransitionContext(
+                        actor=reviewer_actor,
+                        idempotency_key=key,
+                        correlation_id=request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id"),
+                    )
+
+                    decision_str = "APPROVE" if body.decision == ReviewDecision.APPROVE else "REJECT"
+
+                    try:
+                        updated = promo_service.review_promotion(
+                            promotion_decision_id=promotion_decision_id,
+                            decision=decision_str,
+                            reason=body.reason,
+                            risk_acknowledged=body.risk_acknowledged,
+                            context=reviewer_context,
+                        )
+                    except PromotionScoreQueueError as exc:
+                        failed = promo_service.promotion_repository.get_promotion(promotion_decision_id)
+                        if not failed or failed.get("status") != "SCORE_FAILED" or not failed.get("candidate_site_id") or not failed.get("site_score_job_id"):
+                            raise
+                        failed["reviewer_subject_id"] = actor_id
+                        audit_promotion(request, before_promotion, failed, actor_id)
+                        return {"detail": str(exc)}, 422
+                    except Exception as exc:
+                        if "SELF_REVIEW_DENIED" in str(exc):
+                            raise HTTPException(403, "SELF_REVIEW_DENIED") from exc
+                        if "DUPLICATE_CANDIDATE" in str(exc) or "DEPENDENCY_CONFLICT" in str(exc):
+                            raise HTTPException(409, "DUPLICATE_CANDIDATE") from exc
+                        if "WORKFLOW_STATE_DENIED" in str(exc):
+                            raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
+                        raise HTTPException(422, str(exc)) from exc
+
+                    updated["reviewer_subject_id"] = actor_id
+                    audit_promotion(request, before_promotion, updated, actor_id)
+                    return updated, 200
+
+                val, code, was_replayed = replay(
+                    key,
+                    body.model_dump(),
+                    tenant_id,
+                    actor_id,
+                    "reviewPromotionDecision",
+                    make,
+                    resource_id=promotion_decision_id,
+                )
+            if code >= 400:
+                raise HTTPException(code, val["detail"], headers={"Idempotency-Replayed": str(was_replayed).lower()})
             response.status_code = 200 if was_replayed else code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'W/"{val["version"]}"'

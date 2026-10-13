@@ -289,12 +289,15 @@ export type ListingSource = {
 export type Listing = {
   id: string;
   sourceId: string;
-  heatZoneId: string;
+  heatZoneId: string | null;
   address: string;
   status: ListingStatus;
   rentPerMonth: number;
   areaPing: number;
-  geocodeConfidence: number;
+  geocodeConfidence: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  h3Index?: string | null;
   duplicateOfId?: string;
   hardRuleFailures: string[];
   candidateId?: string;

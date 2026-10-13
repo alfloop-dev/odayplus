@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from uuid import uuid4
 
 import pytest
@@ -7,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.app.routes.listings import V1ListingRepositoryAdapter
 from apps.api.oday_api.main import create_app
-from modules.listing.application.promotion import PromotionService
+from modules.listing.application.promotion import PromotionScoreQueueError, PromotionService
 from modules.listing.domain.intake_states import (
     Actor,
     PrincipalRole,
@@ -16,7 +17,7 @@ from modules.listing.domain.intake_states import (
 from modules.listing.domain.models import ListingDedupKey
 from shared.auth import Role
 from shared.domain import AddressLocation, Listing
-from shared.infrastructure.persistence.factory import _durable_bundle
+from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
 from tests.integration._authz import auth_headers
 
 HEADERS = {
@@ -67,8 +68,12 @@ class _IntakeRepository:
         return self.intake if self.intake["id"] == intake_id else None
 
 
-def test_durable_score_failure_retains_domain_candidate_without_recursion(
-    tmp_path,
+@pytest.mark.parametrize(
+    ("score_failure", "target_format"),
+    [(False, "FMT-MICRO-STORE"), (True, "FMT-STANDARD-STORE")],
+)
+def test_durable_promotion_preserves_requested_format_and_candidate(
+    tmp_path, score_failure, target_format,
 ) -> None:
     bundle = _durable_bundle(tmp_path / "promotion-score-failure.sqlite3")
     listing = Listing(
@@ -111,13 +116,13 @@ def test_durable_score_failure_retains_domain_candidate_without_recursion(
         promotion_repository=promotions,
         listing_repository=adapter,
         intake_repository=_IntakeRepository(intake),
-        score_queue_hook=fail_score_queue,
+        score_queue_hook=fail_score_queue if score_failure else None,
     )
     try:
         bundle.listing_repository.save_listing(listing, address, key)
         requested = service.request_promotion(
             intake_id=intake["id"],
-            target_format_code="FORMAT-A",
+            target_format_code=target_format,
             reason="request durable candidate",
             gate_snapshot_sha256="a" * 64,
             context=TransitionContext(
@@ -131,7 +136,7 @@ def test_durable_score_failure_retains_domain_candidate_without_recursion(
             ),
         )
 
-        with pytest.raises(RuntimeError, match="ODP_TEST_SCORE_FAILURE"):
+        with pytest.raises(PromotionScoreQueueError, match="ODP_TEST_SCORE_FAILURE") if score_failure else nullcontext():
             service.review_promotion(
                 promotion_decision_id=requested["promotion_decision_id"],
                 decision="APPROVE",
@@ -151,16 +156,52 @@ def test_durable_score_failure_retains_domain_candidate_without_recursion(
         failed = promotions.get_promotion(requested["promotion_decision_id"])
         candidates = bundle.listing_repository.list_candidates()
         assert failed is not None
-        assert failed["status"] == "SCORE_FAILED"
+        assert failed["status"] == ("SCORE_FAILED" if score_failure else "COMPLETED")
+        assert failed["target_format_code"] == target_format
         assert len(candidates) == 1
+        assert candidates[0].candidate_site.target_format_code == target_format
+        assert candidates[0].candidate_site.site_status == ("SCORING_FAILED" if score_failure else "ready")
         assert candidates[0].listing == listing
         assert candidates[0].address == address
     finally:
         bundle.engine.close()
 
 
+def _synthetic_measured_listing_app():
+    """Keep local fixture rows and add an explicitly measured test listing.
+
+    Manual create intentionally does not manufacture geocoder evidence. These
+    saga tests exercise approval against a synthetic pre-existing measurement,
+    then bind the intake through the real revise decision endpoint.
+    """
+    from modules.opsboard.application.network_listings import NetworkListingService
+
+    bundle = _memory_bundle()
+    NetworkListingService(listing_repository=bundle.listing_repository)
+    listing = Listing(
+        listing_id="L-SYNTHETIC-MEASURED-77120345", source_id="SRC-SYNTHETIC",
+        source_listing_id="synthetic-77120345", listing_status="active",
+        address_id="ADDR-SYNTHETIC-MEASURED-77120345", rent_amount=45000,
+        area_ping=16, floor="1F", frontage_m=5.5,
+        snapshot_id="SNAP-SYNTHETIC-MEASURED-77120345", confidence=0.92,
+    )
+    object.__setattr__(listing, "property_id", "00000000-0000-0000-0000-000000009001")
+    address = AddressLocation(
+        address_id=listing.address_id, raw_address="新北市新莊區興德路 30 號 1F",
+        normalized_address="新北市新莊區興德路30號1F",
+        latitude=25.062916, longitude=121.452638, geocode_confidence=0.94,
+        h3_res_9="8929a1d4d67ffff",
+    )
+    bundle.listing_repository.save_listing(listing, address, ListingDedupKey(
+        source_id=listing.source_id, source_listing_id=listing.source_listing_id,
+        normalized_address=address.normalized_address, rent_amount=listing.rent_amount,
+        area_ping=listing.area_ping,
+    ))
+    return create_app(persistence=bundle), listing, address
+
+
 def test_promotion_saga_golden_flow() -> None:
-    app = create_app()
+    app, measured_listing, measured_address = _synthetic_measured_listing_app()
     client = TestClient(app)
 
     # 1. Submit a listing to create a READY intake
@@ -179,13 +220,14 @@ def test_promotion_saga_golden_flow() -> None:
     assert intake["stage"] == "READY"
     intake_id = intake["id"]
 
-    # 2. Decide the intake (action="create" to resolve it to a listing)
+    # 2. Bind this intake to the existing measured fixture via a real decision.
     decide_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{intake_id}/decide",
         json={
-            "action": "create",
-            "reason": "Creating new listing",
-            "riskSummary": "This creates new listing L-xxxx",
+            "action": "revise",
+            "targetListingId": measured_listing.listing_id,
+            "reason": "Synthetic observation confirms the measured listing",
+            "riskSummary": "Update supplied facts while preserving recorded geocode evidence",
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
@@ -198,7 +240,12 @@ def test_promotion_saga_golden_flow() -> None:
     assert decide_resp.status_code == 200, decide_resp.text
     intake = decide_resp.json()
     target_listing_id = intake["matchResult"]["targetListingId"]
-    assert target_listing_id is not None
+    assert target_listing_id == measured_listing.listing_id
+    revised = app.state.listing_repository.get_listing(target_listing_id)
+    assert revised.rent_amount == 45000
+    persisted_address = app.state.listing_repository.get_address(revised.address_id)
+    assert persisted_address.geocode_confidence == measured_address.geocode_confidence
+    assert persisted_address.h3_res_9 == measured_address.h3_res_9
 
     # 3. Promote the intake (Propose step)
     promote_resp = client.post(
@@ -328,7 +375,7 @@ def test_promotion_saga_golden_flow() -> None:
 
 
 def test_promotion_saga_segregation_of_duties() -> None:
-    app = create_app()
+    app, measured_listing, _ = _synthetic_measured_listing_app()
     client = TestClient(app)
 
     # Submit intake with manager role
@@ -350,9 +397,10 @@ def test_promotion_saga_segregation_of_duties() -> None:
     decide_resp = client.post(
         f"/api/v1/operator/network-listings/intake/{intake_id}/decide",
         json={
-            "action": "create",
-            "reason": "Creating new listing",
-            "riskSummary": "This creates new listing L-xxxx",
+            "action": "revise",
+            "targetListingId": measured_listing.listing_id,
+            "reason": "Synthetic observation confirms the measured listing",
+            "riskSummary": "Update supplied facts while preserving recorded geocode evidence",
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
@@ -364,7 +412,7 @@ def test_promotion_saga_segregation_of_duties() -> None:
     )
     assert decide_resp.status_code == 200
     intake = decide_resp.json()
-    assert intake["matchResult"]["targetListingId"] is not None
+    assert intake["matchResult"]["targetListingId"] == measured_listing.listing_id
 
     # Request promotion with manager actorName
     promote_resp = client.post(

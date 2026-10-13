@@ -16,9 +16,9 @@ type NetworkListingDetail = Listing & {
   convertedAt?: string;
   duplicateOfId?: string;
   firstSeenAt?: string;
-  fitScore?: number;
+  fitScore?: number | null;
   floor?: string;
-  frontageMeters?: number;
+  frontageMeters?: number | null;
   hardRuleSummary?: string;
   mergeReason?: string;
   mergedIntoId?: string;

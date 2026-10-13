@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 import uvloop
@@ -33,6 +36,24 @@ from shared.infrastructure.persistence.operator_domains import (
     TenantScopedDocumentStore,
 )
 from shared.infrastructure.persistence.repositories import DurableDecisionStore
+from tests.intake_registry_fixture import (
+    APPROVER,
+    MANAGER,
+    OWNER,
+    TENANT,
+    _audit_retention_row,
+    _calendar_row,
+    _workflow_row,
+)
+from tests.integration.test_intake_registry_calendar_postgresql import (
+    _bundle as _postgres_bundle,
+)
+from tests.integration.test_intake_registry_calendar_postgresql import (
+    _insert_policy,
+)
+from tests.integration.test_operator_intake_workflow_postgresql import (
+    bridge_database as bridge_database,
+)
 
 BASE = "/api/v1/operator"
 SEED_IDS = {
@@ -191,13 +212,15 @@ class _ScopeCapturingLiveRepository(_StaticLiveRepository):
 
 
 def _live_app(
-    database_path: Path,
+    database_path: Path | None,
     *,
     allow_test_reset: bool = False,
     live_repository: Any | None = None,
+    bundle: Any | None = None,
 ) -> tuple[FastAPI, Any]:
-    bundle = _durable_bundle(database_path)
-    document_store = SqliteDocumentStore(bundle.engine)
+    bundle = bundle if bundle is not None else _durable_bundle(database_path)
+    workflow_store = getattr(bundle, "assisted_intake_store", None)
+    document_store = workflow_store._store if workflow_store else SqliteDocumentStore(bundle.engine)
 
     def scoped(tenant_id: str) -> TenantScopedDocumentStore:
         return TenantScopedDocumentStore(document_store, tenant_id)
@@ -234,6 +257,8 @@ def _live_app(
                 scoped(tenant_id)
             ),
             model_runtime=_UnusedModelRuntime(),
+            intake_workflow_store=workflow_store,
+            intake_workflow_policy=getattr(bundle, "assisted_intake_workflow_policy", None),
             live_repository=live_repository or OperatorLiveRepository(bundle),
             require_live_data=True,
             persistence_mode="postgresql",
@@ -245,10 +270,43 @@ def _live_app(
     return app, bundle
 
 
+def _postgres_live_app(database, monkeypatch):
+    """Production workflow dependencies use a real isolated PostgreSQL engine."""
+    return _live_app(None, bundle=_postgres_bundle(database, monkeypatch))
+
+
+def _second_workflow_tenant(database):
+    """A second explicitly synthetic registry, never installed in product code."""
+    tenant = "00000000-0000-0000-0000-000000000002"
+    ids = {APPROVER: "00000000-0000-0000-0000-000000000201",
+           MANAGER: "00000000-0000-0000-0000-000000000202",
+           OWNER: "00000000-0000-0000-0000-000000000203"}
+    with database.connect() as conn:
+        conn.execute("INSERT INTO core.tenants (tenant_id,tenant_name) VALUES (%s,%s)",
+                     (tenant, "Synthetic second workflow tenant"))
+        for source, target in ids.items():
+            conn.execute("""INSERT INTO identity.accounts
+                (account_id,tenant_id,username,email,status,created_by)
+                SELECT %s,%s,%s,%s,status,created_by FROM identity.accounts WHERE account_id=%s""",
+                         (target, tenant, target, target + "@example.invalid", source))
+            conn.execute("""INSERT INTO identity.account_roles(account_id,role,granted_by)
+                SELECT %s,role,granted_by FROM identity.account_roles WHERE account_id=%s""", (target, source))
+            conn.execute("INSERT INTO identity.account_scopes(account_id) VALUES (%s)", (target,))
+        for row in (_workflow_row(), _calendar_row(), _audit_retention_row()):
+            parameters = deepcopy(row.parameters)
+            if "calendar_version_id" in parameters:
+                parameters["calendar_version_id"] = parameters["calendar_version_id"].replace(TENANT, tenant)
+            _insert_policy(conn, replace(row, tenant_id=tenant, approved_by=ids[APPROVER],
+                                        policy_version_id=row.policy_version_id.replace(TENANT, tenant),
+                                        parameters=parameters))
+    return tenant, ids[MANAGER]
+
+
+@pytest.mark.requires_live_env
 def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
-    app, bundle = _live_app(tmp_path / "operator-live-routes.sqlite3")
+    app, bundle = _postgres_live_app(bridge_database, monkeypatch)
     try:
         paths = set(app.openapi()["paths"])
         assert {
@@ -273,9 +331,9 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
         } <= paths
 
         with TestClient(app) as client:
-            headers = _headers("tenant-live-empty")
-            ops_headers = _ops_headers("tenant-live-empty")
-            franchisee_headers = _franchisee_headers("tenant-live-empty")
+            headers = {**_headers(TENANT), "x-subject-id": MANAGER}
+            ops_headers = {**_ops_headers(TENANT), "x-subject-id": MANAGER}
+            franchisee_headers = {**_franchisee_headers(TENANT), "x-subject-id": MANAGER}
             shell_search = client.get(
                 f"{BASE}/shell/search",
                 headers=headers,
@@ -974,19 +1032,19 @@ def test_live_router_without_document_store_mounts_routes_and_returns_503(
         bundle.engine.close()
 
 
+@pytest.mark.requires_live_env
 def test_live_intake_write_and_idempotency_survive_restart(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
-    database_path = tmp_path / "operator-live-restart.sqlite3"
-    tenant_id = "00000000-0000-0000-0000-000000000001"
+    tenant_id = TENANT
     headers = {**_headers(tenant_id, idempotency_key="idem-live-a-1"),
-               "x-subject-id":"00000000-0000-0000-0000-000000000101"}
+               "x-subject-id": MANAGER, "x-correlation-id": str(uuid4())}
     payload = {
         "url": "https://example.com/property/live-a-1",
         "heatZoneId": None,
     }
 
-    first_app, first_bundle = _live_app(database_path)
+    first_app, first_bundle = _postgres_live_app(bridge_database, monkeypatch)
     try:
         with TestClient(first_app) as client:
             first = client.post(
@@ -999,7 +1057,7 @@ def test_live_intake_write_and_idempotency_survive_restart(
     finally:
         first_bundle.engine.close()
 
-    reopened_app, reopened_bundle = _live_app(database_path)
+    reopened_app, reopened_bundle = _postgres_live_app(bridge_database, monkeypatch)
     try:
         with TestClient(reopened_app) as client:
             detail = client.get(
@@ -1021,16 +1079,17 @@ def test_live_intake_write_and_idempotency_survive_restart(
         reopened_bundle.engine.close()
 
 
+@pytest.mark.requires_live_env
 def test_live_domain_state_and_idempotency_are_tenant_isolated(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
-    tenant_a_id = "00000000-0000-0000-0000-000000000001"
-    tenant_b_id = "00000000-0000-0000-0000-000000000002"
+    tenant_a_id = TENANT
+    tenant_b_id, actor_b = _second_workflow_tenant(bridge_database)
     headers_a = {**_headers(tenant_a_id, idempotency_key="shared-key"),
-                 "x-subject-id":"00000000-0000-0000-0000-000000000101"}
+                 "x-subject-id": MANAGER, "x-correlation-id": str(uuid4())}
     headers_b = {**_headers(tenant_b_id, idempotency_key="shared-key"),
-                 "x-subject-id":"00000000-0000-0000-0000-000000000102"}
-    app, bundle = _live_app(tmp_path / "operator-live-tenants.sqlite3")
+                 "x-subject-id": actor_b, "x-correlation-id": str(uuid4())}
+    app, bundle = _postgres_live_app(bridge_database, monkeypatch)
     try:
         with TestClient(app) as client:
             tenant_a = client.post(
@@ -1088,26 +1147,27 @@ def test_live_governance_export_refuses_metadata_only_success_after_restart(tmp_
     ("x-region-ids", "regionId", "NORTH"),
     ("x-store-ids", "storeId", "STORE-A"),
 ])
-def test_live_network_viewer_scope_is_projected_after_tenant_resolution(tmp_path, header, axis, allowed):
-    app, bundle = _live_app(tmp_path / "read-scope.sqlite")
-    store = SqliteDocumentStore(bundle.engine)
+@pytest.mark.requires_live_env
+def test_live_network_viewer_scope_is_projected_after_tenant_resolution(bridge_database, monkeypatch, header, axis, allowed):
+    app, bundle = _postgres_live_app(bridge_database, monkeypatch)
+    store = bundle.assisted_intake_store._store
     state_repository = DurableOperatorDomainStateRepository(store, "network-listings")
-    state_repository.save("tenant-a", {
+    state_repository.save(TENANT, {
         "heatZones": [{"id": "ZONE-A", "label": "A"}, {"id": "ZONE-B", "label": "B"}],
         "listings": [
-            {"id": "LISTING-A", "tenantId": "tenant-a", "heatZoneId": "ZONE-A", axis: allowed},
-            {"id": "LISTING-B", "tenantId": "tenant-a", "heatZoneId": "ZONE-B", axis: "excluded"},
+            {"id": "LISTING-A", "tenantId": TENANT, "heatZoneId": "ZONE-A", axis: allowed},
+            {"id": "LISTING-B", "tenantId": TENANT, "heatZoneId": "ZONE-B", axis: "excluded"},
         ],
         "candidates": [
             {"id": "CANDIDATE-A", "listingId": "LISTING-A"},
-            {"id": "CANDIDATE-B", "listingId": "LISTING-B", "tenantId": "tenant-a"},
+            {"id": "CANDIDATE-B", "listingId": "LISTING-B", "tenantId": TENANT},
         ],
         "siteReviews": [{"id": "REVIEW-A", "candidateId": "CANDIDATE-A"},
                         {"id": "REVIEW-B", "candidateId": "CANDIDATE-B"}],
         "assistedIntakes": [], "listingSources": [], "auditEvents": [],
     })
-    headers = {"x-subject-id": "reader", "x-roles": "platform_admin,operator_viewer",
-               "x-operator-role": "pm-audit", "x-tenant-id": "tenant-a", header: allowed}
+    headers = {"x-subject-id": MANAGER, "x-roles": "platform_admin,operator_viewer",
+               "x-operator-role": "pm-audit", "x-tenant-id": TENANT, header: allowed}
     try:
         with TestClient(app) as client:
             response = client.get(f"{BASE}/network-listings", headers=headers)
@@ -1118,7 +1178,7 @@ def test_live_network_viewer_scope_is_projected_after_tenant_resolution(tmp_path
             assert [row["id"] for row in snap["siteReviews"]] == ["REVIEW-A"]
             assert snap["counts"]["listings"] == 1
             assert "LISTING-B" not in response.text and "CANDIDATE-B" not in response.text
-            foreign = client.get(f"{BASE}/network-listings", headers={**headers, "x-tenant-id": "tenant-b"})
+            foreign = client.get(f"{BASE}/network-listings", headers={**headers, "x-tenant-id": "00000000-0000-0000-0000-000000000002"})
             assert foreign.status_code == 200 and foreign.json()["listings"] == []
     finally:
         bundle.engine.close()
@@ -1159,15 +1219,15 @@ def test_tenant_scoped_document_store_never_queries_unpartitioned_collections() 
         assert coll != base_coll
 
 
-def test_batch_worker_result_is_readable_by_live_operator_after_restart(tmp_path: Path) -> None:
+@pytest.mark.requires_live_env
+def test_batch_worker_result_is_readable_by_live_operator_after_restart(bridge_database, monkeypatch) -> None:
     """A worker receipt must identify a row the live tenant route can read."""
     from apps.worker.oday_worker.handlers import BATCH_LISTING_INTAKE_JOB_TYPE
     from apps.worker.oday_worker.main import ODayWorker
     from shared.jobs.queue import JobRequest, JobStatus
 
-    path = tmp_path / "batch-operator-readback.sqlite3"
-    tenant = "batch-readback-tenant"
-    app, bundle = _live_app(path)
+    tenant = TENANT
+    app, bundle = _postgres_live_app(bridge_database, monkeypatch)
     try:
         job, _ = bundle.job_queue.enqueue(
             JobRequest(
@@ -1190,14 +1250,14 @@ def test_batch_worker_result_is_readable_by_live_operator_after_restart(tmp_path
     finally:
         bundle.engine.close()
 
-    restarted_app, restarted = _live_app(path)
+    restarted_app, restarted = _postgres_live_app(bridge_database, monkeypatch)
     try:
         with TestClient(restarted_app) as client:
             same = client.get(f"{BASE}/network-listings/intake/{intake_id}", headers=_headers(tenant))
             assert same.status_code == 200, same.text
             assert same.json()["tenantId"] == tenant
             assert same.json()["parsedFields"]["address"]["normalizedValue"] == "Synthetic address"
-            foreign = client.get(f"{BASE}/network-listings/intake/{intake_id}", headers=_headers("foreign-tenant"))
+            foreign = client.get(f"{BASE}/network-listings/intake/{intake_id}", headers=_headers("00000000-0000-0000-0000-000000000002"))
             assert foreign.status_code == 404
     finally:
         restarted.engine.close()

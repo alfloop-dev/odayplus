@@ -179,9 +179,9 @@ type NetworkListingDetail = Listing & {
   archivedReason?: string;
   convertedAt?: string;
   firstSeenAt?: string;
-  fitScore?: number;
+  fitScore?: number | null;
   floor?: string;
-  frontageMeters?: number;
+  frontageMeters?: number | null;
   hardRuleSummary?: string;
   mergeReason?: string;
   mergedIntoId?: string;

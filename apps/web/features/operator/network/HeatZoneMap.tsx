@@ -750,9 +750,9 @@ function buildDeckLayers({
       lineWidthMaxPixels: 8,
       pickable: false,
     }),
-    new ScatterplotLayer<Listing>({
+    new ScatterplotLayer<Listing & { coordinates: [number, number] }>({
       id: "odp-listing-points",
-      data: listings,
+      data: listings.filter((item): item is Listing & { coordinates: [number, number] } => item.coordinates !== null),
       visible: visible.listings,
       getPosition: (item) => item.coordinates,
       getFillColor: [43, 108, 176, 210],
@@ -929,12 +929,14 @@ function nearestProjected<T>(
   items: T[],
   point: { x: number; y: number },
   map: maplibregl.Map,
-  getCoordinates: (item: T) => [number, number],
+  getCoordinates: (item: T) => [number, number] | null,
   maxDistance: number,
 ): T | undefined {
   let nearest: { item: T; distance: number } | undefined;
   for (const item of items) {
-    const projected = map.project(getCoordinates(item));
+    const coordinates = getCoordinates(item);
+    if (coordinates === null) continue;
+    const projected = map.project(coordinates);
     const distance = Math.hypot(projected.x - point.x, projected.y - point.y);
     if (distance <= maxDistance && (!nearest || distance < nearest.distance)) {
       nearest = { item, distance };

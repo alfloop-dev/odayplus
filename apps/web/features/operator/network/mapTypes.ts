@@ -57,8 +57,8 @@ export type Listing = {
   area: string;
   geocode: string;
   duplicate: string;
-  heatZoneId: string;
-  coordinates: [number, number];
+  heatZoneId: string | null;
+  coordinates: [number, number] | null;
   updatedAt: string;
   action: string;
 };

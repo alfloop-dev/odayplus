@@ -259,6 +259,8 @@ def _operator_case(bundle):
     app.include_router(create_operator_router(
         audit_log=bundle.audit_log, document_store=documents,
         listing_repository_for_tenant=bundle.listing_repository_for_tenant,
+        intake_workflow_store=bundle.assisted_intake_store,
+        intake_workflow_policy=bundle.assisted_intake_workflow_policy,
         live_repository=OperatorLiveRepository(bundle), require_live_data=True,
         persistence_mode="postgresql", provider_mode="live",
     ), prefix="/api/v1")
