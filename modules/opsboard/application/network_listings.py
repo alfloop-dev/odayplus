@@ -42,6 +42,11 @@ from datetime import UTC, datetime
 from functools import wraps
 from typing import Any, Protocol
 
+from modules.listing.application.intake_authorization import (
+    LEGAL_HOLD_FIELDS,
+    recorded_legal_hold_state,
+)
+
 # These bindings are recorded by the property/observation pipeline. The
 # operator adapter carries them through writes; it never derives new IDs.
 _LISTING_LINEAGE_FIELDS = (
@@ -734,6 +739,11 @@ class NetworkListingService:
         meta = self._get_listing_metadata(lst.listing_id)
         if meta:
             res.update(meta)
+            if any(name in res for name in LEGAL_HOLD_FIELDS):
+                # Expose the producer's custody state to the existing Radar
+                # controls. An older false display flag cannot conceal a hold
+                # or replace a revoked/invalid current observation.
+                res["hasLegalHold"] = recorded_legal_hold_state(res)
             # Supplemental presentation metadata cannot reopen the listing
             # aggregate's terminal archive, including on a later retry.
             if str(lst.listing_status).upper() == "ARCHIVED":
@@ -1384,13 +1394,13 @@ class NetworkListingService:
             raise NetworkListingConflict("VERSION_CONFLICT")
 
     def _guard_listing_hold(self, record: dict[str, Any]) -> None:
-        for hold_field in ("hasLegalHold", "legalHold"):
+        for hold_field in LEGAL_HOLD_FIELDS:
             value = record.get(hold_field)
-            if value is not None and not isinstance(value, bool):
+            if hold_field in record and not isinstance(value, bool):
                 raise NetworkListingPolicyError("LEGAL_HOLD_STATE_UNAVAILABLE")
             if value is True:
                 raise NetworkListingConflict("LEGAL_HOLD_CONFLICT")
-        if not self._seed_fixtures and not any(isinstance(record.get(name), bool) for name in ("hasLegalHold", "legalHold")):
+        if not self._seed_fixtures and not any(isinstance(record.get(name), bool) for name in LEGAL_HOLD_FIELDS):
             raise NetworkListingPolicyError("LEGAL_HOLD_STATE_UNAVAILABLE")
 
     def _guard_listing_retention(self, record: dict[str, Any]) -> None:

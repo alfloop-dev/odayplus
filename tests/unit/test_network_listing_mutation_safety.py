@@ -57,7 +57,7 @@ def _merge(service, *, key="merge-once", target=TARGET, actor=ACTOR):
     )
 
 
-@pytest.mark.parametrize("field", ["hasLegalHold", "legalHold"])
+@pytest.mark.parametrize("field", ["hasLegalHold", "legalHold", "has_legal_hold", "legal_hold"])
 @pytest.mark.parametrize("operation", ["archive", "merge-source", "merge-target"])
 def test_recorded_hold_denies_mutation_without_state_or_receipt_change(field, operation):
     service = _service()
@@ -146,6 +146,33 @@ def test_hold_added_after_archive_denies_service_replay_without_disclosing_cache
     with pytest.raises(NetworkListingConflict, match="LEGAL_HOLD_CONFLICT"):
         _archive(service)
     assert service.export_state() == before
+
+
+@pytest.mark.parametrize("field", ["has_legal_hold", "legal_hold"])
+@pytest.mark.parametrize("value", [None, "true", 1, []])
+@pytest.mark.parametrize("operation", ["archive", "merge"])
+def test_unavailable_native_hold_cannot_be_replaced_by_an_old_false_projection(field, value, operation):
+    service = _service()
+    service._listing(SOURCE)[field] = value
+    before = service.export_state()
+    with pytest.raises(NetworkListingPolicyError, match="LEGAL_HOLD_STATE_UNAVAILABLE"):
+        (_archive if operation == "archive" else _merge)(service)
+    assert service.export_state() == before
+    assert service._intakes.list_idempotency_records() == []
+
+
+@pytest.mark.parametrize("field", ["has_legal_hold", "legal_hold"])
+@pytest.mark.parametrize("operation", ["archive", "merge"])
+def test_native_hold_observation_revoked_after_commit_denies_cached_receipt(field, operation):
+    service = _service()
+    service._listing(SOURCE)[field] = False
+    (_archive if operation == "archive" else _merge)(service)
+    service._listing(SOURCE)[field] = None
+    before = service.export_state()
+    with pytest.raises(NetworkListingPolicyError, match="LEGAL_HOLD_STATE_UNAVAILABLE"):
+        (_archive if operation == "archive" else _merge)(service)
+    assert service.export_state() == before
+    assert len(service._intakes.list_idempotency_records()) == 1
 
 
 def _durable_service(engine, state=None):

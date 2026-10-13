@@ -48,7 +48,7 @@ def _post(client, operation, *, headers=None, **payload):
                        headers=current_headers, json={**body, **payload})
 
 
-@pytest.mark.parametrize("field", ["hasLegalHold", "legalHold"])
+@pytest.mark.parametrize("field", ["hasLegalHold", "legalHold", "has_legal_hold", "legal_hold"])
 @pytest.mark.parametrize("operation,record", [("archive", SOURCE), ("merge", SOURCE),
                                                ("merge", TARGET)])
 def test_http_recorded_hold_is_409_even_when_client_sends_no_hold(field, operation, record):

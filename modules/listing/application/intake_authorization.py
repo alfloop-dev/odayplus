@@ -25,6 +25,32 @@ from shared.auth import (
     check_tenant_isolation,
 )
 
+LEGAL_HOLD_FIELDS = ("hasLegalHold", "legalHold", "has_legal_hold", "legal_hold")
+
+
+def has_recorded_legal_hold(resource: dict[str, Any]) -> bool:
+    """Recognize positive custody facts from Privacy and operator producers.
+
+    False means no positive boolean was found. It does not establish that a
+    required current hold observation is available or well formed.
+    """
+    return any(resource.get(name) is True for name in LEGAL_HOLD_FIELDS)
+
+
+def recorded_legal_hold_state(resource: dict[str, Any]) -> bool | None:
+    """Project current custody observations without a false default.
+
+    Any recorded positive hold remains protective. A missing, null or malformed
+    observation cannot establish the negative state the Radar controls require.
+    """
+    values = [resource[name] for name in LEGAL_HOLD_FIELDS if name in resource]
+    if any(value is True for value in values):
+        return True
+    if not values or any(not isinstance(value, bool) for value in values):
+        return None
+    return False
+
+
 _SCOPE_AXIS_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("brand", ("brand_id", "brandId")),
     ("region", ("region_id", "regionId")),
