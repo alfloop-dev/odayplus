@@ -708,6 +708,7 @@ def create_operator_router(
                 ),
             ),
             exporter=lambda service: service.export_state(),
+            transactional_mutations=True,
             mutating_methods={
                 "reset",
                 "convert_listing",
