@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -23,6 +22,7 @@ from modules.external_data.application.market_data_facade import (
 )
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
 from tests.integration._authz import EXTERNAL_DATA_HEADERS
+from tests.production_composition_binding import bind_offline_score_participants
 
 
 @pytest.fixture(autouse=True)
@@ -97,13 +97,7 @@ def _unavailable_provider() -> Any:
 
 
 def _production_backed_bundle(path: Path) -> Any:
-    bundle = _durable_bundle(path)
-    bundle.engine.is_production = True
-    return replace(
-        bundle,
-        mode="postgresql",
-        assisted_intake_store=SimpleNamespace(),
-    )
+    return bind_offline_score_participants(_durable_bundle(path))
 
 
 def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
