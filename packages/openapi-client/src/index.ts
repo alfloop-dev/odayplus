@@ -917,6 +917,7 @@ type RequestOptions = {
   correlationId?: string;
   idempotencyKey?: string;
   ifMatch?: string;
+  ifActorMatch?: string;
   query?: Record<string, string | undefined>;
 };
 
@@ -982,6 +983,7 @@ export class OdpApiClient {
           ...(options.correlationId ? { [CORRELATION_ID_HEADER]: options.correlationId } : {}),
           ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
           ...(options.ifMatch ? { "If-Match": options.ifMatch } : {}),
+          ...(options.ifActorMatch ? { "If-Actor-Match": options.ifActorMatch } : {}),
         },
         body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       });
@@ -1426,7 +1428,7 @@ export class OdpApiClient {
     payload: NetworkListingActorPayload,
     options: { correlationId?: string; idempotencyKey?: string } = {},
   ): Promise<ConvertListingResponse> {
-    return this.request<ConvertListingResponse>(`/api/v1/operator/network-listings/listings/${listingId}/convert`, {
+    return this.request<ConvertListingResponse>(`/api/v1/operator/network-listings/listings/${encodeURIComponent(listingId)}/convert`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
@@ -1437,26 +1439,30 @@ export class OdpApiClient {
   mergeListing(
     listingId: string,
     payload: NetworkListingMergePayload,
-    options: { correlationId?: string; idempotencyKey?: string } = {},
+    options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string; ifActorMatch?: string } = {},
   ): Promise<MergeListingResponse> {
-    return this.request<MergeListingResponse>(`/api/v1/operator/network-listings/listings/${listingId}/merge`, {
+    return this.request<MergeListingResponse>(`/api/v1/operator/network-listings/listings/${encodeURIComponent(listingId)}/merge`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
       idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
+      ifActorMatch: options.ifActorMatch,
     });
   }
 
   archiveListing(
     listingId: string,
-    payload: NetworkListingActorPayload,
-    options: { correlationId?: string; idempotencyKey?: string } = {},
+    payload: NetworkListingArchivePayload,
+    options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string; ifActorMatch?: string } = {},
   ): Promise<ArchiveListingResponse> {
-    return this.request<ArchiveListingResponse>(`/api/v1/operator/network-listings/listings/${listingId}/archive`, {
+    return this.request<ArchiveListingResponse>(`/api/v1/operator/network-listings/listings/${encodeURIComponent(listingId)}/archive`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
       idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
+      ifActorMatch: options.ifActorMatch,
     });
   }
 
@@ -2103,6 +2109,9 @@ export type ConvertListingResponse = {
 };
 
 export type MergeListingResponse = {
+  actorSubjectId: string;
+  actorRoleId: string;
+  idempotencyKey: string;
   source: any;
   target: any;
   sourceEvidenceRetained: string[];
@@ -2112,6 +2121,9 @@ export type MergeListingResponse = {
 };
 
 export type ArchiveListingResponse = {
+  actorSubjectId: string;
+  actorRoleId: string;
+  idempotencyKey: string | null;
   listing: any;
   auditEvent: any;
   correlationId: string | null;
@@ -2122,6 +2134,11 @@ export type NetworkListingActorPayload = {
   actorRoleId?: string;
   actorName?: string | null;
   reason?: string | null;
+};
+
+export type NetworkListingArchivePayload = NetworkListingActorPayload & {
+  /** Constraint checked against the trusted principal; never an identity grant. */
+  expectedActorSubjectId?: string | null;
 };
 
 /**
@@ -2141,6 +2158,8 @@ export type RiskDisclosure = {
 export type NetworkListingMergePayload = NetworkListingActorPayload &
   RiskDisclosure & {
     targetListingId: string;
+    targetIfMatch?: string;
+    expectedActorSubjectId?: string | null;
   };
 
 export type IntakeSubmitPayload = {

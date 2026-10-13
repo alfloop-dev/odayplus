@@ -23,15 +23,52 @@ export type ScoringGate = {
   totalCount: number;
 };
 
+export type CandidateReadField = {
+  value: string | number | string[] | null;
+  unit: string | null;
+  availability: "recorded" | "unmeasured" | "denied" | "invalid";
+  reason: string | null;
+  provenance: {
+    recordType: string;
+    recordId: string;
+    fieldPath: string;
+    snapshotId: string | null;
+    measurementStatus?: string;
+  };
+};
+
+export type CandidateReadEvidence = {
+  source: "canonical";
+  candidateId: string;
+  listingId: string;
+  addressId: string;
+  datasetSnapshotId: string | null;
+  fields: Record<"address" | "geocode" | "rent" | "area" | "floor" | "hardRule" | "sourceConfidence", CandidateReadField>;
+};
+
+// A future producer can supply these reads without turning model outcomes or
+// comparison membership into a persisted human workflow state.
+export type CandidateWorkflowStage = "scoring" | "shortlisted" | "pendingreview" | "approved" | "rejected" | "onhold";
+export type CandidateWorkflowRead = {
+  source: "canonical";
+  candidateId: string;
+  availability: "recorded" | "unavailable" | "denied" | "conflict";
+  matches: boolean | null;
+  producer: string;
+  recordId: string | null;
+  status: string | null;
+  reason: string | null;
+};
+
 export type ScoringCandidate = {
   id: string;
   listingId?: string | null;
   heatZoneId: string;
   title: string;
   zoneLabel: string;
-  address: string;
+  address: string | null;
   district?: string;
-  modelVersion: string;
+  modelVersion: string | null;
   datasetSnapshotId: string;
   stage: string;
   gate: ScoringGate;
@@ -40,6 +77,8 @@ export type ScoringCandidate = {
   recommendation: ScoreRecommendation | null;
   reviewId?: string | null;
   inCompare: boolean;
+  readEvidence?: CandidateReadEvidence;
+  pipelineEvidence?: Partial<Record<CandidateWorkflowStage, CandidateWorkflowRead>>;
 };
 
 export type RevenueValue = number | { p10: number; p50: number; p90: number } | null;
@@ -52,6 +91,10 @@ export type ScoreCard = {
   score: number | null;
   recommendation: ScoreRecommendation;
   modelVersion: string;
+  // Canonical reports carry immutable lineage; legacy visual fixtures omit it.
+  reportId?: string;
+  reportVersion?: number;
+  sitescoreRunId?: string;
   datasetSnapshotId: string;
   generatedAt: string;
   confidence: string | number | null;

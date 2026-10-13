@@ -10,6 +10,7 @@ import { OperatorDataUnavailableGate } from "../OperatorDataUnavailableGate";
 import styles from "../networkFindAreas.module.css";
 import { AssistedIntakeSection } from "./intake/AssistedIntakeSection";
 import { MERGE_DENIED_NOTE, canMergeListing } from "./listingPermissions";
+import { resolveListingAction, type ListingWriteContext } from "./listingActions";
 import { resolveListingNavigation, type ListingNavigation, type ListingNavigationTarget } from "./listingNavigation";
 
 type NetworkListingDetail = Listing & {
@@ -22,7 +23,7 @@ type NetworkListingDetail = Listing & {
   frontageMeters?: number | null;
   hardRuleSummary?: string;
   mergeReason?: string;
-  mergedIntoId?: string;
+  mergedIntoId?: string | null;
   sourceEvidence?: string[];
   sourceListingId?: string;
   sourceUrl?: string;
@@ -59,6 +60,7 @@ export function ListingRadarPanel({
   selectedHeatZoneId,
   selectedZoneLabel,
   sources,
+  writeContext,
 }: {
   activeRoleId: OperatorRoleId;
   busyListingId?: string | null;
@@ -86,6 +88,7 @@ export function ListingRadarPanel({
   selectedHeatZoneId?: string;
   selectedZoneLabel?: string;
   sources: ListingSource[];
+  writeContext?: ListingWriteContext;
 }) {
   const [filterMode, setFilterMode] = useState<"selected" | "all">("selected");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -110,7 +113,7 @@ export function ListingRadarPanel({
   // isDuplicate/status "duplicate", so only this field distinguishes "can still
   // be merged" from "already merged". A second click would mint a fresh
   // idempotency key, which the server now refuses with 409.
-  const detailMergedIntoId = selectedListing?.mergedIntoId;
+  const detailMergedIntoId = selectedListing?.mergedIntoId ?? undefined;
   const detailIsTerminal = selectedRow?.status === "archived" || Boolean(detailMergedIntoId);
   // The detail pane's primary action doubles as the merge entry point, so it
   // needs the SAME gates as the row-level button — otherwise an unauthorized
@@ -124,11 +127,8 @@ export function ListingRadarPanel({
       selectedRow.status !== "candidate" &&
       !canMergeListing(activeRoleId),
   );
-  const detailLegacyAction = selectedRow && selectedRow.hardRuleStatus === "measured"
-    && !detailIsTerminal && !detailMergeDenied
-    ? selectedRow.id === "L-2029" && (selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId)
-      ? "merge" : selectedRow.id === "L-2030" && selectedRow.hardRuleFailures.length ? "archive" : null
-    : null;
+  const detailAction = selectedRow ? resolveListingAction(selectedRow.id, listings, activeRoleId, writeContext) : null;
+  const detailLegacyAction = detailAction?.kind ?? null;
   const visibleListingCount = rows.filter((row) => row.status !== "archived").length;
   const sourceFilterOptions = [
     { id: "all", label: `全部來源 ${visibleListingCount}` },
@@ -242,15 +242,9 @@ export function ListingRadarPanel({
                   // from offering a button that is guaranteed to 403/422. Once
                   // `mergedIntoId` is set the merge is terminal, so the entry
                   // point must retire rather than mint a second request.
-                  const canMerge =
-                    row.id === "L-2029" &&
-                    Boolean(mergeTarget) &&
-                    !isTerminal &&
-                    canMergeListing(activeRoleId);
-                  const canArchive =
-                    row.id === "L-2030" &&
-                    !isTerminal &&
-                    (row.status === "hardfail" || row.hardRuleFailures.length > 0);
+                  const action = resolveListingAction(row.id, listings, activeRoleId, writeContext);
+                  const canMerge = action?.kind === "merge";
+                  const canArchive = action?.kind === "archive";
 
                   return (
                     <article
@@ -297,15 +291,15 @@ export function ListingRadarPanel({
                           }}
                           type="button"
                         >
-                          {isTerminal ? detailPrimaryLabel(row, canMergeListing(activeRoleId), listing?.mergedIntoId) : navigation.label}
+                          {isTerminal ? detailPrimaryLabel(row, canMergeListing(activeRoleId), listing?.mergedIntoId ?? undefined) : navigation.label}
                         </button>
                         {canMerge && mergeTarget ? (
                           <button
-                            data-testid="merge-L-2029"
+                            data-testid={`merge-${row.id}`}
                             disabled={isBusy}
                             onClick={(event) => {
                               event.stopPropagation();
-                              onMerge?.(row.id, mergeTarget);
+                              if (action?.targetListingId) onMerge?.(row.id, action.targetListingId);
                             }}
                             type="button"
                           >
@@ -314,7 +308,7 @@ export function ListingRadarPanel({
                         ) : null}
                         {canArchive ? (
                           <button
-                            data-testid="archive-L-2030"
+                            data-testid={`archive-${row.id}`}
                             disabled={isBusy}
                             onClick={(event) => {
                               event.stopPropagation();
@@ -371,7 +365,7 @@ export function ListingRadarPanel({
                     if (detailNavigation?.primary) {
                       onNavigate?.(selectedRow.id, detailNavigation.primary);
                     } else if (detailLegacyAction === "merge") {
-                      onMerge?.(selectedRow.id, (selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId)!);
+                      if (detailAction?.targetListingId) onMerge?.(selectedRow.id, detailAction.targetListingId);
                     } else if (detailLegacyAction === "archive") {
                       onArchive?.(selectedRow.id);
                     }

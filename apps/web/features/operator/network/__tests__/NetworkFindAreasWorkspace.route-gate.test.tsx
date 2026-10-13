@@ -56,6 +56,57 @@ function unavailableBinding<T>(): ApiBinding<T> {
 const unavailableCandidates = unavailableBinding<Candidate>();
 const unavailableHeatZones = unavailableBinding<OperatorHeatZone>();
 
+// Actual legacy Review producer row; preserve the local mock IDs/status/count assertions.
+const legacyReviewPrerequisites = {
+  "id": "RV-702",
+  "candidateId": "CS-1001",
+  "candidateTitle": "信義松仁候選點",
+  "zoneLabel": "信義松仁 86",
+  "recommendation": "GO",
+  "score": 82,
+  "risk": "回本 22 個月 · 週末停車不易",
+  "requestedBy": "王若寧（拓展）",
+  "reviewerRole": "選址審核 / Site Reviewer",
+  "submittedAt": "2026-07-13 09:20",
+  "dueAt": "2026-07-16 18:00",
+  "payback": "22 個月",
+  "m12P50": "NT$428K",
+  "rentReasonableness": "合理（區間 P45）",
+  "cannibalization": "4%（低）",
+  "sourceListingId": "L-2024",
+  "fieldVisit": "已完成（現勘照片 6 張）",
+  "brokerContact": "已聯絡（王仲介）",
+  "notes": "住宅＋商辦混合，夜間洗烘需求強；既有店 650m 稀釋僅 4%。",
+  "modelVersion": "SiteScore v2.3",
+  "datasetSnapshotId": "FS-20260704-0600",
+  "compareText": "P1 主推（GO 82，領先板橋府中 6 分）",
+  "candidateStatus": "pendingreview",
+  "eventChips": [
+    "SiteScore v2.3",
+    "Dataset FS-20260704-0600",
+    "現勘完成",
+    "比較 P1"
+  ],
+  "history": [
+    {
+      "t": "2026-07-04 06:10",
+      "v": "SiteScore 完成 GO 82"
+    },
+    {
+      "t": "2026-07-13 09:20",
+      "v": "王若寧送審（拓展）"
+    }
+  ],
+  "status": "pending",
+  "statusLabel": "待審核",
+  "decision": null,
+  "candidateStatusLabel": "待審核",
+  "candidateMissingData": [],
+  "pending": true,
+  "decided": false,
+  "overrideAvailable": true
+};
+
 // The canonical envelope (shared/api/errors.py) a guarded read answers with.
 function forbiddenResponse(correlationId: string, resource: string) {
   const message = `role does not permit view on ${resource}`;
@@ -235,7 +286,7 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
       }
       if (url.endsWith("/network-reviews")) {
         if (decided && result === "denied") return forbiddenResponse("corr-reviews-reload-403", "sitescore");
-        return respond({ source: "api", reviews: decided ? [] : [{ id: "REV-LIVE-1", status: "pending" }] });
+        return respond({ source: "api", reviews: decided ? [] : [{ ...legacyReviewPrerequisites, id: "REV-LIVE-1", status: "pending" }] });
       }
       if (url.includes("/network-listings")) return respond({
         source: "api", heatZones: [], listingSources: [], candidates: [],

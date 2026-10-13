@@ -527,7 +527,11 @@ describe("Operator console govern route with a delayed shell envelope", () => {
     render(<OperatorConsole searchParams={{}} />);
     expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
     bootstrap.release();
-    await waitFor(() => expect(screen.getByText("Live API")).toBeInTheDocument());
+    await waitFor(() => {
+      const banner = screen.getByText("開發／驗收 API 資料");
+      expect(banner).toBeInTheDocument();
+      expect(banner.closest("[data-data-status]")).toHaveAttribute("data-data-status", "ready");
+    });
 
     fireEvent.click(screen.getByRole("button", { name: /治理稽核/ }));
 
@@ -541,7 +545,11 @@ describe("Operator console govern route with a delayed shell envelope", () => {
     render(<OperatorConsole searchParams={{}} />);
     expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
     bootstrap.release();
-    await waitFor(() => expect(screen.getByText("Live API")).toBeInTheDocument());
+    await waitFor(() => {
+      const banner = screen.getByText("開發／驗收 API 資料");
+      expect(banner).toBeInTheDocument();
+      expect(banner.closest("[data-data-status]")).toHaveAttribute("data-data-status", "ready");
+    });
 
     fireEvent.click(screen.getByTestId("operator-approval-count"));
 
@@ -555,7 +563,11 @@ describe("Operator console govern route with a delayed shell envelope", () => {
     render(<OperatorConsole searchParams={{}} />);
     expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
     bootstrap.release();
-    await waitFor(() => expect(screen.getByText("Live API")).toBeInTheDocument());
+    await waitFor(() => {
+      const banner = screen.getByText("開發／驗收 API 資料");
+      expect(banner).toBeInTheDocument();
+      expect(banner.closest("[data-data-status]")).toHaveAttribute("data-data-status", "ready");
+    });
 
     fireEvent.click(screen.getByTestId("operator-command-trigger"));
     const palette = await screen.findByTestId("operator-command-palette");

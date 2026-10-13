@@ -118,6 +118,7 @@ def create_operator_router(
     *,
     audit_log: InMemoryAuditLog | None = None,
     document_store: Any | None = None,
+    job_queue: Any | None = None,
     state_service: OperatorStateService | None = None,
     growth_service: GrowthService | None = None,
     listing_repository: Any | None = None,
@@ -573,6 +574,7 @@ def create_operator_router(
         from shared.infrastructure.persistence.operator_domains import (
             DurableOperatorDomainStateRepository,
         )
+        from shared.infrastructure.persistence.repositories import DurableApprovalRepository
         from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 
         def require_tenant_repository(
@@ -700,6 +702,9 @@ def create_operator_router(
                 seed_fixtures=allow_test_reset,
                 tenant_id=tenant_id,
                 high_risk_write_guard=listing_write_guard,
+                review_decision_repository=require_tenant_repository(
+                    sitescore_decision_repository_for_tenant, "sitescore_decision_repository", tenant_id,
+                ),
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -714,24 +719,32 @@ def create_operator_router(
                 "promote_intake",
             },
         )
+        from modules.listing.application.candidate_score_context import CandidateScoreContextReader
+
         scoring_resolver = DurableTenantServiceResolver(
             scoring_state_repository,
-            factory=lambda state, tenant_id: NetworkScoringService(
-                initial_state=state,
-                seed_fixtures=False,
-                listing_repository=require_tenant_repository(
-                    listing_repository_for_tenant,
-                    "listing_repository",
-                    tenant_id,
+            factory=lambda state, tenant_id: (
+                lambda listing_repository: NetworkScoringService(
+                    initial_state=state,
+                    seed_fixtures=False,
+                    listing_repository=listing_repository,
+                    current_context_reader=CandidateScoreContextReader(
+                        tenant_id=tenant_id, repository=listing_repository,
+                        engine=document_store.engine, store=intake_workflow_store,
+                    ),
+                    sitescore_repository=require_tenant_repository(
+                        sitescore_repository_for_tenant,
+                        "sitescore_repository",
+                        tenant_id,
+                    ),
+                    model_runtime=require_model_runtime(),
+                    require_canonical=True,
+                    tenant_id=tenant_id,
+                )
+            )(
+                require_tenant_repository(
+                    listing_repository_for_tenant, "listing_repository", tenant_id,
                 ),
-                sitescore_repository=require_tenant_repository(
-                    sitescore_repository_for_tenant,
-                    "sitescore_repository",
-                    tenant_id,
-                ),
-                model_runtime=require_model_runtime(),
-                require_canonical=True,
-                tenant_id=tenant_id,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -741,34 +754,38 @@ def create_operator_router(
                 "set_compare_set",
             },
         )
+        def review_service_factory(state: dict[str, Any] | None, tenant_id: str) -> NetworkReviewService:
+            decision_repository = require_tenant_repository(
+                sitescore_decision_repository_for_tenant, "sitescore_decision_repository", tenant_id,
+            )
+            scoped_store = TenantScopedDocumentStore(document_store, tenant_id)
+            candidate_service = NetworkListingService(
+                listing_repository=require_tenant_repository(listing_repository_for_tenant, "listing_repository", tenant_id),
+                intake_repository=DurableAssistedIntakeRepository(scoped_store),
+                seed_fixtures=False, tenant_id=tenant_id, review_decision_repository=decision_repository,
+            )
+            def audit_delivery_factory(tenant: str):
+                from shared.audit.durable_delivery import DurableAuditDelivery
+                from shared.infrastructure.persistence.job_queue import DurableJobQueue
+                # Older router callers can share the existing SQL queue table;
+                # production supplies the worker's same-engine queue instance.
+                queue = job_queue if job_queue is not None else DurableJobQueue(document_store.engine)
+                return DurableAuditDelivery(document_store.engine, tenant, queue, active_audit_log._worm_sink)
+            return NetworkReviewService(
+                initial_state=state, seed_fixtures=False, require_canonical=True,
+                decision_repository=decision_repository,
+                sitescore_repository=require_tenant_repository(sitescore_repository_for_tenant, "sitescore_repository", tenant_id),
+                decision_workflow=SiteScoreDecisionWorkflow(audit_log=active_audit_log, store=decision_repository,
+                                                          approval_store=DurableApprovalRepository(scoped_store)),
+                candidate_workflow_service=candidate_service, audit_delivery_factory=audit_delivery_factory,
+            )
+
         review_resolver = DurableTenantServiceResolver(
             review_state_repository,
-            factory=lambda state, tenant_id: (
-                lambda decision_repository, sitescore_repository: NetworkReviewService(
-                    initial_state=state,
-                    seed_fixtures=False,
-                    decision_repository=decision_repository,
-                    sitescore_repository=sitescore_repository,
-                    decision_workflow=SiteScoreDecisionWorkflow(
-                        audit_log=active_audit_log,
-                        store=decision_repository,
-                    ),
-                    require_canonical=True,
-                )
-            )(
-                require_tenant_repository(
-                    sitescore_decision_repository_for_tenant,
-                    "sitescore_decision_repository",
-                    tenant_id,
-                ),
-                require_tenant_repository(
-                    sitescore_repository_for_tenant,
-                    "sitescore_repository",
-                    tenant_id,
-                ),
-            ),
+            factory=review_service_factory,
             exporter=lambda service: service.export_state(),
             mutating_methods={"reset", "decide_review"},
+            transactional_mutations=True,
         )
 
         def write_governance_approval(
@@ -879,6 +896,7 @@ def create_operator_router(
                     "sitescore_decision_repository",
                     tenant_id,
                 ),
+                sitescore_approval_repository=DurableApprovalRepository(TenantScopedDocumentStore(document_store, tenant_id)),
                 avm_repository=require_tenant_repository(
                     avm_repository_for_tenant,
                     "avm_repository",

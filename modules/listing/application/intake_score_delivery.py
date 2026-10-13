@@ -177,54 +177,13 @@ class IntakeScoreJobRepository:
                      if item.candidate_site.candidate_site_id == candidate_id), None)
 
     def _current_inputs(self, tenant: str, candidate: Any) -> None:
-        repo = self._repository(tenant)
-        listing = repo.get_listing(candidate.candidate_site.listing_id)
-        address = repo.get_address(candidate.candidate_site.address_id)
-        if listing is None or address is None:
-            raise ScoreDeliveryDenied("SITESCORE_CURRENT_INPUT_UNAVAILABLE")
-        # Promotion changes the Listing status after taking its input snapshot.
-        # Every other recorded attribute, including extension provenance, must
-        # still agree. Rebinding a job fingerprint cannot repair a stale input.
-        stored = {k: v for k, v in vars(candidate.listing).items() if k != "listing_status"}
-        current = {k: v for k, v in vars(listing).items() if k != "listing_status"}
-        # Current tenant-scoped operator evidence can withdraw a verdict or
-        # conflict with the immutable candidate inputs after enqueue/inference.
-        # Historical null PIT metadata means unmeasured, not a revision of a
-        # nonnull canonical measurement. A present null verdict does revoke it.
-        from shared.infrastructure.persistence.operator_network_listings import (
-            DurableAssistedIntakeRepository,
+        from modules.listing.application.candidate_score_context import (
+            read_current_candidate_inputs,
+            validate_current_candidate_inputs,
         )
 
-        metadata = self.store._read_locked(
-            repo._store._collection(DurableAssistedIntakeRepository._LISTING_META),
-            candidate.candidate_site.listing_id,
-        ) or {}
-        for attribute, key in (
-            ("prior_90d_cell_net_revenue", "prior90dCellNetRevenue"),
-            ("prior_90d_cell_transaction_count", "prior90dCellTransactionCount"),
-            ("prior_90d_cell_store_count", "prior90dCellStoreCount"),
-            ("feature_snapshot_time", "featureSnapshotTime"),
-            ("hard_rule_failures", "hardRuleFailures"),
-        ):
-            if key not in metadata or (metadata[key] is None and attribute != "hard_rule_failures"):
-                continue
-            value = metadata[key]
-            if attribute == "feature_snapshot_time":
-                try:
-                    value = _time(value)
-                except (TypeError, ValueError, OverflowError) as exc:
-                    raise ScoreDeliveryDenied("SITESCORE_CURRENT_INPUT_UNAVAILABLE") from exc
-            current[attribute] = value
-        failures = current.get("hard_rule_failures")
-        if not isinstance(failures, list) or failures:
-            raise ScoreDeliveryDenied("SITESCORE_CURRENT_HARD_RULE_GATE_DENIED")
-        if _digest(stored) != _digest(current) or _digest(candidate.address) != _digest(address):
-            raise ScoreDeliveryDenied("SITESCORE_CANDIDATE_INPUT_STALE")
-        if (listing.listing_status != "candidate"
-                or listing.rent_amount <= 0 or listing.area_ping <= 0
-                or not address.normalized_address or not address.h3_res_9
-                or not address.geocode_confidence):
-            raise ScoreDeliveryDenied("SITESCORE_CURRENT_CANDIDATE_GATE_DENIED")
+        current = read_current_candidate_inputs(self._repository(tenant), self.store, candidate)
+        validate_current_candidate_inputs(candidate, current)
 
     def _parents(self, row: dict[str, Any], *, live: bool = False) -> tuple[dict, dict, Any]:
         payload, tenant = row["payload"], str(row["tenant_id"])

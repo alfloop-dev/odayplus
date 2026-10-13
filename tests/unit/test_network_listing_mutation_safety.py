@@ -6,6 +6,8 @@ import pytest
 
 from modules.opsboard.application.network_listings import (
     NetworkListingConflict,
+    NetworkListingNotFound,
+    NetworkListingPolicyError,
     NetworkListingService,
 )
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
@@ -25,16 +27,22 @@ def _service():
     state = NetworkListingService(tenant_id=TENANT).export_state()
     source = deepcopy(next(row for row in state["listings"] if row["id"] == "L-2029"))
     target = deepcopy(next(row for row in state["listings"] if row["id"] == "L-2025"))
-    source.update(id=SOURCE, duplicateOfId=TARGET)
-    target.update(id=TARGET)
+    source.update(id=SOURCE, duplicateOfId=TARGET, version=7, hasLegalHold=False)
+    target.update(id=TARGET, version=11, hasLegalHold=False)
     state.update(listings=[source, target], candidates=[], auditEvents=[])
     return NetworkListingService(initial_state=state, seed_fixtures=False, tenant_id=TENANT)
+
+
+def _authorize(row):
+    if row.get("tenantId") != TENANT:
+        raise PermissionError("TENANT_SCOPE_DENIED")
 
 
 def _archive(service, *, key="archive-once", reason="Operator recorded archive reason", actor=ACTOR):
     return service.archive_listing(
         listing_id=SOURCE, reason=reason, actor_role_id="site_reviewer", actor_name=actor,
         idempotency_key=key, correlation_id="00000000-0000-0000-0000-000000000301",
+        if_match='W/"7"', authorize_existing=_authorize,
     )
 
 
@@ -45,6 +53,7 @@ def _merge(service, *, key="merge-once", target=TARGET, actor=ACTOR):
         risk_summary=f"Retain evidence while marking {SOURCE} a duplicate of {target}",
         risk_acknowledged=True, actor_role_id="site_reviewer", actor_name=actor,
         idempotency_key=key, correlation_id="00000000-0000-0000-0000-000000000302",
+        if_match='W/"7"', target_if_match='W/"11"', authorize_existing=_authorize,
     )
 
 
@@ -122,6 +131,7 @@ def test_merge_original_receipt_survives_later_target_archive():
         listing_id=TARGET, reason="Subsequent archive retains merged history",
         actor_role_id="site_reviewer", actor_name=ACTOR,
         idempotency_key="archive-target", correlation_id="00000000-0000-0000-0000-000000000303",
+        if_match='W/"11"', authorize_existing=_authorize,
     )
     before_replay = service.export_state()
     assert _merge(service) == first
@@ -140,10 +150,18 @@ def test_hold_added_after_archive_denies_service_replay_without_disclosing_cache
 
 def _durable_service(engine, state=None):
     store = SqliteDocumentStore(engine)
+    listings = DurableListingRepository(store)
+    intakes = DurableAssistedIntakeRepository(store)
+    if state is not None:
+        # Explicit fixture writer records preexisting revisions and hold facts;
+        # the mutation adapter cannot invent those inputs itself.
+        writer = NetworkListingService(initial_state=state, seed_fixtures=False, tenant_id=TENANT)
+        for row in state["listings"]:
+            listings.save_listing(*writer._dict_to_listing(row))
+            intakes.save_listing_metadata(row["id"], deepcopy(row))
     return NetworkListingService(
-        listing_repository=DurableListingRepository(store),
-        intake_repository=DurableAssistedIntakeRepository(store),
-        initial_state=state, seed_fixtures=False, tenant_id=TENANT,
+        listing_repository=listings, intake_repository=intakes,
+        seed_fixtures=False, tenant_id=TENANT,
     )
 
 
@@ -168,6 +186,82 @@ def test_original_archive_reason_and_actor_bound_receipt_survive_real_sqlite_res
         assert len(restored._intakes.list_idempotency_records()) == 1
     finally:
         restarted.close()
+
+
+@pytest.mark.parametrize("operation", ["archive", "merge"])
+def test_empty_durable_collection_cannot_replay_a_deleted_resource(tmp_path, operation):
+    engine = SqliteEngine(tmp_path / "deleted-resource.sqlite3")
+    try:
+        service = _durable_service(engine, _service().export_state())
+        (_archive if operation == "archive" else _merge)(service)
+        service._listing_repository.clear()
+        with pytest.raises(NetworkListingNotFound):
+            (_archive if operation == "archive" else _merge)(service)
+        assert service._listing_repository.list_listings() == []
+        assert len(service._intakes.list_idempotency_records()) == 1
+    finally:
+        engine.close()
+
+
+def test_compatibility_write_preserves_existing_durable_custody_and_scope(tmp_path):
+    engine = SqliteEngine(tmp_path / "preserved-owner-facts.sqlite3")
+    try:
+        service = _durable_service(engine, _service().export_state())
+        original = service._intakes.get_listing_metadata(SOURCE)
+        owner_facts = {"version": 7, "hasLegalHold": False, "owner": ACTOR,
+                       "proposer": "00000000-0000-0000-0000-000000000102",
+                       "brandId": "authorized-brand", "custodyReference": "retained-receipt"}
+        service._intakes.save_listing_metadata(SOURCE, {**original, **owner_facts})
+        _archive(service)
+        saved = service._intakes.get_listing_metadata(SOURCE)
+        assert {key: saved[key] for key in owner_facts} == owner_facts
+        assert saved["archivedReason"] == "Operator recorded archive reason"
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("operation", ["archive", "merge"])
+def test_unknown_current_hold_cannot_be_substituted_by_cached_receipt(tmp_path, operation):
+    engine = SqliteEngine(tmp_path / "revoked-hold-observation.sqlite3")
+    try:
+        service = _durable_service(engine, _service().export_state())
+        (_archive if operation == "archive" else _merge)(service)
+        stored = service._intakes.get_listing_metadata(SOURCE)
+        service._intakes.save_listing_metadata(SOURCE, {**stored, "hasLegalHold": None, "legalHold": None})
+        with pytest.raises(NetworkListingPolicyError, match="LEGAL_HOLD_STATE_UNAVAILABLE"):
+            (_archive if operation == "archive" else _merge)(service)
+        assert len(service._intakes.list_idempotency_records()) == 1
+    finally:
+        engine.close()
+
+
+def test_an_instance_created_before_another_writer_can_replay_its_durable_receipt(tmp_path):
+    engine = SqliteEngine(tmp_path / "receipt-after-instance-load.sqlite3")
+    try:
+        first = _durable_service(engine, _service().export_state())
+        second = _durable_service(engine)
+        receipt = _archive(first)
+        assert _archive(second) == receipt
+        assert len(second._intakes.list_idempotency_records()) == 1
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("operation", ["archive", "merge"])
+def test_existing_receipt_is_denied_after_independent_durable_hold_writer(tmp_path, operation):
+    engine = SqliteEngine(tmp_path / "replay-new-hold.sqlite3")
+    try:
+        service = _durable_service(engine, _service().export_state())
+        (_archive if operation == "archive" else _merge)(service)
+        before = service._intakes.get_listing_metadata(SOURCE)
+        service._intakes.save_listing_metadata(SOURCE, {**before, "legalHold": True})
+        held = service._intakes.get_listing_metadata(SOURCE)
+        with pytest.raises(NetworkListingConflict, match="LEGAL_HOLD_CONFLICT"):
+            (_archive if operation == "archive" else _merge)(service)
+        assert service._intakes.get_listing_metadata(SOURCE) == held
+        assert len(service._intakes.list_idempotency_records()) == 1
+    finally:
+        engine.close()
 
 
 @pytest.mark.parametrize("operation", ["archive", "merge"])

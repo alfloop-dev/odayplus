@@ -2388,6 +2388,7 @@ else:
                 audit_log=audit_log,
                 identity_user_role_service=identity_user_role_service,
                 document_store=operator_document_store,
+                job_queue=job_queue,
                 listing_repository=listing_repository,
                 listing_repository_for_tenant=listing_repository_for_tenant,
                 sitescore_repository_for_tenant=sitescore_repository_for_tenant,

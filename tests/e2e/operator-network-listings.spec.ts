@@ -182,6 +182,11 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     );
 
     await page.getByTestId("archive-L-2030").click();
+    await expect(page.getByTestId("listing-archive-dialog")).toBeVisible();
+    await expect(page.getByTestId("listing-archive-reason")).toHaveValue("");
+    await page.getByTestId("listing-archive-reason").fill("Hard-rule archive");
+    await page.getByTestId("listing-archive-submit").click();
+    await expect(page.getByTestId("listing-archive-dialog")).toBeHidden();
     await expect(page.getByTestId("listing-row-L-2030")).toContainText("封存");
     await expect(page.getByTestId("listing-row-L-2030")).toContainText(
       "Hard-rule archive",

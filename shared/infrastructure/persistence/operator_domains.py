@@ -175,6 +175,14 @@ class DurableOperatorDomainStateRepository:
         self._store = store
         self._domain = domain.strip()
 
+    @property
+    def engine(self) -> Any:
+        return self._store.engine
+
+    @property
+    def domain(self) -> str:
+        return self._domain
+
     def load(self, tenant_id: str) -> dict[str, Any] | None:
         scoped = TenantScopedDocumentStore(self._store, tenant_id)
         state = scoped.get(self._COLLECTION, self._domain)

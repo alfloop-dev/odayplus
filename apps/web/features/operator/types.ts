@@ -307,6 +307,12 @@ export type Listing = {
   /** Unknown checks must remain distinct from a recorded empty failure list. */
   hardRuleFailures: NetworkListingReadResponse["hardRuleFailures"];
   candidateId?: string;
+  /** Actual producer revision; absent means versioned writes are unavailable. */
+  version?: number | null;
+  tenantId?: string | null;
+  mergedIntoId?: string | null;
+  hasLegalHold?: boolean | null;
+  legalHold?: boolean | null;
 };
 
 export type Candidate = {

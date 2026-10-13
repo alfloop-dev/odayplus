@@ -355,6 +355,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Canonical Review frontend evidence exercises the real durable Python
+      # producer before validating its DTO. Keep that bridge in this lane.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install Python dependencies for canonical frontend evidence
+        run: uv sync --frozen --python 3.12
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:

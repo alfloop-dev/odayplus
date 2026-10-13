@@ -33,11 +33,14 @@ import { buildDurableDetailHref } from "./network/intake/AssistedIntakeSection";
 import { parseUrlState } from "./network/intake/urlState";
 import { navigationIncludesTarget, resolveListingNavigation, type ListingNavigationTarget, type RelatedIntake } from "./network/listingNavigation";
 import { ListingMergeDialog, type ListingMergeForm, type ListingMergeRequest } from "./network/ListingMergeDialog";
+import { ListingArchiveDialog, type ListingArchiveRequest } from "./network/ListingArchiveDialog";
+import { listingWriteReceiptMatches, listingWriteTerminalMatches, resolveListingAction, type ListingAction } from "./network/listingActions";
 import {
   buildListingsClient,
   listingsApi,
   missingListingsClientError,
   newMergeIdempotencyKey,
+  newArchiveIdempotencyKey,
   type ListingApiError,
 } from "./network/listingsClient";
 import { canMergeListing } from "./network/listingPermissions";
@@ -45,7 +48,10 @@ import { CandidatePanel } from "./network/CandidatePanel";
 import { SiteScorePanel } from "./network/SiteScorePanel";
 import { ComparePanel } from "./network/ComparePanel";
 import { ReviewPanel, resolveEffectiveReviews } from "./network/ReviewPanel";
+import { hasRecordedReviewReport, inspectReviewsReadProjection, isReviewPending } from "./network/networkReviewProjection";
 import { NetworkShell } from "./network/NetworkShell";
+import { projectCandidateWorkflow } from "./network/networkWorkflowProjection";
+import { hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, readId, readObject } from "./network/networkReadValidation";
 import { FindAreasPanel } from "./network/FindAreasPanel";
 import { canPerform as canPerformIntake } from "./network/intake/intakePermissions";
 import type { RebalancePanelProps } from "./network/RebalancePanel";
@@ -56,7 +62,8 @@ import type {
 } from "./network/HeatZoneMergeSplitPanel";
 import {
   buildNetworkTabHref,
-  candidateNavigationParams,
+  candidateWorkflowNavigationParams,
+  isCandidateWorkflowTab,
   CANDIDATE_SELECTION_PARAM,
   parseCandidateSelection,
   parseNetworkTabIndex,
@@ -190,7 +197,7 @@ type NetworkListingDetail = Listing & {
   frontageMeters?: number | null;
   hardRuleSummary?: string;
   mergeReason?: string;
-  mergedIntoId?: string;
+  mergedIntoId?: string | null;
   sourceEvidence?: string[];
   sourceListingId?: string;
   sourceUrl?: string;
@@ -275,8 +282,9 @@ export function resolveNetworkTabGateState({
 
 export function inspectNetworkListingsSnapshot(
   snapshot: NetworkListingsSnapshot | null,
-): Extract<OperatorDataAvailability, "ready" | "seed" | "empty"> {
-  if (!snapshot) return "empty";
+): Extract<OperatorDataAvailability, "ready" | "seed" | "empty" | "error"> {
+  if (snapshot == null) return "empty";
+  if (!readObject(snapshot)) return "error";
   if (payloadContainsSeedData(snapshot) || isSeedDataSource(snapshot.source)) return "seed";
   const requiredCollections = [
     snapshot.heatZones,
@@ -285,9 +293,11 @@ export function inspectNetworkListingsSnapshot(
     snapshot.candidates,
     snapshot.siteReviews,
   ];
+  if (snapshot.source === "api" && requiredCollections.some((value) => value !== undefined && !Array.isArray(value))) return "error";
   const hasRequiredShape =
     snapshot.source === "api" &&
     requiredCollections.every(Array.isArray);
+  if (hasRequiredShape && !hasNetworkListingsRenderShape(snapshot)) return "error";
   // A scoped read may legitimately withhold whole-zone HeatZone aggregates
   // while still authorizing individual listings/candidates. The snapshot is
   // usable when it carries any authorized record; each tab then decides
@@ -309,15 +319,52 @@ export function resolveNetworkFindAreasLoadState(
 
 export function inspectNetworkScoringSnapshot(
   snapshot: NetworkScoringSnapshot | null,
-): Extract<OperatorDataAvailability, "ready" | "seed" | "empty"> {
-  if (!snapshot) return "empty";
+): Extract<OperatorDataAvailability, "ready" | "seed" | "empty" | "error"> {
+  if (snapshot == null) return "empty";
+  if (!readObject(snapshot)) return "error";
   if (payloadContainsSeedData(snapshot) || isSeedDataSource(snapshot.source)) return "seed";
-  return (snapshot.source === "api" || snapshot.source === "canonical") &&
-    Array.isArray(snapshot.candidates) && Array.isArray(snapshot.scorecards) &&
-    Array.isArray(snapshot.compare?.columns) &&
-    (snapshot.candidates.length > 0 || snapshot.scorecards.length > 0)
-    ? "ready"
-    : "empty";
+  if (snapshot.source === "api" || snapshot.source === "canonical") {
+    if ([snapshot.candidates, snapshot.scorecards].some((value) => value !== undefined && !Array.isArray(value))
+      || snapshot.compare !== undefined && !readObject(snapshot.compare)
+      || snapshot.compare?.columns !== undefined && !Array.isArray(snapshot.compare.columns)) return "error";
+  }
+  if ((snapshot.source !== "api" && snapshot.source !== "canonical")
+    || !Array.isArray(snapshot.candidates) || !Array.isArray(snapshot.scorecards)
+    || !Array.isArray(snapshot.compare?.columns)) return "empty";
+  if (!hasNetworkScoringRenderShape(snapshot)) return "error";
+  return snapshot.candidates.length > 0 || snapshot.scorecards.length > 0 ? "ready" : "empty";
+}
+
+type ScoringWorkflowProvenance = "canonical" | "fixture" | "unknown";
+
+function inspectScoringWorkflowProvenance(snapshot: unknown): ScoringWorkflowProvenance {
+  if (!readObject(snapshot)) return "unknown";
+  // The actual canonical scoring producer owns this marker. It selects the
+  // strict projector; existing shape, generation and exact joins still admit
+  // each observation, so a marker alone cannot assert progress or permission.
+  if (snapshot.source === "canonical") {
+    if (!hasNetworkScoringRenderShape(snapshot)) return "unknown";
+    const associated = (snapshot.candidates as unknown[]).every((row) => {
+      if (!readObject(row)) return false;
+      const evidence = row.readEvidence;
+      const admission = row.currentAdmission;
+      if (Object.prototype.hasOwnProperty.call(row, "readEvidence")
+        && (!readObject(evidence) || evidence.candidateId !== row.id || evidence.listingId !== row.listingId || !readId(evidence.addressId))) return false;
+      if (Object.prototype.hasOwnProperty.call(row, "currentAdmission")
+        && (!readObject(admission) || admission.candidateId !== row.id || admission.listingId !== row.listingId || !readId(admission.addressId)
+          || readObject(evidence) && admission.addressId !== evidence.addressId)) return false;
+      return true;
+    });
+    return associated ? "canonical" : "unknown";
+  }
+  if (snapshot.source !== "api" || !hasNetworkScoringRenderShape(snapshot)) return "unknown";
+  // The actual legacy fixture producer predates these canonical fields.
+  // Presence, including explicit null, cannot silently become fixture data.
+  const hasOwn = (row: unknown, keys: string[]) => readObject(row)
+    && keys.some((key) => Object.prototype.hasOwnProperty.call(row, key));
+  if ((snapshot.candidates as unknown[]).some((row) => hasOwn(row, ["readEvidence", "currentAdmission", "pipelineEvidence"]))
+    || (snapshot.scorecards as unknown[]).some((row) => hasOwn(row, ["reportId", "reportVersion", "sitescoreRunId"]))) return "unknown";
+  return "fixture";
 }
 
 export function inspectNetworkRebalanceSnapshot(
@@ -332,12 +379,10 @@ export function inspectNetworkRebalanceSnapshot(
 
 export function inspectNetworkReviewsSnapshot(
   snapshot: NetworkReviewsSnapshot | null,
-): Extract<OperatorDataAvailability, "ready" | "seed" | "empty"> {
+): Extract<OperatorDataAvailability, "ready" | "seed" | "empty" | "error"> {
   if (!snapshot) return "empty";
   if (payloadContainsSeedData(snapshot) || isSeedDataSource(snapshot.source)) return "seed";
-  return snapshot.source === "api" && snapshot.reviews.length > 0
-    ? "ready"
-    : "empty";
+  return inspectReviewsReadProjection(snapshot);
 }
 
 const NETWORK_ACTOR = {
@@ -403,7 +448,7 @@ async function readNetworkSnapshot<T>(
       return { ok: false, failure: await operatorLoadFailureFromResponse(response, label, correlationId) };
     }
     const body: unknown = await response.json();
-    if (typeof body !== "object" || body === null) {
+    if (!readObject(body)) {
       return {
         ok: false,
         failure: {
@@ -584,6 +629,7 @@ export function NetworkFindAreasWorkspace({
   const navigationIntent = useRef(0);
   const networkReadSequence = useRef(0);
   const scoringReadSequence = useRef(0);
+  const reviewsReadSequence = useRef(0);
   const navigationLocationKey = `${pathname}?${searchParams.toString()}`;
   const navigationLocation = useRef({ key: navigationLocationKey, version: 0, mounted: true });
   if (navigationLocation.current.key !== navigationLocationKey) {
@@ -598,6 +644,7 @@ export function NetworkFindAreasWorkspace({
   }, []);
   const [networkNavigationGeneration, setNetworkNavigationGeneration] = useState<number | null>(null);
   const [scoringNavigationGeneration, setScoringNavigationGeneration] = useState<number | null>(null);
+  const [reviewsNavigationGeneration, setReviewsNavigationGeneration] = useState<number | null>(null);
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId]);
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
@@ -606,7 +653,10 @@ export function NetworkFindAreasWorkspace({
   const listingSources = listingSourcesInput ?? (fixturesAllowed ? LISTING_SOURCE_FIXTURES : EMPTY_LISTING_SOURCES);
   const rebalanceStores = rebalanceStoresInput ?? (fixturesAllowed ? REBALANCE_STORE_FIXTURES : EMPTY_REBALANCE_STORES);
   const siteReviews = siteReviewsInput ?? (fixturesAllowed ? SITE_REVIEW_FIXTURES : EMPTY_SITE_REVIEWS);
-  const reviewIdentity = useMemo(() => resolveNetworkReviewIdentity(activeRoleId), [activeRoleId]);
+  const reviewIdentity = useMemo(() => ({
+    ...resolveNetworkReviewIdentity(activeRoleId),
+    observedContextKey: navigationContextKey,
+  }), [activeRoleId, navigationContextKey]);
   const [localSelectedId, setLocalSelectedId] = useState(
     selectedHeatZoneId ?? (fixturesAllowed ? "HZ-01" : ""),
   );
@@ -641,20 +691,22 @@ export function NetworkFindAreasWorkspace({
     && tabOverride.fromZoneId === urlCandidateZoneId
     && tabOverride.fromCandidateQuery === JSON.stringify(searchParams.getAll(CANDIDATE_SELECTION_PARAM));
   const activeTab = overrideApplies ? tabOverride.requested : urlTab;
+  const workflowCandidateId = isCandidateWorkflowTab(activeTab) && !intakeDetailOpen
+    ? overrideApplies ? tabOverride.candidateId : urlCandidateSelection.id : null;
   // 「查看本區候選點」 scopes the Candidates tab to one HeatZone. The scope is
   // carried in the URL (`zone=<heatZoneId>`) so a reload or back/forward
   // restores it, and in the click-time override for the same reason the tab is.
   const candidateZoneId =
-    activeTab !== 2
+    activeTab !== 2 || workflowCandidateId !== null
       ? null
       : overrideApplies
         ? tabOverride.candidateZoneId
         : urlCandidateZoneId;
 
-  const selectedCandidateId = activeTab === 2
-    ? overrideApplies ? tabOverride.candidateId : urlCandidateSelection.id : null;
-  const candidateSelectionError = activeTab === 2 && !overrideApplies && urlCandidateSelection.invalid
+  const selectedCandidateId = activeTab === 2 ? workflowCandidateId : null;
+  const workflowSelectionError = isCandidateWorkflowTab(activeTab) && !overrideApplies && urlCandidateSelection.invalid
     ? "候選點連結包含不一致或空白的選取值。" : null;
+  const candidateSelectionError = activeTab === 2 ? workflowSelectionError : null;
 
   useEffect(() => {
     setTabOverride((current) => (current !== null
@@ -680,7 +732,22 @@ export function NetworkFindAreasWorkspace({
   const [mergeRequest, setMergeRequest] = useState<ListingMergeRequest | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [mergeError, setMergeError] = useState<ListingApiError | null>(null);
+  const [archiveRequest, setArchiveRequest] = useState<ListingArchiveRequest | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState<ListingApiError | null>(null);
+  const listingWriteSession = useRef<{
+    action: ListingAction; contextKey: string; generation: number; locationVersion: number;
+    submittedForm?: string;
+    verifiedActorSubjectId?: string;
+  } | null>(null);
+  const listingWriteInFlight = useRef(false);
+  useEffect(() => {
+    listingWriteSession.current = null;
+    setMergeRequest(null); setMergeError(null); setMergeBusy(false);
+    setArchiveRequest(null); setArchiveError(null); setArchiveBusy(false);
+  }, [navigationContextKey, navigationLocationKey]);
   const [scoringSnapshotValue, setScoringSnapshot] = useState<NetworkScoringSnapshot | null>(null);
+  const [scoringWorkflowProvenance, setScoringWorkflowProvenance] = useState<ScoringWorkflowProvenance>("unknown");
   const scoringSnapshot = scoringNavigationGeneration === navigationContext.current.generation ? scoringSnapshotValue : null;
   const [scoringLoadStateValue, setScoringLoadState] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
@@ -697,11 +764,15 @@ export function NetworkFindAreasWorkspace({
   );
   const [rebalanceLoadFailure, setRebalanceLoadFailure] = useState<OperatorLoadFailure | null>(null);
   const [busyRebalanceAction, setBusyRebalanceAction] = useState<string | null>(null);
-  const [reviewsSnapshot, setReviewsSnapshot] = useState<NetworkReviewsSnapshot | null>(null);
-  const [reviewsLoadState, setReviewsLoadState] = useState<OperatorDataAvailability>(
+  const [reviewsSnapshotValue, setReviewsSnapshot] = useState<NetworkReviewsSnapshot | null>(null);
+  const reviewsSnapshot = reviewsNavigationGeneration === navigationContext.current.generation ? reviewsSnapshotValue : null;
+  const [reviewsLoadStateValue, setReviewsLoadState] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
   );
-  const [reviewsLoadFailure, setReviewsLoadFailure] = useState<OperatorLoadFailure | null>(null);
+  const reviewsLoadState: OperatorDataAvailability = reviewsNavigationGeneration === navigationContext.current.generation || fixturesAllowed
+    ? reviewsLoadStateValue : "loading";
+  const [reviewsLoadFailureValue, setReviewsLoadFailure] = useState<OperatorLoadFailure | null>(null);
+  const reviewsLoadFailure = reviewsNavigationGeneration === navigationContext.current.generation ? reviewsLoadFailureValue : null;
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
 
@@ -809,23 +880,18 @@ export function NetworkFindAreasWorkspace({
     navigationIntent.current += 1;
     setBusyListingId(null);
     setNavigationError(null);
+    const params = candidateWorkflowNavigationParams(tabIndex, searchParams, workflowCandidateId, extraParams);
+    const exactCandidate = params.get(CANDIDATE_SELECTION_PARAM);
     setTabOverride({
       from: urlTab,
       fromZoneId: urlCandidateZoneId,
       fromCandidateQuery: JSON.stringify(searchParams.getAll(CANDIDATE_SELECTION_PARAM)),
-      candidateId: tabIndex === 2 ? extraParams?.[CANDIDATE_SELECTION_PARAM] || null : null,
+      candidateId: exactCandidate,
       requested: tabIndex,
       candidateZoneId: tabIndex === 2 ? extraParams?.[CANDIDATE_ZONE_PARAM] || null : null,
     });
-    const exactCandidate = extraParams?.[CANDIDATE_SELECTION_PARAM];
-    const params = exactCandidate
-      ? candidateNavigationParams(exactCandidate, searchParams)
-      : new URLSearchParams(searchParams.toString());
-    params.delete(CANDIDATE_SELECTION_PARAM);
-    // The zone scope only lives as long as the navigation that asked for it;
-    // any other tab change (tab bar or stepper) shows every candidate.
-    params.delete(CANDIDATE_ZONE_PARAM);
-    for (const [key, value] of Object.entries(extraParams ?? {})) params.set(key, value);
+    // Zone owns the Candidates panel. Exact workflow identity survives only
+    // Candidates → SiteScore → Compare → Review; an exit or zone intent clears it.
     if (exactCandidate) params.set("ws", "network");
     const href = buildNetworkTabHref(
       exactCandidate ? "/operator" : pathname,
@@ -834,7 +900,7 @@ export function NetworkFindAreasWorkspace({
       typeof window === "undefined" || exactCandidate && window.location.hash.startsWith("#intake/") ? "" : window.location.hash,
     );
     router.push(href, { scroll: false });
-  }, [pathname, router, searchParams, urlTab, urlCandidateZoneId]);
+  }, [pathname, router, searchParams, urlTab, urlCandidateZoneId, workflowCandidateId]);
 
   const snapshotHeatZones = networkSnapshot?.heatZones?.length
     ? networkSnapshot.heatZones
@@ -915,7 +981,7 @@ export function NetworkFindAreasWorkspace({
           setLocalSelectedId(serverSelectedId);
         }
         setNetworkSnapshot(
-          inspection === "ready" || fixturesAllowed
+          inspection === "ready" || fixturesAllowed && hasNetworkListingsRenderShape(snapshot)
             ? snapshot
             : null,
         );
@@ -958,9 +1024,10 @@ export function NetworkFindAreasWorkspace({
       const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && generation === navigationContext.current.generation && snapshot) {
         setScoringNavigationGeneration(generation);
+        setScoringWorkflowProvenance(inspectScoringWorkflowProvenance(snapshot));
         const inspection = inspectNetworkScoringSnapshot(snapshot);
         setScoringSnapshot(
-          inspection === "ready" || fixturesAllowed
+          inspection === "ready" || fixturesAllowed && hasNetworkScoringRenderShape(snapshot)
             ? snapshot
             : null,
         );
@@ -1022,30 +1089,43 @@ export function NetworkFindAreasWorkspace({
     };
   }, [activeRoleId, fixturesAllowed]);
 
-  const applyReviewsSnapshot = useCallback((snapshot: NetworkReviewsSnapshot) => {
+  const applyReviewsSnapshot = useCallback((snapshot: NetworkReviewsSnapshot, generation: number, sequence: number) => {
+    if (!navigationLocation.current.mounted || generation !== navigationContext.current.generation
+        || sequence !== reviewsReadSequence.current) return false;
     const inspection = inspectNetworkReviewsSnapshot(snapshot);
     // An authorized empty dedicated read is authoritative too. Do not replace
     // its zero queue with the independently projected network-listings rows.
     setReviewsSnapshot(
-      inspection === "ready" || (inspection === "empty" && snapshot.source === "api") || fixturesAllowed
+      inspection === "ready" || (inspection === "empty" && (snapshot.source === "api" || snapshot.source === "canonical")) || (fixturesAllowed && inspection !== "error")
         ? snapshot
         : null,
     );
-    setReviewsLoadFailure(null);
+    setReviewsNavigationGeneration(generation);
+    setReviewsLoadFailure(inspection === "error"
+      ? operatorLoadFailureFromError(new Error("Network review read contract is incomplete or conflicting"), "network-reviews")
+      : null);
     setReviewsLoadState(
       inspection === "ready" ? "ready" : fixturesAllowed ? "fixture" : inspection,
     );
+    return inspection === "ready" || inspection === "empty";
   }, [fixturesAllowed]);
 
   useEffect(() => {
     let cancelled = false;
+    const generation = navigationContext.current.generation;
+    const sequence = ++reviewsReadSequence.current;
+    setReviewError(null);
+    setReviewSubmitting(false);
+    setReviewsLoadState(fixturesAllowed ? "fixture" : "loading");
     async function loadReviews() {
       const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
       const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && snapshot) {
-        applyReviewsSnapshot(snapshot);
-      } else if (!cancelled && !read.ok) {
+        applyReviewsSnapshot(snapshot, generation, sequence);
+      } else if (!cancelled && navigationLocation.current.mounted && generation === navigationContext.current.generation
+          && sequence === reviewsReadSequence.current && !read.ok) {
         setReviewsSnapshot(null);
+        setReviewsNavigationGeneration(generation);
         setReviewsLoadFailure(read.failure);
         setReviewsLoadState(fixturesAllowed ? "fixture" : "error");
       }
@@ -1056,9 +1136,8 @@ export function NetworkFindAreasWorkspace({
     };
   }, [applyReviewsSnapshot, fixturesAllowed, reviewIdentity]);
 
-  // Decide a review as the active operator role's review identity. The decision
-  // syncs Candidate + Review + Approval + Decision + Audit atomically
-  // server-side; on success we reload the queue. Returns false so the dialog
+  // Decide using the current review identity and reload the authoritative queue.
+  // Returns false so the dialog
   // stays open when the server rejects the decision (policy 422 / role 403 /
   // conflict 409). A non-deciding role reaching this path carries its own
   // non-approving headers, so the API fails closed with 403.
@@ -1067,6 +1146,13 @@ export function NetworkFindAreasWorkspace({
     action: ReviewDecisionAction,
     form: ReviewDecisionForm,
   ): Promise<boolean> {
+    const generation = navigationContext.current.generation;
+    if (!navigationLocation.current.mounted || reviewIdentity.observedContextKey !== navigationContext.current.key) return false;
+    if (!reviewIdentity.canDecide) return false;
+    if (!fixturesAllowed && !reviewsSnapshot?.reviews.some((review) => review.id === reviewId && isReviewPending(review) && hasRecordedReviewReport(review))) return false;
+    const sequence = ++reviewsReadSequence.current;
+    const isCurrent = () => navigationLocation.current.mounted && generation === navigationContext.current.generation
+      && sequence === reviewsReadSequence.current;
     setReviewSubmitting(true);
     setReviewError(null);
     try {
@@ -1091,24 +1177,27 @@ export function NetworkFindAreasWorkspace({
           overrideAck: form.overrideAck,
         }),
       });
+      if (!isCurrent()) return false;
       if (!response.ok) {
         setReviewError(`review decision failed (${response.status})`);
         return false;
       }
       const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
+      if (!isCurrent()) return false;
       if (read.ok) {
-        applyReviewsSnapshot(read.snapshot);
+        return applyReviewsSnapshot(read.snapshot, generation, sequence);
       } else {
         setReviewsSnapshot(null);
+        setReviewsNavigationGeneration(generation);
         setReviewsLoadFailure(read.failure);
         setReviewsLoadState(fixturesAllowed ? "fixture" : "error");
       }
-      return true;
+      return false;
     } catch {
-      setReviewError("review decision failed");
+      if (isCurrent()) setReviewError("review decision failed");
       return false;
     } finally {
-      setReviewSubmitting(false);
+      if (isCurrent()) setReviewSubmitting(false);
     }
   }
 
@@ -1120,8 +1209,9 @@ export function NetworkFindAreasWorkspace({
       || navigationContextKey !== navigationContext.current.key || generation !== navigationContext.current.generation) return;
     setScoringNavigationGeneration(generation);
     if (read.ok) {
+      setScoringWorkflowProvenance(inspectScoringWorkflowProvenance(read.snapshot));
       const inspection = inspectNetworkScoringSnapshot(read.snapshot);
-      setScoringSnapshot(inspection === "ready" || fixturesAllowed ? read.snapshot : null);
+      setScoringSnapshot(inspection === "ready" || fixturesAllowed && hasNetworkScoringRenderShape(read.snapshot) ? read.snapshot : null);
       setScoringLoadFailure(null);
       setScoringLoadState(inspection);
     } else {
@@ -1348,7 +1438,7 @@ export function NetworkFindAreasWorkspace({
     [dedicatedReviews, reviewFallbackRows],
   );
   const pendingReviewCount = reviewsSnapshot !== null || fixturesAllowed
-    ? displayedReviews.filter((review) => review.status === "pending").length
+    ? displayedReviews.filter(isReviewPending).length
     : viewModel.totals.pendingReviews;
   const tabCounts = [
     null,
@@ -1429,7 +1519,7 @@ export function NetworkFindAreasWorkspace({
     setNetworkNavigationGeneration(generation);
     if (read.ok) {
       const inspection = inspectNetworkListingsSnapshot(read.snapshot);
-      setNetworkSnapshot(inspection === "ready" || fixturesAllowed ? read.snapshot : null);
+      setNetworkSnapshot(inspection === "ready" || fixturesAllowed && hasNetworkListingsRenderShape(read.snapshot) ? read.snapshot : null);
       setNetworkLoadState(inspection);
       setNetworkApiError(null);
       setNetworkLoadFailure(null);
@@ -1437,41 +1527,6 @@ export function NetworkFindAreasWorkspace({
       setNetworkSnapshot(null);
       setNetworkLoadFailure(read.failure);
       setNetworkLoadState("error");
-    }
-  }
-
-  async function postNetworkListingAction(
-    listingId: string,
-    action: "merge" | "archive",
-    body: Record<string, unknown>,
-  ) {
-    setBusyListingId(listingId);
-    try {
-      const response = await fetch(`/api/v1/operator/network-listings/listings/${listingId}/${action}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": `r4-005-${action}-${listingId}`,
-          "X-Correlation-Id": `corr-r4-005-${action}-${listingId}`,
-          ...NETWORK_OPERATOR_HEADERS,
-        },
-        body: JSON.stringify({
-          ...NETWORK_ACTOR,
-          ...body,
-        }),
-      });
-      if (!response.ok) {
-        setNetworkApiError(`network-listings ${action} failed (${response.status})`);
-        return null;
-      }
-      const payload = (await response.json()) as NetworkListingsSnapshot;
-      await reloadNetworkSnapshot();
-      return payload;
-    } catch {
-      setNetworkApiError(`network-listings ${action} failed`);
-      return null;
-    } finally {
-      setBusyListingId(null);
     }
   }
 
@@ -1522,6 +1577,7 @@ export function NetworkFindAreasWorkspace({
         return;
       }
       if (target.kind === "candidate") {
+        if (scoringRead?.ok) setScoringWorkflowProvenance(inspectScoringWorkflowProvenance(scoringRead.snapshot));
         if (!scoringRead?.ok || inspectNetworkScoringSnapshot(scoringRead.snapshot) !== "ready"
           || scoringRead.snapshot.candidates.filter((row) => row.id === target.id).length !== 1
           || !scoringRead.snapshot.candidates.some((row) => row.id === target.id && row.listingId === listingId)) {
@@ -1564,82 +1620,150 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
-  /**
-   * Merge is a high-impact, irreversible write, so the button only OPENS the
-   * confirmation surface — it never writes. ListingMergeDialog collects the
-   * operator's own reason and their acknowledgement of the exact risk summary
-   * it rendered; submitMergeListing then performs the write. Cancelling, or
-   * closing without acknowledging, writes nothing.
-   */
-  function mergeListing(sourceListingId: string, targetListingId: string) {
-    setMergeError(null);
-    setMergeRequest({
-      sourceListingId,
-      targetListingId,
-      sourceLabel: listingsEffective.find((item) => item.id === sourceListingId)?.address,
-      targetLabel: listingsEffective.find((item) => item.id === targetListingId)?.address,
-      // Minted once per initiated merge and carried across every retry, so a
-      // retry after a lost response replays the original result server-side
-      // instead of merging a second time.
-      idempotencyKey: newMergeIdempotencyKey(sourceListingId, targetListingId),
-    });
+  const listingWriteContext = {
+    ready: networkLoadState === "ready" || fixturesAllowed && networkLoadState === "fixture",
+    fixturesAllowed, candidates,
+  };
+
+  function openListingWrite(listingId: string, kind: "merge" | "archive", targetId?: string) {
+    if (listingWriteInFlight.current || listingWriteSession.current) return;
+    const action = resolveListingAction(listingId, listingsEffective, activeRoleId, listingWriteContext);
+    if (!action || action.kind !== kind || kind === "merge" && action.targetListingId !== targetId) return;
+    listingWriteSession.current = { action, contextKey: navigationContext.current.key,
+      generation: navigationContext.current.generation, locationVersion: navigationLocation.current.version };
+    setMergeError(null); setArchiveError(null);
+    if (kind === "merge" && action.targetListingId) {
+      setArchiveRequest(null);
+      setMergeRequest({ sourceListingId: listingId, targetListingId: action.targetListingId,
+        sourceLabel: action.sourceLabel, targetLabel: action.targetLabel,
+        ifMatch: action.ifMatch, targetIfMatch: action.targetIfMatch,
+        idempotencyKey: newMergeIdempotencyKey(listingId, action.targetListingId) });
+    } else {
+      setMergeRequest(null);
+      setArchiveRequest({ listingId, label: action.sourceLabel, ifMatch: action.ifMatch,
+        idempotencyKey: newArchiveIdempotencyKey(listingId) });
+    }
   }
 
-  /**
-   * The write goes through the typed OpenAPI client, which carries a
-   * correlation ID and a per-attempt idempotency key and surfaces structured
-   * errors. `reason` and `riskSummary` come from the dialog verbatim — the
-   * audit record must store what the operator actually wrote and read.
-   */
-  async function submitMergeListing(form: ListingMergeForm) {
-    if (!mergeRequest) return;
-    const client = buildListingsClient(activeRoleId);
-    if (!client) {
-      setMergeError(missingListingsClientError());
-      return;
-    }
+  function mergeListing(sourceId: string, targetId: string) { openListingWrite(sourceId, "merge", targetId); }
+  function archiveListing(listingId: string) { openListingWrite(listingId, "archive"); }
 
-    setMergeBusy(true);
-    setBusyListingId(mergeRequest.sourceListingId);
+  async function readListingWriteSubject(): Promise<string | null> {
+    if (fixturesAllowed) return operatorSubjectId(activeRoleId) || null;
     try {
-      const result = await listingsApi.merge(client, mergeRequest.sourceListingId, {
-        targetListingId: mergeRequest.targetListingId,
-        actorRoleId: activeRoleId,
-        reason: form.reason,
-        riskSummary: form.riskSummary,
-        riskAcknowledged: form.riskAcknowledged,
-        // Same key on every retry of this request — see mergeListing().
-        idempotencyKey: mergeRequest.idempotencyKey,
-      });
-      if (!result.ok) {
-        // The dialog stays open so the operator keeps their reason and can read
-        // the error code / correlation ID.
-        setMergeError(result.error);
+      const response = await fetch("/auth/session", { cache: "no-store", headers: { accept: "application/json" } });
+      if (!response.ok) return null;
+      const session: unknown = await response.json();
+      return readObject(session) && typeof session.subject === "string" && session.subject.trim() ? session.subject : null;
+    } catch { return null; }
+  }
+
+  async function submitListingWrite(kind: "merge" | "archive", form: ListingMergeForm | string) {
+    const session = listingWriteSession.current;
+    const request = kind === "merge" ? mergeRequest : archiveRequest;
+    if (!session || !request || session.action.kind !== kind || listingWriteInFlight.current) return;
+    const current = () => listingWriteSession.current === session && navigationLocation.current.mounted
+      && session.contextKey === navigationContext.current.key && session.generation === navigationContext.current.generation
+      && session.locationVersion === navigationLocation.current.version
+      && session.contextKey === JSON.stringify([activeRoleId, operatorSubjectId(activeRoleId),
+        typeof window === "undefined" ? "" : window.sessionStorage.getItem("oday.operator.tenant")]);
+    if (!current()) return;
+    const setError = kind === "merge" ? setMergeError : setArchiveError;
+    const setBusy = kind === "merge" ? setMergeBusy : setArchiveBusy;
+    const client = buildListingsClient(activeRoleId);
+    if (!client) { setError(missingListingsClientError()); return; }
+    // The ref closes the rapid-double-submit gap before React commits busy.
+    listingWriteInFlight.current = true;
+    setBusy(true); setBusyListingId(session.action.sourceListingId);
+    try {
+      const reason = typeof form === "string" ? form : form.reason;
+      const formIdentity = JSON.stringify(form);
+      if (session.submittedForm !== undefined && session.submittedForm !== formIdentity) {
+        setError({ status: 409, code: "ODP-LISTING-REQUEST-CHANGED", summary: "此操作已送出，原因與風險確認不可改成另一筆請求。",
+          nextAction: "請先確認原操作結果，再開啟新的確認視窗。", correlationId: null,
+          occurredAt: new Date().toISOString(), retryable: false });
         return;
       }
-      setMergeRequest(null);
-      setMergeError(null);
+      const actorSubjectId = await readListingWriteSubject();
+      if (!current()) return;
+      if (!fixturesAllowed && !actorSubjectId || session.verifiedActorSubjectId && actorSubjectId !== session.verifiedActorSubjectId) {
+        setError({ status: 409, code: "ODP-LISTING-ACTOR-UNVERIFIED", summary: "尚無法確認原操作的登入操作者，未送出寫入。",
+          nextAction: "請確認登入狀態並重新開啟確認視窗。", correlationId: null, occurredAt: new Date().toISOString(), retryable: false });
+        return;
+      }
+      if (actorSubjectId) session.verifiedActorSubjectId = actorSubjectId;
+      const fresh = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId);
+      if (!current()) return;
+      const admitted = fresh.ok && (inspectNetworkListingsSnapshot(fresh.snapshot) === "ready"
+        || fixturesAllowed && hasNetworkListingsRenderShape(fresh.snapshot));
+      const projected = admitted && fresh.ok && Array.isArray(fresh.snapshot.listings) ? resolveListingAction(session.action.sourceListingId, fresh.snapshot.listings,
+        activeRoleId, { ready: true, fixturesAllowed, candidates: fresh.snapshot.candidates }) : null;
+      const receiptRetry = session.submittedForm !== undefined && admitted && fresh.ok && Array.isArray(fresh.snapshot.listings)
+        && listingWriteTerminalMatches(session.action, fresh.snapshot.listings, reason);
+      const action = receiptRetry ? session.action : projected;
+      if (!action || !receiptRetry && action.fingerprint !== session.action.fingerprint || action.kind !== kind) {
+        setError({ status: 409, code: "ODP-LISTING-CURRENT-STATE-UNAVAILABLE",
+          summary: "物件、關聯或權限資料已變更，尚未送出寫入。", nextAction: "請關閉此視窗並重新載入後確認目前紀錄。",
+          occurredAt: new Date().toISOString(), correlationId: null, retryable: false });
+        return;
+      }
+      if (!current()) return;
+      session.submittedForm = formIdentity;
+      const result = kind === "merge" && typeof form !== "string" && action.targetListingId
+        ? await listingsApi.merge(client, action.sourceListingId, { targetListingId: action.targetListingId,
+          actorRoleId: activeRoleId, reason: form.reason, riskSummary: form.riskSummary,
+          riskAcknowledged: form.riskAcknowledged, idempotencyKey: request.idempotencyKey,
+          ifMatch: action.ifMatch, targetIfMatch: action.targetIfMatch, ifActorMatch: actorSubjectId ?? undefined })
+        : kind === "archive" && typeof form === "string"
+          ? await listingsApi.archive(client, action.sourceListingId, { actorRoleId: activeRoleId, reason: form,
+            idempotencyKey: request.idempotencyKey, ifMatch: action.ifMatch, ifActorMatch: actorSubjectId ?? undefined }) : null;
+      if (!current() || !result) return;
+      if (!result.ok) { setError(result.error); return; }
+      const subjectAfter = await readListingWriteSubject();
+      if (!current()) return;
+      if (subjectAfter !== actorSubjectId || !listingWriteReceiptMatches(action, result.value, reason, {
+        actorSubjectId, fixturesAllowed,
+        idempotencyKey: request.idempotencyKey,
+        riskSummary: typeof form === "string" ? undefined : form.riskSummary,
+        riskAcknowledged: typeof form === "string" ? undefined : form.riskAcknowledged,
+      })) {
+        setError({ status: 0, code: "ODP-LISTING-RECEIPT-UNVERIFIED", summary: "回應未包含此操作的完整紀錄，尚無法確認結果。",
+          nextAction: "請保留此視窗與操作識別，重新讀取紀錄或以同一操作重試。", correlationId: null,
+          occurredAt: new Date().toISOString(), retryable: true });
+        return;
+      }
+      listingWriteSession.current = null;
+      setMergeRequest(null); setArchiveRequest(null); setError(null);
       await reloadNetworkSnapshot();
     } finally {
-      setMergeBusy(false);
-      setBusyListingId(null);
+      listingWriteInFlight.current = false;
+      if (current() || listingWriteSession.current === null && session.contextKey === navigationContext.current.key
+        && session.generation === navigationContext.current.generation && session.locationVersion === navigationLocation.current.version) {
+        setBusy(false); setBusyListingId(null);
+      }
     }
   }
 
-  async function archiveListing(listingId: string) {
-    await postNetworkListingAction(listingId, "archive", {
-      reason: "Hard-rule archive: area and floor exceed ODAY_G2 intake policy.",
-    });
-  }
+  function submitMergeListing(form: ListingMergeForm) { void submitListingWrite("merge", form); }
 
-  const expansionSteps =
-    networkSnapshot?.expansionSteps ??
-    (fixturesAllowed
-      ? buildFallbackExpansionSteps(
+  const workflowProjection = projectCandidateWorkflow({
+    selection: { id: workflowCandidateId, invalid: isCandidateWorkflowTab(activeTab) && !overrideApplies && urlCandidateSelection.invalid },
+    currentGeneration: navigationContext.current.generation,
+    network: { snapshot: networkSnapshot, status: networkLoadState, generation: networkNavigationGeneration },
+    scoring: { snapshot: scoringSnapshot, status: fixturesAllowed && scoringWorkflowProvenance === "unknown" ? "error" : scoringLoadState, generation: scoringNavigationGeneration },
+    // Use only the admitted review read from the current access generation.
+    reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
+  });
+  // Both snapshots are masked to the current access generation above. A prior
+  // fixture read cannot survive a role/tenant change or a failed current read.
+  const useFixtureWorkflow = fixturesAllowed && scoringWorkflowProvenance === "fixture"
+    && networkSnapshot !== null && scoringSnapshot !== null;
+  const expansionSteps = useFixtureWorkflow
+    ? networkSnapshot?.expansionSteps ?? buildFallbackExpansionSteps(
           effectiveSelectedId,
           viewModel.candidatePipeline.some((row) => row.id === "CS-1001"),
         )
-      : []);
+    : workflowProjection.steps;
   const candidateZoneScope = candidateZoneId
     ? {
         id: candidateZoneId,
@@ -1715,14 +1839,17 @@ export function NetworkFindAreasWorkspace({
       selectedHeatZoneId={effectiveSelectedId}
       selectedZoneLabel={selectedZoneLabel}
       sources={listingSourcesEffective}
+      writeContext={listingWriteContext}
     />
   );
 
   const listingMergeDialog = mergeRequest ? (
     <ListingMergeDialog
+      key={mergeRequest.idempotencyKey}
       busy={mergeBusy}
       error={mergeError}
       onClose={() => {
+        listingWriteSession.current = null;
         setMergeRequest(null);
         setMergeError(null);
       }}
@@ -1730,6 +1857,10 @@ export function NetworkFindAreasWorkspace({
       request={mergeRequest}
     />
   ) : null;
+
+  const listingArchiveDialog = archiveRequest ? <ListingArchiveDialog key={archiveRequest.idempotencyKey} busy={archiveBusy} error={archiveError}
+    request={archiveRequest} onClose={() => { listingWriteSession.current = null; setArchiveRequest(null); setArchiveError(null); }}
+    onSubmit={(reason) => { void submitListingWrite("archive", reason); }} /> : null;
 
   /*
    * Package 10 renders the intake detail as the first workspace surface under
@@ -1753,6 +1884,7 @@ export function NetworkFindAreasWorkspace({
       >
         {listingRadarPanel}
         {listingMergeDialog}
+        {listingArchiveDialog}
       </section>
     );
   }
@@ -1785,6 +1917,8 @@ export function NetworkFindAreasWorkspace({
         activeTab={activeTab}
         onTabChange={changeActiveTab}
         steps={expansionSteps}
+        workflowNotice={useFixtureWorkflow ? undefined : workflowProjection.notice}
+        workflowNextAction={useFixtureWorkflow ? undefined : workflowProjection.nextAction}
         tabCounts={tabCounts}
         tabs={networkTabs}
       >
@@ -1817,8 +1951,12 @@ export function NetworkFindAreasWorkspace({
             candidates={scoringSnapshot?.candidates ?? []}
             fallbackRows={fixturesAllowed ? viewModel.siteScoreLab : []}
             modelVersion={scoringSnapshot?.modelVersion}
-            onRescore={runSiteScore}
+            onRescore={fixturesAllowed ? runSiteScore : undefined}
+            rescoreUnavailableReason={fixturesAllowed ? undefined : "目前工作與再評分資格尚未確認；已保存報告仍可查閱。"}
             scorecards={scoringSnapshot?.scorecards ?? []}
+            selectedCandidateId={workflowCandidateId}
+            onSelectCandidate={(id) => changeActiveTab(3, { [CANDIDATE_SELECTION_PARAM]: id })}
+            selectionError={workflowSelectionError}
           />
         ) : activeTab === 4 ? (
           <ComparePanel
@@ -1833,6 +1971,11 @@ export function NetworkFindAreasWorkspace({
             submitting={reviewSubmitting}
             decideError={reviewError}
             onDecide={submitReviewDecision}
+            workflowCandidateId={workflowCandidateId}
+            expectedReport={workflowProjection.report}
+            fixtureCandidateContext={fixturesAllowed}
+            onSelectCandidate={(id) => changeActiveTab(5, { [CANDIDATE_SELECTION_PARAM]: id })}
+            selectionError={workflowSelectionError}
           />
         ) : activeTab === 6 ? (
           <RebalancePanel
@@ -1881,6 +2024,7 @@ export function NetworkFindAreasWorkspace({
       </NetworkShell>
 
       {listingMergeDialog}
+        {listingArchiveDialog}
     </section>
   );
 }

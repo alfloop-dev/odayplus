@@ -11,6 +11,8 @@ export function NetworkShell({
   steps,
   tabCounts,
   tabs,
+  workflowNotice,
+  workflowNextAction,
 }: {
   activeTab: number;
   children: ReactNode;
@@ -19,10 +21,12 @@ export function NetworkShell({
   /** Package 10 count badge per tab; zero or missing shows no badge. */
   tabCounts?: ReadonlyArray<number | null | undefined>;
   tabs: readonly string[];
+  workflowNotice?: string;
+  workflowNextAction?: string;
 }) {
   return (
     <>
-      <ExpansionStepper activeTab={activeTab} onStepSelect={onTabChange} steps={steps} />
+      <ExpansionStepper activeTab={activeTab} onStepSelect={onTabChange} steps={steps} workflowNotice={workflowNotice} workflowNextAction={workflowNextAction} />
       <nav className={styles.tabs} aria-label="Network tabs" role="tablist">
         {tabs.map((tab, index) => {
           const [label, englishLabel] = tab.split(" / ");

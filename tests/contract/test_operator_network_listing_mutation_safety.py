@@ -25,8 +25,8 @@ def _client():
     service = NetworkListingService()
     source = deepcopy(service._listing("L-2029"))
     target = deepcopy(service._listing("L-2025"))
-    source.update(id=SOURCE, duplicateOfId=TARGET)
-    target.update(id=TARGET)
+    source.update(id=SOURCE, duplicateOfId=TARGET, version=7, hasLegalHold=False)
+    target.update(id=TARGET, version=11, hasLegalHold=False)
     # Existing fixture expansion steps still refer to their original records;
     # add independent UUID rows rather than deleting those supporting inputs.
     service._state["listings"].extend([source, target])
@@ -42,9 +42,10 @@ def _post(client, operation, *, headers=None, **payload):
     body = {"reason": "Operator supplied actual reason"}
     if operation == "merge":
         body.update(targetListingId=TARGET, riskSummary="Retain recorded source evidence",
-                    riskAcknowledged=True)
+                    riskAcknowledged=True, targetIfMatch='W/"11"')
+    current_headers = {"If-Match": 'W/"7"', **(headers or HEADERS)}
     return client.post(f"/api/v1/operator/network-listings/listings/{SOURCE}/{operation}",
-                       headers=headers or HEADERS, json={**body, **payload})
+                       headers=current_headers, json={**body, **payload})
 
 
 @pytest.mark.parametrize("field", ["hasLegalHold", "legalHold"])
@@ -106,4 +107,18 @@ def test_http_other_tenant_is_denied_without_effect(operation):
     before = service.export_state()
     response = _post(client, operation, headers={**HEADERS, "x-tenant-id": "tenant-b"})
     assert response.status_code == 403, response.text
+    assert service.export_state() == before
+
+
+@pytest.mark.parametrize("operation,record", [("archive", SOURCE), ("merge", SOURCE),
+                                               ("merge", TARGET)])
+def test_http_new_hold_denies_original_receipt_on_replay(operation, record):
+    client, service = _client()
+    first = _post(client, operation)
+    assert first.status_code == 200, first.text
+    service._listing(record)["legalHold"] = True
+    before = service.export_state()
+    replay = _post(client, operation)
+    assert replay.status_code == 409, replay.text
+    assert replay.json()["detail"] == "LEGAL_HOLD_CONFLICT"
     assert service.export_state() == before

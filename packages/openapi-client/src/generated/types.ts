@@ -1191,13 +1191,23 @@ export type NetworkListingActorPayload = {
   reason?: string | null;
 };
 
+/** NetworkListingArchivePayload */
+export type NetworkListingArchivePayload = {
+  actorName?: string | null;
+  actorRoleId?: string;
+  expectedActorSubjectId?: string | null;
+  reason?: string | null;
+};
+
 /** NetworkListingMergePayload */
 export type NetworkListingMergePayload = {
   actorName?: string | null;
   actorRoleId?: string;
+  expectedActorSubjectId?: string | null;
   reason?: string | null;
   riskAcknowledged?: boolean;
   riskSummary?: string | null;
+  targetIfMatch?: string | null;
   targetListingId: string;
 };
 

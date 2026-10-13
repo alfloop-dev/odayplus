@@ -71,7 +71,10 @@ def create_network_scoring_sub_router(
     ) -> dict[str, Any]:
         try:
             principal = request.state.operator_principal
-            kwargs: dict[str, Any] = {"correlation_id": x_correlation_id}
+            kwargs: dict[str, Any] = {
+                "correlation_id": x_correlation_id,
+                "read_principal": principal,
+            }
             if principal.has_role(Role.OPERATOR_VIEWER):
                 kwargs.update(
                     principal=principal,
@@ -92,7 +95,9 @@ def create_network_scoring_sub_router(
         ],
     )
     def reset_network_scoring(request: Request) -> dict[str, Any]:
-        return resolve_service(request, service, service_resolver).reset()
+        return resolve_service(request, service, service_resolver).reset(
+            read_principal=request.state.operator_principal,
+        )
 
     @router.post(
         "/candidates/{candidate_id}/score",
@@ -106,13 +111,22 @@ def create_network_scoring_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
-            return resolve_service(request, service, service_resolver).score_candidate(
+            result = resolve_service(request, service, service_resolver).score_candidate(
                 candidate_id=candidate_id,
                 actor_role_id=body.actorRoleId,
                 actor_name=body.actorName,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
             )
+            candidate = result.get("candidate")
+            if isinstance(candidate, dict) and "readEvidence" in candidate:
+                result = {
+                    **result,
+                    "candidate": NetworkScoringService._mask_candidate_read(
+                        candidate, request.state.operator_principal,
+                    ),
+                }
+            return result
         except NetworkScoringNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkScoringGateError as exc:

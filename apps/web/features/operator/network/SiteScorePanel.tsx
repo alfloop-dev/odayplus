@@ -31,6 +31,10 @@ export function SiteScorePanel({
   modelVersion,
   onRescore,
   scorecards,
+  selectedCandidateId,
+  onSelectCandidate,
+  selectionError,
+  rescoreUnavailableReason,
 }: {
   busyCandidateId?: string | null;
   candidates: ScoringCandidate[];
@@ -38,6 +42,10 @@ export function SiteScorePanel({
   modelVersion?: string | null;
   onRescore?: (candidateId: string) => void;
   scorecards: ScoreCard[];
+  selectedCandidateId?: string | null;
+  onSelectCandidate?: (candidateId: string) => void;
+  selectionError?: string | null;
+  rescoreUnavailableReason?: string | null;
 }) {
   const cards = scorecards.length ? scorecards : fallbackRows.flatMap((row) => {
     const card = fallbackToCard(row);
@@ -46,7 +54,10 @@ export function SiteScorePanel({
   const blocked = candidates.filter((candidate) => !candidate.gate.passed);
   const [mode, setMode] = useState<"single" | "batch">("single");
   const [selectedId, setSelectedId] = useState(cards[0]?.id ?? "");
-  const selectedCard = cards.find((card) => card.id === selectedId) ?? cards[0];
+  const matchingCards = cards.filter((card) => card.id === selectedCandidateId);
+  const selectedCard = selectionError ? undefined : selectedCandidateId
+    ? matchingCards.length === 1 ? matchingCards[0] : undefined
+    : cards.find((card) => card.id === selectedId) ?? cards[0];
 
   useEffect(() => {
     if (cards.length && !cards.some((card) => card.id === selectedId)) {
@@ -95,7 +106,7 @@ export function SiteScorePanel({
                   aria-current={selectedCard?.id === card.id ? "true" : undefined}
                   data-testid={`sitescore-pick-${card.id}`}
                   key={card.id}
-                  onClick={() => setSelectedId(card.id)}
+                  onClick={() => { setSelectedId(card.id); onSelectCandidate?.(card.id); }}
                   type="button"
                 >
                   <span>
@@ -118,6 +129,8 @@ export function SiteScorePanel({
               ))}
             </aside>
             <section className={styles.scoreLabReportStack}>
+              {selectionError ? <p role="status">{selectionError}</p> : null}
+              {selectedCandidateId && !selectedCard ? <p role="status">指定候選點的報告目前無法唯一核對，未選取其他報告。</p> : null}
               {cards.map((card) => (
                 <ScoreReport
                   busy={busyCandidateId === card.id}
@@ -125,6 +138,7 @@ export function SiteScorePanel({
                   hidden={selectedCard?.id !== card.id}
                   key={card.id}
                   onRescore={onRescore}
+                  rescoreUnavailableReason={rescoreUnavailableReason}
                 />
               ))}
             </section>
@@ -175,11 +189,13 @@ function ScoreReport({
   card,
   hidden,
   onRescore,
+  rescoreUnavailableReason,
 }: {
   busy: boolean;
   card: ScoreCard;
   hidden: boolean;
   onRescore?: (candidateId: string) => void;
+  rescoreUnavailableReason?: string | null;
 }) {
   const tone = recommendationTone(card.recommendation);
   return (
@@ -255,12 +271,13 @@ function ScoreReport({
       <button
         className={styles.detailPrimaryButton}
         data-testid={`sitescore-rescore-${card.id}`}
-        disabled={busy || !onRescore}
-        onClick={() => onRescore?.(card.id)}
+        disabled={busy || !onRescore || Boolean(rescoreUnavailableReason)}
+        onClick={() => { if (!busy && !rescoreUnavailableReason) onRescore?.(card.id); }}
         type="button"
       >
         {busy ? "評分中…" : "重新評分（Re-run SiteScore）"}
       </button>
+      {rescoreUnavailableReason ? <p className={styles.muted} data-testid={`sitescore-rescore-qualification-${card.id}`}>{rescoreUnavailableReason}</p> : null}
     </article>
   );
 }

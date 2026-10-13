@@ -106,6 +106,7 @@ class GovernanceService:
         initial_state: dict[str, Any] | None = None,
         seed_fixtures: bool = True,
         sitescore_decision_repository: Any | None = None,
+        sitescore_approval_repository: Any | None = None,
         avm_repository: Any | None = None,
         netplan_repository: Any | None = None,
         priceops_repository: Any | None = None,
@@ -115,6 +116,7 @@ class GovernanceService:
         self._seed_fixtures = seed_fixtures
         self._growth = growth_service
         self._sitescore_decision_repository = sitescore_decision_repository
+        self._sitescore_approval_repository = sitescore_approval_repository
         self._avm_repository = avm_repository
         self._netplan_repository = netplan_repository
         self._priceops_repository = priceops_repository
@@ -328,18 +330,20 @@ class GovernanceService:
 
         for decision in self._sitescore_decision_repository.list_decisions():
             row = decision.to_dict()
+            approval_id = getattr(decision, "approval_id", None)
+            signature = (self._sitescore_approval_repository.get(approval_id)
+                         if self._sitescore_approval_repository is not None and approval_id else None)
+            if signature is not None and signature.decision_id != decision.decision_id:
+                raise GovernancePolicyError("canonical approval does not belong to this decision")
+            network_action = getattr(decision, "network_action", None)
             approval = {
-                "id": decision.decision_id,
+                "id": signature.approval_id if signature is not None else None,
                 "module": "SiteScore",
                 "title": decision.candidate_site_id,
-                "status": (
-                    "pending"
-                    if decision.status.value in {
-                        "SYSTEM_RECOMMENDED",
-                        "PENDING_REVIEW",
-                    }
-                    else decision.status.value.lower()
-                ),
+                "status": signature.approval_status if signature is not None else "unavailable",
+                "decisionId": decision.decision_id,
+                "networkAction": network_action,
+                "networkEnvelopeStatus": {"GO": "approved", "WAIT": "on_hold", "RETURN": "need_data", "REJECT": "rejected"}.get(network_action),
                 "entityRef": decision.candidate_site_id,
                 "systemRecommendation": decision.recommendation.value,
                 "modelVersion": decision.model_version,
@@ -347,15 +351,20 @@ class GovernanceService:
                 "submittedAt": decision.created_at.isoformat(),
                 "_canonical": True,
             }
-            approvals.append(approval)
-            if decision.is_terminal:
+            if signature is not None:
+                approvals.append(approval)
+            if network_action is not None and decision.history:
                 decisions.append(
                     {
                         "id": decision.decision_id,
                         "module": "SiteScore",
                         "item": decision.candidate_site_id,
                         "systemRecommendation": decision.recommendation.value,
-                        "finalDecision": decision.status.value,
+                        "finalDecision": {"GO": "Approved", "WAIT": "On Hold", "RETURN": "Need Data", "REJECT": "Rejected"}[network_action],
+                        "canonicalDecisionStatus": decision.status.value,
+                        "networkAction": network_action,
+                        "conditions": getattr(decision, "conditions", None),
+                        "requiredData": list(getattr(decision, "required_data", ()) or ()),
                         "reason": (
                             decision.history[-1].reason
                             if decision.history
@@ -373,7 +382,7 @@ class GovernanceService:
                         ),
                         "model": decision.model_version,
                         "datasetSnapshot": None,
-                        "approvalId": decision.decision_id,
+                        "approvalId": signature.approval_id if signature is not None else None,
                         "_canonical": True,
                     }
                 )
@@ -390,6 +399,10 @@ class GovernanceService:
                         "occurredAt": transition["at"],
                         "entityRef": decision.decision_id,
                         "reason": transition["reason"],
+                        "networkAction": transition.get("network_action"),
+                        "conditions": transition.get("conditions"),
+                        "requiredData": transition.get("required_data"),
+                        "approvalId": transition.get("approval_id"),
                         "_canonical": True,
                     }
                 )
