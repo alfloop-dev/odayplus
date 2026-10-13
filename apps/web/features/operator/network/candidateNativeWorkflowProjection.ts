@@ -1,4 +1,4 @@
-import { hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, readId, readObject } from "./networkReadValidation";
+import { hasCandidateReviewSubmission, hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, readId, readObject } from "./networkReadValidation";
 import { inspectReviewsReadProjection } from "./networkReviewProjection";
 import type { NetworkReviewsSnapshot, ReviewItem } from "./networkReviewTypes";
 import type { CandidateNativeWorkflowRead, CandidateNativeWorkflowReads, CandidateReviewReadTarget, NetworkScoringSnapshot } from "./networkScoringTypes";
@@ -74,6 +74,29 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
           || latest.modelVersion === row.modelVersion && latest.datasetSnapshotId === row.datasetSnapshotId)
         && approval?.recordSource === "persisted" && readId(approval.id) && approval.id !== row.id;
     };
+    const submission = raw.reviewSubmission;
+    if (submission !== undefined && submission !== null) {
+      const row = hasCandidateReviewSubmission(submission) ? ownReviews.find((review) => review.id === submission.decisionId) : undefined;
+      const decision = row && reviews.decisions?.find((record) => record.decision_id === row.id);
+      const approval = row && reviews.approvals?.find((record) => record.reviewId === row.id);
+      if (!hasCandidateReviewSubmission(submission) || !row || !decision || !readObject(decision) || !persisted(row)
+        || row.canonicalDecisionStatus !== "PENDING_REVIEW" || row.status !== "pending"
+        || submission.decisionVersion !== decision.version || submission.tenantId !== decision.tenant_id
+        || submission.approvalId !== decision.approval_id || submission.approvalId !== approval?.id
+        || approval.approvalStatus !== "pending" || approval.status !== "pending"
+        || submission.reportId !== row.reportId || submission.reportVersion !== row.reportVersion
+        || submission.latestReportId !== latest?.reportId || submission.latestReportVersion !== latest?.reportVersion
+        || submission.submittedBy !== decision.submitted_by || decision.submission_actor_verified !== true
+        || submission.submissionSummary !== decision.submission_summary || submission.reviewerGroupId !== decision.reviewer_group_id
+        || submission.originalCreatorSubjectId !== decision.created_by || submission.originalCreatorVerified !== decision.created_by_verified
+        || raw.reviewId != null && raw.reviewId !== row.id || raw.reviewWorkflow != null
+        || ["approved", "opened", "rejected"].includes(String(result.lifecycle))) {
+        Object.assign(result, { availability: "conflict", reason: messages.conflict }); continue;
+      }
+      Object.assign(result, { availability: "recorded", stage: "pendingreview", review: target(row),
+        reason: `已核對實際待審 Decision、獨立 Approval 與凍結報告 v${row.reportVersion}；最新報告 v${latest.reportVersion} 另行保存。` });
+      continue;
+    }
     const metadata = raw.reviewWorkflow;
     if (metadata !== undefined && metadata !== null) {
       const row = readObject(metadata) && readId(metadata.decisionId)

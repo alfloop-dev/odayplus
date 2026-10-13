@@ -46,7 +46,13 @@ for (const width of [1440,1024,390]) {
       await mkdir(evidence,{recursive:true});
       await page.screenshot({path:path.join(evidence,`network-review-${action}-${width}.png`),animations:"disabled"});
       await writeFile(path.join(evidence,`network-review-${action}-${width}.json`),JSON.stringify({geometry,axeViolations:axe.violations,writesBeforeConfirmation:writes,scope:"Local fixture; not remote visual approval"},null,2));
-      await page.keyboard.press("Escape");await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused();expect(writes).toBe(0);
+      await reason.fill("Synthetic local entered reason remains until explicit cancellation.");
+      await page.keyboard.press("Escape");await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole("status")).toHaveText("決策確認視窗需以「取消」按鈕關閉（防誤觸 Esc）");
+      await expect(reason).toHaveValue("Synthetic local entered reason remains until explicit cancellation.");
+      expect(writes).toBe(0);
+      await dialog.getByRole("button",{name:"取消",exact:true}).click();
+      await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused();expect(writes).toBe(0);
     });
   }
 }

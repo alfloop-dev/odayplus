@@ -3,6 +3,17 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
 
+// Existing business assertions keep their transport premise: a current
+// canonical session precedes protected shell reads. No principal/grant is
+// derived from this unit-test response.
+function stubAuthenticatedFetch(read: typeof fetch) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
+    ? Promise.resolve(process.env.NEXT_PUBLIC_PRODUCTION_MODE === "true"
+      ? new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }) : new Response(JSON.stringify({ authenticated: false }), { status: 401, headers: { "Content-Type": "application/json" } })) : read(input, init)));
+}
+
 const productionRetryDelays = [...operatorBootstrapRetryPolicy.delaysMs];
 
 const seedEnvelope = {
@@ -116,7 +127,7 @@ describe("OperatorConsole production data gate", () => {
 
   it("blocks seed shell data instead of rendering a workspace fixture", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify(seedEnvelope), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -135,7 +146,7 @@ describe("OperatorConsole production data gate", () => {
   it("shows an error gate when bootstrap cannot be loaded", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     const fetchMock = vi.fn().mockRejectedValue(new Error("offline"));
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "store" }} />);
 
@@ -158,8 +169,7 @@ describe("OperatorConsole production data gate", () => {
 
   it("leaves loading when the bootstrap BFF returns an upstream timeout", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal(
-      "fetch",
+    stubAuthenticatedFetch(
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
@@ -187,7 +197,7 @@ describe("OperatorConsole production data gate", () => {
 
   it("builds the production Today state only from a complete live API payload", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify(liveEnvelope), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -206,7 +216,7 @@ describe("OperatorConsole production data gate", () => {
 
   it("blocks a nominally live but incomplete API payload", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
         ...liveEnvelope,
         today: {
@@ -253,7 +263,7 @@ describe("OperatorConsole production data gate", () => {
       }
       return new Response(null, { status: 404 });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
     expect(await screen.findByText("Production issue")).toBeInTheDocument();
@@ -283,7 +293,7 @@ describe("OperatorConsole production data gate", () => {
       }
       return new Response(null, { status: 404 });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(

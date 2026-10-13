@@ -595,6 +595,9 @@ describe("AssistedIntakeSection production container", () => {
       if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
       return json({ code: "NOT_FOUND" }, 404);
     }));
+    // Exercise the real panel's routing and authoritative intake binding.
+    // Fresh-browser cold module loading is verified separately.
+    await import("../../../NetworkFindAreasWorkspace");
     render(<OperatorConsole searchParams={{ ws: "network", tab: "radar", selected: record.id, dialog: "detail", stage: "NEEDS_REVIEW" }} />);
     expect(await screen.findByTestId("intake-detail-dialog")).toBeInTheDocument();
     expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();

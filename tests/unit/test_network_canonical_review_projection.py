@@ -113,7 +113,7 @@ def test_conflicting_frozen_report_never_supplies_another_record_measurements(tm
                "report": {"report_id": "synthetic-other-report"},
                "version": {"report_version": saved.report_version + 1},
                "model": {"model_version": "synthetic-other-model"}}[mismatch]
-    decisions.save_report(decision.decision_id, replace(saved, **changes))
+    decisions._store.put(decisions._REPORTS, decision.decision_id, replace(saved, **changes))  # explicit raw corruption fixture
     row = service.snapshot()["reviews"][0]
     assert row["reportAvailability"] == "conflict"
     assert row["score"] is None and row["confidence"] is None and row["zoneLabel"] is None
@@ -192,7 +192,7 @@ def test_missing_or_conflicting_report_cannot_write_any_transition(tmp_path, sta
                    "report": {"report_id": "synthetic-other-report"},
                    "version": {"report_version": saved.report_version + 1},
                    "model": {"model_version": "synthetic-other-model"}}[mismatch]
-        decisions.save_report(decision.decision_id, replace(saved, **changes))
+        decisions._store.put(decisions._REPORTS, decision.decision_id, replace(saved, **changes))  # explicit raw corruption fixture
     before = engine.query("SELECT collection, doc_id, data FROM durable_documents ORDER BY collection, doc_id")
     exported_before = service.export_state()
     with pytest.raises(NetworkReviewConflict, match="report"):
@@ -247,7 +247,7 @@ def test_matching_unknown_retained_identity_cannot_authorize_a_fresh_decision(tm
     engine, scores, decisions, workflow, service = components(tmp_path / "identity.sqlite")
     saved, original = open_review(scores, workflow, report())
     retained = replace(saved, **changes)
-    decisions.save_report(original.decision_id, retained)
+    decisions._store.put(decisions._REPORTS, original.decision_id, retained)  # explicit raw corruption fixture
     decisions.save_decision(replace(original, **changes))
     before = engine.query("SELECT collection, doc_id, data FROM durable_documents ORDER BY collection, doc_id")
     exported = service.export_state()

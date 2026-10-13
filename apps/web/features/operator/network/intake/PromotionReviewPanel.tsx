@@ -184,7 +184,8 @@ function PromotionConfirmationDialog({
   reason: string;
   record: AssistedIntake;
 }) {
-  const panelRef = useModalDialogBehavior({ dismissible: !busy, onClose });
+  const [escapeBlocked, setEscapeBlocked] = useState(false);
+  const panelRef = useModalDialogBehavior({ dismissible: false, onClose, onEscapeBlocked: () => setEscapeBlocked(true) });
   const summary = [
     ["收件", record.id],
     ["既有 Listing", promotion.listing_id || "—"],
@@ -200,9 +201,6 @@ function PromotionConfirmationDialog({
       className={`${styles.overlay} ${styles.overlayStacked}`}
       data-screen-label="Dialog Promotion 核准"
       data-testid="promotion-confirmation-dialog"
-      onMouseDown={(event) => {
-        if (!busy && event.target === event.currentTarget) onClose();
-      }}
     >
       <div
         aria-describedby="promotion-confirmation-impact"
@@ -229,6 +227,7 @@ function PromotionConfirmationDialog({
         </header>
 
         <div className={styles.promotionConfirmBody}>
+          {escapeBlocked ? <p className={styles.noteBox} role="status">決策確認視窗需以「取消」按鈕關閉（防誤觸 Esc）</p> : null}
           <div className={styles.reviewSummary} data-testid="promotion-review-summary">
             <div className={styles.sectionHead}>決策前檢視 REVIEW SUMMARY</div>
             {summary.map(([label, value]) => (

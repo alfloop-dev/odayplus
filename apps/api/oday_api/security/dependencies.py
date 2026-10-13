@@ -33,7 +33,7 @@ import logging
 import os
 from collections.abc import Iterable, Mapping
 from datetime import date
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from modules.opsboard.auth import AuthenticationBoundary
@@ -1001,3 +1001,14 @@ def require_operator_permission(
         return principal
 
     return dependency
+
+
+def record_review_owner_denial(request: Request, *, audit_log: Any, resource_id: str, reason: str,
+                              module: Literal['operator_console', 'sitescore'] = 'operator_console') -> None:
+    """Persist a trusted object-owner denial after its business transaction rolls back."""
+    principal = request.state.operator_principal
+    resource = ResourceDescriptor(type="sitescore", resource_id=resource_id, tenant_id=principal.tenant_id,
+                                  module=module, attributes={})
+    access = _operator_access_request(request, principal, Action.APPROVE, resource)
+    _record_denial(build_engine(audit_log=audit_log), access,
+                  Decision.deny(reason, policy_id="sitescore.review_owner"))

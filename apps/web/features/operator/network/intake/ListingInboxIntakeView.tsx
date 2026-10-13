@@ -6,6 +6,7 @@ import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
 import { AddListingFromUrlDialog } from "./AddListingFromUrlDialog";
+import { StateMatrix } from "./StateMatrix";
 import {
   matchLabel,
   matchTone,
@@ -58,6 +59,7 @@ export function ListingInboxIntakeView({
   onAddDialogClosed?: () => void;
 }) {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isStateMatrixOpen, setIsStateMatrixOpen] = useState(false);
 
   const role = getOperatorRole(activeRoleId);
   const submitterLabel = `${role.label}`;
@@ -65,6 +67,8 @@ export function ListingInboxIntakeView({
   const permitted = canView(activeRoleId);
   const canSubmit = canPerform("submit", activeRoleId);
   const canRetry = canPerform("retry", activeRoleId);
+
+  useEffect(() => { setIsStateMatrixOpen(false); }, [activeRoleId]);
 
   useEffect(() => {
     if (addDialogRequested && canSubmit) setIsAddDialogOpen(true);
@@ -128,6 +132,15 @@ export function ListingInboxIntakeView({
         </div>
 
         <div className={styles.inboxPaginationControls}>
+          <button
+            aria-haspopup="dialog"
+            className={styles.secondaryButton}
+            data-testid="intake-state-matrix-trigger"
+            onClick={() => setIsStateMatrixOpen(true)}
+            type="button"
+          >
+            收件狀態矩陣
+          </button>
           <div aria-label="檢視模式切換" className={styles.chip} data-testid="intake-view-mode-toggle">
             <button
               className={filters.viewMode === "list" ? styles.primaryButton : styles.secondaryButton}
@@ -559,6 +572,8 @@ export function ListingInboxIntakeView({
           </div>
         </div>
       ) : null}
+
+      {isStateMatrixOpen ? <StateMatrix onClose={() => setIsStateMatrixOpen(false)} /> : null}
 
       {/* Add Dialog */}
       {isAddDialogOpen ? (

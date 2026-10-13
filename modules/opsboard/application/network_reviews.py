@@ -35,7 +35,7 @@ import math
 import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from modules.sitescore.domain.scoring import SiteScoreReport
 from shared.domain.models import MEASUREMENT_MEASURED, MEASUREMENT_UNMEASURED
@@ -446,6 +446,74 @@ class NetworkReviewService:
             "correlationId": correlation_id,
         }
 
+    def submission_context(self, *, candidate_id: str, principal: Any, decision_id: str | None = None,
+                           module: Literal['operator_console', 'sitescore'] = 'operator_console'):
+        from .network_review_submission import NetworkReviewSubmissionOwner
+        return NetworkReviewSubmissionOwner(self).context(candidate_id=candidate_id, principal=principal, decision_id=decision_id, module=module)
+
+    def authorize_native_report_candidate(self, *, candidate_id: str | None, principal: Any, report_repository: Any):
+        """Authorize retained report reads without acquiring current model admission."""
+        from shared.auth import Action
+
+        from .network_review_submission import NetworkReviewSubmissionOwner
+        self._require_canonical_dependencies()
+        if (getattr(report_repository, 'engine', None) is not self._sitescore_repository.engine
+                or getattr(report_repository, 'tenant_id', None) != self._sitescore_repository.tenant_id):
+            raise NetworkReviewRuntimeUnavailable('native report reader must share the canonical tenant SQL engine')
+        self.transaction_scope(self._decision_repository.engine, self._decision_repository.tenant_id)
+        if candidate_id is None:
+            return None
+        candidate = NetworkReviewSubmissionOwner(self)._candidate(
+            candidate_id, principal, action=Action.VIEW, module='sitescore',
+        )
+        if candidate.candidate_site.candidate_site_id != candidate_id:
+            raise NetworkReviewConflict('CURRENT_CANDIDATE_RELATIONSHIP_CONFLICT')
+        return candidate.candidate_site.candidate_site_id
+
+    def submission_context_for_report(self, *, report_id: str, principal: Any):
+        self._require_canonical_dependencies()
+        report = self._sitescore_repository.get_report(report_id)
+        if report is None:
+            raise NetworkReviewNotFound("report not found")
+        context = self.submission_context(candidate_id=report.candidate_site_id, principal=principal, module='sitescore')
+        if context["target"]["expectedReportId"] != report_id:
+            raise NetworkReviewConflict("SUBMISSION_REPORT_CONTEXT_CONFLICT")
+        return context
+
+    def submit_native_report(self, *, report_id: str, principal: Any, request_payload: dict[str, Any],
+                             idempotency_key: str | None, correlation_id: str | None):
+        from .network_review_submission import NetworkReviewSubmissionOwner
+        self._require_canonical_dependencies()
+        report = self._sitescore_repository.get_report(report_id)
+        if report is None:
+            raise NetworkReviewNotFound("report not found")
+        NetworkReviewSubmissionOwner(self)._candidate(report.candidate_site_id, principal, module='sitescore')
+        if not idempotency_key:
+            raise NetworkReviewConflict("IDEMPOTENCY_KEY_REQUIRED")
+        fingerprint = hashlib.sha256(json.dumps(request_payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        key = ("canonical-native-submit", principal.tenant_id, principal.subject_id, report_id, idempotency_key)
+        cached = self._idempotency_cache.get(key)
+        if cached:
+            if cached["requestFingerprint"] != fingerprint:
+                raise NetworkReviewConflict("IDEMPOTENCY_PAYLOAD_CONFLICT")
+            return {**_copy(cached["response"]), "idempotentReplay": True}
+        context = self.submission_context_for_report(report_id=report_id, principal=principal)
+        receipt = self.submit_review(candidate_id=report.candidate_site_id, principal=principal,
+            target=context["target"], idempotency_key="native:" + idempotency_key, correlation_id=correlation_id,
+            submission_summary=request_payload.get("submission_summary"), reviewer_group_id=request_payload.get("reviewer_group_id"), module='sitescore')
+        receipt["commandReceipt"]["idempotencyKey"] = idempotency_key
+        self._idempotency_cache[key] = {"requestFingerprint": fingerprint, "response": _copy(receipt)}
+        return receipt
+
+    def submit_review(self, *, candidate_id: str, principal: Any, target: dict[str, Any],
+                      idempotency_key: str | None, correlation_id: str | None,
+                      submission_summary: str, reviewer_group_id: str,
+                      module: Literal['operator_console', 'sitescore'] = 'operator_console'):
+        from .network_review_submission import NetworkReviewSubmissionOwner
+        return NetworkReviewSubmissionOwner(self).submit(candidate_id=candidate_id, principal=principal, target=target,
+            idempotency_key=idempotency_key, correlation_id=correlation_id,
+            submission_summary=submission_summary, reviewer_group_id=reviewer_group_id, module=module)
+
     def decide_review(
         self,
         *,
@@ -459,6 +527,7 @@ class NetworkReviewService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        principal: Any | None = None,
     ) -> dict[str, Any]:
         """Atomically apply a review decision across all five governance records.
 
@@ -508,6 +577,7 @@ class NetworkReviewService:
                 idempotency_key=idempotency_key,
                 cache_key=cache_key,
                 correlation_id=correlation_id,
+                principal=principal,
             )
 
         if action not in DECISION_ACTIONS:
@@ -687,6 +757,11 @@ class NetworkReviewService:
                 + ", ".join(missing)
             )
 
+    @staticmethod
+    def _reviewer_groups():
+        from .network_review_submission import reviewer_groups
+        return reviewer_groups()
+
     def _canonical_snapshot(
         self,
         *,
@@ -765,7 +840,11 @@ class NetworkReviewService:
                 "decided": recorded_action is not None,
                 "submittedAt": decision.created_at.isoformat(),
                 "requestedBy": decision.created_by,
-                "reviewerRole": "Site Reviewer",
+                "reviewerRole": (
+                    next((group["label"] for group in self._reviewer_groups()
+                          if group["id"] == getattr(decision, "reviewer_group_id", None)), None)
+                    if getattr(decision, "submission_actor_verified", False) else "Site Reviewer"
+                ),
                 "dueAt": None,
                 "payback": self._recorded_number(report.payback_p50_months, " 個月") if report is not None else None,
                 "m12P50": self._recorded_number(report.m12.p50) if report is not None else None,
@@ -774,7 +853,7 @@ class NetworkReviewService:
                 "sourceListingId": None,
                 "fieldVisit": None,
                 "brokerContact": None,
-                "notes": None,
+                "notes": getattr(decision, "submission_summary", None) if getattr(decision, "submission_actor_verified", False) else None,
                 "compareText": None,
                 "eventChips": [],
                 "modelVersion": (
@@ -892,7 +971,77 @@ class NetworkReviewService:
             return None
         return f"{value:g}{suffix}"
 
-    def _decide_canonical(
+    def _decide_canonical(self, **kwargs):
+        existing = self._decision_repository.get_decision(kwargs["review_id"])
+        if existing is None:
+            raise NetworkReviewNotFound("review not found")
+        principal = kwargs.pop("principal", None)
+        with self._sitescore_repository.report_guard(existing.candidate_site_id):
+            candidate_service = self._candidate_workflow_service
+            guard = (candidate_service._listing_repository.candidate_guard(existing.candidate_site_id)
+                     if candidate_service is not None else nullcontext())
+            with guard:
+                current = self._decision_repository.get_decision(existing.decision_id)
+                if principal is not None:
+                    self.authorize_review_actor(current, principal)
+                elif (
+                    getattr(current, "submission_actor_verified", False) and current.submitted_by == kwargs["actor_name"]
+                    or getattr(current, "created_by_verified", False) and current.created_by == kwargs["actor_name"]
+                ):
+                    raise NetworkReviewRoleError("proposer cannot approve own submission")
+                return self._decide_canonical_unlocked(**kwargs)
+
+    def authorize_review_actor(self, decision: Any, principal: Any, *,
+                               module: Literal['operator_console', 'sitescore'] = 'operator_console') -> None:
+        from shared.auth import Action
+
+        from .network_review_submission import NetworkReviewSubmissionOwner
+        NetworkReviewSubmissionOwner(self)._candidate(decision.candidate_site_id, principal, action=Action.APPROVE, module=module)
+        # The type-level dependency does not evaluate the shared SoD hook.
+        # Keep both verified proposers segregated: the current submitter and
+        # the original creator retained across RETURN/resubmission. A legacy
+        # body created_by or an automatic submit transition is not authority.
+        if (
+            getattr(decision, "submission_actor_verified", False) and decision.submitted_by == principal.subject_id
+            or getattr(decision, "created_by_verified", False) and decision.created_by == principal.subject_id
+        ):
+            raise NetworkReviewRoleError("proposer cannot approve own submission")
+
+    def read_native_review(self, *, review_id: str, principal: Any):
+        from shared.auth import Action
+
+        from .network_review_submission import NetworkReviewSubmissionOwner
+        self._require_canonical_dependencies()
+        decision = self._decision_repository.get_decision(review_id)
+        if decision is None:
+            raise NetworkReviewNotFound("review not found")
+        NetworkReviewSubmissionOwner(self)._candidate(decision.candidate_site_id, principal, action=Action.VIEW, module='sitescore')
+        return decision.to_dict()
+
+    def decide_native_review(self, *, review_id: str, action: str, reason: str, principal: Any,
+                             expected_version: int | None, correlation_id: str | None):
+        from shared.workflow.sitescore import DecisionAction
+        existing = self._decision_repository.get_decision(review_id)
+        if existing is None:
+            raise NetworkReviewNotFound("review not found")
+        with self._sitescore_repository.report_guard(existing.candidate_site_id), self._candidate_workflow_service._listing_repository.candidate_guard(existing.candidate_site_id):
+            existing = self._decision_repository.get_decision(review_id)
+            self.authorize_review_actor(existing, principal, module='sitescore')
+            if expected_version is None or existing.version != expected_version or existing.version < 1:
+                raise NetworkReviewConflict("DECISION_VERSION_CONFLICT")
+            _, availability = self._retained_decision_report(existing)
+            if availability != "available":
+                raise NetworkReviewConflict("IMMUTABLE_RETAINED_REPORT_REQUIRED")
+            try:
+                outcome = self._decision_workflow.decide(review_id, action=DecisionAction(action),
+                    actor=principal.subject_id, reason=reason, correlation_id=correlation_id or "")
+            except (SiteScoreDecisionError, ValueError) as exc:
+                raise NetworkReviewConflict(str(exc)) from exc
+            if outcome.decision.network_action is not None:
+                self._candidate_workflow_service.record_review_decision(outcome.decision)
+            return outcome.to_dict()
+
+    def _decide_canonical_unlocked(
         self,
         *,
         review_id: str,

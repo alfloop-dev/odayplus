@@ -789,7 +789,7 @@ def create_operator_router(
             review_state_repository,
             factory=review_service_factory,
             exporter=lambda service: service.export_state(),
-            mutating_methods={"reset", "decide_review"},
+            mutating_methods={"reset", "decide_review", "submit_review", "submit_native_report", "decide_native_review"},
             transactional_mutations=True,
         )
 
@@ -983,11 +983,15 @@ def create_operator_router(
         router.include_router(
             create_network_review_sub_router(
                 NetworkReviewService(seed_fixtures=False),
+                audit_log=active_audit_log,
                 require_view_permission_fn=require_operator_permission(
                     "sitescore",
                     Action.VIEW,
                     engine=authz_engine,
                     scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
+                ),
+                require_submit_permission_fn=require_operator_permission(
+                    "sitescore", Action.EXECUTE, engine=authz_engine
                 ),
                 require_decide_permission_fn=require_operator_permission(
                     "sitescore", Action.APPROVE, engine=authz_engine
@@ -1170,12 +1174,15 @@ def create_operator_router(
     router.include_router(
         create_network_review_sub_router(
             NetworkReviewService(),
-            read_scope_snapshot_fn=local_network_read_scope_snapshot,
+            audit_log=active_audit_log,            read_scope_snapshot_fn=local_network_read_scope_snapshot,
             require_view_permission_fn=require_operator_permission(
                 "sitescore",
                 Action.VIEW,
                 engine=authz_engine,
                 scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
+            ),
+            require_submit_permission_fn=require_operator_permission(
+                "sitescore", Action.EXECUTE, engine=authz_engine
             ),
             require_decide_permission_fn=require_operator_permission(
                 "sitescore", Action.APPROVE, engine=authz_engine

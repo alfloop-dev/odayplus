@@ -122,7 +122,10 @@ def actual_readback(path: Path, action: str, *, latest: int = 1, opened: bool = 
             "idempotency_key": "offline-other-review-key"})
     if opened:
         current = next(row for row in repository.list_candidates() if row.candidate_site.candidate_site_id == target_id)
-        repository.save_candidate(replace(current, candidate_site=replace(current.candidate_site, site_status="opened")))
+        repository.save_review_candidate(
+            replace(current, candidate_site=replace(current.candidate_site, site_status="opened")),
+            expected_review_id=current.review_id, expected_state=current.candidate_site.site_status,
+        )
     for version in range(2, latest + 1):
         scores.save_report(replace(report(candidate_id=target_id, confidence=0, confidence_status=MEASUREMENT_MEASURED),
                                    model_version=f"offline-newer-model-{version}"))

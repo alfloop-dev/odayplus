@@ -1,3 +1,4 @@
+import type { CandidateReviewSubmissionReference } from "./networkReviewSubmissionTypes";
 // Validate only DTO fields consumed by Network renderers. This does not derive
 // scores, eligibility, workflow state or access rights, and never repairs a row.
 type Row = Record<string, unknown>;
@@ -196,4 +197,13 @@ export function scoreExecutionCommandReceiptMatches(
     && value.actorSubjectId === intent.actorSubjectId && value.tenantId === intent.tenantId
     && value.idempotencyKey === intent.idempotencyKey && value.correlationId === intent.correlationId
     && value.executionRequestId === request.executionRequestId && value.jobId === request.jobId;
+}
+
+// Typed pending namespace is emitted only after the backend checks the physical
+// review pointer; full canonical Decision/Approval joins remain required.
+export function hasCandidateReviewSubmission(value: unknown): value is CandidateReviewSubmissionReference {
+  return readObject(value) && ["decisionId", "approvalId", "reportId", "tenantId", "submittedBy", "submissionSummary", "reviewerGroupId"].every((key) => readId(value[key]))
+    && value.decisionId !== value.approvalId && typeof value.reportVersion === "number" && Number.isSafeInteger(value.reportVersion) && value.reportVersion > 0 && typeof value.decisionVersion === "number" && Number.isSafeInteger(value.decisionVersion) && value.decisionVersion > 0
+    && readId(value.originalCreatorSubjectId) && typeof value.originalCreatorVerified === "boolean"
+    && readId(value.latestReportId) && typeof value.latestReportVersion === "number" && Number.isSafeInteger(value.latestReportVersion) && value.latestReportVersion > 0;
 }

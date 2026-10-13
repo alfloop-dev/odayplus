@@ -44,6 +44,9 @@ import {
   type ListingApiError,
 } from "./network/listingsClient";
 import { canMergeListing } from "./network/listingPermissions";
+import { ReviewSubmissionDialog } from "./network/ReviewSubmissionDialog";
+import { canOfferReviewSubmission, hasReviewSubmissionContext, reviewSubmissionTargetsMatch, reviewSubmissionReceiptMatches, reviewSubmissionReadbackMatches, reviewSubmissionOffers } from "./network/networkReviewSubmission";
+import type { ReviewSubmissionContext, ReviewSubmissionBody, ReviewSubmissionForm, ReviewSubmissionOffer, ReviewSubmissionReceipt } from "./network/networkReviewSubmissionTypes";
 import { CandidatePanel } from "./network/CandidatePanel";
 import { SiteScorePanel } from "./network/SiteScorePanel";
 import { ComparePanel } from "./network/ComparePanel";
@@ -796,6 +799,22 @@ export function NetworkFindAreasWorkspace({
   const reviewsLoadFailure = reviewsNavigationGeneration === navigationContext.current.generation ? reviewsLoadFailureValue : null;
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const [submissionOffer, setSubmissionOffer] = useState<ReviewSubmissionOffer | null>(null);
+  const [submissionContext, setSubmissionContext] = useState<ReviewSubmissionContext | null>(null);
+  const [submissionBusy, setSubmissionBusy] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [submissionCorrelation, setSubmissionCorrelation] = useState<string | null>(null);
+  const [submissionConfirmed, setSubmissionConfirmed] = useState<ReviewSubmissionReceipt | null>(null);
+  const submissionSession = useRef<{ generation: number; contextKey: string; locationVersion: number;
+    observedTenant: string | null; offer: ReviewSubmissionOffer; actor: string | null;
+    context: ReviewSubmissionContext | null; attempt: { body: ReviewSubmissionBody; payload: string; key: string; correlation: string } | null } | null>(null);
+  const submissionInFlight = useRef(false);
+  useEffect(() => {
+    submissionSession.current = null;
+    setSubmissionOffer(null); setSubmissionContext(null); setSubmissionBusy(false);
+    setSubmissionError(null); setSubmissionCorrelation(null); setSubmissionConfirmed(null);
+  }, [navigationContextKey, navigationLocationKey]);
 
   const [proposals, setProposals] = useState<HeatZoneProposal[]>([]);
   const [proposalsLoadState, setProposalsLoadState] = useState<OperatorDataAvailability>(
@@ -1932,6 +1951,143 @@ export function NetworkFindAreasWorkspace({
 
   function submitMergeListing(form: ListingMergeForm) { void submitListingWrite("merge", form); }
 
+  function submissionIsCurrent(session: NonNullable<typeof submissionSession.current>) {
+    return submissionSession.current === session && navigationLocation.current.mounted
+      && session.generation === navigationContext.current.generation && session.contextKey === navigationContext.current.key
+      && session.locationVersion === navigationLocation.current.version
+      && session.observedTenant === window.sessionStorage.getItem("oday.operator.tenant");
+  }
+
+  async function submissionSubject(session: NonNullable<typeof submissionSession.current>) {
+    const subject = await readCanonicalScoreSubject(() => submissionIsCurrent(session));
+    if (!subject || !submissionIsCurrent(session) || session.actor !== null && session.actor !== subject) {
+      throw new Error("登入身分或操作上下文已變更；尚未確認送審結果，請重新讀取。");
+    }
+    session.actor = subject;
+    return subject;
+  }
+
+  async function submissionRead(session: NonNullable<typeof submissionSession.current>, path: string, init?: RequestInit): Promise<unknown> {
+    const response = await fetch(path, { cache: "no-store", ...init });
+    await submissionSubject(session);
+    const value: unknown = await response.json();
+    await submissionSubject(session);
+    if (!response.ok) throw new Error(`送審服務拒絕或未完成讀取（${response.status}）；${session.attempt?.correlation ?? "結果尚未確認"}`);
+    return value;
+  }
+
+  async function requestReviewSubmission(offer: ReviewSubmissionOffer) {
+    if (submissionInFlight.current || !navigationLocation.current.mounted
+      || nativeReadGeneration !== navigationContext.current.generation || nativeReadContextKey !== navigationContext.current.key
+      || submissionCandidates[offer.candidateId] !== offer) return;
+    const scored = scoringSnapshot?.candidates.filter((row) => row.id === offer.candidateId) ?? [];
+    const reports = scoringSnapshot?.scorecards.filter((row) => row.id === offer.candidateId) ?? [];
+    const frozen = offer.decisionId ? reviewsSnapshot?.reviews.find((row) => row.id === offer.decisionId) : reports[0];
+    const decision = offer.decisionId ? reviewsSnapshot?.decisions?.find((row) => row.decision_id === offer.decisionId) : null;
+    if (scored.length !== 1 || reports.length !== 1 || !readId(scored[0].listingId)) return;
+    submissionInFlight.current = true;
+    const session = { generation: navigationContext.current.generation, contextKey: navigationContext.current.key,
+      locationVersion: navigationLocation.current.version, observedTenant: window.sessionStorage.getItem("oday.operator.tenant"),
+      offer, actor: null as string | null, context: null as ReviewSubmissionContext | null,
+      attempt: null as { body: ReviewSubmissionBody; payload: string; key: string; correlation: string } | null };
+    submissionSession.current = session;
+    setSubmissionOffer(offer); setSubmissionContext(null); setSubmissionError(null);
+    setSubmissionCorrelation(null); setSubmissionConfirmed(null); setSubmissionBusy(true);
+    try {
+      const actor = await submissionSubject(session);
+      const query = offer.decisionId ? `?decisionId=${encodeURIComponent(offer.decisionId)}` : "";
+      const context = await submissionRead(session,
+        `/api/v1/operator/network-reviews/candidates/${encodeURIComponent(offer.candidateId)}/submission-context${query}`,
+        { headers: NETWORK_OPERATOR_HEADERS });
+      if (!hasReviewSubmissionContext(context) || context.actorSubjectId !== actor || context.candidateId !== offer.candidateId
+        || context.listingId !== scored[0].listingId || scored[0].readEvidence && context.addressId !== scored[0].readEvidence.addressId || session.observedTenant && context.tenantId !== session.observedTenant
+        || context.target.expectedLatestReportId !== reports[0].reportId || context.target.expectedLatestReportVersion !== reports[0].reportVersion
+        || context.canSubmit && context.target.decisionId !== offer.decisionId
+        || context.canSubmit && (context.target.expectedReportId !== frozen?.reportId || context.target.expectedReportVersion !== frozen?.reportVersion)
+        || context.canSubmit && offer.decisionId !== null && context.target.expectedDecisionVersion !== decision?.version) {
+        throw new Error("送審上下文與目前候選點、登入者或報告版本不一致；尚未受理送審。");
+      }
+      if (!submissionIsCurrent(session)) return;
+      session.context = context; setSubmissionContext(context);
+      if (!context.canSubmit) setSubmissionError("已有待審紀錄；請重新讀取候選點以查閱正式 Decision 與 Approval。未建立新的送審。");
+    } catch (error) {
+      if (submissionIsCurrent(session)) setSubmissionError(error instanceof Error ? error.message : "送審資格尚未確認。");
+    } finally {
+      submissionInFlight.current = false;
+      if (submissionIsCurrent(session)) setSubmissionBusy(false);
+    }
+  }
+
+  async function submitCanonicalReview(form: ReviewSubmissionForm) {
+    const session = submissionSession.current;
+    const context = session?.context;
+    if (!session || !context?.canSubmit || submissionInFlight.current || !submissionIsCurrent(session)
+      || !form.submissionSummary.trim() || !context.reviewerGroups.some((group) => group.id === form.reviewerGroupId)) return;
+    submissionInFlight.current = true; setSubmissionBusy(true); setSubmissionError(null);
+    try {
+      const actor = await submissionSubject(session);
+      const body: ReviewSubmissionBody = { ...context.target, submissionSummary: form.submissionSummary.trim(),
+        reviewerGroupId: form.reviewerGroupId, expectedActorSubjectId: actor, expectedTenantId: context.tenantId };
+      const payload = JSON.stringify(body);
+      if (!session.attempt || session.attempt.payload !== payload) {
+        session.attempt = { body, payload, key: globalThis.crypto.randomUUID(), correlation: globalThis.crypto.randomUUID() };
+      }
+      const attempt = session.attempt;
+      setSubmissionCorrelation(attempt.correlation);
+      const query = context.target.decisionId ? `?decisionId=${encodeURIComponent(context.target.decisionId)}` : "";
+      const current = await submissionRead(session,
+        `/api/v1/operator/network-reviews/candidates/${encodeURIComponent(context.candidateId)}/submission-context${query}`,
+        { headers: NETWORK_OPERATOR_HEADERS });
+      if (!hasReviewSubmissionContext(current) || current.candidateId !== context.candidateId || current.listingId !== context.listingId
+        || current.addressId !== context.addressId || current.tenantId !== context.tenantId || current.actorSubjectId !== actor
+        || !current.reviewerGroups.some((group) => group.id === form.reviewerGroupId)
+        || current.canSubmit && !reviewSubmissionTargetsMatch(current.target, context.target)) {
+        throw new Error("送審資料已變更；保留表單，請重新確認候選點與報告版本。");
+      }
+      await submissionSubject(session);
+      const receipt = await submissionRead(session,
+        `/api/v1/operator/network-reviews/candidates/${encodeURIComponent(context.candidateId)}/submit`, {
+          method: "POST", headers: { ...NETWORK_OPERATOR_HEADERS, "Content-Type": "application/json", "If-Actor-Match": actor,
+            "Idempotency-Key": attempt.key, "X-Correlation-Id": attempt.correlation }, body: attempt.payload,
+        });
+      if (!reviewSubmissionReceiptMatches(receipt, context, attempt.body, attempt.key, attempt.correlation)) {
+        throw new Error("送審回覆的 Decision、Approval 或操作人員資料未吻合；結果尚未確認。");
+      }
+      // Receipt never grants VIEW. Each fresh read passes through the current
+      // authenticated BFF and API permissions before any pending UI is applied.
+      const network = await submissionRead(session,
+        `/api/v1/operator/network-listings?${new URLSearchParams({ lens: localLens })}`, { headers: NETWORK_OPERATOR_HEADERS });
+      const scoring = await submissionRead(session, "/api/v1/operator/network-scoring", { headers: NETWORK_OPERATOR_HEADERS });
+      const reviews = await submissionRead(session, "/api/v1/operator/network-reviews", { headers: reviewIdentity.readHeaders });
+      if (!hasNetworkListingsRenderShape(network) || !hasNetworkScoringRenderShape(scoring)
+        || !reviewSubmissionReadbackMatches(network, reviews, receipt)) {
+        throw new Error("正式審核讀取尚未核對同一份送審紀錄；結果尚未確認，請保留識別碼重新確認。");
+      }
+      const confirmedWorkflow = projectCandidateNativeWorkflow({ currentGeneration: session.generation, tenantId: context.tenantId,
+        network: { snapshot: network as NetworkListingsSnapshot, status: "ready", generation: session.generation },
+        scoring: { snapshot: scoring as NetworkScoringSnapshot, status: "ready", generation: session.generation },
+        reviews: { snapshot: reviews as NetworkReviewsSnapshot, status: "ready", generation: session.generation } });
+      const confirmedTarget = confirmedWorkflow[context.candidateId];
+      if (confirmedTarget?.availability !== "recorded" || confirmedTarget.stage !== "pendingreview"
+        || confirmedTarget.review?.reviewId !== receipt.records.decisionId || confirmedTarget.review.reportId !== receipt.records.reportId
+        || confirmedTarget.review.reportVersion !== receipt.records.reportVersion) {
+        throw new Error("待審指標與凍結／最新報告關聯尚未吻合；送審結果尚未確認。");
+      }
+      await submissionSubject(session);
+      if (!submissionIsCurrent(session)) return;
+      setNetworkSnapshot(network as NetworkListingsSnapshot); setNetworkNavigationGeneration(session.generation); setNetworkLoadState("ready"); setNetworkLoadFailure(null);
+      setScoringSnapshot(scoring as NetworkScoringSnapshot); setScoringNavigationGeneration(session.generation); setScoringLoadState("ready"); setScoringLoadFailure(null); setScoringWorkflowProvenance("canonical");
+      applyReviewsSnapshot(reviews as NetworkReviewsSnapshot, session.generation, ++reviewsReadSequence.current);
+      setSubmissionConfirmed(receipt); setSubmissionOffer(null); setSubmissionContext(null);
+      submissionSession.current = null;
+    } catch (error) {
+      if (submissionIsCurrent(session)) setSubmissionError(error instanceof Error ? error.message : "送審结果尚未確認。");
+    } finally {
+      submissionInFlight.current = false;
+      if (submissionIsCurrent(session) || submissionSession.current === null) setSubmissionBusy(false);
+    }
+  }
+
   const workflowProjection = projectCandidateWorkflow({
     selection: { id: workflowCandidateId, invalid: isCandidateWorkflowTab(activeTab) && !overrideApplies && urlCandidateSelection.invalid },
     currentGeneration: navigationContext.current.generation,
@@ -1951,6 +2107,8 @@ export function NetworkFindAreasWorkspace({
     scoring: { snapshot: scoringSnapshot, status: scoringWorkflowProvenance === "canonical" ? scoringLoadState : "error", generation: scoringNavigationGeneration },
     reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
   });
+  const submissionCandidates = canOfferReviewSubmission(activeRoleId)
+    ? reviewSubmissionOffers(networkSnapshot, scoringSnapshot, reviewsSnapshot, nativeWorkflow) : {};
   const explicitReview = resolveCandidateReviewTarget(nativeWorkflow ?? {}, workflowCandidateId,
     activeTab === 5 ? overrideApplies ? { id: tabOverride.reviewId, invalid: false } : urlReviewSelection
       : { id: null, invalid: false });
@@ -2081,7 +2239,7 @@ export function NetworkFindAreasWorkspace({
         data-testid="network-find-areas-workspace"
       >
         {listingRadarPanel}
-        {listingMergeDialog}
+              {listingMergeDialog}
         {listingArchiveDialog}
       </section>
     );
@@ -2131,7 +2289,9 @@ export function NetworkFindAreasWorkspace({
           listingRadarPanel
         ) : activeTab === 2 ? (
           <CandidatePanel
-            busyCandidateId={busyCandidateId}
+            busyCandidateId={submissionBusy ? submissionOffer?.candidateId : busyCandidateId}
+            submissionOffers={submissionCandidates}
+            onRequestSubmission={(offer) => { void requestReviewSubmission(offer); }}
             candidates={scoringNavigationGeneration === navigationContext.current.generation ? scoringSnapshot?.candidates ?? [] : []}
             fallbackRows={fixturesAllowed && !selectedCandidateId ? viewModel.candidatePipeline : []}
             selectedCandidateId={selectedCandidateId}
@@ -2233,6 +2393,16 @@ export function NetworkFindAreasWorkspace({
         )}
       </NetworkShell>
 
+        {submissionConfirmed ? <p role="status" data-testid="review-submission-confirmed">已核對正式送審紀錄：Decision {submissionConfirmed.records.decisionId} v{submissionConfirmed.records.decisionVersion} · Approval {submissionConfirmed.records.approvalId}。<br />
+        送審摘要：{submissionConfirmed.commandReceipt.submissionSummary} · 審核群組：{submissionConfirmed.commandReceipt.reviewerGroupId} · 送審者：{submissionConfirmed.commandReceipt.verifiedSubmitterSubjectId}。
+        <button type="button" onClick={() => {
+          const target = nativeWorkflow?.[submissionConfirmed.records.candidateId]?.review;
+          if (!target || target.reviewId !== submissionConfirmed.records.decisionId || target.generation !== navigationContext.current.generation) return;
+          changeActiveTab(5, { [CANDIDATE_SELECTION_PARAM]: target.candidateId, [REVIEW_SELECTION_PARAM]: target.reviewId });
+        }}>查看已確認審核</button></p> : null}
+      {submissionOffer ? <ReviewSubmissionDialog candidateId={submissionOffer.candidateId} context={submissionContext} busy={submissionBusy}
+        error={submissionError} correlationId={submissionCorrelation} onSubmit={(form) => { void submitCanonicalReview(form); }}
+        onClose={() => { if (!submissionInFlight.current) { submissionSession.current = null; setSubmissionOffer(null); setSubmissionContext(null); setSubmissionError(null); } }} /> : null}
       {listingMergeDialog}
         {listingArchiveDialog}
     </section>

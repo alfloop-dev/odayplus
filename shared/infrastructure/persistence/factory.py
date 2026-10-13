@@ -119,6 +119,46 @@ class PersistenceBundle:
                 registry_repository=self.learninghub_repository, engine=self.engine)
         return SiteScoreExecutionService(ScoreExecutionJobRepository(self, model_admission=admission))
 
+    def network_review_resolver(self, *, hooks: Any = ()) -> Any:
+        """Native aliases share the Operator review domain's durable owner."""
+        from apps.api.app.routes.operator_modules.live_service import DurableTenantServiceResolver
+        from modules.opsboard.application.network_listings import NetworkListingService
+        from modules.opsboard.application.network_reviews import NetworkReviewService
+        from shared.audit.durable_delivery import DurableAuditDelivery
+        from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+        from shared.infrastructure.persistence.operator_domains import (
+            DurableOperatorDomainStateRepository,
+            TenantScopedDocumentStore,
+        )
+        from shared.infrastructure.persistence.operator_network_listings import (
+            DurableAssistedIntakeRepository,
+        )
+        from shared.infrastructure.persistence.repositories import (
+            DurableApprovalRepository,
+            DurableDecisionStore,
+            DurableListingRepository,
+            DurableSiteScoreRepository,
+        )
+        from shared.workflow.sitescore import SiteScoreDecisionWorkflow
+        if not self.is_durable:
+            return None
+        store = SqliteDocumentStore(self.engine)
+        def factory(state: Any, tenant: str) -> Any:
+            scoped = TenantScopedDocumentStore(store, tenant)
+            decisions = DurableDecisionStore(scoped)
+            candidate = NetworkListingService(listing_repository=DurableListingRepository(scoped),
+                intake_repository=DurableAssistedIntakeRepository(scoped), tenant_id=tenant,
+                review_decision_repository=decisions, seed_fixtures=False)
+            return NetworkReviewService(initial_state=state, seed_fixtures=False, require_canonical=True,
+                decision_repository=decisions, sitescore_repository=DurableSiteScoreRepository(scoped),
+                decision_workflow=SiteScoreDecisionWorkflow(store=decisions, audit_log=self.audit_log,
+                    approval_store=DurableApprovalRepository(scoped), hooks=hooks),
+                candidate_workflow_service=candidate,
+                audit_delivery_factory=lambda tid: DurableAuditDelivery(self.engine, tid, self.job_queue, self.audit_log._worm_sink))
+        return DurableTenantServiceResolver(DurableOperatorDomainStateRepository(store, "network-reviews"),
+            factory=factory, exporter=lambda value: value.export_state(),
+            mutating_methods={"submit_review", "submit_native_report", "decide_review", "decide_native_review"}, transactional_mutations=True)
+
     def listing_repository_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("listing_repository", tenant_id)
 

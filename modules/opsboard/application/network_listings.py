@@ -791,8 +791,14 @@ class NetworkListingService:
         if action in {"GO", "REJECT"}:
             candidate = replace(candidate, candidate_site=replace(candidate.candidate_site, site_status=state))
         candidate = replace(candidate, review_id=decision.decision_id)
-        self._listing_repository.save_candidate(candidate)
+        owner_save = getattr(self._listing_repository, "save_review_candidate", None)
+        if owner_save is None:
+            raise NetworkListingPolicyError("CANONICAL_REVIEW_CANDIDATE_OWNER_REQUIRED")
+        original = self.validate_review_candidate(decision)
+        owner_save(candidate, expected_review_id=original.review_id,
+                   expected_state=original.candidate_site.site_status)
         metadata = self._get_candidate_metadata(decision.candidate_site_id)
+        expected_owned = {key: _copy(metadata[key]) for key in ("reviewWorkflow", "reviewSubmission") if key in metadata}
         metadata["reviewWorkflow"] = {
             "decisionId": decision.decision_id, "approvalId": decision.approval_id,
             "reportId": decision.report_id, "reportVersion": decision.report_version,
@@ -800,7 +806,7 @@ class NetworkListingService:
             "networkAction": action, "status": state,
             "conditions": decision.conditions, "requiredData": list(decision.required_data or ()),
         }
-        self._save_candidate_metadata(decision.candidate_site_id, metadata)
+        self._intakes.save_review_metadata(decision.candidate_site_id, metadata, expected_owned=expected_owned)
         return _copy(metadata["reviewWorkflow"])
 
     def _candidate_to_dict(self, cand: Any) -> dict[str, Any]:
@@ -838,6 +844,36 @@ class NetworkListingService:
             # Presentation metadata cannot replace a committed worker result.
             if meta.get("title"):
                 res["title"] = meta["title"]
+        submitted = meta.get("reviewSubmission") if isinstance(meta, dict) else None
+        if isinstance(submitted, dict) and self._review_decision_repository is not None:
+            from shared.infrastructure.persistence.repositories import (
+                DurableApprovalRepository,
+                DurableSiteScoreRepository,
+            )
+            decision = self._review_decision_repository.get_decision(submitted.get("decisionId", ""))
+            approval = DurableApprovalRepository(self._review_decision_repository._store).get(submitted.get("approvalId", ""))
+            if (decision is not None and decision.status.value == "PENDING_REVIEW"
+                    and decision.tenant_id == self._tenant_id and decision.candidate_site_id == res["id"]
+                    and cand.review_id == decision.decision_id and decision.report_id == submitted.get("reportId")
+                    and decision.report_version == submitted.get("reportVersion")
+                    and decision.version == submitted.get("decisionVersion")
+                    and decision.approval_id == submitted.get("approvalId")
+                    and decision.submitted_by == submitted.get("submittedBy")
+                    and decision.submission_actor_verified is True
+                    and decision.submission_summary == submitted.get("submissionSummary")
+                    and decision.reviewer_group_id == submitted.get("reviewerGroupId")
+                    and approval is not None and approval.decision_id == decision.decision_id
+                    and approval.approval_status == "pending"):
+                retained = self._review_decision_repository.get_report(decision.decision_id)
+                scores = DurableSiteScoreRepository(self._review_decision_repository._store)
+                latest = scores.latest(res["id"])
+                if (retained is not None and latest is not None and scores.get_report(decision.report_id) == retained
+                        and (retained.report_id, retained.report_version, retained.candidate_site_id) ==
+                            (decision.report_id, decision.report_version, res["id"])
+                        and decision.created_by == submitted.get("originalCreatorSubjectId")
+                        and getattr(decision, "created_by_verified", False) == submitted.get("originalCreatorVerified")):
+                    res["reviewSubmission"] = {**_copy(submitted),
+                        "latestReportId": latest.report_id, "latestReportVersion": latest.report_version}
         workflow = meta.get("reviewWorkflow") if isinstance(meta, dict) else None
         if isinstance(workflow, dict) and self._review_decision_repository is not None:
             decision = self._review_decision_repository.get_decision(workflow.get("decisionId", ""))

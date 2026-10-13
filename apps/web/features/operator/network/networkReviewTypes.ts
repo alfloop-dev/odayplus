@@ -84,6 +84,11 @@ export type NetworkReviewsSnapshot = {
     recommendation?: ScoreRecommendation;
     model_version?: string | null;
     created_by?: string;
+    created_by_verified?: boolean;
+    submitted_by?: string | null;
+    submission_actor_verified?: boolean;
+    submission_summary?: string | null;
+    reviewer_group_id?: string | null;
     created_at?: string;
     version?: number;
     tenant_id?: string;

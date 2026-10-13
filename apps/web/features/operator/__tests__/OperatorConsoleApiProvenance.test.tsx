@@ -3,6 +3,16 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
 
+// Existing business assertions keep their transport premise: a current
+// canonical session precedes protected shell reads. No principal/grant is
+// derived from this unit-test response.
+function stubAuthenticatedFetch(read: typeof fetch) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
+    ? Promise.resolve(new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })) : read(input, init)));
+}
+
 const seedEnvelope = {
   meta: {
     source: "operator-shell-api-envelope",
@@ -106,7 +116,7 @@ beforeEach(() => {
   vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
 });
 afterEach(() => { operatorBootstrapRetryPolicy.delaysMs = [...retryDelays]; cleanup(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
-function reads(body: unknown, status = 200) { vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }))); }
+function reads(body: unknown, status = 200) { stubAuthenticatedFetch( vi.fn().mockImplementation(async () => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }))); }
 describe("Operator API banner accurately labels the permitted data lane", () => {
   it("labels an admitted API payload as development/acceptance data in POC", async () => {
     reads(envelopes.live); render(<OperatorConsole searchParams={{ ws: "today" }} />);

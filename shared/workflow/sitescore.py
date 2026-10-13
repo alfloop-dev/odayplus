@@ -75,6 +75,10 @@ class DecisionTransition:
     report_version: int | None = None
     model_version: str | None = None
     approval_id: str | None = None
+    submitted_by: str | None = None
+    submission_actor_verified: bool = False
+    submission_summary: str | None = None
+    reviewer_group_id: str | None = None
     version: int | None = None
     correlation_id: str | None = None
 
@@ -89,7 +93,8 @@ class DecisionTransition:
             **{
                 key: getattr(self, key, None)
                 for key in ("network_action", "conditions", "override_ack", "actor_role_id",
-                            "tenant_id", "report_id", "report_version", "model_version", "approval_id", "version", "correlation_id")
+                            "tenant_id", "report_id", "report_version", "model_version", "approval_id", "version", "correlation_id",
+                            "submitted_by", "submission_actor_verified", "submission_summary", "reviewer_group_id")
             },
             "required_data": (list(self.required_data) if getattr(self, "required_data", None) is not None else None),
         }
@@ -109,6 +114,7 @@ class SiteScoreDecision:
     created_at: datetime
     history: tuple[DecisionTransition, ...] = ()
     tenant_id: str = ""
+    created_by_verified: bool = False
     # Zero denotes a legacy record without a persisted concurrency version.
     version: int = 0
     network_action: str | None = None
@@ -117,6 +123,10 @@ class SiteScoreDecision:
     override_ack: bool | None = None
     actor_role_id: str | None = None
     approval_id: str | None = None
+    submitted_by: str | None = None
+    submission_actor_verified: bool = False
+    submission_summary: str | None = None
+    reviewer_group_id: str | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -133,12 +143,14 @@ class SiteScoreDecision:
             "policy_version": self.policy_version,
             "model_version": self.model_version,
             "created_by": self.created_by,
+            "created_by_verified": getattr(self, "created_by_verified", False),
             "created_at": self.created_at.isoformat(),
             "history": [transition.to_dict() for transition in self.history],
             "tenant_id": self.tenant_id,
             "version": getattr(self, "version", 0),
             **{key: getattr(self, key, None) for key in
-               ("network_action", "conditions", "override_ack", "actor_role_id", "approval_id")},
+               ("network_action", "conditions", "override_ack", "actor_role_id", "approval_id",
+                "submitted_by", "submission_actor_verified", "submission_summary", "reviewer_group_id")},
             "required_data": (list(self.required_data) if getattr(self, "required_data", None) is not None else None),
         }
 
@@ -359,6 +371,7 @@ class SiteScoreDecisionWorkflow:
         created_by: str,
         correlation_id: str = "",
         tenant_id: str = "",
+        verified_creator: bool = False,
     ) -> SiteScoreDecision:
         """Seed a decision from a SiteScore report (system recommendation)."""
         now = datetime.now(UTC)
@@ -376,11 +389,13 @@ class SiteScoreDecisionWorkflow:
             policy_version=self.policy_version,
             model_version=report.model_version,
             created_by=created_by,
+            created_by_verified=verified_creator,
             created_at=now,
             tenant_id=tenant_id,
             version=1,
         )
-        self._store.save_report(decision.decision_id, report)
+        retain = getattr(self._store, "retain_report_once", self._store.save_report)
+        retain(decision.decision_id, report)
         self._store.save_decision(decision)
         self._record_audit(
             decision,
@@ -398,6 +413,9 @@ class SiteScoreDecisionWorkflow:
         *,
         submitted_by: str,
         correlation_id: str = "",
+        submission_summary: str | None = None,
+        reviewer_group_id: str | None = None,
+        verified_submitter: bool = False,
     ) -> SiteScoreDecision:
         decision = self._require(decision_id)
         if decision.status not in {DecisionStatus.SYSTEM_RECOMMENDED, DecisionStatus.DRAFT}:
@@ -409,7 +427,11 @@ class SiteScoreDecisionWorkflow:
             to_status=DecisionStatus.PENDING_REVIEW,
             actor=submitted_by,
             action="submit",
-            reason="送審",
+            reason=submission_summary if submission_summary is not None else "送審",
+            submitted_by=submitted_by,
+            submission_actor_verified=verified_submitter,
+            submission_summary=submission_summary,
+            reviewer_group_id=reviewer_group_id,
             approval_id=self._create_approval(decision),
             correlation_id=correlation_id,
         )
@@ -419,7 +441,7 @@ class SiteScoreDecisionWorkflow:
             outcome="pending_review",
             actor=submitted_by,
             correlation_id=correlation_id,
-            reason="送審",
+            reason=submission_summary if submission_summary is not None else "送審",
         )
         return updated
 
@@ -557,8 +579,19 @@ class SiteScoreDecisionWorkflow:
         actor_role_id: str | None = None,
         approval_id: str | None = None,
         correlation_id: str = "",
+        submitted_by: str | None = None,
+        submission_actor_verified: bool | None = None,
+        submission_summary: str | None = None,
+        reviewer_group_id: str | None = None,
     ) -> SiteScoreDecision:
+        submission = {
+            "submitted_by": submitted_by if submitted_by is not None else getattr(decision, "submitted_by", None),
+            "submission_actor_verified": submission_actor_verified if submission_actor_verified is not None else getattr(decision, "submission_actor_verified", False),
+            "submission_summary": submission_summary if submission_summary is not None else getattr(decision, "submission_summary", None),
+            "reviewer_group_id": reviewer_group_id if reviewer_group_id is not None else getattr(decision, "reviewer_group_id", None),
+        }
         transition = DecisionTransition(
+            **submission,
             from_status=decision.status,
             to_status=to_status,
             actor=actor,
@@ -581,6 +614,7 @@ class SiteScoreDecisionWorkflow:
         updated = SiteScoreDecision(
             **{
                 **decision.__dict__,
+                **submission,
                 "status": to_status,
                 "history": (*decision.history, transition),
                 "version": getattr(decision, "version", 0) + 1,
@@ -592,7 +626,11 @@ class SiteScoreDecisionWorkflow:
                 "approval_id": approval_id or getattr(decision, "approval_id", None),
             }
         )
-        self._store.save_decision(updated)
+        cas = getattr(self._store, "save_decision_version", None)
+        if cas is not None:
+            cas(updated, expected_version=getattr(decision, "version", 0))
+        else:
+            self._store.save_decision(updated)
         return updated
 
     def _record_audit(
@@ -627,7 +665,8 @@ class SiteScoreDecisionWorkflow:
                     "model_version": decision.model_version,
                     "version": getattr(decision, "version", 0),
                     **{key: getattr(decision, key, None) for key in
-                       ("network_action", "conditions", "override_ack", "actor_role_id", "approval_id")},
+                       ("network_action", "conditions", "override_ack", "actor_role_id", "approval_id",
+                        "submitted_by", "submission_actor_verified", "submission_summary", "reviewer_group_id")},
                     "required_data": (list(decision.required_data) if getattr(decision, "required_data", None) is not None else None),
                 },
             )
