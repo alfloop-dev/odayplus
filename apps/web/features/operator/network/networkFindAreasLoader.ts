@@ -24,6 +24,7 @@ import type { ApiBinding } from "../../../src/lib/api/binding.ts";
 import { loadApiBinding } from "../../../src/lib/api/binding.ts";
 import type { Candidate, Listing, OperatorHeatZone } from "../types.ts";
 import { payloadContainsSeedData } from "../operatorDataMode.ts";
+import { projectRecordedHeatZone, type RecordedOperatorHeatZone } from "./heatZoneRecordedEvidence.ts";
 
 // ---------------------------------------------------------------------------
 // Re-exported binding types used by NetworkFindAreasWorkspace
@@ -39,7 +40,7 @@ export type CandidateBinding = ApiBinding<Candidate>;
 // missing optional fields get safe defaults.
 // ---------------------------------------------------------------------------
 
-function adaptHeatZone(raw: Record<string, unknown>): OperatorHeatZone {
+function adaptHeatZone(raw: Record<string, unknown>): RecordedOperatorHeatZone {
   // The backend scores use h3_index as the stable zone id; we propagate it
   // directly so the frontend lens map can show real IDs.
   const id = (raw["h3_index"] as string | undefined) ?? String(raw["id"] ?? "HZ-UNKNOWN");
@@ -59,7 +60,7 @@ function adaptHeatZone(raw: Record<string, unknown>): OperatorHeatZone {
     throw new Error("HEATZONE_GEOMETRY_UNAVAILABLE");
   }
 
-  return {
+  const zone: OperatorHeatZone = {
     id,
     label: (raw["label"] as string | undefined) ?? id,
     rank: Number(raw["priority_rank"] ?? raw["rank"] ?? 999),
@@ -80,6 +81,7 @@ function adaptHeatZone(raw: Record<string, unknown>): OperatorHeatZone {
     risks: Array.isArray(raw["risks"]) ? (raw["risks"] as string[]) : [],
     nextStep: (raw["next_step"] as string | undefined) ?? (raw["nextStep"] as string | undefined) ?? "",
   };
+  return { ...zone, recordedMap: projectRecordedHeatZone(raw, zone) };
 }
 
 function measuredScore(value: unknown): number | null {

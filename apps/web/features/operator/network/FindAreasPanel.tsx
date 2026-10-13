@@ -16,6 +16,7 @@ import {
   operatorHeatZoneToMapZone,
   operatorListingToMapListing,
 } from "./heatZoneMapAdapters";
+import { recordedLensPoints, recordedMapFreshness, recordedZoneDetailRows } from "./heatZoneRecordedEvidence";
 import { GeocoderSearchPanel } from "./geocoder";
 import type { GeocodeAuditEvent } from "./geocoder";
 import { canSearchAddress, canSelectGeocodeCandidate } from "./geocoder/geocoderPermissions";
@@ -95,7 +96,14 @@ export function FindAreasPanel({
   selectedZone,
   viewModel,
 }: FindAreasPanelProps) {
-  const mapZones = useMemo<MapHeatZone[]>(() => heatZones.map(operatorHeatZoneToMapZone), [heatZones]);
+  const mapZones = useMemo<MapHeatZone[]>(
+    () => heatZones.map((zone) => operatorHeatZoneToMapZone(zone, fixturesAllowed)),
+    [heatZones, fixturesAllowed],
+  );
+  const mapFreshness = useMemo(
+    () => fixturesAllowed ? OPERATOR_MAP_FRESHNESS : recordedMapFreshness(mapZones),
+    [mapZones, fixturesAllowed],
+  );
   const mapListings = useMemo<MapListing[]>(
     () => listings.map((l, i) => operatorListingToMapListing(l, heatZones, i, fixturesAllowed)),
     [listings, heatZones, fixturesAllowed],
@@ -105,14 +113,32 @@ export function FindAreasPanel({
     [candidates],
   );
   const lensScores = useMemo<HeatZoneLensScore[]>(
-    () =>
-      viewModel.zones.map((zone) => ({
+    () => fixturesAllowed
+      ? viewModel.zones.map((zone) => ({
         id: zone.id,
         label: zone.label.replace(ZONE_NAME_SUFFIX, ""),
         points: zone.lensPoints,
+      }))
+      : mapZones.map((zone) => ({
+        id: zone.id, label: zone.district.replace(ZONE_NAME_SUFFIX, ""),
+        points: recordedLensPoints(zone, effectiveLens),
       })),
-    [viewModel.zones],
+    [viewModel.zones, mapZones, fixturesAllowed, effectiveLens],
   );
+  const pointsById = new Map(lensScores.map((lens) => [lens.id, lens.points]));
+  const displayedZones = fixturesAllowed ? viewModel.rankedZones : [...viewModel.zones].sort((a, b) => {
+    const left = pointsById.get(a.id);
+    const right = pointsById.get(b.id);
+    if (left == null) return right == null ? a.rank - b.rank : 1;
+    if (right == null) return -1;
+    return right - left || a.rank - b.rank;
+  });
+  const selectedMapZone = mapZones.find((zone) => zone.id === selectedZone?.id);
+  const selectedPoints = selectedZone ? pointsById.get(selectedZone.id) ?? null : null;
+  const pointTier = (points: number | null | undefined) => points == null ? "unknown"
+    : points >= 80 ? "high" : points >= 70 ? "mid" : points >= 60 ? "watch" : "low";
+  const selectedRows = fixturesAllowed ? selectedZone?.detailRows ?? []
+    : selectedMapZone ? recordedZoneDetailRows(selectedMapZone) : [];
   const selectedMapZoneId = selectedZone?.id ?? heatZones[0]?.id ?? "";
   const lensName = viewModel.lenses.find((lens) => lens.id === effectiveLens)?.label ?? effectiveLens;
   // The accepted geocode is held here as a receipt rather than written through:
@@ -187,7 +213,7 @@ export function FindAreasPanel({
             caption={`HeatZone Lens：${lensName}`}
             candidates={mapCandidates}
             dataSource={fixturesAllowed ? "fixture" : "api"}
-            freshness={OPERATOR_MAP_FRESHNESS}
+            freshness={mapFreshness}
             layerQuery={FIND_AREAS_MAP_LAYERS}
             lensScores={lensScores}
             listings={mapListings}
@@ -203,10 +229,10 @@ export function FindAreasPanel({
             <span>依「{lensName}」排序</span>
           </div>
           <div className={styles.trayGrid} data-testid="find-areas-tray">
-            {viewModel.rankedZones.map((zone) => (
+            {displayedZones.map((zone) => (
               <button
                 aria-current={selectedZone?.id === zone.id ? "true" : undefined}
-                aria-label={`${zone.label} ${zone.lensPoints} 分`}
+                aria-label={`${zone.label} ${pointsById.get(zone.id) == null ? "未評估" : `${pointsById.get(zone.id)} 分`}`}
                 className={styles.trayCard}
                 data-zone-id={zone.id}
                 key={zone.id}
@@ -215,8 +241,8 @@ export function FindAreasPanel({
               >
                 <span className={styles.trayCardTop}>
                   <strong>{zone.label}</strong>
-                  <span className={styles.score} data-tier={zone.lensTier}>
-                    {zone.lensPoints}
+                  <span className={styles.score} data-tier={pointTier(pointsById.get(zone.id))}>
+                    {pointsById.get(zone.id) ?? "未評估"}
                   </span>
                 </span>
                 <span className={styles.trayMeta}>
@@ -255,21 +281,21 @@ export function FindAreasPanel({
                 <h3 id="find-areas-detail-title">{selectedZone.label}</h3>
                 {isSelectedTracked ? <span className={styles.trackedPill}>追蹤中</span> : null}
                 <span
-                  aria-label={`${lensName} ${selectedZone.lensPoints} 分`}
+                  aria-label={`${lensName} ${selectedPoints == null ? "未評估" : `${selectedPoints} 分`}`}
                   className={styles.bigScore}
                   data-testid="find-areas-zone-score"
-                  data-tier={selectedZone.lensTier}
+                  data-tier={pointTier(selectedPoints)}
                 >
-                  {selectedZone.lensPoints}
+                  {selectedPoints ?? "未評估"}
                 </span>
               </div>
               <p className={styles.detailSub}>
-                {selectedZone.id} · HeatZone 綜合 {selectedZone.overallPoints} · Lens：{lensName}
+                {selectedZone.id} · HeatZone 綜合 {fixturesAllowed ? selectedZone.overallPoints : selectedMapZone?.score ?? "未評估"} · Lens：{lensName}
               </p>
             </header>
 
             <dl className={styles.kvTable} data-testid="find-areas-zone-facts">
-              {selectedZone.detailRows.map((row) => (
+              {selectedRows.map((row) => (
                 <div key={row.key}>
                   <dt>{row.label}</dt>
                   <dd>{row.value}</dd>
@@ -280,7 +306,7 @@ export function FindAreasPanel({
             <section className={styles.bullets} data-tone="why" aria-labelledby="find-areas-why-title">
               <h4 id="find-areas-why-title">為什麼是這一區</h4>
               <ul>
-                {selectedZone.reasons.map((reason) => (
+                {(fixturesAllowed ? selectedZone.reasons : selectedMapZone?.reasons ?? []).map((reason) => (
                   <li key={reason}>{reason}</li>
                 ))}
               </ul>
@@ -289,7 +315,7 @@ export function FindAreasPanel({
             <section className={styles.bullets} data-tone="risk" aria-labelledby="find-areas-risk-title">
               <h4 id="find-areas-risk-title">主要風險</h4>
               <ul>
-                {selectedZone.risks.map((risk) => (
+                {(fixturesAllowed ? selectedZone.risks : selectedMapZone?.warnings ?? []).map((risk) => (
                   <li key={risk}>{risk}</li>
                 ))}
               </ul>

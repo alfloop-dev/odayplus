@@ -18,16 +18,17 @@ import type {
   HeatZone as MapHeatZone,
   Listing as MapListing,
 } from "./mapTypes";
+import { projectRecordedHeatZone, type RecordedOperatorHeatZone } from "./heatZoneRecordedEvidence";
 
 /** Fallback centroid (Taipei) for records whose heat zone cannot be resolved. */
 const FALLBACK_CENTROID: [number, number] = [121.48, 25.0];
 
 export const OPERATOR_MAP_FRESHNESS = {
-  status: "FRESH",
+  status: "FIXTURE",
   updatedAt: "",
-  modelVersion: "network-ops-local",
+  modelVersion: "network-ops-fixture",
   featureSnapshotTime: "",
-  sourceSnapshotId: "snap-network-ops-local",
+  sourceSnapshotId: "fixture-network-ops",
 };
 
 /**
@@ -47,7 +48,7 @@ function offsetFromZone(
   return [lng + offset * Math.cos(angle), lat + offset * Math.sin(angle)];
 }
 
-/** Derive a canonical HeatZone state from OperatorHeatZone metrics. */
+/** Derive an illustrative state only for an explicitly selected fixture. */
 export function deriveHeatZoneState(zone: OperatorHeatZone): MapHeatZone["state"] {
   if (zone.confidence === null || zone.confidence < 0.7) return "SUPPRESSED_LOW_CONFIDENCE";
   if (zone.demandGap >= 0.75) return "STILL_EXPANDABLE";
@@ -58,10 +59,13 @@ export function deriveHeatZoneState(zone: OperatorHeatZone): MapHeatZone["state"
 
 /**
  * Convert an OperatorHeatZone to the MapHeatZone type expected by HeatZoneMap.
- * Fields not tracked by the operator layer are synthesised deterministically
- * so that the map renders correctly without requiring API data.
+ * Live data preserves recorded evidence. Only an explicit fixture caller may
+ * synthesize illustrative metrics.
  */
-export function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
+export function operatorHeatZoneToMapZone(zone: OperatorHeatZone, allowFixtureMetrics = false): MapHeatZone {
+  if (!allowFixtureMetrics) {
+    return (zone as Partial<RecordedOperatorHeatZone>).recordedMap ?? projectRecordedHeatZone({}, zone);
+  }
   const indexedCell = isValidCell(zone.id);
   return {
     id: zone.id,
@@ -77,12 +81,12 @@ export function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
     listings: 0,
     warnings: zone.risks,
     reasons: zone.reasons,
-    modelVersion: "network-ops-local",
-    featureVersion: "operator-proxy-v1",
+    modelVersion: "network-ops-fixture",
+    featureVersion: "operator-fixture-v1",
     featureSnapshotTime: "",
     predictionOriginTime: "",
     lastScoredAt: "",
-    sourceSnapshotIds: ["snap-network-ops-local"],
+    sourceSnapshotIds: ["fixture-network-ops"],
     unmetDemandScore: zone.demandGap,
     formatFitScore: 1 - zone.competitionIndex,
     cannibalizationRisk: zone.cannibalizationRisk === "low" ? 0.1 : zone.cannibalizationRisk === "medium" ? 0.35 : 0.65,
