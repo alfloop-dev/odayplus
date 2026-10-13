@@ -286,6 +286,8 @@ def _seed_candidate(harness: CanonicalHarness, tenant_id: str) -> str:
         snapshot_id="snapshot-live-1",
         confidence=0.94,
     )
+    # Local synthetic measured verdict; this is not a legacy data backfill.
+    object.__setattr__(listing, "hard_rule_failures", [])
     candidate = CandidateSite(
         candidate_site_id="candidate-live-1",
         listing_id=listing.listing_id,
@@ -1045,6 +1047,8 @@ def test_canonical_scoring_fails_closed_when_point_in_time_features_missing(
         snapshot_id="snap-b1",
         confidence=0.94,
     )
+    # Local recorded pass isolates this test's existing PIT failure boundary.
+    object.__setattr__(listing, "hard_rule_failures", [])
     candidate = CandidateSite(
         candidate_site_id="cand-b1",
         listing_id=listing.listing_id,
@@ -1189,6 +1193,8 @@ def test_canonical_scoring_fails_closed_when_feature_snapshot_time_is_stale_or_m
         snapshot_id="snap-b4",
         confidence=0.94,
     )
+    # Local recorded pass isolates this test's existing PIT failure boundary.
+    object.__setattr__(listing, "hard_rule_failures", [])
     candidate = CandidateSite(
         candidate_site_id="cand-b4",
         listing_id=listing.listing_id,

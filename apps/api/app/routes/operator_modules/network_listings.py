@@ -35,7 +35,9 @@ from modules.opsboard.application.network_listings import (
     NetworkListingConflict,
     NetworkListingNotFound,
     NetworkListingPolicyError,
+    NetworkListingPreconditionRequired,
     NetworkListingService,
+    NetworkListingVersionUnavailable,
 )
 from modules.opsboard.application.network_read_scope import (
     project_intake_record,
@@ -147,6 +149,12 @@ class RiskDisclosurePayload(NetworkListingActorPayload):
 
 class NetworkListingMergePayload(RiskDisclosurePayload):
     targetListingId: str
+    targetIfMatch: str | None = None
+    expectedActorSubjectId: str | None = None
+
+
+class NetworkListingArchivePayload(NetworkListingActorPayload):
+    expectedActorSubjectId: str | None = None
 
 
 class IntakeSubmitPayload(BaseModel):
@@ -383,54 +391,33 @@ def create_network_listings_sub_router(
         body: NetworkListingMergePayload,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+        if_match: str | None = Header(default=None, alias="If-Match"),
+        if_actor_match: str | None = Header(default=None, alias="If-Actor-Match"),
     ) -> dict[str, Any]:
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            source = active_service(request)._listing(listing_id)
-            target = active_service(request)._listing(body.targetListingId)
-
-            has_legal_hold = (
-                source.get("hasLegalHold")
-                or source.get("legalHold")
-                or target.get("hasLegalHold")
-                or target.get("legalHold")
-                or False
-            )
-            first_actor_id = (
-                source.get("proposer")
-                or source.get("submitter")
-            )
             actor = operator_actor(principal)
+            if if_actor_match is not None and if_actor_match != actor.subject_id:
+                raise NetworkListingConflict("ACTOR_CONTEXT_CONFLICT")
+            if body.expectedActorSubjectId is not None and body.expectedActorSubjectId != actor.subject_id:
+                raise NetworkListingConflict("ACTOR_CONTEXT_CONFLICT")
 
-            authorize_intake_action(
-                principal,
-                "merge",
-                resource=source,
-                risk_acknowledged=body.riskAcknowledged,
-                risk_summary=body.riskSummary,
-                first_actor_id=first_actor_id,
-                has_legal_hold=has_legal_hold,
-                operator_role_id=operator_role_id,
-                audit_log=audit_log,
-                correlation_id=x_correlation_id,
-            )
-            authorize_intake_action(
-                principal,
-                "merge",
-                resource=target,
-                risk_acknowledged=body.riskAcknowledged,
-                risk_summary=body.riskSummary,
-                first_actor_id=first_actor_id,
-                has_legal_hold=has_legal_hold,
-                operator_role_id=operator_role_id,
-                audit_log=audit_log,
-                correlation_id=x_correlation_id,
-            )
+            def authorize_current(resource: dict[str, Any]) -> None:
+                authorize_intake_action(
+                    principal, "merge", resource=resource,
+                    risk_acknowledged=body.riskAcknowledged,
+                    risk_summary=body.riskSummary,
+                    first_actor_id=resource.get("proposer") or resource.get("submitter"),
+                    has_legal_hold=resource.get("hasLegalHold") is True or resource.get("legalHold") is True,
+                    operator_role_id=operator_role_id, audit_log=audit_log,
+                    correlation_id=x_correlation_id,
+                )
 
             result = active_service(request).merge_listing(
                 source_listing_id=listing_id,
                 target_listing_id=body.targetListingId,
+                target_if_match=body.targetIfMatch,
                 reason=body.reason or "",
                 risk_summary=body.riskSummary,
                 risk_acknowledged=body.riskAcknowledged,
@@ -438,6 +425,8 @@ def create_network_listings_sub_router(
                 actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
+                if_match=if_match,
+                authorize_existing=authorize_current,
             )
 
             if "source" in result:
@@ -451,6 +440,10 @@ def create_network_listings_sub_router(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except NetworkListingPreconditionRequired as exc:
+            raise HTTPException(status_code=428, detail=str(exc)) from exc
+        except NetworkListingVersionUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except NetworkListingPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -461,26 +454,30 @@ def create_network_listings_sub_router(
     def archive_listing(
         request: Request,
         listing_id: str,
-        body: NetworkListingActorPayload,
+        body: NetworkListingArchivePayload,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+        if_match: str | None = Header(default=None, alias="If-Match"),
+        if_actor_match: str | None = Header(default=None, alias="If-Actor-Match"),
     ) -> dict[str, Any]:
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            listing = active_service(request)._listing(listing_id)
-            has_legal_hold = listing.get("hasLegalHold") or listing.get("legalHold") or False
             actor = operator_actor(principal)
+            if if_actor_match is not None and if_actor_match != actor.subject_id:
+                raise NetworkListingConflict("ACTOR_CONTEXT_CONFLICT")
+            if body.expectedActorSubjectId is not None and body.expectedActorSubjectId != actor.subject_id:
+                raise NetworkListingConflict("ACTOR_CONTEXT_CONFLICT")
 
-            authorize_intake_action(
-                principal,
-                "cancel",
-                resource=listing,
-                has_legal_hold=has_legal_hold,
-                operator_role_id=operator_role_id,
-                audit_log=audit_log,
-                correlation_id=x_correlation_id,
-            )
+            def authorize_current(resource: dict[str, Any]) -> None:
+                # Archive has retention semantics distinct from intake cancel.
+                # Its hold/terminal guards run in the listing write owner.
+                authorize_intake_action(
+                    principal, "cancel", resource=resource,
+                    has_legal_hold=resource.get("hasLegalHold") is True or resource.get("legalHold") is True,
+                    operator_role_id=operator_role_id, audit_log=audit_log,
+                    correlation_id=x_correlation_id,
+                )
 
             result = active_service(request).archive_listing(
                 listing_id=listing_id,
@@ -489,6 +486,8 @@ def create_network_listings_sub_router(
                 actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
+                if_match=if_match,
+                authorize_existing=authorize_current,
             )
 
             if "listing" in result:
@@ -500,6 +499,10 @@ def create_network_listings_sub_router(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except NetworkListingPreconditionRequired as exc:
+            raise HTTPException(status_code=428, detail=str(exc)) from exc
+        except NetworkListingVersionUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except NetworkListingPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

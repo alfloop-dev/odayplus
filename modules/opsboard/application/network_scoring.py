@@ -29,6 +29,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from models.shared_ml.production_runtime import ProductionModelRuntimeError
+from modules.listing.application.candidate_score_context import (
+    CandidateScoreContextReader,
+    unverified_current_admission,
+)
+from modules.listing.application.intake_authorization import mask_listing
 from modules.opsboard.application.network_read_scope import (
     scoped_audit_events,
     visible_candidate_ids,
@@ -65,6 +70,22 @@ def _score_order(card: dict[str, Any]) -> tuple[bool, float, str]:
 
 def _none_safe_min(*values: float | None) -> float | None:
     return none_safe_min(*values)
+
+
+def _finite_real_measurement(value: Any) -> bool:
+    """A recorded numeric measurement cannot be a bool, NaN or infinity."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except (OverflowError, ValueError):
+        # A corrupt integer too large to represent is not a finite model input.
+        return False
+
+
+def _positive_amount_present(value: Any) -> bool:
+    """Keep the existing > 0 gate while missing or malformed values fail closed."""
+    return _finite_real_measurement(value) and value > 0
 
 
 # The six required data dimensions the gate enforces before scoring.
@@ -337,9 +358,11 @@ class NetworkScoringService:
         model_runtime: Any | None = None,
         require_canonical: bool = False,
         tenant_id: str = "",
+        current_context_reader: CandidateScoreContextReader | None = None,
     ) -> None:
         self._seed_fixtures = seed_fixtures
         self._listing_repository = listing_repository
+        self._current_context_reader = current_context_reader
         self._sitescore_repository = sitescore_repository
         self._model_runtime = model_runtime
         self._require_canonical = require_canonical
@@ -378,15 +401,15 @@ class NetworkScoringService:
 
     # -- public API ----------------------------------------------------
 
-    def reset(self) -> dict[str, Any]:
+    def reset(self, *, read_principal: Principal | None = None) -> dict[str, Any]:
         if self._require_canonical:
             self._audit_events = []
             self._idempotency_cache = {}
             self._compare_set = []
             self._refresh_canonical()
-            return self.snapshot()
+            return self.snapshot(read_principal=read_principal)
         self.__init__(seed_fixtures=self._seed_fixtures)
-        return self.snapshot()
+        return self.snapshot(read_principal=read_principal)
 
     def export_state(self) -> dict[str, Any]:
         return {
@@ -400,6 +423,7 @@ class NetworkScoringService:
     def snapshot(
         self, *, correlation_id: str | None = None,
         principal: Principal | None = None, scope_snapshot: dict[str, Any] | None = None,
+        read_principal: Principal | None = None,
     ) -> dict[str, Any]:
         if self._require_canonical:
             self._refresh_canonical()
@@ -415,7 +439,10 @@ class NetworkScoringService:
             scorecards = [row for row in scorecards if row["id"] in ids]
             compare_set = [cid for cid in compare_set if cid in ids]
             audit_events = scoped_audit_events(audit_events, {"candidate": ids})
-        candidates = [self._candidate_view(candidate) for candidate in visible]
+        candidates = [
+            self._candidate_view(candidate, read_principal=read_principal or principal)
+            for candidate in visible
+        ]
         return {
             "source": "canonical" if self._require_canonical else "api",
             "modelVersion": (
@@ -599,16 +626,148 @@ class NetworkScoringService:
             self._candidate_from_draft(draft)
             for draft in drafts
         ]
-        self._scores = {
-            report.candidate_site_id: self._scorecard_from_report(report)
-            for report in reports
-        }
         known = {candidate["id"] for candidate in self._candidates}
+        scores: dict[str, dict[str, Any]] = {}
+        report_ids: set[str] = set()
+        for report in reports:
+            # The listing repository owns the candidate relationship index.
+            # Unrelated reports cannot supply candidate metadata or counts.
+            if report.candidate_site_id not in known:
+                continue
+            if (
+                any(not isinstance(value, str) or not value.strip()
+                    for value in (report.report_id, report.sitescore_run_id))
+                or not isinstance(report.report_version, int)
+                or isinstance(report.report_version, bool)
+                or report.report_version < 1
+                or report.candidate_site_id in scores
+                or report.report_id in report_ids
+            ):
+                # list_latest promises one immutable result per candidate.
+                # A conflicting read is unavailable, never last-row-wins.
+                raise NetworkScoringRuntimeUnavailable(
+                    "canonical SiteScore report provenance is conflicting or incomplete",
+                    code="SITESCORE_CANONICAL_REPORT_CONFLICT",
+                )
+            scores[report.candidate_site_id] = self._scorecard_from_report(report)
+            report_ids.add(report.report_id)
+        self._scores = scores
         self._compare_set = [
             candidate_id for candidate_id in self._compare_set if candidate_id in known
         ]
 
+    @staticmethod
+    def _candidate_read_evidence(draft: Any) -> dict[str, Any]:
+        """Project recorded measurements without evaluating a new admission gate.
+
+        Legacy zero rent/area defaults have no measurement marker. Hard-rule
+        evidence is the recorded listing verdict, never the draft's default
+        empty feasibility flags. Address records carry no snapshot identifier.
+        """
+        def source_field(source: Any, name: str) -> Any:
+            return source.get(name) if isinstance(source, dict) else getattr(source, name, None)
+
+        listing = source_field(draft, "listing")
+        address = source_field(draft, "address")
+        candidate = source_field(draft, "candidate_site")
+        snapshot_id = source_field(listing, "snapshot_id") or None
+
+        def evidence(
+            value: Any, *, record: Any, record_type: str, record_id: str,
+            field_path: str, unit: str | None = None, numeric: bool = False,
+            positive: bool = False, ratio: bool = False, verdict: bool = False,
+            measurement_status: str | None = None,
+        ) -> dict[str, Any]:
+            availability, reason = "recorded", None
+            if measurement_status is not None and measurement_status != MEASUREMENT_MEASURED:
+                value, availability, reason = None, "unmeasured", measurement_status.upper()
+            elif value is None or (isinstance(value, str) and not value.strip()):
+                value, availability, reason = None, "unmeasured", "UNMEASURED"
+            elif numeric:
+                if (
+                    not _finite_real_measurement(value) or (ratio and not 0 <= value <= 1)
+                    or (positive and value < 0)
+                ):
+                    value, availability, reason = None, "invalid", "INVALID_RECORDED_VALUE"
+                elif positive and value == 0:
+                    value, availability, reason = None, "unmeasured", "DEFAULT_OR_UNMEASURED"
+            elif verdict:
+                if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                    value, availability, reason = None, "invalid", "INVALID_RECORDED_VALUE"
+            elif not isinstance(value, str):
+                value, availability, reason = None, "invalid", "INVALID_RECORDED_VALUE"
+            provenance: dict[str, Any] = {
+                "recordType": record_type,
+                "recordId": source_field(record, record_id),
+                "fieldPath": field_path,
+                "snapshotId": snapshot_id if record_type == "Listing" else None,
+            }
+            if measurement_status is not None:
+                provenance["measurementStatus"] = measurement_status
+            return {
+                "value": _copy(value), "unit": unit, "availability": availability,
+                "reason": reason, "provenance": provenance,
+            }
+
+        normalized = source_field(address, "normalized_address")
+        address_field = "normalized_address" if normalized else "raw_address"
+        currency = source_field(listing, "currency")
+        listing_args = {"record": listing, "record_type": "Listing", "record_id": "listing_id"}
+        address_args = {"record": address, "record_type": "AddressLocation", "record_id": "address_id"}
+        confidence_status = source_field(listing, "effective_confidence_provenance")
+        return {
+            "source": "canonical",
+            "candidateId": source_field(candidate, "candidate_site_id"),
+            "listingId": source_field(listing, "listing_id"),
+            "addressId": source_field(address, "address_id"),
+            "datasetSnapshotId": snapshot_id,
+            "fields": {
+                "address": evidence(source_field(address, address_field), **address_args, field_path=address_field),
+                "geocode": evidence(source_field(address, "geocode_confidence"), **address_args,
+                                    field_path="geocode_confidence", unit="ratio", numeric=True, ratio=True),
+                "rent": evidence(source_field(listing, "rent_amount"), **listing_args,
+                                 field_path="rent_amount", unit=currency if isinstance(currency, str) and currency else None,
+                                 numeric=True, positive=True),
+                "area": evidence(source_field(listing, "area_ping"), **listing_args,
+                                 field_path="area_ping", unit="ping", numeric=True, positive=True),
+                "floor": evidence(source_field(listing, "floor"), **listing_args, field_path="floor"),
+                "hardRule": evidence(source_field(listing, "hard_rule_failures"), **listing_args,
+                                     field_path="hard_rule_failures", verdict=True),
+                "sourceConfidence": evidence(source_field(listing, "effective_confidence"), **listing_args,
+                                             field_path="confidence", unit="ratio", numeric=True, ratio=True,
+                                             measurement_status=confidence_status),
+            },
+        }
+
+    @staticmethod
+    def _mask_candidate_read(candidate: dict[str, Any], principal: Principal) -> dict[str, Any]:
+        """Reuse listing classification without letting address aliases bypass it."""
+        result = _copy(candidate)
+        fields = result["readEvidence"]["fields"]
+        aliases = {"address": "address", "rent": "rentPerMonth", "area": "areaPing", "floor": "floor"}
+        masked = mask_listing(principal, {alias: fields[key]["value"] for key, alias in aliases.items()})
+        for key, alias in aliases.items():
+            if masked.get(f"{alias}_masked"):
+                fields[key].update(value=None, availability="denied", reason="FIELD_MASKED")
+        if masked.get("address_masked"):
+            result["address"] = None
+            result["title"] = result["id"]
+            for check in result["gate"]["checks"]:
+                if check["key"] == "address":
+                    check["note"] = ""
+        return result
+
     def _candidate_from_draft(self, draft: Any) -> dict[str, Any]:
+        canonical_draft = draft
+        if self._current_context_reader is not None:
+            context = self._current_context_reader.read(draft)
+            current_admission = context.admission
+            if context.current_draft is not None:
+                draft = context.current_draft
+        else:
+            current_admission = unverified_current_admission(
+                draft, "SITESCORE_CURRENT_CONTEXT_UNAVAILABLE",
+            )
         listing = draft.listing if hasattr(draft, "listing") else draft["listing"]
         address = draft.address if hasattr(draft, "address") else draft["address"]
         candidate = draft.candidate_site if hasattr(draft, "candidate_site") else draft["candidate_site"]
@@ -629,7 +788,10 @@ class NetworkScoringService:
             return default if value is None else value
 
         feasibility_flags = tuple(field("feasibility_flags", ()) or ())
-        hard_rule_passed = not feasibility_flags
+        hard_rule_failures = getattr(listing, "hard_rule_failures", None)
+        hard_rule_recorded = (isinstance(hard_rule_failures, list)
+                              and all(isinstance(value, str) for value in hard_rule_failures))
+        hard_rule_passed = hard_rule_recorded and not hard_rule_failures
         heat_zone_id = field("heat_zone_id", "")
 
         tenant_id = (
@@ -647,26 +809,29 @@ class NetworkScoringService:
             "zoneLabel": address.district or heat_zone_id,
             "address": normalized_address,
             "district": address.district,
-            "modelVersion": "",
+            "modelVersion": None,
             "datasetSnapshotId": listing.snapshot_id,
             "generatedAt": candidate.created_at.isoformat(),
+            "readEvidence": self._candidate_read_evidence(draft),
             "missingEvidence": list(feasibility_flags),
             "data": {
                 "address": {"present": bool(normalized_address)},
                 "geocode": {
-                    "present": bool(address.latitude and address.longitude),
+                    "present": address.latitude is not None and address.longitude is not None,
                     "confidence": address.geocode_confidence,
                 },
-                "rent": {"present": listing.rent_amount > 0},
-                "area": {"present": listing.area_ping > 0},
+                "rent": {"present": _positive_amount_present(listing.rent_amount)},
+                "area": {"present": _positive_amount_present(listing.area_ping)},
                 "floor": {"present": bool(listing.floor)},
                 "hardRule": {
-                    "present": True,
+                    "present": hard_rule_recorded,
                     "pass": hard_rule_passed,
-                    "note": ", ".join(feasibility_flags),
+                    "note": ", ".join(hard_rule_failures) if hard_rule_recorded else "未記錄硬規則判定",
                 },
             },
-            "canonicalFeature": feature_from_candidate(draft, tenant_id=tenant_id),
+            "canonicalDraft": canonical_draft,
+            "currentAdmission": current_admission,
+            "canonicalTenantId": tenant_id,
         }
 
     def _run_canonical_score(self, candidate: dict[str, Any]) -> dict[str, Any]:
@@ -676,7 +841,11 @@ class NetworkScoringService:
                 repository=self._sitescore_repository,
                 model_runtime=self._model_runtime,
                 require_production_model=True,
-            ).score_candidates_with_execution([candidate["canonicalFeature"]])
+            ).score_candidates_with_execution([
+                feature_from_candidate(
+                    candidate["canonicalDraft"], tenant_id=candidate["canonicalTenantId"],
+                ),
+            ])
         except ProductionModelRuntimeError as exc:
             raise NetworkScoringRuntimeUnavailable(
                 str(exc),
@@ -772,8 +941,10 @@ class NetworkScoringService:
             field = data.get(dimension, {})
             present = bool(field.get("present"))
             if dimension == "geocode":
-                confidence = float(field.get("confidence", 0.0))
-                present = present and confidence >= GEOCODE_MIN_CONFIDENCE
+                confidence_value = field.get("confidence")
+                present = (present and _finite_real_measurement(confidence_value)
+                           and 0 <= confidence_value <= 1
+                           and confidence_value >= GEOCODE_MIN_CONFIDENCE)
                 geocode_ok = present
             if dimension == "hardRule":
                 present = present and bool(field.get("pass", True))
@@ -792,7 +963,11 @@ class NetworkScoringService:
             block_note = "地址／Geocode 未確認 — 需人工確認地址後才能評分"
         elif not hard_rule_ok:
             state = "hard"
-            block_note = "硬規則未通過 — 建議標記不適合並退回物件"
+            block_note = (
+                "硬規則判定未取得或無法驗證 — 需補充現行已記錄判定後才能評分"
+                if not data.get("hardRule", {}).get("present")
+                else "硬規則未通過 — 建議標記不適合並退回物件"
+            )
         elif missing:
             state = "needdata"
             block_note = "缺必要資料：" + "、".join(missing)
@@ -864,9 +1039,18 @@ class NetworkScoringService:
         scored.sort(key=_score_order)
         return scored
 
-    def _candidate_view(self, candidate: dict[str, Any]) -> dict[str, Any]:
+    def _candidate_view(
+        self, candidate: dict[str, Any], *, read_principal: Principal | None = None,
+    ) -> dict[str, Any]:
         gate = self._gate(candidate)
         scorecard = self._scores.get(candidate["id"])
+        model_version = candidate["modelVersion"]
+        if self._require_canonical:
+            # This is the committed report's model, not current model admission
+            # or the draft's cached version. Missing metadata stays unknown.
+            model_version = scorecard["modelVersion"] if scorecard else None
+            if not isinstance(model_version, str) or not model_version.strip():
+                model_version = None
         if scorecard is not None:
             stage = "rejected" if scorecard["recommendation"] == "REJECT" else "evaluated"
             if candidate.get("reviewId") and scorecard["recommendation"] != "REJECT":
@@ -875,7 +1059,7 @@ class NetworkScoringService:
             stage = "needdata"
         else:
             stage = "ready"
-        return {
+        result = {
             "id": candidate["id"],
             "listingId": candidate.get("listingId"),
             "heatZoneId": candidate["heatZoneId"],
@@ -883,7 +1067,7 @@ class NetworkScoringService:
             "zoneLabel": candidate["zoneLabel"],
             "address": candidate["address"],
             "district": candidate.get("district", ""),
-            "modelVersion": candidate["modelVersion"],
+            "modelVersion": model_version,
             "datasetSnapshotId": candidate["datasetSnapshotId"],
             "stage": stage,
             "gate": gate,
@@ -893,6 +1077,13 @@ class NetworkScoringService:
             "reviewId": candidate.get("reviewId"),
             "inCompare": candidate["id"] in self._compare_set,
         }
+        if "currentAdmission" in candidate:
+            result["currentAdmission"] = _copy(candidate["currentAdmission"])
+        if "readEvidence" in candidate:
+            result["readEvidence"] = _copy(candidate["readEvidence"])
+            if read_principal is not None:
+                result = self._mask_candidate_read(result, read_principal)
+        return result
 
     def _batch_results(self, scorecards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ranked = all(_has_scalar_score(card) for card in scorecards)

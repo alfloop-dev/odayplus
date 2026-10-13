@@ -234,6 +234,10 @@ class DurableSiteScoreRepository:
         self._store = store
 
     @property
+    def engine(self) -> Any:
+        return self._store.engine
+
+    @property
     def tenant_id(self) -> str:
         return getattr(self._store, "tenant_id", "")
 
@@ -4914,6 +4918,10 @@ class DurableDecisionStore:
         self._store = store
 
     @property
+    def engine(self) -> Any:
+        return self._store.engine
+
+    @property
     def tenant_id(self) -> str:
         return getattr(self._store, "tenant_id", "")
 
@@ -4931,6 +4939,36 @@ class DurableDecisionStore:
 
     def list_decisions(self) -> list[SiteScoreDecision]:
         return self._store.list_all(self._DECISIONS)
+
+
+class DurableApprovalRepository:
+    """Actual generic workflow signatures, keyed by their own approval UUID."""
+
+    _COLLECTION = "workflow.approvals"
+
+    def __init__(self, store: SqliteDocumentStore) -> None:
+        self._store = store
+
+    @property
+    def engine(self) -> Any:
+        return self._store.engine
+
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
+
+    def save(self, approval: Any) -> None:
+        from shared.domain.models import Approval
+        if not isinstance(approval, Approval) or approval.approval_status not in {
+            "pending", "approved", "rejected", "returned", "escalated",
+        } or not isinstance(approval.decision_id, str) or not approval.decision_id.strip() or not isinstance(
+            approval.approval_id, str
+        ) or not approval.approval_id.strip() or approval.approval_id == approval.decision_id:
+            raise ValueError("canonical approval requires its own identity and an existing generic status")
+        self._store.put(self._COLLECTION, approval.approval_id, approval)
+
+    def get(self, approval_id: str) -> Any | None:
+        return self._store.get(self._COLLECTION, approval_id)
 
 
 class DurableRealizedSiteStore:
@@ -4963,6 +5001,7 @@ __all__ = [
     "DurableAVMRepository",
     "DurableAdLiftRepository",
     "DurableArtifactStore",
+    "DurableApprovalRepository",
     "DurableDecisionStore",
     "DurableForecastOpsRepository",
     "DurableHeatZoneCompositionRepository",

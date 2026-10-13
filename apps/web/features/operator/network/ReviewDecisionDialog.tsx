@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState } from "react";
 import { useModalDialogBehavior } from "./useModalDialogBehavior";
+import { formatReviewScore } from "./networkReviewProjection";
 import styles from "../networkFindAreas.module.css";
 import {
   DECISION_BUTTON_LABEL,
@@ -51,9 +52,10 @@ export function ReviewDecisionDialog({
   const override = isOverride(action, review.recommendation);
   const finalLabel = DECISION_FINAL_LABEL[action];
 
-  const syncNote =
-    `送出後 Candidate、Review、Approval、Decision、Audit 於同一交易同步：` +
-    `${review.candidateId} → ${finalLabel}，並寫入 Decision Log 與稽核軌跡。`;
+  const syncNote = review.canonicalDecisionStatus
+    ? `送出後重新讀取正式決策紀錄；結果與處理人員以伺服器保存的紀錄為準。`
+    : `送出後 Candidate、Review、Approval、Decision、Audit 於同一交易同步：` +
+      `${review.candidateId} → ${finalLabel}，並寫入 Decision Log 與稽核軌跡。`;
 
   function handleSubmit() {
     if (submitting) return;
@@ -105,7 +107,7 @@ export function ReviewDecisionDialog({
 
         <div className={styles.reviewDialogBody}>
           <div className={styles.reviewDialogSub}>
-            {review.id} · SiteScore {review.recommendation} {review.score} → {finalLabel}
+            {review.id} · SiteScore {review.recommendation} {formatReviewScore(review.score)} → {finalLabel}
           </div>
 
           {override ? (

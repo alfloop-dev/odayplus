@@ -207,6 +207,14 @@ class NetworkListingPolicyError(RuntimeError):
     """Raised when a mutation violates the network intake policy."""
 
 
+class NetworkListingPreconditionRequired(NetworkListingPolicyError):
+    """A governed write did not carry its actual listing revision."""
+
+
+class NetworkListingVersionUnavailable(NetworkListingPolicyError):
+    """The listing producer has not published an authoritative revision."""
+
+
 def _require_acknowledged_risk(
     *, risk_summary: str | None, risk_acknowledged: bool, action_label: str
 ) -> str:
@@ -504,9 +512,11 @@ class NetworkListingService:
         seed_fixtures: bool = True,
         tenant_id: str | None = None,
         high_risk_write_guard: Callable[[str], None] | None = None,
+        review_decision_repository: Any | None = None,
     ) -> None:
         self._seed_fixtures = seed_fixtures
         self._high_risk_write_guard = high_risk_write_guard
+        self._review_decision_repository = review_decision_repository
         self._tenant_id = tenant_id.strip() if tenant_id and tenant_id.strip() else None
         self._listing_repository = listing_repository
         self._intakes: AssistedIntakeRepository = (
@@ -762,6 +772,37 @@ class NetworkListingService:
         )
         return lst, addr, key
 
+    def validate_review_candidate(self, decision: Any) -> Any:
+        candidates = [row for row in self._listing_repository.list_candidates()
+                      if row.candidate_site.candidate_site_id == decision.candidate_site_id]
+        if len(candidates) != 1 or decision.tenant_id != self._tenant_id:
+            raise NetworkListingPolicyError("CANONICAL_REVIEW_CANDIDATE_ASSOCIATION_REQUIRED")
+        if candidates[0].review_id and candidates[0].review_id != decision.decision_id:
+            raise NetworkListingPolicyError("CANONICAL_REVIEW_CURRENT_CANDIDATE_REQUIRED")
+        return candidates[0]
+
+    def record_review_decision(self, decision: Any) -> dict[str, Any]:
+        """Persist Operator workflow status without inventing shared site enums."""
+        candidate = self.validate_review_candidate(decision)
+        action = decision.network_action
+        state = {"GO": "approved", "WAIT": "onhold", "RETURN": "needdata", "REJECT": "rejected"}[action]
+        # onhold/needdata are Operator workflow states; CandidateSite retains
+        # its existing domain enum and physical lifecycle status.
+        if action in {"GO", "REJECT"}:
+            candidate = replace(candidate, candidate_site=replace(candidate.candidate_site, site_status=state))
+        candidate = replace(candidate, review_id=decision.decision_id)
+        self._listing_repository.save_candidate(candidate)
+        metadata = self._get_candidate_metadata(decision.candidate_site_id)
+        metadata["reviewWorkflow"] = {
+            "decisionId": decision.decision_id, "approvalId": decision.approval_id,
+            "reportId": decision.report_id, "reportVersion": decision.report_version,
+            "decisionVersion": decision.version, "tenantId": decision.tenant_id,
+            "networkAction": action, "status": state,
+            "conditions": decision.conditions, "requiredData": list(decision.required_data or ()),
+        }
+        self._save_candidate_metadata(decision.candidate_site_id, metadata)
+        return _copy(metadata["reviewWorkflow"])
+
     def _candidate_to_dict(self, cand: Any) -> dict[str, Any]:
         snapshot_time = cand.feature_snapshot_time
         res = {
@@ -797,6 +838,28 @@ class NetworkListingService:
             # Presentation metadata cannot replace a committed worker result.
             if meta.get("title"):
                 res["title"] = meta["title"]
+        workflow = meta.get("reviewWorkflow") if isinstance(meta, dict) else None
+        if isinstance(workflow, dict) and self._review_decision_repository is not None:
+            decision = self._review_decision_repository.get_decision(workflow.get("decisionId", ""))
+            if (decision is not None and decision.candidate_site_id == res["id"]
+                    and getattr(decision, "network_action", None) in {"GO", "WAIT", "RETURN", "REJECT"}
+                    and cand.review_id == decision.decision_id
+                    and decision.tenant_id == self._tenant_id
+                    and getattr(decision, "network_action", None) == workflow.get("networkAction")
+                    and decision.report_id == workflow.get("reportId")
+                    and decision.report_version == workflow.get("reportVersion")
+                    and getattr(decision, "version", None) == workflow.get("decisionVersion")
+                    and getattr(decision, "approval_id", None) == workflow.get("approvalId")
+                    and getattr(decision, "conditions", None) == workflow.get("conditions")
+                    and list(getattr(decision, "required_data", ()) or ()) == workflow.get("requiredData")
+                    and {"GO": "approved", "WAIT": "onhold", "RETURN": "needdata", "REJECT": "rejected"}.get(
+                        getattr(decision, "network_action", None)) == workflow.get("status")):
+                res["canonicalSiteStatus"] = res["status"]
+                res["status"] = workflow["status"]
+                res["reviewId"] = decision.decision_id
+                res["reviewWorkflow"] = _copy(workflow)
+                if decision.network_action == "RETURN":
+                    res["missingData"] = list(decision.required_data or ())
         elif self._seed_fixtures:
             if res["id"] == "CS-1001":
                 res["title"] = "信義松仁候選點"
@@ -823,12 +886,13 @@ class NetworkListingService:
         lst_obj, addr_obj, _ = self._dict_to_listing(listing)
         previous = next((candidate for candidate in self._listing_repository.list_candidates()
                          if candidate.candidate_site.candidate_site_id == d["id"]), None) if self._listing_repository else None
-        cand_site = replace(previous.candidate_site, site_status=d["status"]) if previous else CandidateSite(
+        site_status = d.get("canonicalSiteStatus", d["status"])
+        cand_site = replace(previous.candidate_site, site_status=site_status) if previous else CandidateSite(
             candidate_site_id=d["id"],
             listing_id=d["listingId"],
             address_id=addr_obj.address_id,
             target_format_code=d.get("targetFormatCode") or "",
-            site_status=d["status"],
+            site_status=site_status,
         )
         heat_zone_id = d.get("heatZoneId")
         # A blank heat zone is the same data gap as an absent one: it makes the
@@ -1234,6 +1298,81 @@ class NetworkListingService:
         self._save_write(write, result)
         return result
 
+    def _action_listing(self, listing_id: str) -> dict[str, Any]:
+        records = self._state.get("listings")
+        if not isinstance(records, list) or any(not isinstance(row, dict) for row in records):
+            raise NetworkListingPolicyError("LISTING_COLLECTION_UNAVAILABLE")
+        matches = [row for row in records if row.get("id") == listing_id]
+        if not matches:
+            raise NetworkListingNotFound(listing_id)
+        if len(matches) != 1:
+            raise NetworkListingConflict("AMBIGUOUS_LISTING_ID")
+        record = matches[0]
+        if self._tenant_id is not None and record.get("tenantId") not in (None, self._tenant_id):
+            raise PermissionError("TENANT_SCOPE_DENIED")
+        return record
+
+    def _authorize_listing_write(
+        self, records: list[dict[str, Any]], authorize_existing: Callable[[dict[str, Any]], None] | None,
+    ) -> None:
+        if authorize_existing is None and not self._seed_fixtures:
+            raise NetworkListingPolicyError("LISTING_SCOPE_CONTEXT_REQUIRED")
+        if authorize_existing is not None:
+            for record in records:
+                authorize_existing(_copy(record))
+
+    def _listing_write_records(self, action: str, key: str | None, actor: str, ids: list[str]) -> list[dict[str, Any]]:
+        lookup_key = key.strip() if key and (action == "merge" or not self._seed_fixtures) else key
+        cached = self._idempotency_cache.get((action, hashlib.sha256(actor.encode()).hexdigest() + ":" + lookup_key)) if lookup_key else None
+        if cached is not None:
+            fields = ("source", "target") if action == "merge" else ("listing",)
+            if any(not isinstance(cached.get(name), dict) or not isinstance(cached[name].get("id"), str) for name in fields):
+                raise NetworkListingPolicyError("REPLAY_RECEIPT_UNAVAILABLE")
+            # Authorize the durable receipt's actual resources before exposing
+            # it or rejecting a changed fingerprint. Never choose new body IDs
+            # as the authority for an existing logical operation.
+            ids = [cached[name]["id"] for name in fields]
+        return [self._action_listing(listing_id) for listing_id in ids]
+
+    def _check_listing_revision(self, record: dict[str, Any], if_match: str | None) -> None:
+        # Fixture compatibility is explicit. An absent canonical revision is
+        # unavailable, never an invented version 1 or a successful SQL CAS.
+        revision = record.get("version")
+        if self._seed_fixtures and revision is None and if_match is None:
+            return
+        if if_match is None:
+            raise NetworkListingPreconditionRequired("PRECONDITION_REQUIRED")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+            raise NetworkListingVersionUnavailable("LISTING_VERSION_UNAVAILABLE")
+        if if_match != f'W/"{revision}"':
+            raise NetworkListingConflict("VERSION_CONFLICT")
+
+    def _guard_listing_retention(self, record: dict[str, Any]) -> None:
+        if record.get("status") == "archived" or record.get("mergedIntoId"):
+            raise NetworkListingConflict("LISTING_TERMINAL")
+        for hold_field in ("hasLegalHold", "legalHold"):
+            value = record.get(hold_field)
+            if value is not None and not isinstance(value, bool):
+                raise NetworkListingPolicyError("LEGAL_HOLD_STATE_UNAVAILABLE")
+            if value is True:
+                raise NetworkListingConflict("LEGAL_HOLD_CONFLICT")
+        if not self._seed_fixtures and not any(isinstance(record.get(name), bool) for name in ("hasLegalHold", "legalHold")):
+            raise NetworkListingPolicyError("LEGAL_HOLD_STATE_UNAVAILABLE")
+        candidates = self._state.get("candidates")
+        if not isinstance(candidates, list) or any(
+            not isinstance(candidate, dict) or not isinstance(candidate.get("id"), str)
+            or not candidate["id"] or not isinstance(candidate.get("listingId"), str)
+            or not candidate["listingId"] for candidate in candidates
+        ):
+            raise NetworkListingPolicyError("CANDIDATE_DEPENDENCIES_UNAVAILABLE")
+        direct_id = record.get("candidateId")
+        if direct_id is not None and (not isinstance(direct_id, str) or not direct_id):
+            raise NetworkListingPolicyError("CANDIDATE_DEPENDENCIES_UNAVAILABLE")
+        if direct_id or any(candidate["listingId"] == record["id"] for candidate in candidates):
+            # The identity executor's candidate-disposition plan is not owned
+            # by this legacy evidence-marker action. Do not silently reassign.
+            raise NetworkListingConflict("CANDIDATE_DISPOSITION_REQUIRED")
+
     def merge_listing(
         self,
         *,
@@ -1246,9 +1385,15 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        if_match: str | None = None,
+        target_if_match: str | None = None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
         actor_name = self._require_actor(actor_name, actor_role_id)
+        source, target = self._listing_write_records("merge", idempotency_key, actor_name,
+                                                    [source_listing_id, target_listing_id])
+        self._authorize_listing_write([source, target], authorize_existing)
         allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "executive", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to merge listing")
@@ -1270,25 +1415,33 @@ class NetworkListingService:
         )
 
         write = self._prepare_write("merge", governed_key, actor_name,
-                                    {"source_listing_id": source_listing_id, "target_listing_id": target_listing_id, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged}, correlation_id)
+                                    {"source_listing_id": source_listing_id, "target_listing_id": target_listing_id, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged, "if_match": if_match, "target_if_match": target_if_match}, correlation_id)
         if write.replayed_response is not None:
             return write.replayed_response
 
-        source = self._listing(source_listing_id)
-        target = self._listing(target_listing_id)
-        if source_listing_id == target_listing_id:
-            raise NetworkListingConflict("source and target listing must be different")
-        # Merge is terminal for the source. Replaying the SAME idempotency key is
-        # served from the cache above; reaching here with an already-merged source
-        # means a genuinely new request, which would append a second listing.merge
-        # audit event and overwrite the first merge's reason.
+        # Same-key replay has already returned its receipt; a new request
+        # preserves the established terminal explanation without another write.
         merged_into = source.get("mergedIntoId")
         if merged_into:
             raise NetworkListingConflict(
                 f"{source_listing_id} is already merged into {merged_into} and cannot be merged again"
             )
-
+        self._check_listing_revision(source, if_match)
+        self._check_listing_revision(target, target_if_match)
+        self._guard_listing_retention(source)
+        self._guard_listing_retention(target)
+        if source_listing_id == target_listing_id:
+            raise NetworkListingConflict("source and target listing must be different")
+        if source.get("duplicateOfId") != target_listing_id or target.get("duplicateOfId"):
+            raise NetworkListingConflict("EXACT_DUPLICATE_TARGET_REQUIRED")
+        for record in (source, target):
+            for evidence_field in ("sourceEvidence", "mergedSourceListingIds"):
+                values = record.get(evidence_field, [])
+                if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+                    raise NetworkListingPolicyError("LISTING_EVIDENCE_UNAVAILABLE")
         source_before_status = source.get("status")
+        source_before_version = source.get("version")
+        target_before_version = target.get("version")
         target_before_evidence = list(target.get("sourceEvidence", []))
 
         source_evidence = list(source.get("sourceEvidence", []))
@@ -1314,6 +1467,7 @@ class NetworkListingService:
             correlation_id=correlation_id,
             metadata={
                 "sourceListingId": source_listing_id,
+                "targetListingId": target_listing_id,
                 # The operator's own words, recorded alongside the disclosure
                 # they acknowledged; archive does the same.
                 "reason": reason,
@@ -1322,10 +1476,14 @@ class NetworkListingService:
                 "before": {
                     "sourceStatus": source_before_status,
                     "targetEvidenceCount": len(target_before_evidence),
+                    "sourceVersion": source_before_version,
+                    "targetVersion": target_before_version,
                 },
                 "after": {
                     "sourceStatus": "duplicate",
                     "targetEvidenceCount": len(target["sourceEvidence"]),
+                    "sourceVersion": source.get("version"),
+                    "targetVersion": target.get("version"),
                 },
                 "riskSummary": risk_summary_text,
                 "riskAcknowledged": True,
@@ -1337,6 +1495,9 @@ class NetworkListingService:
         result = {
             "source": _copy(source),
             "target": _copy(target),
+            "actorSubjectId": actor_name,
+            "actorRoleId": actor_role_id,
+            "idempotencyKey": governed_key,
             "sourceEvidenceRetained": _copy(source_evidence),
             "auditEvent": audit,
             "correlationId": correlation_id,
@@ -1354,9 +1515,13 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        if_match: str | None = None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
         actor_name = self._require_actor(actor_name, actor_role_id)
+        listing, = self._listing_write_records("archive", idempotency_key, actor_name, [listing_id])
+        self._authorize_listing_write([listing], authorize_existing)
         allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "executive", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to archive listing")
@@ -1366,12 +1531,14 @@ class NetworkListingService:
             raise NetworkListingPolicyError("archive reason is required")
 
         write = self._prepare_write("archive", idempotency_key, actor_name,
-                                    {"listing_id": listing_id, "reason": reason}, correlation_id)
+                                    {"listing_id": listing_id, "reason": reason, "if_match": if_match}, correlation_id)
         if write.replayed_response is not None:
             return write.replayed_response
 
-        listing = self._listing(listing_id)
+        self._check_listing_revision(listing, if_match)
+        self._guard_listing_retention(listing)
         before_status = listing.get("status")
+        before_version = listing.get("version")
 
         listing["status"] = "archived"
         listing["archivedReason"] = reason
@@ -1391,15 +1558,20 @@ class NetworkListingService:
                                         if isinstance(listing.get("sourceEvidence"), list) else None),
                 "before": {
                     "status": before_status,
+                    "version": before_version,
                 },
                 "after": {
                     "status": "archived",
+                    "version": listing.get("version"),
                 },
                 "effectSummary": f"Archive listing {listing_id}. Reason: {reason}",
             },
         )
         result = {
             "listing": _copy(listing),
+            "actorSubjectId": actor_name,
+            "actorRoleId": actor_role_id,
+            "idempotencyKey": write.key.split(":", 1)[1] if write.key else None,
             "auditEvent": audit,
             "correlationId": correlation_id,
             "expansionSteps": self._expansion_steps(selected_id=listing["heatZoneId"]),
@@ -2845,82 +3017,29 @@ class NetworkListingService:
         selected_id: str | None,
     ) -> list[dict[str, Any]]:
         if not self._seed_fixtures:
-            listing = self._state["listings"][0] if self._state["listings"] else None
-            candidate = (
-                self._state["candidates"][0]
-                if self._state["candidates"]
-                else None
-            )
-            review = (
-                self._state["siteReviews"][0]
-                if self._state["siteReviews"]
-                else None
-            )
+            # This endpoint owns listings, not a selected scoring/report/review
+            # context. Keep the six-step API shape without exposing a global
+            # first row or claiming that candidate existence requires scoring.
             return [
                 {
-                    "id": "find",
-                    "label": "Find Area",
-                    "tabIndex": 0,
-                    "state": "completed" if selected_id else "current",
-                    "entityId": selected_id,
+                    "id": step_id,
+                    "label": label,
+                    "tabIndex": tab_index,
+                    "state": "blocked",
+                    "entityId": None,
                     "summary": (
-                        "Live HeatZone selected."
-                        if selected_id
-                        else "No live HeatZone is available."
+                        "Select an exact candidate context; progress requires "
+                        "current authorized listing, report and review reads."
                     ),
-                },
-                {
-                    "id": "radar",
-                    "label": "Listing Radar",
-                    "tabIndex": 1,
-                    "state": "completed" if listing else "current",
-                    "entityId": listing.get("id") if listing else None,
-                    "summary": (
-                        "Live listing is available."
-                        if listing
-                        else "No live listing has been submitted."
-                    ),
-                },
-                {
-                    "id": "candidate",
-                    "label": "Candidate",
-                    "tabIndex": 2,
-                    "state": "completed" if candidate else "next",
-                    "entityId": candidate.get("id") if candidate else None,
-                    "summary": (
-                        "Live candidate exists."
-                        if candidate
-                        else "Candidate creation requires a live listing."
-                    ),
-                },
-                {
-                    "id": "sitescore",
-                    "label": "SiteScore",
-                    "tabIndex": 3,
-                    "state": "next" if candidate else "blocked",
-                    "entityId": candidate.get("id") if candidate else None,
-                    "summary": "Requires a production model binding.",
-                },
-                {
-                    "id": "compare",
-                    "label": "Compare",
-                    "tabIndex": 4,
-                    "state": "next" if candidate else "blocked",
-                    "entityId": candidate.get("id") if candidate else None,
-                    "summary": "Requires live scored candidates.",
-                },
-                {
-                    "id": "review",
-                    "label": "Review",
-                    "tabIndex": 5,
-                    "state": "current" if review else "blocked",
-                    "entityId": review.get("id") if review else None,
-                    "summary": (
-                        "Live review is ready."
-                        if review
-                        else "No live review packet is available."
-                    ),
-                },
+                }
+                for step_id, label, tab_index in (
+                    ("find", "Find Area", 0),
+                    ("radar", "Listing Radar", 1),
+                    ("candidate", "Candidate", 2),
+                    ("sitescore", "SiteScore", 3),
+                    ("compare", "Compare", 4),
+                    ("review", "Review", 5),
+                )
             ]
         has_selected_zone = any(zone["id"] == selected_id for zone in self._state["heatZones"])
         candidate = next(
