@@ -19,6 +19,7 @@
  */
 
 import type { OdpApiClient } from "@oday-plus/openapi-client";
+import { cellToLatLng, isValidCell } from "h3-js";
 import type { ApiBinding } from "../../../src/lib/api/binding.ts";
 import { loadApiBinding } from "../../../src/lib/api/binding.ts";
 import type { Candidate, Listing, OperatorHeatZone } from "../types.ts";
@@ -42,17 +43,27 @@ function adaptHeatZone(raw: Record<string, unknown>): OperatorHeatZone {
   // The backend scores use h3_index as the stable zone id; we propagate it
   // directly so the frontend lens map can show real IDs.
   const id = (raw["h3_index"] as string | undefined) ?? String(raw["id"] ?? "HZ-UNKNOWN");
-  const unmetDemand = Number(raw["unmet_demand"] ?? raw["unmetDemand"] ?? 0);
+  const unmetDemand = Number(raw["unmet_demand_score"] ?? raw["unmet_demand"] ?? raw["unmetDemand"] ?? 0);
   const confidence = raw["confidence"] != null ? Number(raw["confidence"]) : null;
+  const observedCentroid = raw["centroid"];
+  let centroid: [number, number];
+  if (Array.isArray(observedCentroid) && observedCentroid.length === 2
+    && observedCentroid.every((value) => typeof value === "number" && Number.isFinite(value))
+    && Math.abs(observedCentroid[0]) <= 180 && Math.abs(observedCentroid[1]) <= 90) {
+    centroid = observedCentroid as [number, number];
+  } else if (observedCentroid == null && typeof raw["h3_index"] === "string" && isValidCell(raw["h3_index"])) {
+    // The cell center is derived geometry, not a fabricated address geocode.
+    const [lat, lng] = cellToLatLng(raw["h3_index"]);
+    centroid = [lng, lat];
+  } else {
+    throw new Error("HEATZONE_GEOMETRY_UNAVAILABLE");
+  }
 
   return {
     id,
     label: (raw["label"] as string | undefined) ?? id,
-    rank: Number(raw["rank"] ?? 999),
-    // centroid: [lng, lat] — fall back to [0,0] if not provided
-    centroid: Array.isArray(raw["centroid"])
-      ? (raw["centroid"] as [number, number])
-      : [0, 0],
+    rank: Number(raw["priority_rank"] ?? raw["rank"] ?? 999),
+    centroid,
     demandGap: unmetDemand,
     competitionIndex: Number(raw["competition_index"] ?? raw["competitionIndex"] ?? 0),
     cannibalizationRisk:

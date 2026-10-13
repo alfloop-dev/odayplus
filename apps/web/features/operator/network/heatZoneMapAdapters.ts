@@ -12,6 +12,7 @@
  */
 
 import type { Candidate, Listing, OperatorHeatZone } from "../types";
+import { getResolution, isValidCell } from "h3-js";
 import type {
   CandidateSite as MapCandidateSite,
   HeatZone as MapHeatZone,
@@ -61,14 +62,14 @@ export function deriveHeatZoneState(zone: OperatorHeatZone): MapHeatZone["state"
  * so that the map renders correctly without requiring API data.
  */
 export function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
+  const indexedCell = isValidCell(zone.id);
   return {
     id: zone.id,
     district: zone.label,
-    // h3 is intentionally invalid so that zoneToFeature falls back to the
-    // centroid-delta polygon – a deterministic, no-network fallback.
-    h3: `h3-${zone.id}`,
+    // API-backed H3 cells use their actual boundary in zoneToFeature.
+    h3: indexedCell ? zone.id : `h3-${zone.id}`,
     centroid: zone.centroid,
-    h3Resolution: 9,
+    h3Resolution: indexedCell ? getResolution(zone.id) : 9,
     score: Math.round(zone.demandGap * 100),
     confidence: zone.confidence,
     state: deriveHeatZoneState(zone),
