@@ -29,6 +29,23 @@ const manualListing = {
 } satisfies NetworkListingRadarSnapshot["listings"][number];
 
 describe("Listing map projection with missing measurements", () => {
+  it.each([null, undefined])("preserves an unrecorded hard-rule verdict (%s) without crashing the real listing projection", (missing) => {
+    // A domain repository record can lack optional operator presentation
+    // metadata even though the generated transport type requires an array.
+    const listing = { ...manualListing, hardRuleFailures: missing } as unknown as typeof manualListing;
+    expect(operatorListingToMapListing(listing, [], 0).issue).toBe("硬規則尚未檢核");
+    const row = buildNetworkFindAreasViewModel({ heatZones: [], listings: [listing], candidates: [] }).listingRadar[0];
+    expect(row).toMatchObject({ hardRuleStatus: "unmeasured", hardRuleFailures: [], tone: "watch" });
+    expect(row.geocodeConfidence).toBeNull();
+  });
+
+  it("distinguishes a recorded empty failure list from an unmeasured verdict", () => {
+    const listing = { ...manualListing, hardRuleFailures: [] };
+    const row = buildNetworkFindAreasViewModel({ heatZones: [], listings: [listing], candidates: [] }).listingRadar[0];
+    expect(row).toMatchObject({ hardRuleStatus: "measured", hardRuleFailures: [], tone: "good" });
+    expect(operatorListingToMapListing(listing, [], 0).issue).toBe("");
+  });
+
   it("keeps a manual row readable without inventing geocode confidence or a map point", () => {
     const projected = operatorListingToMapListing(manualListing, [], 0);
     expect(projected.geocode).toBe("未知");

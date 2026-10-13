@@ -511,7 +511,7 @@ def _postgres_bundle(
     from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
 
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
-    pg_job_queue = DurableJobQueue(engine)
+    pg_job_queue = DurableJobQueue(engine, canonical_intake_score_schedule=True)
     canonical_audit_writer = CanonicalPostgresAuditLog(engine)
 
     assisted_intake_store.configure_canonical_audit(CanonicalIntakeAuditSink(

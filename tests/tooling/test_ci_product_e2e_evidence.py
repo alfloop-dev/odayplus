@@ -13,6 +13,7 @@ from delivery_toolchain.e2e.product_e2e_receipt import (
     RAW_PLAYWRIGHT_PATH,
     RAW_PYTEST_PATH,
     RECEIPT_PATH,
+    canonical_json_bytes,
     seal_normalized,
     sha256_bytes,
 )
@@ -161,6 +162,73 @@ def test_existing_output_is_not_reused(tmp_path):
     with pytest.raises(ValueError, match="must be empty"):
         collector.collect_evidence(tmp_path, output)
     assert old.read_text() == "old"
+
+
+def _with_attachments(path, artifact, attachments):
+    result = artifact["payload"]["suites"][0]["specs"][0]["tests"][0]["results"][0]
+    result["attachments"] = attachments
+    artifact["payload_sha256"] = sha256_bytes(canonical_json_bytes(artifact["payload"]))
+    seal_normalized(artifact, "normalized_artifact_sha256")
+    path.write_text(json.dumps(artifact))
+
+
+def test_first_failure_trace_is_copied_but_unreferenced_old_trace_is_not(tmp_path, monkeypatch):
+    path, artifact = write_raw(tmp_path, failed=True)
+    trace = tmp_path / "test-results" / "first-failure" / "trace.zip"
+    trace.parent.mkdir(parents=True)
+    trace.write_bytes(b"explicit synthetic trace bytes")
+    stale = tmp_path / "test-results" / "stale.zip"
+    stale.write_bytes(b"old run")
+    _with_attachments(path, artifact, [{"name": "trace", "contentType": "application/zip", "path": str(trace)}])
+    monkeypatch.setattr(collector, "source_identity", lambda _: SOURCE)
+    output = tmp_path / "archive"
+    packet = collector.collect_evidence(tmp_path, output)
+    assert len(packet["diagnostics"]) == 1
+    evidence = packet["diagnostics"][0]
+    assert (output / evidence["archive_path"]).read_bytes() == trace.read_bytes()
+    assert evidence["sha256"] == sha256_bytes(trace.read_bytes())
+    assert evidence["referencing_artifact_sha256"] == sha256_bytes(path.read_bytes())
+    assert evidence["diagnostic_only"] is True
+    assert not (output / "test-results" / "stale.zip").exists()
+    assert packet["full_product_acceptance_claimed"] is False
+
+
+@pytest.mark.parametrize("kind", ["outside", "symlink", "missing", "parent_symlink"])
+def test_attachment_paths_cannot_export_unrelated_files(tmp_path, monkeypatch, kind):
+    path, artifact = write_raw(tmp_path, failed=True)
+    unrelated = tmp_path / "unrelated.txt"
+    unrelated.write_text("must never be exported")
+    results = tmp_path / "test-results"
+    results.mkdir()
+    attachment = unrelated
+    if kind == "symlink":
+        attachment = results / "trace.zip"
+        attachment.symlink_to(unrelated)
+    elif kind == "missing":
+        attachment = results / "missing.zip"
+    elif kind == "parent_symlink":
+        (results / "linked").symlink_to(tmp_path, target_is_directory=True)
+        attachment = results / "linked" / "unrelated.txt"
+    _with_attachments(path, artifact, [{"name": "trace", "path": str(attachment)}])
+    monkeypatch.setattr(collector, "source_identity", lambda _: SOURCE)
+    output = tmp_path / "archive"
+    packet = collector.collect_evidence(tmp_path, output)
+    assert not packet["diagnostics"]
+    assert len(packet["diagnostics_omitted"]) == 1
+    assert not (output / "test-results").exists()
+
+
+def test_stale_source_cannot_export_even_a_real_attachment(tmp_path, monkeypatch):
+    path, artifact = write_raw(tmp_path, failed=True)
+    trace = tmp_path / "test-results" / "trace.zip"
+    trace.parent.mkdir()
+    trace.write_bytes(b"old evidence")
+    _with_attachments(path, artifact, [{"name": "trace", "path": str(trace)}])
+    monkeypatch.setattr(collector, "source_identity", lambda _: {**SOURCE, "commit_sha": "c" * 40})
+    output = tmp_path / "archive"
+    packet = collector.collect_evidence(tmp_path, output)
+    assert not packet["files"] and not packet["diagnostics"]
+    assert not (output / "test-results").exists()
 
 
 def test_real_checkout_does_not_relabel_committed_historical_packet(tmp_path):

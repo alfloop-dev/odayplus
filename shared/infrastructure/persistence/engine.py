@@ -38,6 +38,7 @@ _SCHEMA_FILES = (
     "000022_durable_manual_corrections.sql",
     "000024_avm_quality_score_nullable_sqlite.sql",
     "000026_canonical_measurement_nullable_sqlite.sql",
+    "000031_durable_job_availability_sqlite.sql",
 )
 
 

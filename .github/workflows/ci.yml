@@ -497,7 +497,7 @@ jobs:
         run: make product-e2e-bootstrap
 
       # Fixture UI geometry/axe checks are supplemental, not part of the exact
-      # 18-spec/129-test deterministic product receipt inventory. Fail this required
+      # 18-spec/130-test deterministic product receipt inventory. Fail this required
       # lane on visual regressions without changing release authority or counts.
       - name: Verify Store Ops Package 10 geometry and accessibility
         run: npx playwright test --config tests/visual/operator-store-ops-parity.config.ts
@@ -526,9 +526,25 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
+          # The collector includes only traces/screenshots/context explicitly
+          # referenced by the validated current-source Playwright artifact.
           name: product-e2e-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/product-e2e-evidence/
           if-no-files-found: error
+          retention-days: 90
+
+      # Startup can fail before Playwright produces a source-bound receipt.
+      # Keep its explicit diagnostics separately; they grant no acceptance.
+      - name: Preserve product E2E startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-startup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .odp_data/e2e-diagnostics/source-identity.json
+            .odp_data/e2e-diagnostics/compose-ps.txt
+            .odp_data/e2e-diagnostics/compose-tail.log
+          if-no-files-found: warn
           retention-days: 90
 
   automatic-dev-release:

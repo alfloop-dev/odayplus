@@ -688,11 +688,28 @@ describe("SiteScoreJobStatus — outcome and delivery distinct, ID only from rec
     expect(screen.getByTestId("sitescore-job-correlation").textContent).toBe("CORR-9001");
   });
 
-  it("replays a failed outcome carrying a dead-letter delivery state", () => {
+  it("keeps an exhausted candidate visible without offering an unsupported budget override", () => {
     render(<SiteScoreJobStatus canReplay job={job("FAILED", { delivery_state: "DEAD_LETTER" })} onReplay={vi.fn()} />);
-    expect(screen.getByTestId("sitescore-replay-controls")).not.toBeNull();
+    expect(screen.queryByTestId("sitescore-replay-controls")).toBeNull();
     expect(screen.getByTestId("sitescore-job-state").textContent).toContain("FAILED");
     expect(screen.getByTestId("sitescore-job-state").textContent).toContain("DEAD_LETTER");
+    expect(screen.getByTestId("candidate-retained-note").textContent).toContain("已達重試上限");
+  });
+
+  it("retains a failed score candidate after the promotion has already completed", () => {
+    render(<SiteScoreJobStatus canReplay candidateSiteId="CAND-1234" job={job("FAILED")}
+      onReplay={vi.fn()} promotionStatus="COMPLETED" />);
+    expect(screen.getByTestId("candidate-retained-id").textContent).toBe("CAND-1234");
+    expect(screen.getByTestId("candidate-retained-note").textContent).toContain("評分失敗（FAILED）");
+    expect(screen.getByTestId("sitescore-replay-controls")).not.toBeNull();
+  });
+
+  it("shows a scheduled automatic retry without a failure or manual replay control", () => {
+    render(<SiteScoreJobStatus canReplay job={job("QUEUED", { delivery_state: "RETRYING" })}
+      onReplay={vi.fn()} promotionStatus="COMPLETED" />);
+    expect(screen.getByTestId("sitescore-job-state").textContent).toContain("自動重試中");
+    expect(screen.queryByTestId("candidate-retained-note")).toBeNull();
+    expect(screen.queryByTestId("sitescore-replay-controls")).toBeNull();
   });
 
   it("requires reason and risk ack before replay is enabled", () => {

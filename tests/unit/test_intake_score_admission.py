@@ -68,9 +68,9 @@ def test_live_source_revocation_and_missing_approval_deny(admission, field, valu
     ("source_policy_version", None, "SOURCE_POLICY_PIN_REQUIRED"),
     ("source_policy_version", True, "SOURCE_POLICY_PIN_REQUIRED"),
     ("source_id", "another-source", "SOURCE_BINDING_DENIED"),
-    ("source_snapshot_id", str(uuid4()), "SOURCE_SNAPSHOT_BINDING_DENIED"),
+    ("source_snapshot_id", "00000000-0000-4000-8000-000000000901", "SOURCE_SNAPSHOT_BINDING_DENIED"),
     ("policy_state", "APPROVED_RETRIEVAL", "SOURCE_POLICY_STATE_MISMATCH"),
-    ("parser_release_id", str(uuid4()), "MANUAL_PARSER_BINDING_DENIED"),
+    ("parser_release_id", "00000000-0000-4000-8000-000000000902", "MANUAL_PARSER_BINDING_DENIED"),
 ])
 def test_intake_binding_cannot_be_inferred_or_replaced(admission, field, value, code):
     admission.intake[field] = value
@@ -113,8 +113,8 @@ def test_recorded_parser_run_binds_current_compatible_production_release(admissi
     ("parser_releases", "validation_status", "ROLLED_BACK", "PARSER_RELEASE_DENIED"),
     ("parser_releases", "input_schema_version", "raw-v2", "PARSER_SCHEMA_COMPATIBILITY_DENIED"),
     ("parser_releases", "output_schema_version", "listing-v3", "PARSER_SCHEMA_COMPATIBILITY_DENIED"),
-    ("parser_runs", "intake_id", str(uuid4()), "PARSER_RUN_BINDING_DENIED"),
-    ("parser_runs", "source_snapshot_id", str(uuid4()), "PARSER_RUN_BINDING_DENIED"),
+    ("parser_runs", "intake_id", "00000000-0000-4000-8000-000000000903", "PARSER_RUN_BINDING_DENIED"),
+    ("parser_runs", "source_snapshot_id", "00000000-0000-4000-8000-000000000904", "PARSER_RUN_BINDING_DENIED"),
     ("parser_runs", "status", "FAILED", "PARSER_RUN_BINDING_DENIED"),
     ("parser_runs", "validation_errors", ["missing-rent"], "PARSER_RUN_BINDING_DENIED"),
 ])

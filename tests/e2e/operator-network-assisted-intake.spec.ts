@@ -44,6 +44,8 @@ import {
  * ============================================================================
  */
 
+import { openPgScenario } from "./_intakeScorePg";
+
 import {
   acquireOperatorBackendLock,
   releaseOperatorBackendLock,
@@ -982,7 +984,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
 
   test("verify audit envelope for CREATE and PROMOTE decisions", async ({
     page,
-  }) => {
+  }, info) => {
     await openRadarAsExpansionManager(page);
 
     // 1. CREATE decision
@@ -1023,54 +1025,66 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     const createdListingId = auditCreate.metadata.targetListingId;
     expect(createdListingId).toBeTruthy();
 
-    // 2. PROMOTE decision (requires targetListingId created above)
-    const apiContext = await playwrightRequest.newContext({
-      baseURL: API_BASE_URL,
-      extraHTTPHeaders: {
-        "x-subject-id": "operator-expansion-manager",
-        "x-roles": "expansion_user",
-        "x-operator-role": "expansion-staff",
-        "x-tenant-id": "tenant-a",
-        "X-Correlation-Id": "promote-corr-id-12345",
-        "Idempotency-Key": "promote-key-12345",
-      },
-    });
-    const promoteRes = await apiContext.post(
-      `/api/v1/operator/network-listings/intake/${id1}/promote`,
-      {
-        data: {
-          reason: "Audit test promote reason",
-          riskSummary: "測試推廣風險宣告",
-          riskAcknowledged: true,
-          actorRoleId: "expansion-manager",
-          actorName: "林曉青",
-        },
-      },
-    );
-    expect(promoteRes.status()).toBe(200);
-    const promoteResultData = await promoteRes.json();
-    await apiContext.dispose();
-
-    // Package 10 promotion is a reviewed two-actor saga: this endpoint only
-    // records the promotion *request* (candidate creation happens after the
-    // independent review, covered by the canonical assisted-listing spec).
-    expect(promoteResultData.status).toBe("PENDING_REVIEW");
-    expect(promoteResultData.promotion_decision_id).toBeTruthy();
-
-    const data1Updated = await getIntakeApi(id1);
-    const auditPromote = data1Updated.auditEvents.find(
-      (e: any) => e.action === "intake.promote_request",
-    );
-    expect(auditPromote).toBeDefined();
-    expect(auditPromote.actorRoleId).toBe("expansion_user");
-    expect(auditPromote.actorName).toBe("operator-expansion-manager");
-    expect(auditPromote.occurredAt).toBeTruthy();
-    expect(auditPromote.message).toContain("Audit test promote reason");
-    expect(auditPromote.correlationId).toBe("promote-corr-id-12345");
-    expect(auditPromote.metadata.targetListingId).toBe(createdListingId);
-    expect(auditPromote.metadata.reason).toBe("Audit test promote reason");
-    expect(auditPromote.metadata.riskSummary).toBe("測試推廣風險宣告");
-    expect(auditPromote.metadata.riskAcknowledged).toBe(true);
+    // 2. Canonical promotion uses a separately admitted, measured PG fixture.
+    // The created legacy row above has real hard-rule failures; its 422 is a
+    // correct guard, not a reason to manufacture geocode or weaken acceptance.
+    const pgPage = await page.context().newPage();
+    const { api, scenario } = await openPgScenario(pgPage);
+    try {
+      await pgPage.getByTestId("promotion-request-reason").fill("Audit test canonical promotion reason");
+      await pgPage.getByTestId("promotion-request-ack").check();
+      const [requested] = await Promise.all([
+        pgPage.waitForResponse((r) => r.url().includes("/promotion-requests") && r.request().method() === "POST"),
+        pgPage.getByTestId("promotion-request-submit").click(),
+      ]);
+      expect(requested.status(), await requested.text()).toBe(202);
+      const requestReceipt = await requested.json();
+      expect(requestReceipt.status).toBe("PENDING_REVIEW");
+      await expect(pgPage.getByTestId("promotion-self-review-denied")).toBeVisible();
+      await pgPage.setExtraHTTPHeaders({ "x-subject-id": scenario.reviewer_id, "x-tenant-id": scenario.tenant_id,
+        "x-roles": "expansion_user,site_reviewer", "x-operator-role": "expansion-manager" });
+      await pgPage.evaluate((actor) => sessionStorage.setItem("oday.operator.subject", actor), scenario.reviewer_id);
+      await pgPage.reload();
+      await expect(pgPage.getByTestId("promotion-second-actor-ok")).toBeVisible();
+      await pgPage.getByTestId("promotion-review-reason").fill("Audit test independent review reason");
+      await pgPage.getByTestId("promotion-review-ack").check();
+      await pgPage.getByTestId("promotion-approve-btn").click();
+      const [reviewed] = await Promise.all([
+        pgPage.waitForResponse((r) => r.url().includes("/actions/review") && r.request().method() === "POST"),
+        pgPage.getByTestId("promotion-confirm-approve-btn").click(),
+      ]);
+      expect(reviewed.status(), await reviewed.text()).toBe(200);
+      const reviewReceipt = await reviewed.json();
+      expect(reviewReceipt.status).toBe("SCORE_QUEUED");
+      const evidenceResponse = await api.get(`/_synthetic/evidence/${scenario.scenario_id}`);
+      expect(evidenceResponse.status(), await evidenceResponse.text()).toBe(200);
+      const evidence = await evidenceResponse.json();
+      const requestAudit = evidence.audits.find((event: any) => event.audit_event_id === requestReceipt.audit_event_id);
+      expect(requestAudit).toMatchObject({ actor_subject_id: scenario.proposer_id, action: "intake.promotion_requested",
+        resource_id: requestReceipt.promotion_decision_id, result: "SUCCEEDED", before_value: null });
+      expect(requestAudit.after_value).toMatchObject({ listing_id: scenario.listing_id, intake_id: scenario.intake_id,
+        reason: "Audit test canonical promotion reason", status: "PENDING_REVIEW" });
+      expect(requestAudit.correlation_id).toBe((await requested.request().allHeaders())["x-correlation-id"]);
+      expect(requestAudit.occurred_at).toBeTruthy();
+      const reviewAudit = evidence.audits.find((event: any) => event.audit_event_id === reviewReceipt.audit_event_id);
+      expect(reviewAudit).toMatchObject({ actor_subject_id: scenario.reviewer_id, action: "promotion.score_queued",
+        resource_id: requestReceipt.promotion_decision_id, result: "SUCCEEDED" });
+      expect(reviewAudit.before_value.status).toBe("PENDING_REVIEW");
+      expect(reviewAudit.after_value).toMatchObject({ status: "SCORE_QUEUED", review_reason: "Audit test independent review reason",
+        risk_acknowledged: true, site_score_job_id: reviewReceipt.site_score_job_id, candidate_site_id: reviewReceipt.candidate_site_id });
+      expect(reviewAudit.correlation_id).toBe((await reviewed.request().allHeaders())["x-correlation-id"]);
+      expect(reviewAudit.occurred_at).toBeTruthy();
+      expect(evidence.job).toMatchObject({ job_id: reviewReceipt.site_score_job_id, status: "QUEUED", attempt: 0 });
+      await info.attach("physical-pg-request-and-review-audit", { body: JSON.stringify(evidence, null, 2), contentType: "application/json" });
+      // Leave the isolated queue settled so a later positive case can run its
+      // own true worker without inheriting another scenario's pending work.
+      const drained = await api.post("/_synthetic/worker/drain", { data: { scenario_id: scenario.scenario_id }, timeout: 45_000 });
+      expect(drained.ok(), await drained.text()).toBe(true);
+      expect((await drained.json()).job.status).toBe("SUCCEEDED");
+    } finally {
+      await api.dispose();
+      await pgPage.close();
+    }
   });
 
   test("verify audit envelope for REVISE decision", async ({ page }) => {

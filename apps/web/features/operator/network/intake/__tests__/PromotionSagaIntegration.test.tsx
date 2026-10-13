@@ -268,6 +268,30 @@ afterEach(() => {
 });
 
 describe("promotion saga — live operator route integration", () => {
+  it.each([["SCORE_QUEUED", "QUEUED"], ["COMPLETED", "RUNNING"]])("refreshes %s / %s to the worker outcome without resubmitting any command", async (promotionStatus, jobStatus) => {
+    const { captured, routes, fetchStub } = buildFetchStub(readyIntake());
+    const queued = { ...scoreFailedReceipt(), status: promotionStatus };
+    let outcome = jobStatus;
+    routes[`GET /api/v1/intakes/${INTAKE_ID}/promotion-decision`] = () => Response.json(queued);
+    routes[`GET /api/v1/promotion-decisions/${DECISION_ID}`] = () => Response.json({ ...queued, status: "COMPLETED", version: 7 });
+    routes[`GET /api/v1/jobs/${SCORE_JOB_ID}/receipt`] = () => Response.json({
+      job_id: SCORE_JOB_ID, status: outcome, checkpoint: "SCORE_QUEUED", attempt: 1, version: 4, correlation_id: "corr-test",
+    });
+    vi.stubGlobal("fetch", fetchStub);
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={REVIEWER_ID} />);
+    fireEvent.click(await screen.findByTestId(`intake-inbox-row-${INTAKE_ID}`));
+    await waitFor(() => expect(screen.getByTestId("sitescore-job-state")).toHaveTextContent(jobStatus));
+    outcome = "SUCCEEDED";
+    fireEvent.click(screen.getByTestId("promotion-refresh-btn"));
+    await waitFor(() => expect(screen.getByTestId("sitescore-job-state")).toHaveTextContent("SUCCEEDED"));
+    expect(screen.getByTestId("promotion-receipt-status")).toHaveTextContent("COMPLETED");
+    expect(screen.getByTestId("promotion-decision-id")).toHaveTextContent(DECISION_ID);
+    expect(screen.getByTestId("promotion-candidate-id")).toHaveTextContent(CANDIDATE_ID);
+    expect(screen.getByTestId("sitescore-job-id")).toHaveTextContent(SCORE_JOB_ID);
+    expect(requestsTo(captured, "GET", `/api/v1/promotion-decisions/${DECISION_ID}`)).toHaveLength(1);
+    expect(captured.filter((request) => request.method === "POST")).toEqual([]);
+  });
+
   it("restores a deep-linked intake by fetching the record outside the current inbox page", async () => {
     const record = readyIntake();
     const { captured, routes, fetchStub } = buildFetchStub(record);

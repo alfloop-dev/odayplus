@@ -142,16 +142,15 @@ overlays taking precedence over earlier catalog clauses.
 
 ## Candidate implementation: actual SiteScore delivery and result commit
 
-The behavior below is implemented and locally tested, but two lifecycle
-semantics remain a release blocker against
-`docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md`:
-the reviewed `SCORE_QUEUED` to `COMPLETED` precondition is worker job
-accepted/committed (line 246), while this candidate waits for a successful
-report commit; the reviewed `SCORE_FAILED` precondition is exhausted budget or
-permanent validation failure (line 247), while this candidate also settles a
-transient inference failure immediately. Schema/enum validation does not approve
-either interpretation. Align the implementation with the reviewed lifecycle,
-or obtain an explicit reviewed contract change, before accepting this workflow.
+The worker follows the acceptance boundary in
+`docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md` section 7.
+Before external inference, its transaction validates the current source and
+parent bindings, changes `SCORE_QUEUED` to `COMPLETED`, and records a promotion
+audit, completion event and `worker_acceptance` receipt. That receipt binds the
+tenant, job, intake, promotion, candidate, promotion version, acceptance fence,
+timestamp and actual audit ID. A second connection must be able to read the
+committed acceptance while inference is still blocked and no report exists.
+The terminal promotion does not reopen when subsequent computation fails.
 
 `workflow.jobs` is authoritative for `intake-sitescore`. The durable delivery
 queue reserves the same UUID and contains only `job_id`, `tenant_id`, and a
@@ -168,6 +167,20 @@ execution; inspecting an existing receipt does not need the key. Rotation must
 account for outstanding signed deliveries: this implementation has no key ring
 and does not authorize automatic resigning of existing jobs.
 
+Enqueue also requires `ODP_INTAKE_SCORE_RETRY_POLICY_JSON`, an explicit object
+with `policy_id`, positive integer `version`, `max_attempts` between one and
+five, and `backoff_seconds` containing exactly `max_attempts - 1` positive,
+finite delays. Each delay must be at most 86,400 seconds. Missing or invalid
+configuration returns unavailable and rolls back the enclosing review; there
+is no production default. The canonical payload retains the policy snapshot.
+The configured policy must still match before accepting or committing an
+attempt. An authorized failed-job replay may refresh that snapshot but cannot
+increase the recorded attempt budget. Configuration alone is not approval;
+production owners must supply policy authority, applicable tenant/model scope,
+version and evidence. Synthetic test policy values prove mechanism behavior
+only. The schema's `timeout_at` retains the 30-second enqueue deadline; it is
+not enforced as an inference execution limit.
+
 The canonical intake must pin its recorded source policy and snapshot. The live
 SQL source policy must remain enabled, unexpired and legally licensed; the
 snapshot must match the actual tenant/intake/source/candidate lineage.
@@ -181,22 +194,66 @@ External inference runs outside locks. Before result persistence the worker
 locks and rereads the parent, candidate, listing, address, authoritative job and
 delivery; validates both leases, fence/version, cancellation, input fingerprint
 and current source admission; then commits reports, prediction lineage,
-candidate changes, promotion completion, audit and delivery acknowledgement in
+candidate changes, job outcome, audit and delivery acknowledgement in
 one SQL transaction. Report/prediction IDs are stable per job. Heartbeats update
-both job stores and cannot renew an expired canonical lease.
+both job stores and cannot renew an expired canonical or delivery lease.
+Acceptance and result commits are separate transactions: failure to persist
+the report cannot undo an earlier committed promotion acceptance.
 
-A failed computation moves the actual job to `FAILED` and the promotion to
-`SCORE_FAILED`, preserving the candidate. Manager retry checks current scope,
+Before acceptance, permanent validation failure or exhausted budget may move
+the promotion to `SCORE_FAILED`, preserving the candidate as `SCORING_FAILED`.
+After acceptance, a permanent failure updates the job and candidate while
+preserving the entire `COMPLETED` promotion receipt. A retryable failure with
+remaining budget atomically writes canonical `RETRYING`/`next_attempt_at`,
+delivery `QUEUED`/`RETRYING`, and a `sitescore.retry_scheduled` audit. It does not
+emit a terminal failure or a manual replay event. The public job receipt shows
+`QUEUED` plus delivery state `RETRYING`. Automatic retry keeps the signed
+generation, candidate, original prediction time and admission snapshot.
+
+The PostgreSQL factory explicitly enables canonical score scheduling on its
+queue. The bridge mirrors eligibility into delivery-only `available_at` in
+the same transaction as the authoritative checkpoint. A global queue poll
+must not query tenant-protected `workflow.jobs`: a non-bypass worker has no
+tenant context before authenticating the selected signed reference. The queue
+filters delivery availability before `LIMIT`; a future retry does not consume
+an attempt or hide another eligible job. The bridge then checks the signature,
+sets tenant context and rechecks canonical due time before execution. A stale
+or changed delivery hint never authorizes an early canonical attempt. Claims,
+due checks and leases use PostgreSQL `statement_timestamp()`. SQLite uses its
+own scheduling column and does not query the canonical workflow schema.
+Merely claiming a delivery is not acceptance. Delivery `attempts` count claims,
+including recovery before worker acceptance; canonical `attempt` counts starts
+at the business checkpoint. The two counters need not match. Canonical workers
+use `claim_next` plus the bridge, not the legacy queue `lease`/`nack` API.
+
+The runtime PostgreSQL bootstrap adds nullable `available_at` and its index;
+the SQLite bootstrap has an additive migration. Apply and verify schema changes
+under the approved migration identity before a restricted runtime starts. The
+PostgreSQL DDL requires a table lock, and index creation needs a deployment
+window assessment. This implementation does not grant runtime `BYPASSRLS`.
+Generic old deliveries with NULL availability remain immediately eligible;
+canonical intake score deliveries with NULL availability are parked. Do not
+backfill every old score job with the current time: that could erase a retry
+delay, bypass a missing policy, or invent worker acceptance. Inventory pending
+jobs by authorized tenant, reconcile their canonical checkpoint, signature,
+policy and acceptance proof, and use a separately reviewed fenced recovery
+procedure. That existing-job recovery procedure remains a release requirement.
+
+Manager retry checks current scope,
 version, checkpoint, policy/parser admission and reason, renews the signed
 generation, and reuses the job and candidate IDs. Retry-budget overrides are
 refused because the current request contract has no incident/change reference.
+The UI does not offer ordinary replay for an exhausted dead-letter receipt.
+Manual replay cannot skip a pending automatic retry delay.
 Repeated expired attempts settle in dead letter at the recorded limit. An old
 attempt whose input changed cannot commit; a fresh delivery claim settles that
 stale checkpoint, after which authorized repair/replay can proceed. Cancellation
 discards the result and settles a fresh claimed delivery without inference.
+Cancellation does not emit `sitescore.failed` or invent a promotion transition.
+The promotion and candidate remain at their recorded checkpoint. The contract
+does not define reopening a promotion cancelled before acceptance; that product
+policy remains unresolved and must not be represented as an implemented path.
 
-In this candidate, `SCORE_QUEUED` becomes `COMPLETED` only through successful
-report commit; this timing is subject to the unresolved contract issue above.
 A durable SQL queue is not proof of Cloud Tasks transport. The
 contract's 30-second SiteScore enqueue budget is not an approved inference
 timeout/backoff policy; inference-level hard limits and external transport

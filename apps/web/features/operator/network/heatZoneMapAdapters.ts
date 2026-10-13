@@ -129,7 +129,7 @@ export function operatorListingToMapListing(
         ? hasGeocode ? "GEOCODED" : "PARSED"
       : listing.status === "parsed" ? "PARSED"
       : "RAW",
-    issue: listing.hardRuleFailures.join("; ") || "",
+    issue: Array.isArray(listing.hardRuleFailures) ? listing.hardRuleFailures.join("; ") : "硬規則尚未檢核",
     rent: listing.rentPerMonth > 0 ? `NT$${listing.rentPerMonth.toLocaleString()}` : "NT$ *** / 月",
     area: `${listing.areaPing} ping`,
     geocode: typeof confidence === "number" && Number.isFinite(confidence)

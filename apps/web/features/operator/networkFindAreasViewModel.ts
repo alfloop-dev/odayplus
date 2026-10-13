@@ -107,6 +107,7 @@ export type ListingRadarRow = {
   isDuplicate: boolean;
   duplicateOfId?: string;
   hardRuleFailures: string[];
+  hardRuleStatus: "measured" | "unmeasured";
   candidateId?: string;
   tone: NetworkTone;
 };
@@ -518,11 +519,13 @@ function buildListingRadar(
   const sourceById = new Map(sources.map((source) => [source.id, source] as const));
   return listings.map((listing) => {
     const source = sourceById.get(listing.sourceId);
+    const hardRuleMeasured = Array.isArray(listing.hardRuleFailures);
+    const hardRuleFailures = hardRuleMeasured ? listing.hardRuleFailures : [];
     const isDuplicate = listing.status === "duplicate" || Boolean(listing.duplicateOfId);
     const tone: NetworkTone =
-      listing.status === "hardfail" || listing.hardRuleFailures.length > 0
+      listing.status === "hardfail" || hardRuleFailures.length > 0
         ? "risk"
-        : isDuplicate || listing.status === "expired"
+        : !hardRuleMeasured || isDuplicate || listing.status === "expired"
           ? "watch"
           : "good";
     return {
@@ -533,7 +536,8 @@ function buildListingRadar(
       duplicateOfId: listing.duplicateOfId,
       geocodeConfidence: listing.geocodeConfidence,
       geocodeConfidenceLabel: formatPercent(listing.geocodeConfidence),
-      hardRuleFailures: listing.hardRuleFailures,
+      hardRuleFailures,
+      hardRuleStatus: hardRuleMeasured ? "measured" : "unmeasured",
       heatZoneId: listing.heatZoneId,
       id: listing.id,
       isDuplicate,

@@ -7,6 +7,7 @@ reject missing model admission and may never fall back to a local score.
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -41,9 +42,14 @@ pytestmark = pytest.mark.requires_live_env
 def explicit_local_signing_key(monkeypatch):
     # Deliberately non-secret, local synthetic material; never production config.
     monkeypatch.setenv("ODP_INTAKE_SCORE_ATTEMPT_SIGNING_KEY", "synthetic-local-score-delivery-test-key-20261013")
+    # Explicit mechanism-test policy, not approval of inference retry budgets.
+    monkeypatch.setenv("ODP_INTAKE_SCORE_RETRY_POLICY_JSON", json.dumps({
+        "policy_id": "synthetic-local-score-retry-v1", "version": 1,
+        "max_attempts": 5, "backoff_seconds": [10, 30, 120, 600],
+    }))
 
 
-def _approved_score(db, bundle, client, *, retrieved=False, available_from=None):
+def _score_proposal(db, bundle, client, *, retrieved=False, available_from=None):
     intake, listing_id = _ready_intake(db, bundle, client)
     repo = bundle.listing_repository_for_tenant(TENANT)
     listing = repo.get_listing(listing_id)
@@ -68,7 +74,12 @@ def _approved_score(db, bundle, client, *, retrieved=False, available_from=None)
     _seed_manual_admission(db, bundle, intake, listing, retrieved=retrieved)
     proposed = _request(client, intake)
     assert proposed.status_code == 202, proposed.text
-    reviewed = _review(client, proposed.json())
+    return intake, listing_id, proposed.json()
+
+
+def _approved_score(db, bundle, client, *, retrieved=False, available_from=None):
+    intake, listing_id, proposed = _score_proposal(db, bundle, client, retrieved=retrieved, available_from=available_from)
+    reviewed = _review(client, proposed)
     assert reviewed.status_code in (200, 202), reviewed.text
     receipt = reviewed.json()
     assert receipt["candidate_site_id"]
@@ -296,9 +307,11 @@ def test_result_is_discarded_after_authority_changes_during_inference(bridge_dat
     try:
         intake, _, receipt = _approved_score(bridge_database, bundle, _promotion_client(bundle))
         claimed = _claim(bundle, receipt["site_score_job_id"])
+        accepted_promotion = []
 
         class AuthorityChangedRuntime(RecordingRuntime):
             def infer(self, **kwargs):
+                accepted_promotion.append(deepcopy(bundle.assisted_intake_store.promotions[receipt["promotion_decision_id"]]))
                 result = super().infer(**kwargs)
                 if mutation in ("canonical_fence", "canonical_version", "delivery_fence", "canonical_lease", "delivery_lease", "cancel"):
                     with bridge_database.connect() as conn:
@@ -333,8 +346,11 @@ def test_result_is_discarded_after_authority_changes_during_inference(bridge_dat
         assert len(runtime.calls) == 1, "The mutation must happen during actual inference"
         _assert_no_result(bundle, receipt["candidate_site_id"])
         assert _physical(bridge_database, claimed.job_id)["status"] != "SUCCEEDED"
-        assert not [e for e in bundle.outbox_repository.get_unpublished_events()
-                    if e.event_type == "candidate.promotion_completed"]
+        assert len([e for e in bundle.outbox_repository.get_unpublished_events()
+                    if e.event_type == "candidate.promotion_completed"]) == 1
+        bundle.assisted_intake_store.refresh(TENANT)
+        assert accepted_promotion[0]["status"] == "COMPLETED"
+        assert bundle.assisted_intake_store.promotions[receipt["promotion_decision_id"]] == accepted_promotion[0]
     finally:
         bundle.engine.close()
 
@@ -352,7 +368,8 @@ def test_normal_runtime_missing_registry_cannot_produce_local_score(bridge_datab
         bundle.engine.execute("UPDATE durable_jobs SET lease_expires_at=? WHERE job_id=?", ("2026-01-01T00:00:00+00:00", claimed.job_id))
         assert ODayWorker(persistence=bundle, worker_id="synthetic-default-registry-worker").run_once()
         current = _physical(bridge_database, claimed.job_id)
-        assert current["status"] in ("RETRYING", "FAILED")
+        assert current["status"] == "RETRYING"
+        assert datetime.fromisoformat(current["next_attempt_at"]) > datetime.now(UTC)
         assert current["last_error"]["code"] == "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE"
         _assert_no_result(bundle, receipt["candidate_site_id"])
         assert current["result"] is None
@@ -405,7 +422,7 @@ def test_score_retry_preserves_candidate_and_rechecks_authority_and_version(brid
         bundle.engine.close()
 
 
-def test_result_persistence_failure_rolls_back_reports_candidate_and_completion(bridge_database, monkeypatch):
+def test_result_persistence_failure_rolls_back_results_but_preserves_committed_acceptance(bridge_database, monkeypatch):
     from modules.sitescore.application.intake_score_worker import (
         _JobResultRepository,
         handle_intake_score,
@@ -428,9 +445,15 @@ def test_result_persistence_failure_rolls_back_reports_candidate_and_completion(
         _assert_no_result(bundle, receipt["candidate_site_id"])
         current = _physical(bridge_database, claimed.job_id)
         assert current["status"] == "RUNNING" and current["result"] is None
-        assert not [e for e in bundle.outbox_repository.get_unpublished_events() if e.event_type == "candidate.promotion_completed"]
+        assert current["payload"]["worker_acceptance"]["candidate_site_id"] == receipt["candidate_site_id"]
+        assert len([e for e in bundle.outbox_repository.get_unpublished_events() if e.event_type == "candidate.promotion_completed"]) == 1
+        accepted = deepcopy(bundle.assisted_intake_store.promotions[receipt["promotion_decision_id"]])
+        assert accepted["status"] == "COMPLETED"
         bundle.engine.close()
         bundle = _bundle(bridge_database, monkeypatch)
+        bundle.assisted_intake_store.refresh(TENANT)
+        assert bundle.assisted_intake_store.promotions[receipt["promotion_decision_id"]] == accepted
+        assert len([e for e in bundle.outbox_repository.get_unpublished_events() if e.event_type == "candidate.promotion_completed"]) == 1
         _assert_no_result(bundle, receipt["candidate_site_id"])
     finally:
         bundle.engine.close()
@@ -514,6 +537,9 @@ def test_live_source_revocation_discards_inferred_output(bridge_database, monkey
         assert len(runtime.calls) == 1
         _assert_no_result(bundle, receipt["candidate_site_id"])
         assert _physical(bridge_database, claimed.job_id)["status"] != "SUCCEEDED"
+        bundle.assisted_intake_store.refresh(TENANT)
+        assert bundle.assisted_intake_store.promotions[receipt["promotion_decision_id"]]["status"] == "COMPLETED"
+        assert len([e for e in bundle.outbox_repository.get_unpublished_events() if e.event_type == "candidate.promotion_completed"]) == 1
     finally:
         bundle.engine.close()
 
@@ -614,10 +640,10 @@ def test_expired_worker_attempts_exhaust_into_one_canonical_failure(bridge_datab
         assert delivery.status == (JobStatus.CANCELLED if cancel_requested else JobStatus.FAILED)
         assert delivery.delivery_state == (None if cancel_requested else JobDeliveryState.DEAD_LETTER)
         response = client.get(f"/api/v1/promotion-decisions/{receipt['promotion_decision_id']}", headers=_reviewer_headers())
-        assert response.status_code == 200 and response.json()["status"] == "SCORE_FAILED", response.text
+        assert response.status_code == 200 and response.json()["status"] == "COMPLETED", response.text
         _assert_no_result(bundle, receipt["candidate_site_id"])
         events = bundle.outbox_repository.get_unpublished_events()
-        assert len([event for event in events if event.event_type == "sitescore.failed"]) == 1
+        assert len([event for event in events if event.event_type == "sitescore.failed"]) == (0 if cancel_requested else 1)
         dead_letters = [event for event in events if event.event_type == "job.dead_lettered"]
         if cancel_requested:
             assert dead_letters == []
@@ -734,6 +760,9 @@ def test_cancellation_before_worker_claim_settles_without_inference(bridge_datab
     try:
         _, _, receipt = _approved_score(bridge_database, bundle, _promotion_client(bundle))
         job_id = receipt["site_score_job_id"]
+        bundle.assisted_intake_store.refresh(TENANT)
+        promotion_before = deepcopy(bundle.assisted_intake_store.promotions[receipt["promotion_decision_id"]])
+        candidate_before = deepcopy(bundle.listing_repository_for_tenant(TENANT).list_candidates())
         with bridge_database.connect() as conn:
             conn.execute("UPDATE workflow.jobs SET cancellation_requested_at=now(),version=version+1 WHERE job_id=%s", (job_id,))
         runtime = RecordingRuntime()
@@ -742,12 +771,17 @@ def test_cancellation_before_worker_claim_settles_without_inference(bridge_datab
         cancelled = _physical(bridge_database, job_id)
         assert cancelled["status"] == "CANCELLED"
         assert cancelled["attempt"] == 1
+        assert cancelled["payload"].get("worker_acceptance") is None
         assert bundle.job_queue.get(job_id).status == JobStatus.CANCELLED
         events = bundle.outbox_repository.get_unpublished_events()
         failures = [event for event in events if event.event_type == "sitescore.failed"]
-        assert len(failures) == 1 and failures[0].payload["attempt"] == cancelled["attempt"]
-        assert failures[0].payload["error_code"] == "SITESCORE_CANCELLED"
+        assert failures == []
         assert not any(event.event_type == "job.dead_lettered" for event in events)
+        bundle.assisted_intake_store.refresh(TENANT)
+        assert bundle.assisted_intake_store.promotions[receipt["promotion_decision_id"]] == promotion_before
+        assert bundle.listing_repository_for_tenant(TENANT).list_candidates() == candidate_before
+        audits = [row for row in bundle.assisted_intake_store.workflow_audits.values() if row["action"] == "sitescore.cancelled"]
+        assert len(audits) == 1 and audits[0]["after_value"]["attempt"] == cancelled["attempt"]
         _assert_no_result(bundle, receipt["candidate_site_id"])
     finally:
         bundle.engine.close()

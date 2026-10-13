@@ -853,6 +853,9 @@ export function AssistedIntakeSection({
       if (getResult.ok) {
         applyRecord(getResult.value);
         setActionError(null);
+        // The worker advances promotion/job receipts independently of the
+        // intake record. Refresh those authorities even if intake ID is stable.
+        await handleLookupPromotionDecision();
       } else {
         setActionError(getResult.error);
       }

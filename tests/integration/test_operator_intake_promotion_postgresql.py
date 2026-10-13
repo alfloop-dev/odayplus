@@ -1,5 +1,6 @@
 """Canonical promotion with isolated SQL and explicitly synthetic measured evidence."""
 
+import json
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -27,6 +28,10 @@ pytestmark = pytest.mark.requires_live_env
 @pytest.fixture(autouse=True)
 def synthetic_score_signing_key(monkeypatch):
     monkeypatch.setenv("ODP_INTAKE_SCORE_ATTEMPT_SIGNING_KEY", "synthetic-local-score-delivery-test-key-20261013")
+    monkeypatch.setenv("ODP_INTAKE_SCORE_RETRY_POLICY_JSON", json.dumps({
+        "policy_id": "synthetic-local-score-retry-v1", "version": 1,
+        "max_attempts": 5, "backoff_seconds": [10, 30, 120, 600],
+    }))
 
 
 def _promotion_client(bundle):

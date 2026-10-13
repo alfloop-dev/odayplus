@@ -42,6 +42,8 @@ def collect_evidence(root: Path, output: Path, *, expect_complete: bool = False)
     files: list[dict[str, Any]] = []
     omitted: list[dict[str, str]] = []
     errors: list[str] = []
+    diagnostics: list[dict[str, Any]] = []
+    diagnostics_omitted: list[dict[str, str]] = []
     for relative, runner in (
         (RAW_PLAYWRIGHT_PATH, "playwright"),
         (RAW_PYTEST_PATH, "pytest"),
@@ -91,6 +93,10 @@ def collect_evidence(root: Path, output: Path, *, expect_complete: bool = False)
             }
         )
         errors.extend(f"{path.name}: {error}" for error in validation_errors)
+        if runner == "playwright" and not validation_errors:
+            diagnostics, diagnostics_omitted = _copy_playwright_diagnostics(
+                root, output, payload["payload"], source_hash=sha256_bytes(raw),
+            )
     if expect_complete:
         errors.extend(f"{item['path']}: {item['reason']}" for item in omitted)
         if not omitted:
@@ -103,11 +109,61 @@ def collect_evidence(root: Path, output: Path, *, expect_complete: bool = False)
         "files": files,
         "omitted": omitted,
         "validation_errors": errors,
+        "diagnostics": diagnostics,
+        "diagnostics_omitted": diagnostics_omitted,
         "full_product_acceptance_claimed": False,
         "production_admission_claimed": False,
     }
     (output / "collection.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
+
+
+def _copy_playwright_diagnostics(root: Path, output: Path, payload: Any, *, source_hash: str):
+    """Copy only attachments named by this validated current-source run.
+
+    No directory glob: an earlier visual/bootstrap run can leave unrelated
+    files behind. Attachment paths must resolve inside the runner's fixed
+    test-results directory; arbitrary files and symlinks are never exported.
+    Diagnostic files are supplemental and cannot make an acceptance pass.
+    """
+    def attachments(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "attachments" and isinstance(child, list):
+                    yield from (item for item in child if isinstance(item, dict) and isinstance(item.get("path"), str))
+                elif isinstance(child, (dict, list)):
+                    yield from attachments(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from attachments(child)
+
+    copied, omitted, seen = [], [], set()
+    allowed = root.resolve() / "test-results"
+    for attachment in attachments(payload):
+        path = Path(attachment["path"])
+        if not path.is_absolute():
+            path = root / path
+        if str(path) in seen:
+            continue
+        seen.add(str(path))
+        resolved = path.resolve()
+        if (not resolved.is_relative_to(allowed) or path.is_symlink()
+                or not path.is_file() or any(parent.is_symlink() for parent in path.parents)):
+            omitted.append({"path": attachment["path"], "reason": "missing, symlink or outside test-results"})
+            continue
+        relative = resolved.relative_to(allowed)
+        destination = output / "test-results" / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        raw = path.read_bytes()
+        destination.write_bytes(raw)
+        copied.append({
+            "path": str(Path("test-results") / relative),
+            "archive_path": destination.relative_to(output).as_posix(),
+            "name": attachment.get("name"), "content_type": attachment.get("contentType"),
+            "sha256": sha256_bytes(raw), "bytes": len(raw),
+            "referencing_artifact_sha256": source_hash, "diagnostic_only": True,
+        })
+    return copied, omitted
 
 
 def main() -> int:

@@ -15,12 +15,13 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, is_dataclass, replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid5
 
 from modules.listing.application.intake_score_admission import validate_score_admission
+from modules.listing.application.intake_score_retry_policy import score_retry_policy
 from modules.listing.application.intake_workflow_bootstrap import record_workflow_change
 from modules.sitescore.application.candidate_features import feature_from_candidate
 from shared.domain.events import DomainEvent
@@ -151,8 +152,8 @@ class IntakeScoreJobRepository:
 
     def _row(self, job_id: str, tenant: str, *, lock: bool = False) -> dict[str, Any] | None:
         row = self.engine.query_one(
-            "SELECT * FROM workflow.jobs WHERE job_id=? AND tenant_id=? AND job_type=?"
-            + (" FOR UPDATE" if lock else ""),
+            ("SELECT * FROM workflow.jobs WHERE job_id=? AND tenant_id=? AND job_type=? FOR UPDATE"
+             if lock else "SELECT * FROM workflow.jobs WHERE job_id=? AND tenant_id=? AND job_type=?"),
             (job_id, tenant, INTAKE_SITESCORE_JOB_TYPE),
         )
         if row is not None:
@@ -160,6 +161,10 @@ class IntakeScoreJobRepository:
                 if isinstance(row[key], str):
                     row[key] = json.loads(row[key])
         return row
+
+    def _now(self) -> datetime:
+        # Eligibility and lease checks must use the same clock as queue claims.
+        return _time(self.engine.query_one("SELECT statement_timestamp() AS now")["now"])
 
     def _repository(self, tenant: str) -> Any:
         repo = self.persistence.listing_repository_for_tenant(tenant)
@@ -231,11 +236,17 @@ class IntakeScoreJobRepository:
         return {
             "job_id": str(row["job_id"]), "tenant_id": str(row["tenant_id"]),
             **{k: row["payload"][k] for k in ("intake_id", "promotion_decision_id", "candidate_site_id")},
-            "status": "FAILED" if status == "DEAD_LETTER" else status,
-            "delivery_state": "DEAD_LETTER" if status == "DEAD_LETTER" else None,
+            "status": "FAILED" if status == "DEAD_LETTER" else "QUEUED" if status == "RETRYING" else status,
+            "delivery_state": status if status in {"DEAD_LETTER", "RETRYING"} else None,
             "checkpoint": row["checkpoint"], "attempt": row["attempt"],
             "version": row["version"], "correlation_id": str(row["correlation_id"]),
         }
+
+    def _audit_snapshot(self, row: dict) -> dict:
+        return {**self._receipt(row), "canonical_status": row["status"],
+                "next_attempt_at": _jsonable(row.get("next_attempt_at")),
+                "retry_policy": deepcopy(row["payload"].get("retry_policy")),
+                "worker_acceptance": deepcopy(row["payload"].get("worker_acceptance"))}
 
     def get_job(self, job_id: str, tenant_id: str) -> dict[str, Any] | None:
         try:
@@ -253,6 +264,7 @@ class IntakeScoreJobRepository:
     def enqueue(self, promotion: dict[str, Any], *, context: Any) -> dict[str, Any]:
         tenant = context.actor.tenant_id
         self._key()
+        retry_policy = score_retry_policy()
         with self.engine.lock:
             self._tenant(tenant)
             job_id = str(uuid5(UUID(promotion["promotion_decision_id"]), "sitescore"))
@@ -263,7 +275,7 @@ class IntakeScoreJobRepository:
                 raise ScoreDeliveryDenied("SITESCORE_PARENT_BINDING_DENIED")
             self._current_inputs(tenant, candidate)
             admission = validate_score_admission(self.engine, intake, candidate)
-            now = datetime.now(UTC)
+            now = self._now()
             correlation = context.correlation_id or intake["correlation_id"]
             UUID(correlation)
             payload = {
@@ -275,13 +287,16 @@ class IntakeScoreJobRepository:
                 "parent_fingerprint": self._fingerprint(intake, promotion, candidate),
                 "prediction_origin_time": now.isoformat(),
                 "admission": admission,
+                "retry_policy": retry_policy,
             }
             token = self._signed(job_id, tenant, 1)
             self.engine.execute(
                 "INSERT INTO workflow.jobs(job_id,tenant_id,job_type,aggregate_type,aggregate_id,"
                 "status,checkpoint,max_attempts,timeout_at,payload,correlation_id,idempotency_key,attempt_token_sha256) "
-                "VALUES(?,?,?,'candidate_site',?,'QUEUED','SCORE_QUEUED',5,?,?::jsonb,?,?,?)",
+                "VALUES(?,?,?,'candidate_site',?,'QUEUED','SCORE_QUEUED',?,?,?::jsonb,?,?,?)",
                 (job_id, tenant, INTAKE_SITESCORE_JOB_TYPE, promotion["candidate_site_id"],
+                 retry_policy["max_attempts"],
+                 # This is the existing enqueue deadline, not an inference SLA.
                  (now + timedelta(seconds=30)).isoformat(), json.dumps(payload), correlation,
                  f"intake-sitescore:{tenant}:{promotion['promotion_decision_id']}", hashlib.sha256(token.encode()).hexdigest()),
             )
@@ -292,7 +307,8 @@ class IntakeScoreJobRepository:
             ), correlation_id=correlation)
             if not created or delivery.job_id != job_id:
                 raise ScoreDeliveryConflict("SITESCORE_DELIVERY_RESERVATION_CONFLICT")
-            self.engine.execute("UPDATE durable_jobs SET max_retries=5 WHERE job_id=?", (job_id,))
+            self.engine.execute("UPDATE durable_jobs SET max_retries=? WHERE job_id=?", (retry_policy["max_attempts"], job_id))
+            self._schedule_delivery(delivery, now)
             row = self._row(job_id, tenant)
             self._event(row, "sitescore.requested", "candidate_promotion_service", "SiteScoreRequestedV1", {
                 "candidate_site_id": payload["candidate_site_id"],
@@ -348,9 +364,93 @@ class IntakeScoreJobRepository:
         if (current is None or current.job_type != INTAKE_SITESCORE_JOB_TYPE
                 or current.payload != payload or current.status != JobStatus.RUNNING
                 or current.fence_token != job.fence_token or current.locked_by != job.locked_by
-                or current.lease_expires_at is None or current.lease_expires_at <= datetime.now(UTC)):
+                or current.lease_expires_at is None or current.lease_expires_at <= self._now()):
             raise JobFenceRejectedError("SITESCORE_DELIVERY_FENCE_REJECTED")
         return current
+
+    def _schedule_delivery(self, current: JobRecord, available_at: datetime | None,
+                           *, after_status_update: bool = False) -> None:
+        """Mirror canonical eligibility in the same fenced transaction.
+
+        The global delivery poller must not read tenant-protected business rows.
+        This scheduling hint never authorizes execution: begin_attempt checks
+        the signed reference, tenant, canonical checkpoint and due time again.
+        """
+        result = self.engine.execute(
+            "UPDATE durable_jobs SET available_at=? WHERE job_id=? AND version=? AND fence_token=?",
+            (_jsonable(available_at), current.job_id,
+             current.version + int(after_status_update), current.fence_token),
+        )
+        if result.rowcount != 1:
+            raise JobFenceRejectedError("SITESCORE_DELIVERY_SCHEDULE_CAS_REJECTED")
+
+    def _accepted(self, row: dict, promotion: dict) -> bool:
+        acceptance = row["payload"].get("worker_acceptance")
+        if acceptance is None:
+            return False
+        expected = {
+            "tenant_id": str(row["tenant_id"]), "job_id": str(row["job_id"]),
+            "intake_id": row["payload"]["intake_id"],
+            "promotion_decision_id": row["payload"]["promotion_decision_id"],
+            "candidate_site_id": row["payload"]["candidate_site_id"],
+            "promotion_version": promotion["version"],
+            "audit_event_id": promotion.get("audit_event_id"),
+        }
+        if (not isinstance(acceptance, dict) or promotion["status"] != "COMPLETED"
+                or any(acceptance.get(key) != value for key, value in expected.items())
+                or type(acceptance.get("accepted_fence")) is not int
+                or not 0 < acceptance["accepted_fence"] <= row["fence_token"]
+                or not acceptance.get("accepted_at")):
+            raise JobFenceRejectedError("SITESCORE_ACCEPTANCE_BINDING_REJECTED")
+        try:
+            accepted_at = _time(acceptance["accepted_at"])
+            if (accepted_at.tzinfo is None or accepted_at.utcoffset() is None
+                    or not _time(row["created_at"]) <= accepted_at <= self._now()):
+                raise ValueError("Acceptance timestamp outside job lifetime")
+        except (ValueError, TypeError, OverflowError) as exc:
+            raise JobFenceRejectedError("SITESCORE_ACCEPTANCE_TIME_REJECTED") from exc
+        audit = self.store.workflow_audits.get(acceptance["audit_event_id"])
+        audit_parent = {
+            "tenant_id": str(row["tenant_id"]),
+            "promotion_decision_id": row["payload"]["promotion_decision_id"],
+            "intake_id": row["payload"]["intake_id"],
+            "candidate_site_id": row["payload"]["candidate_site_id"],
+            "site_score_job_id": str(row["job_id"]),
+            "version": promotion["version"], "status": "COMPLETED",
+        }
+        if (not audit or audit["resource_type"] != "promotion_decision"
+                or audit["resource_id"] != promotion["promotion_decision_id"]
+                or audit["action"] != "candidate.promotion_completed"
+                or audit["service_principal"] != "sitescore_worker"
+                or audit["result"] != "SUCCEEDED"
+                or audit["tenant_id"] != str(row["tenant_id"])
+                or audit["correlation_id"] != str(row["correlation_id"])
+                or any(audit["after_value"].get(key) != value for key, value in audit_parent.items())):
+            raise JobFenceRejectedError("SITESCORE_ACCEPTANCE_AUDIT_REJECTED")
+        return True
+
+    def _accept(self, row: dict, intake: dict, promotion: dict, candidate: Any) -> None:
+        before = deepcopy(promotion)
+        self._promotion(promotion, "COMPLETED")
+        audit_id = record_workflow_change(
+            self.store, intake, resource_type="promotion_decision", before=before, after=promotion,
+            action="candidate.promotion_completed", actor_id=row["payload"]["actor_id"],
+            service_principal="sitescore_worker", correlation_id=str(row["correlation_id"]),
+        )
+        self.store.promotions[promotion["promotion_decision_id"]] = promotion
+        payload = deepcopy(row["payload"])
+        payload["worker_acceptance"] = {
+            "tenant_id": str(row["tenant_id"]), "job_id": str(row["job_id"]),
+            "intake_id": payload["intake_id"], "promotion_decision_id": payload["promotion_decision_id"],
+            "candidate_site_id": payload["candidate_site_id"], "promotion_version": promotion["version"],
+            "accepted_at": self._now().isoformat(), "audit_event_id": audit_id,
+            "accepted_fence": row["fence_token"],
+        }
+        payload["parent_fingerprint"] = self._fingerprint(intake, promotion, candidate)
+        self._update(row, payload=payload)
+        self._event(row, "candidate.promotion_completed", "candidate_promotion_service", "PromotionChangedV1", {
+            key: promotion[key] for key in ("promotion_decision_id", "intake_id", "listing_id", "status", "decision_type", "candidate_site_id", "site_score_job_id", "version")
+        }, promotion=True)
 
     def begin_attempt(self, job: JobRecord) -> ScoreAttempt | None:
         tenant = self._authenticate_reference(job)
@@ -362,10 +462,14 @@ class IntakeScoreJobRepository:
                     raise ScoreDeliveryDenied("SITESCORE_ATTEMPT_TOKEN_DENIED")
                 return None
             current = self._delivery(job, row)
-            if (row["status"] not in {"QUEUED", "RUNNING"}
-                    or promotion["status"] != "SCORE_QUEUED"):
+            accepted = self._accepted(row, promotion)
+            if (row["status"] not in {"QUEUED", "RETRYING", "RUNNING"}
+                    or (not accepted and promotion["status"] != "SCORE_QUEUED")):
                 raise JobFenceRejectedError("SITESCORE_PARENT_OR_STATE_CHANGED")
-            if row["status"] == "RUNNING" and row["lease_expires_at"] and _time(row["lease_expires_at"]) > datetime.now(UTC):
+            now = self._now()
+            if row["status"] == "RETRYING" and (not row["next_attempt_at"] or _time(row["next_attempt_at"]) > now):
+                raise JobFenceRejectedError("SITESCORE_RETRY_NOT_DUE")
+            if row["status"] == "RUNNING" and row["lease_expires_at"] and _time(row["lease_expires_at"]) > now:
                 raise JobFenceRejectedError("SITESCORE_ATTEMPT_ALREADY_RUNNING")
             if row["cancellation_requested_at"]:
                 # This authenticated worker claim is an attempt even though it
@@ -373,8 +477,7 @@ class IntakeScoreJobRepository:
                 # consistent without exceeding an already exhausted budget.
                 if row["attempt"] < row["max_attempts"]:
                     self._update(row, attempt=row["attempt"] + 1, fence_token=int(row["fence_token"]) + 1)
-                self._settle_failed(job, row, intake, promotion, candidate, current,
-                                    "SITESCORE_CANCELLED", False, cancelled=True)
+                self._settle_cancelled(job, row, intake, current)
                 return None
             if row["attempt"] >= row["max_attempts"]:
                 self._settle_failed(job, row, intake, promotion, candidate, current,
@@ -385,7 +488,7 @@ class IntakeScoreJobRepository:
             payload["heartbeat_count"] = 0
             self._update(row, status="RUNNING", attempt=row["attempt"] + 1, fence_token=fence, payload=payload,
                          heartbeat_at=current.heartbeat_at, lease_expires_at=current.lease_expires_at,
-                         lease_owner=current.locked_by)
+                         lease_owner=current.locked_by, next_attempt_at=None)
             if self._fingerprint(intake, promotion, candidate) != row["payload"]["parent_fingerprint"]:
                 # The old attempt cannot commit. A newly claimed delivery may
                 # settle its stale checkpoint without overwriting changed input,
@@ -393,19 +496,24 @@ class IntakeScoreJobRepository:
                 self._settle_failed(job, row, intake, promotion, candidate, current,
                                     "SITESCORE_PARENT_CHANGED", False)
                 return None
-            attempt = ScoreAttempt(tenant, row["payload"]["candidate_site_id"],
-                                   _time(row["payload"]["prediction_origin_time"]), datetime.now(UTC),
-                                   {"fence": fence, "version": row["version"], "generation": row["payload"]["generation"],
-                                    "fingerprint": row["payload"]["parent_fingerprint"]}, deepcopy(candidate))
             self._audit(row, intake, "sitescore.attempt_started", row["payload"]["actor_id"])
             try:
                 self._current_inputs(tenant, candidate)
                 if validate_score_admission(self.engine, intake, candidate) != row["payload"]["admission"]:
                     raise ScoreDeliveryDenied("SITESCORE_ADMISSION_CHANGED")
+                if score_retry_policy() != row["payload"].get("retry_policy"):
+                    raise ScoreDeliveryDenied("SITESCORE_RETRY_POLICY_CHANGED")
             except ScoreDeliveryDenied as exc:
                 self._settle_failed(job, row, intake, promotion, candidate, current, str(exc), False)
                 return None
-            return attempt
+            if not accepted:
+                self._accept(row, intake, promotion, candidate)
+            # The unit commits this acceptance receipt, audit and event before
+            # the handler can enter external inference. Result state is separate.
+            return ScoreAttempt(tenant, row["payload"]["candidate_site_id"],
+                                _time(row["payload"]["prediction_origin_time"]), now,
+                                {"fence": fence, "version": row["version"], "generation": row["payload"]["generation"],
+                                 "fingerprint": row["payload"]["parent_fingerprint"]}, deepcopy(candidate))
 
     def _check_attempt(self, job: JobRecord, attempt: ScoreAttempt, row: dict, intake: dict, promotion: dict, candidate: Any):
         current = self._delivery(job, row)
@@ -413,12 +521,14 @@ class IntakeScoreJobRepository:
                 or row["fence_token"] != attempt.token["fence"]
                 or row["version"] != attempt.token["version"] + row["payload"].get("heartbeat_count", 0)
                 or row["payload"]["generation"] != attempt.token["generation"]
-                or not row["lease_expires_at"] or _time(row["lease_expires_at"]) <= datetime.now(UTC)
-                or promotion["status"] != "SCORE_QUEUED"
+                or not row["lease_expires_at"] or _time(row["lease_expires_at"]) <= self._now()
+                or not self._accepted(row, promotion)
                 or self._fingerprint(intake, promotion, candidate) != attempt.token["fingerprint"]):
             raise JobFenceRejectedError("SITESCORE_RESULT_FENCE_REJECTED")
         if validate_score_admission(self.engine, intake, candidate) != row["payload"]["admission"]:
             raise JobFenceRejectedError("SITESCORE_ADMISSION_CHANGED")
+        if score_retry_policy() != row["payload"].get("retry_policy"):
+            raise JobFenceRejectedError("SITESCORE_RETRY_POLICY_CHANGED")
         return current
 
     def commit_success(self, job: JobRecord, attempt: ScoreAttempt, persist_callback: Callable[[], dict]) -> dict:
@@ -429,13 +539,10 @@ class IntakeScoreJobRepository:
             result = persist_callback()
             if not all(result.get(key) for key in ("report_id", "report_version", "sitescore_run_id", "prediction_run_id", "model_version")):
                 raise ScoreDeliveryValidationError("SITESCORE_RESULT_RECEIPT_INCOMPLETE")
-            self._update(row, status="SUCCEEDED", result=result, acknowledged_at=datetime.now(UTC),
-                         lease_expires_at=None, lease_owner=None)
+            self._update(row, status="SUCCEEDED", result=result, acknowledged_at=self._now(),
+                         lease_expires_at=None, lease_owner=None, last_error=None, next_attempt_at=None)
             self.queue.update_status(job.job_id, JobStatus.SUCCEEDED, expected_version=current.version, fence_token=current.fence_token)
-            self._promotion(promotion, "COMPLETED")
-            self._event(row, "candidate.promotion_completed", "candidate_promotion_service", "PromotionChangedV1", {
-                key: promotion[key] for key in ("promotion_decision_id", "intake_id", "listing_id", "status", "decision_type", "candidate_site_id", "site_score_job_id", "version")
-            }, promotion=True)
+            self._schedule_delivery(current, None, after_status_update=True)
             self._audit(row, intake, "sitescore.completed", row["payload"]["actor_id"])
             return self._receipt(row)
 
@@ -444,21 +551,45 @@ class IntakeScoreJobRepository:
             raise ScoreDeliveryDenied("SITESCORE_ATTEMPT_TENANT_DENIED")
         with self._unit(job.job_id, attempt.tenant_id) as (row, intake, promotion, candidate):
             current = self._check_attempt(job, attempt, row, intake, promotion, candidate)
-            self._settle_failed(job, row, intake, promotion, candidate, current, error_code, retryable)
+            if retryable and row["attempt"] < row["max_attempts"]:
+                policy = row["payload"]["retry_policy"]
+                due = self._now() + timedelta(seconds=policy["backoff_seconds"][row["attempt"] - 1])
+                self._update(row, status="RETRYING", next_attempt_at=due,
+                             last_error={"code": error_code, "retryable": True},
+                             lease_expires_at=None, lease_owner=None)
+                self.queue.update_status(job.job_id, JobStatus.QUEUED, expected_version=current.version,
+                                         fence_token=current.fence_token, error_message=error_code,
+                                         delivery_state=JobDeliveryState.RETRYING)
+                self._schedule_delivery(current, due, after_status_update=True)
+                self._audit(row, intake, "sitescore.retry_scheduled", row["payload"]["actor_id"])
+            else:
+                self._settle_failed(job, row, intake, promotion, candidate, current, error_code, retryable)
             return self._receipt(row)
+
+    def _settle_cancelled(self, job: JobRecord, row: dict, intake: dict, current: JobRecord) -> None:
+        self._update(row, status="CANCELLED", last_error={"code": "SITESCORE_CANCELLED", "retryable": False},
+                     lease_expires_at=None, lease_owner=None, next_attempt_at=None)
+        self.queue.update_status(job.job_id, JobStatus.CANCELLED, expected_version=current.version,
+                                 fence_token=current.fence_token, error_message="SITESCORE_CANCELLED")
+        self._schedule_delivery(current, None, after_status_update=True)
+        # Cancellation is not a permanent validation error. The contract has no
+        # promotion cancellation edge; preserve its checkpoint and candidate.
+        self._audit(row, intake, "sitescore.cancelled", row["payload"]["actor_id"])
 
     def _settle_failed(self, job: JobRecord, row: dict, intake: dict, promotion: dict,
                        candidate: Any, current: JobRecord, error_code: str, retryable: bool,
-                       *, exhausted: bool = False, cancelled: bool = False) -> None:
-        exhausted = not cancelled and (exhausted or row["attempt"] >= row["max_attempts"])
-        dead_lettered_at = datetime.now(UTC) if exhausted else None
-        self._update(row, status="CANCELLED" if cancelled else "DEAD_LETTER" if exhausted else "FAILED",
+                       *, exhausted: bool = False) -> None:
+        exhausted = exhausted or row["attempt"] >= row["max_attempts"]
+        dead_lettered_at = self._now() if exhausted else None
+        self._update(row, status="DEAD_LETTER" if exhausted else "FAILED",
                      last_error={"code": error_code, "retryable": retryable},
-                     lease_expires_at=None, lease_owner=None, dead_lettered_at=dead_lettered_at)
-        self.queue.update_status(job.job_id, JobStatus.CANCELLED if cancelled else JobStatus.FAILED, expected_version=current.version,
+                     lease_expires_at=None, lease_owner=None, dead_lettered_at=dead_lettered_at, next_attempt_at=None)
+        self.queue.update_status(job.job_id, JobStatus.FAILED, expected_version=current.version,
                                  fence_token=current.fence_token, error_message=error_code,
                                  delivery_state=JobDeliveryState.DEAD_LETTER if exhausted else None)
-        self._promotion(promotion, "SCORE_FAILED")
+        self._schedule_delivery(current, None, after_status_update=True)
+        if not self._accepted(row, promotion):
+            self._promotion(promotion, "SCORE_FAILED")
         failed = _with_candidate_status(candidate, "SCORING_FAILED")
         self._repository(str(row["tenant_id"])).save_candidate(failed)
         self._event(row, "sitescore.failed", "sitescore_worker", "SiteScoreFailedV1", {
@@ -482,34 +613,44 @@ class IntakeScoreJobRepository:
             raise ScoreDeliveryDenied("SITESCORE_REPLAY_INCIDENT_REFERENCE_REQUIRED")
         self._key()
         with self._unit(job_id, tenant_id) as (row, intake, promotion, candidate):
-            if row["version"] != expected_version or row["status"] != "FAILED" or promotion["status"] != "SCORE_FAILED":
+            accepted = self._accepted(row, promotion)
+            if (row["version"] != expected_version or row["status"] != "FAILED"
+                    or (not accepted and promotion["status"] != "SCORE_FAILED")):
                 raise ScoreDeliveryConflict("SITESCORE_REPLAY_VERSION_OR_STATE_CONFLICT")
             if row["attempt"] >= row["max_attempts"]:
                 raise ScoreDeliveryConflict("SITESCORE_RETRY_BUDGET_EXHAUSTED")
             self._current_inputs(tenant_id, candidate)
             admission = validate_score_admission(self.engine, intake, candidate)
-            self._promotion(promotion, "SCORE_QUEUED")
+            retry_policy = score_retry_policy()
+            if retry_policy["max_attempts"] != row["max_attempts"]:
+                raise ScoreDeliveryDenied("SITESCORE_REPLAY_BUDGET_CHANGE_DENIED")
+            if not accepted:
+                self._promotion(promotion, "SCORE_QUEUED")
             candidate = _with_candidate_status(candidate, "new")
             self._repository(tenant_id).save_candidate(candidate)
             payload = deepcopy(row["payload"])
             payload["generation"] += 1
             payload["actor_id"] = actor_id
-            payload["prediction_origin_time"] = datetime.now(UTC).isoformat()
+            payload["prediction_origin_time"] = self._now().isoformat()
             payload["admission"] = admission
+            payload["retry_policy"] = retry_policy
             payload["parent_fingerprint"] = self._fingerprint(intake, promotion, candidate)
             token = self._signed(job_id, tenant_id, payload["generation"])
             self._update(row, status="QUEUED", payload=payload, fence_token=row["fence_token"] + 1,
-                         cancellation_requested_at=None, last_error=None,
+                         cancellation_requested_at=None, last_error=None, next_attempt_at=None,
                          attempt_token_sha256=hashlib.sha256(token.encode()).hexdigest())
             current = self.queue.get(job_id)
             if current is None or current.status != JobStatus.FAILED:
                 raise ScoreDeliveryConflict("SITESCORE_REPLAY_DELIVERY_CONFLICT")
-            self.engine.execute(
+            delivery_update = self.engine.execute(
                 "UPDATE durable_jobs SET status=?,delivery_state=NULL,payload_json=?,version=version+1,"
-                "fence_token=fence_token+1,locked_by=NULL,lease_expires_at=NULL,heartbeat_at=NULL,error_message=NULL "
+                "fence_token=fence_token+1,locked_by=NULL,lease_expires_at=NULL,heartbeat_at=NULL,error_message=NULL,available_at=? "
                 "WHERE job_id=? AND version=? AND fence_token=?",
-                (JobStatus.QUEUED.value, json.dumps({"job_id": job_id, "tenant_id": tenant_id, "attempt_token": token}), job_id, current.version, current.fence_token),
+                (JobStatus.QUEUED.value, json.dumps({"job_id": job_id, "tenant_id": tenant_id, "attempt_token": token}),
+                 self._now().isoformat(), job_id, current.version, current.fence_token),
             )
+            if delivery_update.rowcount != 1:
+                raise JobFenceRejectedError("SITESCORE_REPLAY_DELIVERY_CAS_REJECTED")
             self._event(row, "job.replay_requested", "job_platform", "JobReplayRequestedV1", {
                 "job_id": job_id, "checkpoint": checkpoint, "requested_by": actor_id,
                 "reason": reason, "override_retry_budget": False,
@@ -523,10 +664,13 @@ class IntakeScoreJobRepository:
             raise JobFenceRejectedError("SITESCORE_JOB_UNAVAILABLE")
         tenant = self._authenticate_reference(current)
         with self._unit(job_id, tenant) as (row, intake, promotion, candidate):
-            if row["status"] not in {"QUEUED", "RUNNING"} or row["cancellation_requested_at"]:
+            if row["status"] not in {"QUEUED", "RETRYING", "RUNNING"} or row["cancellation_requested_at"]:
                 raise JobFenceRejectedError("SITESCORE_HEARTBEAT_STATE_REJECTED")
+            if row["status"] == "RETRYING" and (not row["next_attempt_at"]
+                    or _time(row["next_attempt_at"]) > self._now()):
+                raise JobFenceRejectedError("SITESCORE_RETRY_NOT_DUE")
             if row["status"] == "RUNNING" and (not row["lease_expires_at"]
-                    or _time(row["lease_expires_at"]) <= datetime.now(UTC)):
+                    or _time(row["lease_expires_at"]) <= self._now()):
                 raise JobFenceRejectedError("SITESCORE_HEARTBEAT_LEASE_EXPIRED")
             self._delivery(current, row)
             version = self.queue.heartbeat(job_id, expected_version, fence_token)
@@ -540,7 +684,7 @@ class IntakeScoreJobRepository:
 
     def _update(self, row: dict, **changes: Any) -> None:
         allowed = {"status", "attempt", "fence_token", "heartbeat_at", "lease_expires_at", "lease_owner",
-                   "payload", "result", "last_error", "acknowledged_at", "dead_lettered_at", "cancellation_requested_at", "attempt_token_sha256"}
+                   "payload", "result", "last_error", "acknowledged_at", "dead_lettered_at", "cancellation_requested_at", "attempt_token_sha256", "next_attempt_at"}
         if not set(changes) <= allowed:
             raise ValueError("Unsupported workflow job mutation")
         columns, values = [], []
@@ -555,7 +699,7 @@ class IntakeScoreJobRepository:
         )
         if result.rowcount != 1:
             raise JobFenceRejectedError("SITESCORE_JOB_CAS_REJECTED")
-        row["_previous_receipt"] = self._receipt(row)
+        row["_previous_receipt"] = self._audit_snapshot(row)
         row.update(changes)
         row["version"] += 1
 
@@ -571,7 +715,7 @@ class IntakeScoreJobRepository:
         service = ("candidate_promotion_service" if action == "sitescore.enqueue"
                    else "job_platform" if action == "sitescore.replay_requested" else "sitescore_worker")
         record_workflow_change(self.store, intake, resource_type="job", before=row.pop("_previous_receipt", None),
-                               after=self._receipt(row), action=action, actor_id=actor, result=result,
+                               after=self._audit_snapshot(row), action=action, actor_id=actor, result=result,
                                service_principal=service, correlation_id=str(row["correlation_id"]))
 
     def _event(self, row: dict, event: str, producer: str, schema: str, payload: dict,

@@ -225,6 +225,7 @@ export function ListingRadarPanel({
                     row.id === "L-2024" &&
                     !row.candidateId &&
                     !row.isDuplicate &&
+                    row.hardRuleStatus === "measured" &&
                     row.hardRuleFailures.length === 0 &&
                     row.status !== "archived";
                   // Merge needs listing:UPDATE plus the service's actor allowlist;
@@ -268,7 +269,7 @@ export function ListingRadarPanel({
                         {row.hardRuleFailures.length ? (
                           <span className={styles.flagRisk}>{row.hardRuleFailures.join("; ")}</span>
                         ) : null}
-                        {!row.isDuplicate && !row.hardRuleFailures.length ? <span className={styles.muted}>Clean</span> : null}
+                        {row.hardRuleStatus === "unmeasured" ? <span className={styles.muted}>硬規則尚未檢核</span> : !row.isDuplicate && !row.hardRuleFailures.length ? <span className={styles.muted}>Clean</span> : null}
                         {listing?.mergedIntoId ? <small>merged into {listing.mergedIntoId}</small> : null}
                         {listing?.archivedReason ? <small>{listing.archivedReason}</small> : null}
                         <small data-testid={`listing-evidence-${row.id}`}>
@@ -347,7 +348,7 @@ export function ListingRadarPanel({
                   <DetailRow label="首見">{selectedListing?.firstSeenAt ?? "—"}</DetailRow>
                   <DetailRow label="Geocode">{selectedRow.geocodeConfidenceLabel}</DetailRow>
                   <DetailRow label="重複檢查">{selectedRow.isDuplicate ? `重複 ${selectedRow.duplicateOfId ?? ""}` : "唯一物件"}</DetailRow>
-                  <DetailRow label="硬規則">{selectedListing?.hardRuleSummary ?? (selectedRow.hardRuleFailures.length ? selectedRow.hardRuleFailures.join("; ") : "3/3 通過")}</DetailRow>
+                  <DetailRow label="硬規則">{selectedRow.hardRuleStatus === "unmeasured" ? "硬規則尚未檢核" : selectedListing?.hardRuleSummary ?? (selectedRow.hardRuleFailures.length ? selectedRow.hardRuleFailures.join("; ") : "3/3 通過")}</DetailRow>
                   <DetailRow label="HeatZone">{selectedRow.zoneLabel} · 適配 {selectedListing?.fitScore ?? "—"}</DetailRow>
                   <DetailRow label="候選點">{selectedRow.candidateId ?? "—"}</DetailRow>
                   <DetailRow label="Evidence">{(selectedListing?.sourceEvidence ?? []).join(", ") || "—"}</DetailRow>
@@ -357,12 +358,13 @@ export function ListingRadarPanel({
                   data-testid="listing-detail-primary"
                   disabled={
                     !selectedRow ||
+                    selectedRow.hardRuleStatus === "unmeasured" ||
                     selectedRow.status === "archived" ||
                     Boolean(detailMergedIntoId) ||
                     detailMergeDenied
                   }
                   onClick={() => {
-                    if (!selectedRow || detailMergedIntoId || detailMergeDenied) return;
+                    if (!selectedRow || selectedRow.hardRuleStatus === "unmeasured" || detailMergedIntoId || detailMergeDenied) return;
                     const mergeTarget = selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId;
                     if (selectedRow.id === "L-2024" && !selectedRow.candidateId && !selectedRow.isDuplicate) {
                       onConvert?.(selectedRow.id);
@@ -430,6 +432,7 @@ function rowRecommendation(row: ListingRadarRow, mergeTarget?: string) {
   if (row.status === "candidate") return "已轉候選";
   if (row.status === "archived") return "已封存";
   if (row.isDuplicate) return `標記重複${mergeTarget ? ` ${mergeTarget}` : ""}`;
+  if (row.hardRuleStatus === "unmeasured") return "硬規則尚未檢核";
   if (row.hardRuleFailures.length) return "封存";
   return "轉為候選點";
 }
@@ -447,6 +450,7 @@ function detailPrimaryLabel(row: ListingRadarRow, canMerge: boolean, mergedIntoI
   if (row.status === "archived") return "已封存";
   if (mergedIntoId) return `已標記重複至 ${mergedIntoId}`;
   if (row.isDuplicate) return canMerge ? "標記重複（保留目標物件）" : "無標記重複權限";
+  if (row.hardRuleStatus === "unmeasured") return "硬規則尚未檢核";
   if (row.hardRuleFailures.length) return "封存（硬規則未過）";
   return "轉為候選點";
 }
