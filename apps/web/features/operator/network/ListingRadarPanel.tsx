@@ -111,6 +111,7 @@ export function ListingRadarPanel({
   // be merged" from "already merged". A second click would mint a fresh
   // idempotency key, which the server now refuses with 409.
   const detailMergedIntoId = selectedListing?.mergedIntoId;
+  const detailIsTerminal = selectedRow?.status === "archived" || Boolean(detailMergedIntoId);
   // The detail pane's primary action doubles as the merge entry point, so it
   // needs the SAME gates as the row-level button — otherwise an unauthorized
   // role is still offered a merge whose handler silently does nothing.
@@ -124,7 +125,7 @@ export function ListingRadarPanel({
       !canMergeListing(activeRoleId),
   );
   const detailLegacyAction = selectedRow && selectedRow.hardRuleStatus === "measured"
-    && selectedRow.status !== "archived" && !detailMergedIntoId && !detailMergeDenied
+    && !detailIsTerminal && !detailMergeDenied
     ? selectedRow.id === "L-2029" && (selectedListing?.duplicateOfId ?? selectedRow.duplicateOfId)
       ? "merge" : selectedRow.id === "L-2030" && selectedRow.hardRuleFailures.length ? "archive" : null
     : null;
@@ -233,6 +234,7 @@ export function ListingRadarPanel({
                   const listing = listingById.get(row.id);
                   const evidence = listing?.sourceEvidence ?? [];
                   const isBusy = busyListingId === row.id;
+                  const isTerminal = row.status === "archived" || Boolean(listing?.mergedIntoId);
                   const mergeTarget = listing?.duplicateOfId ?? row.duplicateOfId;
                   const navigation = navigationFor(row.id);
                   // Merge needs listing:UPDATE plus the service's actor allowlist;
@@ -243,11 +245,11 @@ export function ListingRadarPanel({
                   const canMerge =
                     row.id === "L-2029" &&
                     Boolean(mergeTarget) &&
-                    !listing?.mergedIntoId &&
+                    !isTerminal &&
                     canMergeListing(activeRoleId);
                   const canArchive =
                     row.id === "L-2030" &&
-                    row.status !== "archived" &&
+                    !isTerminal &&
                     (row.status === "hardfail" || row.hardRuleFailures.length > 0);
 
                   return (
@@ -286,15 +288,16 @@ export function ListingRadarPanel({
                       <div className={styles.rowActions}>
                         <button
                           data-testid={`listing-navigate-${row.id}`}
-                          disabled={isBusy || !onNavigate || (!navigation.primary && navigation.state !== "multiple")}
+                          disabled={isTerminal || isBusy || !onNavigate || (!navigation.primary && navigation.state !== "multiple")}
                           onClick={(event) => {
                             event.stopPropagation();
+                            if (isTerminal) return;
                             setSelectedListingId(row.id);
                             if (navigation.primary) onNavigate?.(row.id, navigation.primary);
                           }}
                           type="button"
                         >
-                          {navigation.label}
+                          {isTerminal ? detailPrimaryLabel(row, canMergeListing(activeRoleId), listing?.mergedIntoId) : navigation.label}
                         </button>
                         {canMerge && mergeTarget ? (
                           <button
@@ -362,8 +365,9 @@ export function ListingRadarPanel({
                 <button
                   className={styles.detailPrimaryButton}
                   data-testid="listing-detail-primary"
-                  disabled={busyListingId === selectedRow.id || (detailNavigation?.primary ? !onNavigate : !detailLegacyAction)}
+                  disabled={detailIsTerminal || busyListingId === selectedRow.id || (detailNavigation?.primary ? !onNavigate : !detailLegacyAction)}
                   onClick={() => {
+                    if (detailIsTerminal) return;
                     if (detailNavigation?.primary) {
                       onNavigate?.(selectedRow.id, detailNavigation.primary);
                     } else if (detailLegacyAction === "merge") {
@@ -374,7 +378,9 @@ export function ListingRadarPanel({
                   }}
                   type="button"
                 >
-                  {detailNavigation?.primary || !detailLegacyAction ? detailNavigation?.label : detailPrimaryLabel(selectedRow, canMergeListing(activeRoleId), detailMergedIntoId)}
+                  {detailIsTerminal
+                    ? detailPrimaryLabel(selectedRow, canMergeListing(activeRoleId), detailMergedIntoId)
+                    : detailNavigation?.primary || !detailLegacyAction ? detailNavigation?.label : detailPrimaryLabel(selectedRow, canMergeListing(activeRoleId), detailMergedIntoId)}
                 </button>
                 {detailNavigation && detailNavigation.intakes.length > 0 ? (
                   <div aria-label="關聯收件" data-testid="listing-related-intakes">
@@ -458,9 +464,9 @@ function rowRecommendation(row: ListingRadarRow, mergeTarget?: string) {
  * it this still labels a completed merge as an available one.
  */
 function detailPrimaryLabel(row: ListingRadarRow, canMerge: boolean, mergedIntoId?: string) {
-  if (row.status === "candidate") return `前往候選點 ${row.candidateId ?? ""}`;
   if (row.status === "archived") return "已封存";
   if (mergedIntoId) return `已標記重複至 ${mergedIntoId}`;
+  if (row.status === "candidate") return `前往候選點 ${row.candidateId ?? ""}`;
   if (row.isDuplicate) return canMerge ? "標記重複（保留目標物件）" : "無標記重複權限";
   if (row.hardRuleStatus === "unmeasured") return "硬規則尚未檢核";
   if (row.hardRuleFailures.length) return "封存（硬規則未過）";
