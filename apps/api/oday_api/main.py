@@ -1139,10 +1139,9 @@ else:
         def _enqueue_job_response(
             body: JobCreatePayload, request: Request, idempotency_key: str | None,
         ) -> dict[str, Any]:
-            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
-
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_authorization import authorize_intake_action
+            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
 
             if body.job_type == INTAKE_SITESCORE_JOB_TYPE:
                 raise HTTPException(
@@ -1325,9 +1324,8 @@ else:
         def _authorize_job_access(
             job: Any, request: Request, *, intake_action: str = "view",
         ) -> dict[str, Any] | None:
-            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
-
             from apps.api.oday_api.security.dependencies import principal_from_headers
+            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
 
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
             if job.job_type == "forecast":
@@ -1346,11 +1344,10 @@ else:
                         detail="job not found",
                     )
             elif job.job_type == INTAKE_SITESCORE_JOB_TYPE:
+                from modules.listing.application.intake_authorization import authorize_intake_action
                 from modules.listing.application.intake_score_delivery import (
                     IntakeScoreJobRepository,
                 )
-
-                from modules.listing.application.intake_authorization import authorize_intake_action
                 from shared.infrastructure.persistence.operator_intake_workflow import (
                     project_operator_intake,
                 )
@@ -1505,9 +1502,8 @@ else:
                     )
 
         def _authorized_job_response(job: Any, request: Request) -> dict[str, Any]:
-            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
-
             from apps.api.oday_api.security.dependencies import principal_from_headers
+            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
 
             authorized_resource = _authorize_job_access(job, request)
             if job.job_type == INTAKE_SITESCORE_JOB_TYPE:
@@ -1540,9 +1536,8 @@ else:
             body: JobRetryPayload | None,
             request: Request,
         ) -> dict[str, Any]:
-            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
-
             from apps.api.oday_api.security.dependencies import principal_from_headers
+            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
             from shared.auth import Action, rbac_allows
             from shared.infrastructure.persistence.job_queue import JobFenceRejectedError
 

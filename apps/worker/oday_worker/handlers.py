@@ -823,8 +823,6 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
 
 def build_default_registry() -> JobRegistry:
     """The registry the runtime worker uses by default."""
-    from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
-
     from apps.worker.assisted_listing_intake.worker import (
         INTAKE_JOB_TYPE,
         handle_assisted_listing_intake,
@@ -832,6 +830,7 @@ def build_default_registry() -> JobRegistry:
     from apps.worker.consumers.canonical_audit import handle_canonical_audit_delivery
     from apps.worker.consumers.durable_audit import handle_durable_audit_delivery
     from apps.worker.consumers.store_ops_audit import handle_store_ops_audit_delivery
+    from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
     from modules.opsboard.application.store_ops_audit_delivery import (
         JOB_TYPE as STORE_OPS_AUDIT_JOB_TYPE,
     )

@@ -24538,6 +24538,26 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Get Job Receipt",
@@ -24769,6 +24789,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -47679,6 +47709,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
