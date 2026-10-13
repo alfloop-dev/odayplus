@@ -126,12 +126,16 @@ def test_second_officer_release_restores_write_and_retains_original_worm_object(
 
 
 @pytest.mark.parametrize("field", ["has_legal_hold", "legal_hold"])
-def test_durable_unknown_hold_is_projected_as_unknown_and_cannot_replay(listing_engine, monkeypatch, field):
+@pytest.mark.parametrize("after_commit", [False, True])
+def test_durable_unknown_hold_is_projected_as_unknown_and_cannot_write_or_replay(listing_engine, monkeypatch, field, after_commit):
     resolver, _, intakes = _wired_resolver(listing_engine, monkeypatch)
-    _invoke(resolver, "archive")
+    if after_commit:
+        _invoke(resolver, "archive")
     metadata = intakes.get_listing_metadata(SOURCE)
-    intakes.save_listing_metadata(SOURCE, {**metadata, field: None})
-    assert resolver._invoke(TENANT, "get_listing", SOURCE)["hasLegalHold"] is None
+    intakes.save_listing_metadata(SOURCE, {**metadata, field: None, "legalHold": False})
+    projected = resolver._invoke(TENANT, "get_listing", SOURCE)
+    assert projected["hasLegalHold"] is None
+    assert projected["legalHold"] is None
     before = _rows(listing_engine)
     from modules.opsboard.application.network_listings import NetworkListingPolicyError
 

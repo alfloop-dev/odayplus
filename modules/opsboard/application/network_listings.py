@@ -743,7 +743,10 @@ class NetworkListingService:
                 # Expose the producer's custody state to the existing Radar
                 # controls. An older false display flag cannot conceal a hold
                 # or replace a revoked/invalid current observation.
-                res["hasLegalHold"] = recorded_legal_hold_state(res)
+                custody_state = recorded_legal_hold_state(res)
+                res["hasLegalHold"] = custody_state
+                if "legalHold" in res:
+                    res["legalHold"] = custody_state
             # Supplemental presentation metadata cannot reopen the listing
             # aggregate's terminal archive, including on a later retry.
             if str(lst.listing_status).upper() == "ARCHIVED":
