@@ -80,6 +80,7 @@ from delivery_toolchain.e2e.check_release_gate_registry import (  # noqa: E402
     SUPPORTED_SCHEMA_VERSIONS,
     check_candidate_ancestry,
     validate_gate,
+    validate_go_signoff,
     validate_stage_metadata,
 )
 from delivery_toolchain.release.release_lease import (  # noqa: E402
@@ -150,6 +151,7 @@ def registry_admission_errors(
     if release.get("decision") != "go":
         errors.append(f"registry decision is {release.get('decision')!r}, expected 'go'")
 
+    validate_go_signoff(release, errors)
     validate_stage_metadata(release, label="release", errors=errors)
     errors.extend(_stage_boundary_errors(release, environment, allowed_environments))
     errors.extend(_manifest_binding_errors(release, expected_manifest_digest))

@@ -142,6 +142,7 @@ def authorize_intake_action(
     operator_role_id: str | None = None,
     audit_log: Any = None,
     correlation_id: str | None = None,
+    source_ip: str | None = None,
     waiver: TenantAccessWaiver | str | None = None,
     waiver_registry: TenantAccessWaiverRegistry | None = None,
     tenant_id: str | None = None,
@@ -213,7 +214,7 @@ def authorize_intake_action(
                 action=action_enum,
                 resource=desc,
                 environment=Environment(
-                    source_ip=None,
+                    source_ip=source_ip,
                     attributes={"correlation_id": correlation_id or "unknown"}
                 ),
             )
@@ -456,7 +457,7 @@ def authorize_intake_action(
             action=action_enum,
             resource=desc,
             environment=Environment(
-                source_ip=None,
+                source_ip=source_ip,
                 attributes={"correlation_id": correlation_id or "unknown"},
             ),
         )
@@ -590,9 +591,48 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
     the in-memory queue's authoritative record.
     """
     clearance = principal.scope.clearance if principal.authenticated else DataClassification.PUBLIC
+    # Clone JSON containers iteratively: deep canonical structures must not
+    # exhaust the Python stack, and no response mask may alter stored records.
+    masked: dict[str, Any] = {}
+    memo: dict[int, Any] = {id(job): masked}
+    pending: list[tuple[Any, Any]] = [(job, masked)]
+    while pending:
+        source, target = pending.pop()
+        entries = source.items() if isinstance(source, dict) else enumerate(source)
+        for key, value in entries:
+            if isinstance(value, (dict, list)):
+                if id(value) not in memo:
+                    memo[id(value)] = {} if isinstance(value, dict) else []
+                    pending.append((value, memo[id(value)]))
+                copied = memo[id(value)]
+            else:
+                copied = deepcopy(value)
+            if isinstance(target, dict):
+                target[key] = copied
+            else:
+                target.append(copied)
+    # Canonical fields can occur in rows, envelopes, receipts or summaries.
+    # Apply classifications even at RESTRICTED, before the legacy coarse mask.
+    pending_nodes: list[Any] = [masked]
+    visited: set[int] = set()
+    while pending_nodes:
+        node = pending_nodes.pop()
+        if not isinstance(node, (dict, list)) or id(node) in visited:
+            continue
+        visited.add(id(node))
+        if isinstance(node, dict):
+            if "classification" in node and any(key in node for key in ("parsed", "normalized", "corrected", "effective")):
+                view = mask_intake(principal, {"fields": [node]})["fields"][0]
+                node.update(view)
+            if isinstance(node.get("fields"), list):
+                view = mask_intake(principal, {"fields": node["fields"]})
+                node["fields"] = view["fields"]
+                node["masked_fields"] = view["masked_fields"]
+            pending_nodes.extend(node.values())
+        else:
+            pending_nodes.extend(node)
     if clearance >= DataClassification.RESTRICTED:
-        return job
-    masked = deepcopy(job)
+        return masked
     masked["error_message"] = None
     aliases = {
         "address_raw": "address", "addressRaw": "address", "address": "address",
@@ -615,7 +655,7 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
                     continue
                 clean = {}
                 for key, raw in row.items():
-                    if key == "item_id":
+                    if key == "item_id" or (key == "fields" and isinstance(raw, list)):
                         clean[key] = raw
                     elif key in aliases:
                         canonical = aliases[key]
@@ -627,7 +667,7 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
                         clean[key] = None
                 rows.append(clean)
             payload[field] = rows
-        elif field not in ("tenant_id", "submitter", "actor_role_id", "receipt", "summary"):
+        elif field not in ("tenant_id", "submitter", "actor_role_id", "receipt", "summary", "fields", "masked_fields"):
             payload[field] = None
     receipt = payload.get("receipt")
     if isinstance(receipt, dict):

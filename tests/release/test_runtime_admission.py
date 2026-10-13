@@ -101,6 +101,7 @@ def build_registry(
             "environment": environment,
             "admission_target": admission_target,
             "decision": "go",
+            "human_signoff": {"approver": "fixture-human-not-operational-approval", "date": "2026-08-24"},
         },
         "gates": [
             {

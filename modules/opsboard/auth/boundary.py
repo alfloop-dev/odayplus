@@ -527,13 +527,16 @@ class AuthenticationBoundary:
         if declared_mapping is None and not bound_roles:
             return ANONYMOUS, AuthFailureReason.UNKNOWN_SERVICE, token_type
 
-        principal = principal_from_claims(
-            claims,
-            subject=subject,
-            # The mapping is the sole role/scope source; the token's own
-            # roles/tenant/scope claims are ignored.
-            principal_mapping=declared_mapping or {},
-        )
+        try:
+            principal = principal_from_claims(
+                claims,
+                subject=subject,
+                # Keep an invalid declaration visible; do not fall through to
+                # role-only or verified-email grants after scope validation fails.
+                principal_mapping=declared_mapping if declared_mapping is not None else {},
+            )
+        except ValueError:
+            return ANONYMOUS, AuthFailureReason.BOUNDARY_NOT_CONFIGURED, token_type
         if bound_roles:
             principal = replace(principal, roles=principal.roles | bound_roles)
         return principal, None, token_type
@@ -626,8 +629,8 @@ class AuthenticationBoundary:
             return False
         if isinstance(aud, str):
             presented = {aud}
-        elif isinstance(aud, (list, tuple, set, frozenset)):
-            presented = {str(item) for item in aud}
+        elif isinstance(aud, list) and all(isinstance(item, str) for item in aud):
+            presented = set(aud)
         else:
             return False
         return bool(presented & set(allowed))

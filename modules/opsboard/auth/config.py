@@ -440,8 +440,11 @@ def _parse_principal_mappings(
         return {}
     if not isinstance(payload, dict):
         return {}
+    # Retain malformed declarations as explicitly invalid restrictions, rather
+    # than dropping the identity and permitting secondary role/email fallback.
+    # The shared principal constructor validates before granting ANY authority.
     return {
-        identifier.strip(): attributes
+        identifier.strip(): attributes if isinstance(attributes, dict) else {"scope": {"modules": {}}}
         for identifier, attributes in payload.items()
-        if isinstance(identifier, str) and identifier.strip() and isinstance(attributes, dict)
+        if isinstance(identifier, str) and identifier.strip()
     }

@@ -943,6 +943,40 @@ else:
         # balancers that must not be asked to learn a version prefix.
         platform_router = APIRouter()
 
+        def _job_audit_marker(request: Request) -> Any:
+            marker = getattr(request.state, "job_denial_marker", None)
+            if marker is None:
+                marker = object()
+                request.state.job_denial_marker = marker
+            return marker
+
+        def _record_job_denial(exc: HTTPException, principal: Any, request: Request, action: Any, job: Any = None) -> None:
+            if exc.status_code not in (403, 404) or getattr(exc, "_job_denial_marker", None) is _job_audit_marker(request):
+                return
+            from shared.audit import build_security_event
+            from shared.auth import AccessRequest, Decision, Environment, ResourceDescriptor
+            reason = exc.detail.get("code") if isinstance(exc.detail, dict) else exc.detail
+            safe_reasons = {"JOB_MODULE_FORBIDDEN", "FORECAST_MODULE_FORBIDDEN", "MODULE_SCOPE_DENIED", "SCOPE_DENIED", "OWNERSHIP_REQUIRED",
+                            "JOB_ITEM_SCOPE_INVALID", "BATCH_INTAKE_RETRY_FORBIDDEN", "JOB_TYPE_READ_FORBIDDEN",
+                            "EXTERNAL_FETCH_VIEW_FORBIDDEN", "FORECAST_EXECUTE_FORBIDDEN", "BATCH_INTAKE_FORBIDDEN",
+                            "JOB_TYPE_CREATE_FORBIDDEN", "TENANT_SCOPE_MISMATCH"}
+            if not isinstance(reason, str) or reason not in safe_reasons:
+                reason = "JOB_AUTHORIZATION_DENIED"
+            correlation_id = CorrelationContext.from_header(getattr(request.state, "correlation_id", None)).correlation_id
+            audit_log.record(build_security_event(AccessRequest(
+                principal=principal, action=action,
+                resource=ResourceDescriptor(type="job", resource_id=getattr(job, "job_id", None), tenant_id=principal.tenant_id),
+                environment=Environment(source_ip=request.client.host if request.client else None,
+                                        attributes={"correlation_id": correlation_id}),
+            ), Decision.deny(reason=reason, policy_id="job_authorization")))
+            exc._job_denial_marker = _job_audit_marker(request)
+
+        def _require_job_module(principal: Any, request: Request, module: str, action: Any, job: Any = None, *, reason: str = "JOB_MODULE_FORBIDDEN") -> None:
+            if not principal.scope.permits_module(module):
+                exc = HTTPException(403, detail={"code": reason})
+                _record_job_denial(exc, principal, request, action, job)
+                raise exc
+
         def forecast_job_tenant(request: Request, *, action: str) -> str:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from shared.auth import Action, rbac_allows
@@ -957,8 +991,8 @@ else:
                     },
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-            if not principal.scope.permits_module("forecastops"):
-                raise HTTPException(403, detail={"code": "FORECAST_MODULE_FORBIDDEN"})
+            _require_job_module(principal, request, "forecastops", Action.EXECUTE if action == "execute" else Action.VIEW,
+                                reason="FORECAST_MODULE_FORBIDDEN")
             required_action = Action.EXECUTE if action == "execute" else Action.VIEW
             if not rbac_allows(principal, "forecastops", required_action):
                 raise HTTPException(
@@ -1008,8 +1042,7 @@ else:
                     },
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-            if not principal.scope.permits_module("integration"):
-                raise HTTPException(403, detail={"code": "JOB_MODULE_FORBIDDEN"})
+            _require_job_module(principal, request, "integration", Action.CREATE)
             if not rbac_allows(principal, "integration", Action.CREATE):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -1048,8 +1081,7 @@ else:
                 if action == "execute"
                 else (Action.CREATE if action == "create" else Action.VIEW)
             )
-            if not principal.scope.permits_module("listing"):
-                raise HTTPException(403, detail={"code": "JOB_MODULE_FORBIDDEN"})
+            _require_job_module(principal, request, "listing", required_action)
             if not rbac_allows(principal, "listing", required_action):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -1159,11 +1191,19 @@ else:
             body: JobCreatePayload, request: Request, idempotency_key: str | None,
         ) -> dict[str, Any]:
             from apps.api.oday_api.security.dependencies import principal_from_headers
-            from modules.listing.application.intake_authorization import authorize_intake_action
-
+            from shared.auth import Action
             principal = principal_from_headers(request.headers)
             if not principal.authenticated:
                 raise HTTPException(401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+            try:
+                return _enqueue_job_checked(body, request, idempotency_key, principal)
+            except HTTPException as exc:
+                _record_job_denial(exc, principal, request, Action.CREATE)
+                raise
+
+        def _enqueue_job_checked(body: JobCreatePayload, request: Request, idempotency_key: str | None, principal: Any) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from modules.listing.application.intake_authorization import authorize_intake_action
             payload = body.payload
             idempotency_tenant_id: str | None = None
             idempotency_scope = ""
@@ -1238,13 +1278,16 @@ else:
                                 )
                             seen_ids.add(item_id)
                             norm_item, item_scope = _normalize_batch_item_scope(raw_item, item_id)
-                            authorize_intake_action(
-                                principal,
-                                "submit_csv",
-                                collection_scope=item_scope,
-                                tenant_id=active_tenant_id,
-                                correlation_id=getattr(request.state, "correlation_id", None),
-                            )
+                            try:
+                                authorize_intake_action(
+                                    principal, "submit_csv", collection_scope=item_scope,
+                                    tenant_id=active_tenant_id, audit_log=audit_log,
+                                    correlation_id=request.state.correlation_id,
+                                    source_ip=request.client.host if request.client else None,
+                                )
+                            except HTTPException as exc:
+                                exc._job_denial_marker = _job_audit_marker(request)
+                                raise
                             normalized_items.append(norm_item)
                         else:
                             normalized_items.append(raw_item)
@@ -1341,7 +1384,7 @@ else:
                 "audit_event_id": audit_event.event_id,
             }
 
-        def _authorize_intake_job_items(job: Any, principal: Any, tenant_id: str, action: str) -> None:
+        def _authorize_intake_job_items(job: Any, principal: Any, tenant_id: str, action: str, request: Request) -> None:
             from modules.listing.application.intake_authorization import (
                 authorize_intake_action,
                 intake_resource_in_scope,
@@ -1373,19 +1416,35 @@ else:
                 _, scope = _normalize_batch_item_scope(item, item_id)
                 if scope.get("tenantId") not in {None, tenant_id} or not intake_resource_in_scope(principal, scope):
                     raise HTTPException(403, detail="SCOPE_DENIED")
-                authorize_intake_action(principal, action, collection_scope=scope, tenant_id=tenant_id)
+                try:
+                    authorize_intake_action(principal, action, collection_scope=scope, tenant_id=tenant_id,
+                                            audit_log=audit_log, correlation_id=request.state.correlation_id,
+                                            source_ip=request.client.host if request.client else None)
+                except HTTPException as exc:
+                    # The shared authorizer has already durably recorded its
+                    # denial; the outer job boundary must not duplicate it.
+                    exc._job_denial_marker = _job_audit_marker(request)
+                    raise
 
         def _authorize_job_access(job: Any, request: Request) -> None:
             from apps.api.oday_api.security.dependencies import principal_from_headers
-
+            from shared.auth import Action
             principal = principal_from_headers(request.headers)
+            try:
+                _check_job_access(job, request, principal)
+            except HTTPException as exc:
+                _record_job_denial(exc, principal, request, Action.VIEW, job)
+                raise
+
+        def _check_job_access(job: Any, request: Request, principal: Any) -> None:
+            from shared.auth import Action
             if not principal.authenticated:
                 raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
             module = {"forecast": "forecastops", "external-fetch": "integration",
                       "batch-listing-intake": "listing", "assisted-listing-intake": "listing"}.get(job.job_type)
-            if module and not principal.scope.permits_module(module):
-                raise HTTPException(403, detail={"code": "JOB_MODULE_FORBIDDEN"})
+            if module:
+                _require_job_module(principal, request, module, Action.VIEW, job)
             if job.job_type == "forecast":
                 active_tenant_id = forecast_job_tenant(request, action="view")
                 if not job_tenant:
@@ -1419,7 +1478,7 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
-                _authorize_intake_job_items(job, principal, active_tenant_id, "view")
+                _authorize_intake_job_items(job, principal, active_tenant_id, "view", request)
             elif job.job_type == "external-fetch":
                 from shared.auth import Action, rbac_allows
                 if not rbac_allows(principal, "integration", Action.VIEW):
@@ -1457,7 +1516,20 @@ else:
         def get_job(job_id: str, request: Request) -> dict[str, Any]:
             return _get_job_response(job_id, request)
 
-        def _retry_job_response(
+        def _retry_job_response(job_id: str, body: JobRetryPayload | None, request: Request) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.auth import Action
+            # Authenticate BEFORE existence/state lookup, as generic GET does.
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+            try:
+                return _retry_job_checked(job_id, body, request)
+            except HTTPException as exc:
+                _record_job_denial(exc, principal, request, Action.CREATE, job_queue.get(job_id))
+                raise
+
+        def _retry_job_checked(
             job_id: str,
             body: JobRetryPayload | None,
             request: Request,
@@ -1494,7 +1566,7 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
-                _authorize_intake_job_items(job, principal, active_tenant_id, "submit_csv")
+                _authorize_intake_job_items(job, principal, active_tenant_id, "submit_csv", request)
             else:
                 principal = principal_from_headers(request.headers)
                 if not principal.authenticated:

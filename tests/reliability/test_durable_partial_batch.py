@@ -2388,13 +2388,20 @@ def test_foreground_denied_enqueue_creates_no_work_and_is_audited(db_path, backe
             response = client.post("/api/v1/jobs", headers={**headers, "x-correlation-id": key}, json={"job_type": "external-fetch", "payload": {"tenant_id": tenant}, "idempotency_key": key})
             assert response.status_code == expected
             assert bundle.job_queue.get_by_idempotency_key(key) is None
-            events = bundle.audit_log.list_events(correlation_id=key)
+            all_events = bundle.audit_log.list_events(correlation_id=key)
+            events = [event for event in all_events if event.event_type == "job.enqueue"]
             assert len(events) == 1
             assert events[0].event_type == "job.enqueue" and events[0].outcome == "denied"
             assert events[0].metadata["status_code"] == expected
+            canonical = [event for event in all_events if event.event_type == "security.authorization" and event.outcome == "deny"]
+            assert len(canonical) == (1 if expected == 403 else 0)
+            if canonical:
+                assert canonical[0].metadata["tenant_id"] == "other-tenant"
         denied_batch = client.post("/api/v1/jobs", headers={**_auth_headers("private-tenant", role="auditor"), "x-correlation-id": "denied-batch"}, json={"job_type": BATCH_LISTING_INTAKE_JOB_TYPE, "payload": {"items": [{"item_id": "one", "address_raw": "PRIVATE"}]}})
         assert denied_batch.status_code == 403
-        assert bundle.audit_log.list_events(correlation_id="denied-batch")[0].outcome == "denied"
+        batch_events = bundle.audit_log.list_events(correlation_id="denied-batch")
+        assert [event for event in batch_events if event.event_type == "job.enqueue"][0].outcome == "denied"
+        assert len([event for event in batch_events if event.event_type == "security.authorization" and event.outcome == "deny"]) == 1
         unknown = client.post("/api/v1/jobs", headers=_auth_headers("private-tenant", role="data_owner"), json={"job_type": "synthetic-generic", "payload": {"tenant_id": "private-tenant"}, "idempotency_key": "forbidden-generic"})
         assert unknown.status_code == 403 and bundle.job_queue.get_by_idempotency_key("forbidden-generic") is None
         accepted = client.post("/api/v1/jobs", headers=_auth_headers("private-tenant", role="data_owner"), json={"job_type": "external-fetch", "payload": {"tenant_id": "private-tenant"}, "idempotency_key": "allowed-supported"})
@@ -2436,7 +2443,17 @@ def test_foreground_legacy_namespace_replay_preserves_separate_tenants(db_path, 
             assert replay.json()["job_id"] == expected_id
         denied = client.post("/api/v1/jobs", headers={**_auth_headers("tenant:segment", subject="different-owner"), "x-correlation-id": "denied-legacy-replay"}, json=body)
         assert denied.status_code == 403
-        assert bundle.audit_log.list_events(correlation_id="denied-legacy-replay")[0].outcome == "denied"
+        events = bundle.audit_log.list_events(correlation_id="denied-legacy-replay")
+        # Preflight permission for the caller-owned input may be allowed before
+        # the ACTUAL legacy replay is refused. Keep the original domain denial
+        # assertion, now scoped by outcome rather than unrelated event order.
+        legacy_denials = [event for event in events if event.outcome == "denied"]
+        assert len(legacy_denials) == 1 and legacy_denials[0].outcome == "denied"
+        canonical_denials = [event for event in events if event.event_type == "security.authorization" and event.outcome == "deny"]
+        assert len(canonical_denials) == 1
+        assert canonical_denials[0].actor == "different-owner"
+        assert canonical_denials[0].metadata["reason"] == "OWNERSHIP_REQUIRED"
+        assert canonical_denials[0].metadata["tenant_id"] == "tenant:segment"
     finally:
         if getattr(bundle, "engine", None) is not None:
             bundle.engine.close()

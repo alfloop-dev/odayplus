@@ -1123,3 +1123,14 @@ replay/retry. Web OIDC runtime time/identity shapes are validated without coerci
 compact JWT size/depth are bounded before parsing and malformed inputs are audited
 refusals before JWKS retrieval. A single malformed cookie field is ambiguity, not
 absence: raw pairs retain uncertainty across foreground normal/diagnostic responses.
+
+Generic intake job rows/envelopes/receipts retain canonical field classification
+checks even at RESTRICTED; response masking does not alter stored records. Python
+JWT audience members must be strings, not coerced scalar values. Generic job
+permission refusals emit canonical authorization-denial events with verified actor,
+normalized correlation, connection IP and static reasons before effects. Malformed
+server-owned role/scope declarations refuse authentication instead of producing the
+empty/unrestricted sentinel or falling back to secondary grants. Runtime admission
+shares the registry's GO human-signoff shape predicate before lease consumption;
+shape consistency is NOT actual human approval. All source/canonical/Human-Ops,
+operational/business/F11 HOLDs and original measurement limits remain unchanged.
