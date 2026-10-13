@@ -618,6 +618,9 @@ class _ObservedWeb:
         limit = self.cleanup_deadline if cleanup else self.deadline
         try:
             with _absolute_deadline(limit):
+                # Never let urllib hide an intermediate cookie-bearing reply or
+                # send another authenticated request before custody inspection.
+                kwargs["follow_redirects"] = False
                 response = self.client.request(method, path, **kwargs)
                 pairs, ambiguous = _response_cookie_pairs(response)
                 if method == "POST" and path == "/login":

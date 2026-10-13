@@ -1076,7 +1076,22 @@ else:
                 ("regionId", "region_id"),
                 ("brandId", "brand_id"),
                 ("assignedAreaId", "assigned_area_id"),
+                ("storeId", "store_id"),
+                ("tenantId", "tenant_id"),
             )
+            nested = raw_item.get("scope", {})
+            if not isinstance(nested, dict):
+                raise HTTPException(422, detail={"code": "INVALID_ITEM_SCOPE"})
+            # Complete object evidence, not collection filters. Resolve EVERY
+            # flat/nested spelling and refuse conflicts instead of hiding one.
+            raw_item = dict(raw_item)
+            for camel_key, snake_key in axis_pairs:
+                values = {str(source[key]).strip() for source in (raw_item, nested)
+                          for key in (camel_key, snake_key) if source.get(key) is not None and str(source[key]).strip()}
+                if len(values) > 1:
+                    raise HTTPException(422, detail={"code": "CONFLICTING_SCOPE_ALIAS"})
+                if values:
+                    raw_item[camel_key] = raw_item[snake_key] = next(iter(values))
             scope: dict[str, Any] = {}
             for camel_key, snake_key in axis_pairs:
                 has_camel = camel_key in raw_item and raw_item[camel_key] is not None
@@ -1140,6 +1155,10 @@ else:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_authorization import authorize_intake_action
 
+            # Read authorization is NEVER enqueue authority. Assisted intake
+            # uses its dedicated creation path, not this generic endpoint.
+            if body.job_type not in {"forecast", "external-fetch", "batch-listing-intake"}:
+                raise HTTPException(403, detail={"code": "JOB_TYPE_CREATE_FORBIDDEN"})
             payload = body.payload
             idempotency_tenant_id: str | None = None
             idempotency_scope = ""
@@ -1360,18 +1379,27 @@ else:
                             detail="OWNERSHIP_REQUIRED",
                         )
 
-                raw_items = job.payload.get("items") or job.payload.get("rows") or []
-                if isinstance(raw_items, list):
+                from modules.listing.application.intake_authorization import (
+                    intake_resource_in_scope,
+                )
+                # This response serializes objects, not scope-projected collection
+                # rows. Mixed OPERATOR_VIEWER roles must not waive missing axes.
+                collections = [job.payload[key] for key in ("items", "rows") if key in job.payload]
+                if not collections:
+                    collections = [[job.payload]]
+                for raw_items in collections:
+                    if not isinstance(raw_items, list):
+                        raise HTTPException(403, detail="JOB_ITEM_SCOPE_INVALID")
                     for idx, raw_item in enumerate(raw_items):
-                        if isinstance(raw_item, dict):
-                            item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
-                            _, item_scope = _normalize_batch_item_scope(raw_item, item_id)
-                            authorize_intake_action(
-                                principal,
-                                "view",
-                                collection_scope=item_scope,
-                                tenant_id=active_tenant_id,
-                            )
+                        if not isinstance(raw_item, dict):
+                            raise HTTPException(403, detail="JOB_ITEM_SCOPE_INVALID")
+                        item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
+                        _, item_scope = _normalize_batch_item_scope(raw_item, item_id)
+                        if (item_scope.get("tenantId") not in {None, active_tenant_id}
+                                or not intake_resource_in_scope(principal, item_scope)):
+                            raise HTTPException(403, detail="SCOPE_DENIED")
+                        authorize_intake_action(principal, "view", collection_scope=item_scope,
+                                                tenant_id=active_tenant_id)
             elif job.job_type == "external-fetch":
                 from shared.auth import Action, rbac_allows
                 if not rbac_allows(principal, "integration", Action.VIEW):

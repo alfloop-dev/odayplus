@@ -1088,3 +1088,12 @@ existing bounded inventory drains newly observed values with one logout per valu
 while UNKNOWN is sticky; no cookie-clearing or later denial substitutes for cleanup.
 These repairs still require fresh exact-head measurements/independent review and
 cannot waive Human/Ops, canonical/operational/full business/F11 acceptance HOLDs.
+
+The intake/transport follow-up separates generic enqueue mutation grants from read
+permission and checks complete per-item scope (all axes/aliases, including nested
+store/tenant) before job serialization/replay. Collection-view scope exemptions
+cannot substitute for actual object projection. Native requests do not follow
+redirects; both foreground HTTPS paths retain unexpected cookie custody on every
+response before body/deadline refusal. Expanding bounded inventories keep shared
+once-only logout intents and sticky UNKNOWN, with quarantine ordering/durable starts
+and all existing caps preserved. These source repairs do not confer acceptance.
