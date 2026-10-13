@@ -238,7 +238,9 @@ export type ExternalDataFreshnessResponse = {
  * V3 may abstain, leaving the overall score null.
  */
 export type HeatZoneScore = {
-  /** H3 hex index used as a stable identifier. */
+  /** Entity identity used by candidate heat_zone_id relationships. */
+  heat_zone_id: string;
+  /** Geometry identity; baseline and V3 entities may share a cell. */
   h3_index: string;
   score: number | null;
   priority_rank: number;

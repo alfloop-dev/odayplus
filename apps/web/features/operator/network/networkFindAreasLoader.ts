@@ -41,9 +41,13 @@ export type CandidateBinding = ApiBinding<Candidate>;
 // ---------------------------------------------------------------------------
 
 function adaptHeatZone(raw: Record<string, unknown>): RecordedOperatorHeatZone {
-  // The backend scores use h3_index as the stable zone id; we propagate it
-  // directly so the frontend lens map can show real IDs.
-  const id = (raw["h3_index"] as string | undefined) ?? String(raw["id"] ?? "HZ-UNKNOWN");
+  // Candidate relationships use the heat-zone entity ID. The H3 cell is a
+  // separate geometry identity and may be shared by baseline and V3 results.
+  const observedId = "heat_zone_id" in raw ? raw["heat_zone_id"] : raw["id"] ?? raw["h3_index"];
+  if ("heat_zone_id" in raw && (typeof observedId !== "string" || !observedId.trim())) {
+    throw new Error("HEATZONE_ID_UNAVAILABLE");
+  }
+  const id = typeof observedId === "string" && observedId.trim() ? observedId : "HZ-UNKNOWN";
   const unmetDemand = Number(raw["unmet_demand_score"] ?? raw["unmet_demand"] ?? raw["unmetDemand"] ?? 0);
   const confidence = raw["confidence"] != null ? Number(raw["confidence"]) : null;
   const observedCentroid = raw["centroid"];

@@ -30,11 +30,12 @@ function strings(input: unknown): string[] {
 
 /** Project the score producer's observations; absent values remain absent. */
 export function projectRecordedHeatZone(row: Record<string, unknown>, zone: OperatorHeatZone): HeatZone {
-  const indexed = isValidCell(zone.id);
+  const observedCell = "h3_index" in row ? row["h3_index"] : zone.id;
+  const indexed = typeof observedCell === "string" && isValidCell(observedCell);
   const state = row["state"];
   return {
-    id: zone.id, district: zone.label, h3: indexed ? zone.id : `h3-${zone.id}`,
-    centroid: zone.centroid, h3Resolution: indexed ? getResolution(zone.id) : 9,
+    id: zone.id, district: zone.label, h3: indexed ? observedCell : `h3-${zone.id}`,
+    centroid: zone.centroid, h3Resolution: indexed ? getResolution(observedCell) : 9,
     score: measured(row["score"], 100),
     confidence: "confidence" in row ? measured(row["confidence"], 1) : zone.confidence,
     state: states.includes(state as HeatZone["state"]) ? state as HeatZone["state"] : "UNKNOWN",

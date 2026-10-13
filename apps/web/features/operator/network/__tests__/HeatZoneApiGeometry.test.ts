@@ -30,7 +30,7 @@ describe("HeatZone batch API geometry", () => {
     const binding = (await loadNetworkFindAreasBindings(clientFor(recordedCell))).heatZones;
     expect(binding.state).toBe("ready");
     const zone = binding.items[0]!;
-    expect(zone.id).toBe(recordedCell.h3_index);
+    expect(zone.id).toBe(recordedCell.heat_zone_id);
     expect(zone.centroid[0]).toBeGreaterThan(-123);
     expect(zone.centroid[0]).toBeLessThan(-122);
     expect(zone.centroid[1]).toBeGreaterThan(37);

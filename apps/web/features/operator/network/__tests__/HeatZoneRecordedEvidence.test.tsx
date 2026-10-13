@@ -64,6 +64,33 @@ describe("recorded HeatZone map evidence", () => {
     });
   });
 
+  it("preserves the heat-zone entity ID separately from its H3 cell", async () => {
+    const zone = await load();
+    expect(zone.id).toBe(recorded.heat_zone_id);
+    expect(operatorHeatZoneToMapZone(zone).h3).toBe(recorded.h3_index);
+  });
+
+  it("joins candidates by the recorded heat-zone entity ID without inventing an H3 alias", async () => {
+    const client = new OdpApiClient({
+      baseUrl: "https://console.example.invalid",
+      fetchImpl: async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path === "/api/v1/heatzones") return Response.json({ items: [recorded], count: 1 });
+        if (path === "/api/v1/listings/candidates") return Response.json({ candidates: [
+          { candidate_site_id: "candidate-canonical-zone", heat_zone_id: recorded.heat_zone_id },
+          { candidate_site_id: "candidate-cell-reference", heat_zone_id: recorded.h3_index },
+        ] });
+        return Response.json({ items: [] });
+      },
+    });
+    const bindings = await loadNetworkFindAreasBindings(client);
+    const view = buildNetworkFindAreasViewModel({
+      heatZones: bindings.heatZones.items, candidates: bindings.candidates.items, listings: [],
+    });
+    expect(view.zones[0]?.candidates.map((candidate) => candidate.id)).toEqual(["candidate-canonical-zone"]);
+    expect(view.zones[0]?.candidateCount).toBe(1);
+  });
+
   it("keeps an abstained score null instead of rebuilding it from demand", async () => {
     expect(operatorHeatZoneToMapZone(await load({ ...recorded, score: null })).score).toBeNull();
   });
