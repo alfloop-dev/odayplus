@@ -5,27 +5,21 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
-from apps.api.oday_api.main import create_app
 from apps.api.oday_api.security import dependencies as deps
 from modules.opsboard.auth import AuthBoundaryConfig, AuthenticationBoundary, JwksResolver
-from shared.audit import InMemoryAuditLog
-from shared.infrastructure.persistence import build_persistence
 from shared.jobs.queue import JobRecord, JobStatus
+from tests.security._offline_job_app import job_app as job_app
+from tests.security._offline_job_app import offline_job_app as offline_job_app
 from tests.security.test_auth_composition_extension import OTHER, TENANT
 from tests.security.test_auth_composition_extension import isolation as isolation
 from tests.security.test_opsboard_jwks_auth import _jwk, _token
 
 
 @pytest.mark.parametrize("alias", ["/jobs", "/api/v1/jobs"])
-def test_complete_scope_precedes_every_read_and_retry_mutation(monkeypatch, alias):
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    bundle = build_persistence(mode="memory")
-    app = create_app(
-        persistence=bundle, audit_log=InMemoryAuditLog(), external_provider_validation=lambda: None
-    )
+def test_complete_scope_precedes_every_read_and_retry_mutation(monkeypatch, alias, job_app):
+    key, bundle, app = job_app
     boundary = AuthenticationBoundary(
         AuthBoundaryConfig(
             issuer="https://idp.example.test",

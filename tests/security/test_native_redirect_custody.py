@@ -12,7 +12,7 @@ import pytest
 from delivery_toolchain.release import consume_dev_smoke as c
 
 
-@pytest.mark.parametrize("mode", ["redirect", "header-loss"])
+@pytest.mark.parametrize("mode", ["redirect", "header-loss", "header-defect"])
 def test_native_real_urllib_never_loses_intermediate_cookie_custody(mode):
     calls = []
 
@@ -46,7 +46,13 @@ def test_native_real_urllib_never_loses_intermediate_cookie_custody(mode):
             cookie = self.headers.get("Cookie", "")
             calls.append((self.command, self.path, cookie))
             if self.path == "/ordinary":
-                if mode == "header-loss":
+                if mode == "header-defect":
+                    self.wfile.write(
+                        (
+                            f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nMalformed header line\r\nSet-Cookie: {c._SESSION_COOKIE}=owned-b; Path=/; Secure; HttpOnly; SameSite=Lax\r\nContent-Length: 2\r\n\r\n{{}}"
+                        ).encode()
+                    )
+                elif mode == "header-loss":
                     self.send_response(200)
                     self.send_header(
                         "Set-Cookie",

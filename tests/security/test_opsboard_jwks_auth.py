@@ -161,9 +161,12 @@ def test_jwks_cache_refreshes_for_rotated_kid_and_keeps_last_good_cache() -> Non
             raise response
         return response  # type: ignore[return-value]
 
-    resolver = JwksResolver("https://idp.example.test/jwks", fetch=fetch)
+    ticks = [0.0]
+    resolver = JwksResolver("https://idp.example.test/jwks", fetch=fetch, clock=lambda: ticks[0])
 
     first_key = resolver.resolve("first")
+    assert resolver.resolve("second") is None and calls == 1  # Finite miss cooldown.
+    ticks[0] = 1.0
     second_key = resolver.resolve("second")
     still_cached = resolver.resolve("first")
 

@@ -957,6 +957,8 @@ else:
                     },
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+            if not principal.scope.permits_module("forecastops"):
+                raise HTTPException(403, detail={"code": "FORECAST_MODULE_FORBIDDEN"})
             required_action = Action.EXECUTE if action == "execute" else Action.VIEW
             if not rbac_allows(principal, "forecastops", required_action):
                 raise HTTPException(

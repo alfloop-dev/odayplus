@@ -3,29 +3,23 @@
 from copy import deepcopy
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
-from apps.api.oday_api.main import create_app
 from apps.api.oday_api.security import dependencies as deps
 from modules.listing.application.intake_authorization import mask_intake
 from modules.opsboard.auth import AuthBoundaryConfig, AuthenticationBoundary, JwksResolver
-from shared.audit import InMemoryAuditLog
 from shared.auth import DataClassification, Principal, Scope
-from shared.infrastructure.persistence import build_persistence
 from shared.jobs.queue import JobRecord
+from tests.security._offline_job_app import job_app as job_app
+from tests.security._offline_job_app import offline_job_app as offline_job_app
 from tests.security.test_auth_composition_extension import TENANT
 from tests.security.test_auth_composition_extension import isolation as isolation
 from tests.security.test_opsboard_jwks_auth import _jwk, _token
 
 
 @pytest.mark.parametrize("alias", ["/jobs", "/api/v1/jobs"])
-def test_forecast_read_enqueue_replay_require_complete_resource_scope(monkeypatch, alias):
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    bundle = build_persistence(mode="memory")
-    app = create_app(
-        persistence=bundle, audit_log=InMemoryAuditLog(), external_provider_validation=lambda: None
-    )
+def test_forecast_read_enqueue_replay_require_complete_resource_scope(monkeypatch, alias, job_app):
+    key, bundle, app = job_app
     boundary = AuthenticationBoundary(
         AuthBoundaryConfig(
             issuer="https://idp.example.test",
@@ -105,6 +99,65 @@ def test_forecast_read_enqueue_replay_require_complete_resource_scope(monkeypatc
         )
         if replay.status_code != 403 or bundle.job_queue._jobs != before:
             errors.append(f"foreign actual replay {replay.status_code}")
+        for modules in (["listing"], ["forecastops"], []):
+            allowed = not modules or "forecastops" in modules
+            boundary = AuthenticationBoundary(
+                AuthBoundaryConfig(
+                    issuer="https://idp.example.test",
+                    audiences=frozenset({"oday-api"}),
+                    jwks_uri="https://offline.invalid/jwks",
+                    principal_mappings={
+                        "operator-real-1": {
+                            "roles": ["operations_manager"],
+                            "scope": {
+                                "tenant_id": TENANT,
+                                "store_ids": ["store-A"],
+                                "brand_ids": ["brand-A"],
+                                "region_ids": ["region-A"],
+                                "modules": modules,
+                            },
+                        }
+                    },
+                ),
+                key_resolver=JwksResolver(
+                    "https://offline.invalid/jwks",
+                    fetch=lambda _: {"keys": [_jwk(key, "offline-key")]},
+                ),
+            )
+            record = JobRecord(
+                job_type="forecast",
+                payload={"tenant_id": TENANT, **good},
+                correlation_id="offline-module",
+            )
+            bundle.job_queue._jobs[record.job_id] = record
+            response = client.get(f"{alias}/{record.job_id}", headers=headers)
+            if response.status_code != (200 if allowed else 403):
+                errors.append(f"module {modules} read={response.status_code}")
+            before = deepcopy(bundle.job_queue._jobs)
+            created = client.post(
+                alias, headers=headers, json={"job_type": "forecast", "payload": good}
+            )
+            if allowed:
+                assert created.status_code == 202
+            elif created.status_code != 403 or bundle.job_queue._jobs != before:
+                errors.append(f"module {modules} enqueue={created.status_code}")
+            token = f"module-replay-{len(modules)}-{'-'.join(modules)}"
+            bundle.job_queue._idempotency_index[
+                f"forecast:v2:{len(TENANT)}:{TENANT}:{len(token)}:{token}"
+            ] = record.job_id
+            replay = client.post(
+                alias,
+                headers={**headers, "Idempotency-Key": token},
+                json={"job_type": "forecast", "payload": good},
+            )
+            if allowed:
+                assert (
+                    replay.status_code == 202
+                    and replay.json()["created"] is False
+                    and replay.json()["job_id"] == record.job_id
+                )
+            elif replay.status_code != 403 or bundle.job_queue._jobs != before:
+                errors.append(f"module {modules} replay={replay.status_code}")
     finally:
         client.close()
     assert not errors, "\n".join(errors)

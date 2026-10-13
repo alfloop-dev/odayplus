@@ -1111,3 +1111,10 @@ usernames resolve through explicit tenant selection or globally unique lookup,
 never arbitrary tenant rows; returned durable account still owns session authority.
 Canonical per-field masking runs even at RESTRICTED clearance. These source repairs
 do not confer acceptance.
+
+JWKS unknown-key refresh uses a shared finite cooldown and never holds the key
+state lock through remote I/O; cached authority retains its original finite expiry.
+Signed temporal claims must be finite; malformed present nbf is not an omitted nbf.
+Forecast jobs also require the authoritative forecastops module. Returned header-
+parser defects remain incomplete custody inspection even if no safe cookie was
+extracted; every transport keeps UNKNOWN through cleanup without enlarging bounds.

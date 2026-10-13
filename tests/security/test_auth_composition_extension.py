@@ -143,6 +143,8 @@ def test_jwks_outage_retains_only_unexpired_cache_and_healthy_refresh_recovers()
     ticks[0] = 30.0
     assert resolver.resolve("known") is None
     healthy[0] = True
+    assert resolver.resolve("known") is None  # Failed attempt cannot be retried inside cooldown.
+    ticks[0] = 31.0
     assert resolver.resolve("known") is not None
 
 

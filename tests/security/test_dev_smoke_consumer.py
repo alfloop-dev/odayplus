@@ -652,7 +652,7 @@ def test_plain_env_flags_or_unsigned_jwt_are_not_native_proof(offline_signing_ke
 @pytest.mark.parametrize("failure", [None, "oidc", "source", "admission", "gate", "canonical",
     "canonical-users", "canonical-audit", "canonical-ack", "canonical-principal",
     "canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown",
-    "canonical-duplicate-cookie", "canonical-serving-identity", "canonical-read-cookie", "canonical-redirect-cookie", "canonical-header-loss"])
+    "canonical-duplicate-cookie", "canonical-serving-identity", "canonical-read-cookie", "canonical-redirect-cookie", "canonical-header-loss", "canonical-header-defect"])
 def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatch, failure):
     # Entirely MOCKED authority/runtime; no network/live receipt. Proves wiring.
     import httpx
@@ -813,12 +813,20 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                             cookies={f.SESSION_COOKIE: "synthetic-read-session"})
                     return response
             web_class = ReadCookieWeb
-        if failure == "canonical-header-loss":
+        if failure in {"canonical-header-loss", "canonical-header-defect"}:
+            import http.client
+            import io
             class HeaderLossWeb(f.AdminWeb):
                 lost_headers = False
                 def request(self, method, path, **kwargs):
                     if path == "/api/v1/operator/users" and not self.lost_headers and (kwargs.get("headers") or {}).get("cookie"):
                         self.lost_headers = True
+                        if failure == "canonical-header-defect":
+                            response = super().request(method, path, **kwargs)
+                            raw = (f"Malformed header line\r\nSet-Cookie: {f.SESSION_COOKIE}=unrecoverable-hidden-cookie; Path=/; Secure; HttpOnly\r\n\r\n").encode()
+                            parsed = http.client.parse_headers(io.BytesIO(raw))
+                            assert parsed.defects and not parsed.get_all("Set-Cookie", [])
+                            return c.gate._to_response(200, parsed, json.dumps(response.payload).encode())
                         self.headers_seen.append((f"{method} {path}", dict(kwargs.get("headers") or {})))
                         # Actual transport parser-failure behavior: no captured
                         # cookie value. Real urllib control is separate.
@@ -870,7 +878,7 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                     assert any(path == "GET /api/v1/auth/principal" and headers.get("cookie") == cookie
                                for path, headers in web.headers_seen)
             uncertain = {"canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown",
-                         "canonical-duplicate-cookie", "canonical-serving-identity", "canonical-read-cookie", "canonical-redirect-cookie", "canonical-header-loss"}
+                         "canonical-duplicate-cookie", "canonical-serving-identity", "canonical-read-cookie", "canonical-redirect-cookie", "canonical-header-loss", "canonical-header-defect"}
             owned_cookies = {f"{f.SESSION_COOKIE}={f.SESSION_VALUE}"}
             if failure in {"canonical-duplicate-cookie", "canonical-read-cookie", "canonical-redirect-cookie"}:
                 extra = f"{f.SESSION_COOKIE}=" + ("synthetic-read-session" if failure in {"canonical-read-cookie", "canonical-redirect-cookie"} else "synthetic-extra-issued-session")
@@ -882,7 +890,7 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                 seen = [path for path, _ in web.headers_seen]
                 latch_at = (seen.index("POST /auth/logout") if failure == "canonical-logout-unknown"
                             else seen.index("GET /api/v1/platform/release-identity") if failure == "canonical-serving-identity"
-                            else seen.index("GET /api/v1/operator/users") if failure == "canonical-header-loss"
+                            else seen.index("GET /api/v1/operator/users") if failure in {"canonical-header-loss", "canonical-header-defect"}
                             else next(i for i, (p, h) in enumerate(web.headers_seen) if p == "GET /auth/session" and h.get("cookie") == f"{f.SESSION_COOKIE}={f.SESSION_VALUE}") if failure in {"canonical-read-cookie", "canonical-redirect-cookie"}
                             else [i for i, p in enumerate(seen) if p == "POST /login"][1])
                 after = web.headers_seen[latch_at + 1:]

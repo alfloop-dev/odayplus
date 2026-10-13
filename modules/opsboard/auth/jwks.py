@@ -22,7 +22,8 @@ class KeyResolver(Protocol):
 class JwksResolver:
     """Resolve RSA verification keys with a bounded cache and rotation retry.
 
-    A cache miss refreshes the JWKS once, which permits normal IdP key rotation.
+    A cache miss may refresh once per second, coalescing concurrent misses and
+    permitting rotation without blocking unexpired cached-key reads.
     Fetch, parse, TLS, or key-shape failures return ``None`` and authentication
     fails closed as ``unknown_key``. The last valid cache is retained when a
     refresh fails, so an IdP control-plane outage does not invalidate an
@@ -44,21 +45,38 @@ class JwksResolver:
         self._keys: dict[str, SigningKey] = {}
         self._expires_at = 0.0
         self._lock = threading.Lock()
+        self._refreshing = False
+        self._next_refresh = 0.0
 
     def resolve(self, kid: str | None) -> SigningKey | None:
         if not kid:
             return None
         with self._lock:
-            now = self._clock()  # refresh time AFTER a potentially blocking lock
+            now = self._clock()
             key = self._keys.get(kid)
             if key is not None and now < self._expires_at:
                 return key
-            self._refresh(now)
-            # Retain old cache for bounded outage tolerance, never renew its
-            # authority on a failed refresh or a wait crossing the expiry.
+            # One shared cooldown, not unbounded per-attacker-kid state. Reserve
+            # before I/O; concurrent misses refuse rather than queue fetches.
+            if self._refreshing or now < self._next_refresh:
+                return None
+            self._refreshing = True
+            self._next_refresh = now + 1.0
+        parsed = None
+        try:
+            # Never hold the cache lock across remote I/O: legitimate cached
+            # keys retain their ORIGINAL expiry while a miss refresh is blocked.
+            parsed = self._refresh()
+        finally:
+            with self._lock:
+                if parsed is not None:
+                    self._keys = parsed  # Successful empty set withdraws keys.
+                    self._expires_at = now + self._ttl
+                self._refreshing = False
+        with self._lock:
             return self._keys.get(kid) if self._clock() < self._expires_at else None
 
-    def _refresh(self, now: float) -> None:
+    def _refresh(self) -> dict[str, SigningKey] | None:
         try:
             payload = self._fetch(self._uri)
             if not isinstance(payload, dict) or not isinstance(payload.get("keys"), list):
@@ -70,13 +88,9 @@ class JwksResolver:
                 for key in [_parse_rsa_jwk(item)]
                 if key is not None
             }
-        except (httpx.HTTPError, KeyError, TypeError, ValueError):
-            return
-        # A successful empty set authoritatively withdraws all cached keys.
-        # Retrieval/shape failure above is uncertainty, not withdrawal; retained
-        # keys still cannot be used outside their prior finite validity bound.
-        self._keys = parsed
-        self._expires_at = now + self._ttl
+        except Exception:
+            return None  # No outage/parser exception can extend key authority.
+        return parsed
 
     @staticmethod
     def _fetch_http(uri: str) -> dict[str, Any]:

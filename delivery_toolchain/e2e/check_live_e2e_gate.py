@@ -692,9 +692,15 @@ def _to_response(status: int, headers: Any, raw: bytes) -> HttpResponse:
         if isinstance(decoded, dict):
             payload = decoded
     pairs = _set_cookie_pairs(headers)
+    defective = bool(getattr(headers, "defects", ()))
+    # A returned partial header view is no more proof of custody than a parser
+    # exception. Preserve extracted values, but never acknowledge this response.
     return HttpResponse(
-        status=status, payload=payload, location=location,
+        status=0 if defective else status, payload={} if defective else payload,
+        location="" if defective else location,
+        error="HTTP response header inspection refused" if defective else "",
         cookies={name: value for name, value in pairs if name}, set_cookie_pairs=pairs,
+        custody_uncertain=defective,
     )
 
 

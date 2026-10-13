@@ -1197,7 +1197,7 @@ class RecoveryHTTPSAttempt:
                 value = _safe_owned_cookie_value(header)
                 if value and value not in issued_cookies and len(issued_cookies) < 4:
                     issued_cookies.append(value)
-            headers_inspected = True
+            headers_inspected = not response.headers.defects
             if cookie_mode == "login":
                 # Retain safe distinct values BEFORE multiplicity/status refusal.
                 # The framing cap already bounds headers; inventory is at most4.
@@ -2377,7 +2377,7 @@ class _ForegroundGateHTTPSClient:
             # Retain a bounded newly issued own cookie BEFORE body decoding.
             # An ambiguous/malformed login remains UNKNOWN, never a login retry.
             pairs = gate._set_cookie_pairs(response.headers)
-            headers_inspected = True
+            headers_inspected = not response.headers.defects
             cookies = {name: value for name, value in pairs if name}
             if not self._api and path != "/login" and any(value for _, value in pairs):
                 for name, value in pairs:

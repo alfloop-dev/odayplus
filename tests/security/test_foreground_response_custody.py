@@ -142,15 +142,20 @@ def test_actual_owned_observation_bad_attributes_keep_custody_unknown(
         assert calls == before
 
 
+@pytest.mark.parametrize("mode", ["raised-cap", "returned-defect"])
 def test_actual_observation_header_parse_loss_never_claims_completed_cleanup(
-    owned_sessions, tls_recovery_server, monkeypatch
+    owned_sessions, tls_recovery_server, monkeypatch, mode
 ):
     with owned_sessions() as (owner, budget, clock, receipts, p, calls, original, target):
         budget.begin("preflight")
         owner.login("original")
         # B precedes the aggregate cap violation, but getresponse never returns
         # parsed headers. Its value is NOT claimed recovered or revocable.
-        extra = HEADER + (b"X-Large: " + b"x" * 33000 + b"\r\n") * 2
+        extra = (
+            b"Malformed header line\r\n" + HEADER
+            if mode == "returned-defect"
+            else HEADER + (b"X-Large: " + b"x" * 33000 + b"\r\n") * 2
+        )
         with tls_recovery_server(recovery_http_reply(b'{"ok":true}', extra=extra)) as (
             origin,
             ca,
@@ -174,8 +179,9 @@ def test_actual_observation_header_parse_loss_never_claims_completed_cleanup(
         assert calls == before
 
 
+@pytest.mark.parametrize("mode", ["raised-cap", "returned-defect"])
 def test_foreground_gate_actual_header_parser_loss_keeps_cleanup_unknown(
-    foreground_gate, tls_recovery_server, monkeypatch
+    foreground_gate, tls_recovery_server, monkeypatch, mode
 ):
     with foreground_gate() as (
         driver,
@@ -190,8 +196,12 @@ def test_foreground_gate_actual_header_parser_loss_keeps_cleanup_unknown(
         events,
     ):
         fake = r._ForegroundGateHTTPSClient._roundtrip
-        triggered = []
-        extra = HEADER + (b"X-Large: " + b"x" * 60000 + b"\r\n") * 9
+        triggered, gate_logouts, known = [], [], set()
+        extra = (
+            b"Malformed header line\r\n" + HEADER
+            if mode == "returned-defect"
+            else HEADER + (b"X-Large: " + b"x" * 60000 + b"\r\n") * 9
+        )
         with tls_recovery_server(recovery_http_reply(b'{"ok":true}', extra=extra)) as (
             origin,
             ca,
@@ -199,13 +209,19 @@ def test_foreground_gate_actual_header_parser_loss_keeps_cleanup_unknown(
         ):
 
             def route(client, method, path, **kwargs):
+                cookie = (kwargs.get("headers") or {}).get("cookie", "").partition("=")[2]
+                if not client._api and path == "/auth/logout":
+                    gate_logouts.append(cookie)
                 if (
                     not client._api
                     and path == "/auth/session"
+                    and cookie
                     and not triggered
                     and budget._active[0] == "gate"
                 ):
                     triggered.append(True)
+                    known.update(driver._cookies)
+                    known.update(value for value in owner._cookies.values() if value)
                     actual = r._ForegroundGateHTTPSClient(
                         driver, api=False, origin=origin, address="127.0.0.1", ca_pem=ca
                     )
@@ -218,8 +234,13 @@ def test_foreground_gate_actual_header_parser_loss_keeps_cleanup_unknown(
             assert triggered and len(requests) == 1
         result = driver.stop_and_cleanup(actions)
         assert result["own_session_cleanup"] == "unknown" and driver._unknown_login
-        logouts = [cookie for operation, cookie, *_ in calls if operation == "logout"]
-        assert len(logouts) == len(set(logouts)) and COOKIE not in logouts
+        owner_logouts = [cookie for operation, cookie, *_ in sessions if operation == "logout"]
+        logouts = gate_logouts + owner_logouts
+        assert known and set(logouts) == known and len(logouts) == len(set(logouts))
+        assert COOKIE not in logouts  # Hidden B was never safely recovered.
+        before = list(calls), list(sessions)
+        driver.stop_and_cleanup(actions)
+        assert (calls, sessions) == before
 
 
 @pytest.mark.parametrize("phase", ["ordinary", "cleanup"])

@@ -25,6 +25,7 @@ denying :class:`AuthOutcome` whose ``principal`` is
 from __future__ import annotations
 
 import hashlib
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -605,6 +606,8 @@ class AuthenticationBoundary:
             return AuthFailureReason.TOKEN_EXPIRED
 
         nbf = _as_epoch(claims.get("nbf"))
+        if "nbf" in claims and nbf is None:
+            return AuthFailureReason.MALFORMED_TOKEN
         if nbf is not None and epoch < nbf - leeway:
             return AuthFailureReason.TOKEN_NOT_YET_VALID
 
@@ -708,5 +711,9 @@ def _as_epoch(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        try:
+            epoch = float(value)
+        except (OverflowError, ValueError):
+            return None
+        return epoch if math.isfinite(epoch) else None
     return None
