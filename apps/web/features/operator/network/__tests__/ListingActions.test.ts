@@ -85,7 +85,7 @@ describe("exact current recorded Radar write projection", () => {
     const mock = vi.fn(async (_url: URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       expect(headers.get("authorization")).toBe("Bearer synthetic-actor-b-bearer");
-      expect(headers.get("if-actor-match")).toBeNull();
+      expect(headers.get("if-actor-match")).toBe(actorA);
       expect(JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)).expectedActorSubjectId).toBe(actorA);
       return new Response(JSON.stringify({ detail: "ACTOR_CONTEXT_CONFLICT" }), { status: 409 });
     });

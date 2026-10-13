@@ -51,7 +51,8 @@ import { ReviewPanel, resolveEffectiveReviews } from "./network/ReviewPanel";
 import { hasRecordedReviewReport, inspectReviewsReadProjection, isReviewPending } from "./network/networkReviewProjection";
 import { NetworkShell } from "./network/NetworkShell";
 import { projectCandidateWorkflow } from "./network/networkWorkflowProjection";
-import { hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, readId, readObject } from "./network/networkReadValidation";
+import { projectCandidateNativeWorkflow, resolveCandidateReviewTarget } from "./network/candidateNativeWorkflowProjection";
+import { hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, hasCanonicalScoreSession, hasScoreExecutionContext, hasScoreExecutionReceipt, scoreExecutionCommandReceiptMatches, hasVerifiedCurrentScoreAdmission, readId, readObject } from "./network/networkReadValidation";
 import { FindAreasPanel } from "./network/FindAreasPanel";
 import { canPerform as canPerformIntake } from "./network/intake/intakePermissions";
 import type { RebalancePanelProps } from "./network/RebalancePanel";
@@ -66,10 +67,12 @@ import {
   isCandidateWorkflowTab,
   CANDIDATE_SELECTION_PARAM,
   parseCandidateSelection,
+  parseReviewSelection,
+  REVIEW_SELECTION_PARAM,
   parseNetworkTabIndex,
 } from "./network/networkUrlState";
 import type { ExpansionStep } from "./network/ExpansionStepper";
-import type { NetworkScoringSnapshot } from "./network/networkScoringTypes";
+import type { NetworkScoringSnapshot, ScoreExecutionReceipt } from "./network/networkScoringTypes";
 import type {
   NetworkReviewsSnapshot,
   ReviewDecisionAction,
@@ -679,17 +682,21 @@ export function NetworkFindAreasWorkspace({
   // tab-only comparison would retain a cleared scope over a restored zone.
   const urlCandidateZoneId = searchParams.get(CANDIDATE_ZONE_PARAM) || null;
   const urlCandidateSelection = parseCandidateSelection(searchParams);
+  const urlReviewSelection = parseReviewSelection(searchParams);
   const [tabOverride, setTabOverride] = useState<{
     from: number;
     fromZoneId: string | null;
     fromCandidateQuery: string;
+    fromReviewQuery: string;
     candidateId: string | null;
+    reviewId: string | null;
     requested: number;
     candidateZoneId: string | null;
   } | null>(null);
   const overrideApplies = tabOverride !== null && tabOverride.from === urlTab
     && tabOverride.fromZoneId === urlCandidateZoneId
-    && tabOverride.fromCandidateQuery === JSON.stringify(searchParams.getAll(CANDIDATE_SELECTION_PARAM));
+    && tabOverride.fromCandidateQuery === JSON.stringify(searchParams.getAll(CANDIDATE_SELECTION_PARAM))
+    && tabOverride.fromReviewQuery === JSON.stringify(searchParams.getAll(REVIEW_SELECTION_PARAM));
   const activeTab = overrideApplies ? tabOverride.requested : urlTab;
   const workflowCandidateId = isCandidateWorkflowTab(activeTab) && !intakeDetailOpen
     ? overrideApplies ? tabOverride.candidateId : urlCandidateSelection.id : null;
@@ -711,7 +718,8 @@ export function NetworkFindAreasWorkspace({
   useEffect(() => {
     setTabOverride((current) => (current !== null
       && (current.from !== urlTab || current.fromZoneId !== urlCandidateZoneId
-        || current.fromCandidateQuery !== JSON.stringify(searchParams.getAll(CANDIDATE_SELECTION_PARAM))) ? null : current));
+        || current.fromCandidateQuery !== JSON.stringify(searchParams.getAll(CANDIDATE_SELECTION_PARAM))
+        || current.fromReviewQuery !== JSON.stringify(searchParams.getAll(REVIEW_SELECTION_PARAM))) ? null : current));
   }, [urlTab, urlCandidateZoneId, searchParams]);
   const [networkSnapshotValue, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
   const networkSnapshot = networkNavigationGeneration === navigationContext.current.generation ? networkSnapshotValue : null;
@@ -757,6 +765,19 @@ export function NetworkFindAreasWorkspace({
   const [scoringLoadFailureValue, setScoringLoadFailure] = useState<OperatorLoadFailure | null>(null);
   const scoringLoadFailure = scoringNavigationGeneration === navigationContext.current.generation ? scoringLoadFailureValue : null;
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
+  const [scoreExecution, setScoreExecution] = useState<ScoreExecutionReceipt | null>(null);
+  const [scoreExecutionError, setScoreExecutionError] = useState<string | null>(null);
+  const executionSequence = useRef(0);
+  const executionSubjectIntent = useRef<string | null>(null);
+  const executionKey = useRef<{ payload: string; key: string; correlation: string; actorSubjectId: string; tenantId: string } | null>(null);
+  useEffect(() => {
+    executionSequence.current += 1;
+    setScoreExecution(null);
+    setScoreExecutionError(null);
+    setBusyCandidateId(null);
+    executionKey.current = null;
+    executionSubjectIntent.current = null;
+  }, [navigationContextKey, navigationLocationKey]);
   const [rebalanceSnapshot, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
   const [rebalanceApiError, setRebalanceApiError] = useState<string | null>(null);
   const [rebalanceLoadState, setRebalanceLoadState] = useState<OperatorDataAvailability>(
@@ -886,7 +907,9 @@ export function NetworkFindAreasWorkspace({
       from: urlTab,
       fromZoneId: urlCandidateZoneId,
       fromCandidateQuery: JSON.stringify(searchParams.getAll(CANDIDATE_SELECTION_PARAM)),
+      fromReviewQuery: JSON.stringify(searchParams.getAll(REVIEW_SELECTION_PARAM)),
       candidateId: exactCandidate,
+      reviewId: params.get(REVIEW_SELECTION_PARAM),
       requested: tabIndex,
       candidateZoneId: tabIndex === 2 ? extraParams?.[CANDIDATE_ZONE_PARAM] || null : null,
     });
@@ -1201,7 +1224,7 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
-  async function reloadScoringSnapshot() {
+  const reloadScoringSnapshot = useCallback(async () => {
     const generation = navigationContext.current.generation;
     const sequence = ++scoringReadSequence.current;
     const read = await fetchNetworkScoringSnapshot(activeRoleId);
@@ -1219,7 +1242,7 @@ export function NetworkFindAreasWorkspace({
       setScoringLoadFailure(read.failure);
       setScoringLoadState("error");
     }
-  }
+  }, [activeRoleId, fixturesAllowed, navigationContextKey]);
 
   async function postScoringAction(
     path: string,
@@ -1253,14 +1276,177 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
-  async function runSiteScore(candidateId: string) {
-    await postScoringAction(
-      `candidates/${candidateId}/score`,
-      {},
-      candidateId,
-      `r4-006-score-${candidateId}`,
-    );
+  async function readCanonicalScoreSubject(isCurrent: () => boolean): Promise<string | null> {
+    try {
+      const response = await fetch("/auth/session", { cache: "no-store", headers: { accept: "application/json" } });
+      if (!isCurrent()) return null;
+      const session: unknown = await response.json();
+      if (!isCurrent()) return null;
+      return response.status === 200 && hasCanonicalScoreSession(session) ? session.subject : null;
+    } catch { return null; }
   }
+
+  async function runSiteScore(candidateId: string, reason?: string) {
+    if (scoringSnapshot?.source !== "canonical") {
+      if (fixturesAllowed) await postScoringAction(`candidates/${candidateId}/score`, {}, candidateId, `r4-006-score-${candidateId}`);
+      return;
+    }
+    const admissionCandidates = scoringSnapshot.candidates.filter((candidate) => candidate.id === candidateId);
+    if (scoringLoadState !== "ready" || scoringNavigationGeneration !== navigationContext.current.generation
+      || candidateId !== workflowCandidateId || admissionCandidates.length !== 1 || !hasVerifiedCurrentScoreAdmission(admissionCandidates[0])) {
+      setScoreExecutionError("目前資料、來源、PIT 或模型的再評分資格尚未確認；已保存報告仍可查閱。");
+      return;
+    }
+    const generation = navigationContext.current.generation;
+    const locationVersion = navigationLocation.current.version;
+    const sequence = ++executionSequence.current;
+    const isCurrent = () => navigationLocation.current.mounted && generation === navigationContext.current.generation
+      && locationVersion === navigationLocation.current.version && sequence === executionSequence.current;
+    const selectedCards = scoringSnapshot.scorecards.filter((card) => card.id === candidateId);
+    if (selectedCards.length !== 1 || !selectedCards[0].reportId || !selectedCards[0].reportVersion || !reason?.trim()) {
+      setScoreExecutionError("請確認候選點已保存報告並填寫重新評分原因。");
+      return;
+    }
+    const retry = scoreExecution && ["FAILED", "CANCELLED"].includes(scoreExecution.status)
+      && scoreExecution.candidateSiteId === candidateId && scoreExecution.jobVersion !== null ? scoreExecution : null;
+    setBusyCandidateId(candidateId);
+    setScoreExecutionError(null);
+    try {
+      // Even fixture-enabled callers need the actual session for a canonical command.
+      const actorSubjectId = await readCanonicalScoreSubject(isCurrent);
+      if (!isCurrent()) return;
+      if (!actorSubjectId || executionSubjectIntent.current && executionSubjectIntent.current !== actorSubjectId
+        || executionKey.current && executionKey.current.actorSubjectId !== actorSubjectId) {
+        setScoreExecutionError("目前登入身分無法核對或已變更，請重新載入後確認；已保存報告仍可查閱。");
+        return;
+      }
+      executionSubjectIntent.current = actorSubjectId;
+      const contextResponse = await fetch(`/api/v1/operator/network-scoring/candidates/${encodeURIComponent(candidateId)}/execution-context`,
+        { cache: "no-store", headers: NETWORK_OPERATOR_HEADERS });
+      if (!isCurrent()) return;
+      const context: unknown = await contextResponse.json();
+      if (!isCurrent()) return;
+      if (!contextResponse.ok || !hasScoreExecutionContext(context) || context.candidateSiteId !== candidateId
+        || context.reportId !== selectedCards[0].reportId || context.reportVersion !== selectedCards[0].reportVersion
+        || executionKey.current && executionKey.current.tenantId !== context.tenantId) {
+        setScoreExecutionError("目前報告、租戶或工作資格已變更，請重新載入後確認。");
+        return;
+      }
+      if (retry) {
+        const current = context.activeExecutionRequest;
+        if (!current || current.executionRequestId !== retry.executionRequestId || current.jobId !== retry.jobId
+          || current.status !== retry.status || current.actualVersion !== retry.actualVersion || current.jobVersion !== retry.jobVersion
+          || retry.baseReportId !== context.reportId || retry.baseReportVersion !== context.reportVersion) {
+          setScoreExecutionError("重試資格或工作版本未確認；請重新載入後確認。已保存報告仍可查閱。");
+          return;
+        }
+      }
+      // The context read may have awaited a session rotation. Do not adopt its new actor.
+      const actorBeforePost = await readCanonicalScoreSubject(isCurrent);
+      if (!isCurrent()) return;
+      if (actorBeforePost !== actorSubjectId) {
+        setScoreExecutionError("目前登入身分無法核對或已變更，請重新載入後確認；已保存報告仍可查閱。");
+        return;
+      }
+      const operation = retry ? "retry" : "create";
+      const body = retry
+        ? { expectedVersion: retry.actualVersion, expectedJobVersion: retry.jobVersion, reason,
+          expectedActorSubjectId: actorSubjectId, expectedTenantId: context.tenantId }
+        : { expectedReportId: context.reportId, expectedReportVersion: context.reportVersion, expectedJobVersion: context.jobVersion, reason,
+          expectedActorSubjectId: actorSubjectId, expectedTenantId: context.tenantId };
+      const payload = JSON.stringify({ candidateId, requestId: retry?.executionRequestId, operation, ...body });
+      if (executionKey.current?.payload !== payload) executionKey.current = {
+        payload, key: crypto.randomUUID(), correlation: crypto.randomUUID(), actorSubjectId, tenantId: context.tenantId,
+      };
+      const key = executionKey.current;
+      const path = retry ? `execution-requests/${encodeURIComponent(retry.executionRequestId)}/retry` : `candidates/${encodeURIComponent(candidateId)}/score`;
+      const response = await fetch(`/api/v1/operator/network-scoring/${path}`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...NETWORK_OPERATOR_HEADERS,
+          "Idempotency-Key": key.key, "X-Correlation-Id": key.correlation, "If-Actor-Match": key.actorSubjectId }, body: JSON.stringify(body),
+      });
+      if (!isCurrent()) return;
+      const value: unknown = await response.json();
+      if (!isCurrent()) return;
+      const actorAfter = await readCanonicalScoreSubject(isCurrent);
+      if (!isCurrent()) return;
+      if (actorAfter !== key.actorSubjectId) {
+        setScoreExecutionError("目前登入身分無法核對或已變更，請重新載入後確認；已保存報告仍可查閱。");
+        return;
+      }
+      if (response.status !== 202 || !readObject(value) || !hasScoreExecutionReceipt(value.executionRequest)
+        || value.executionRequest.candidateSiteId !== candidateId || value.executionRequest.baseReportId !== context.reportId
+        || value.executionRequest.baseReportVersion !== context.reportVersion
+        || retry && (value.executionRequest.executionRequestId !== retry.executionRequestId || value.executionRequest.jobId !== retry.jobId)
+        || !scoreExecutionCommandReceiptMatches(value.commandReceipt,
+          { operation, actorSubjectId: key.actorSubjectId, tenantId: key.tenantId, idempotencyKey: key.key, correlationId: key.correlation }, value.executionRequest)) {
+        setScoreExecutionError(`${retry ? "重試資格或工作版本" : "重新評分請求"}未確認（${response.status}）。已保存報告仍可查閱。`);
+        return;
+      }
+      setScoreExecution(value.executionRequest);
+    } catch {
+      if (isCurrent()) setScoreExecutionError("重新評分請求無法確認；請重新載入後查看工作狀態。");
+    } finally {
+      if (isCurrent()) setBusyCandidateId(null);
+    }
+  }
+
+  useEffect(() => {
+    if (!scoreExecution || ["SUCCEEDED", "FAILED", "DEAD_LETTER", "CANCELLED"].includes(scoreExecution.status)) return;
+    const generation = navigationContext.current.generation;
+    const locationVersion = navigationLocation.current.version;
+    const sequence = executionSequence.current;
+    const requestId = scoreExecution.executionRequestId;
+    const candidateId = scoreExecution.candidateSiteId;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const isCurrent = () => !cancelled && navigationLocation.current.mounted && generation === navigationContext.current.generation
+      && locationVersion === navigationLocation.current.version && sequence === executionSequence.current;
+    async function poll() {
+      try {
+        const response = await fetch(`/api/v1/operator/network-scoring/execution-requests/${encodeURIComponent(requestId)}`, { headers: NETWORK_OPERATOR_HEADERS });
+        if (!isCurrent()) return;
+        const value: unknown = await response.json();
+        if (!isCurrent()) return;
+        if (!response.ok || !hasScoreExecutionReceipt(value) || value.executionRequestId !== requestId || value.candidateSiteId !== candidateId) {
+          setScoreExecutionError("工作狀態無法核對，已保存報告仍可查閱。");
+          return;
+        }
+        setScoreExecution(value);
+        if (value.status === "SUCCEEDED") {
+          executionKey.current = null;
+          executionSubjectIntent.current = null;
+          await reloadScoringSnapshot();
+        } else if (!["FAILED", "DEAD_LETTER", "CANCELLED"].includes(value.status)) {
+          timer = setTimeout(poll, 1000);
+        }
+      } catch {
+        if (isCurrent()) setScoreExecutionError("工作狀態讀取失敗，已保存報告仍可查閱。");
+      }
+    }
+    timer = setTimeout(poll, 1000);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [scoreExecution, navigationContextKey, navigationLocationKey, NETWORK_OPERATOR_HEADERS, reloadScoringSnapshot]);
+
+  useEffect(() => {
+    if (activeTab !== 3 || !workflowCandidateId || scoringSnapshot?.source !== "canonical" || scoringLoadState !== "ready") return;
+    const generation = navigationContext.current.generation;
+    const locationVersion = navigationLocation.current.version;
+    let cancelled = false;
+    const sequence = executionSequence.current;
+    async function restore() {
+      try {
+        const response = await fetch(`/api/v1/operator/network-scoring/candidates/${encodeURIComponent(workflowCandidateId!)}/execution-context`, { headers: NETWORK_OPERATOR_HEADERS });
+        if (cancelled || !navigationLocation.current.mounted || sequence !== executionSequence.current || generation !== navigationContext.current.generation || locationVersion !== navigationLocation.current.version) return;
+        const value: unknown = await response.json();
+        if (cancelled || !navigationLocation.current.mounted || sequence !== executionSequence.current || generation !== navigationContext.current.generation || locationVersion !== navigationLocation.current.version) return;
+        if (response.ok && hasScoreExecutionContext(value) && value.candidateSiteId === workflowCandidateId && value.activeExecutionRequest) {
+          setScoreExecution(value.activeExecutionRequest);
+        }
+      } catch { /* An unverified context cannot change the historical report. */ }
+    }
+    restore();
+    return () => { cancelled = true; };
+  }, [activeTab, workflowCandidateId, scoringSnapshot?.source, scoringLoadState, navigationContextKey, navigationLocationKey, NETWORK_OPERATOR_HEADERS]);
 
   async function scoreAllCandidates(candidateIds?: string[]) {
     // An empty candidateIds list means "every candidate" server-side, so a
@@ -1758,6 +1944,18 @@ export function NetworkFindAreasWorkspace({
   // fixture read cannot survive a role/tenant change or a failed current read.
   const useFixtureWorkflow = fixturesAllowed && scoringWorkflowProvenance === "fixture"
     && networkSnapshot !== null && scoringSnapshot !== null;
+  const nativeWorkflow = useFixtureWorkflow ? undefined : projectCandidateNativeWorkflow({
+    currentGeneration: navigationContext.current.generation,
+    tenantId: typeof window === "undefined" ? null : window.sessionStorage.getItem("oday.operator.tenant"),
+    network: { snapshot: networkSnapshot, status: networkLoadState, generation: networkNavigationGeneration },
+    scoring: { snapshot: scoringSnapshot, status: scoringWorkflowProvenance === "canonical" ? scoringLoadState : "error", generation: scoringNavigationGeneration },
+    reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
+  });
+  const explicitReview = resolveCandidateReviewTarget(nativeWorkflow ?? {}, workflowCandidateId,
+    activeTab === 5 ? overrideApplies ? { id: tabOverride.reviewId, invalid: false } : urlReviewSelection
+      : { id: null, invalid: false });
+  const nativeReadGeneration = navigationContext.current.generation;
+  const nativeReadContextKey = navigationContext.current.key;
   const expansionSteps = useFixtureWorkflow
     ? networkSnapshot?.expansionSteps ?? buildFallbackExpansionSteps(
           effectiveSelectedId,
@@ -1937,6 +2135,13 @@ export function NetworkFindAreasWorkspace({
             candidates={scoringNavigationGeneration === navigationContext.current.generation ? scoringSnapshot?.candidates ?? [] : []}
             fallbackRows={fixturesAllowed && !selectedCandidateId ? viewModel.candidatePipeline : []}
             selectedCandidateId={selectedCandidateId}
+            nativeWorkflow={nativeWorkflow}
+            onViewReview={(target) => {
+              if (!navigationLocation.current.mounted || target.generation !== navigationContext.current.generation
+                || nativeReadGeneration !== navigationContext.current.generation || nativeReadContextKey !== navigationContext.current.key
+                || nativeWorkflow?.[target.candidateId]?.review !== target) return;
+              changeActiveTab(5, { [CANDIDATE_SELECTION_PARAM]: target.candidateId, [REVIEW_SELECTION_PARAM]: target.reviewId });
+            }}
             selectionError={candidateSelectionError}
             onSelectCandidate={(id) => changeActiveTab(2, { [CANDIDATE_SELECTION_PARAM]: id })}
             onScore={runSiteScore}
@@ -1951,8 +2156,11 @@ export function NetworkFindAreasWorkspace({
             candidates={scoringSnapshot?.candidates ?? []}
             fallbackRows={fixturesAllowed ? viewModel.siteScoreLab : []}
             modelVersion={scoringSnapshot?.modelVersion}
-            onRescore={fixturesAllowed ? runSiteScore : undefined}
-            rescoreUnavailableReason={fixturesAllowed ? undefined : "目前工作與再評分資格尚未確認；已保存報告仍可查閱。"}
+            onRescore={scoringSnapshot?.source === "canonical" || fixturesAllowed ? runSiteScore : undefined}
+            requireRescoreReason={scoringSnapshot?.source === "canonical"}
+            executionRequest={scoreExecution}
+            executionError={scoreExecutionError}
+            rescoreUnavailableReason={scoringSnapshot?.source === "canonical" && (scoringLoadState !== "ready" || !workflowCandidateId || scoringSnapshot.candidates.filter((candidate) => candidate.id === workflowCandidateId).length !== 1 || !hasVerifiedCurrentScoreAdmission(scoringSnapshot.candidates.find((candidate) => candidate.id === workflowCandidateId))) ? "目前資料、來源、PIT 或模型的再評分資格尚未確認；已保存報告仍可查閱。" : scoreExecution && ["QUEUED", "RUNNING", "RETRYING"].includes(scoreExecution.status) ? "評分工作處理中，已保存報告仍可查閱。" : scoreExecution && ["DEAD_LETTER"].includes(scoreExecution.status) ? "既有工作尚未解除，請確認重試資格。已保存報告仍可查閱。" : undefined}
             scorecards={scoringSnapshot?.scorecards ?? []}
             selectedCandidateId={workflowCandidateId}
             onSelectCandidate={(id) => changeActiveTab(3, { [CANDIDATE_SELECTION_PARAM]: id })}
@@ -1973,6 +2181,8 @@ export function NetworkFindAreasWorkspace({
             onDecide={submitReviewDecision}
             workflowCandidateId={workflowCandidateId}
             expectedReport={workflowProjection.report}
+            explicitReadTarget={explicitReview.target}
+            explicitSelectionError={explicitReview.error}
             fixtureCandidateContext={fixturesAllowed}
             onSelectCandidate={(id) => changeActiveTab(5, { [CANDIDATE_SELECTION_PARAM]: id })}
             selectionError={workflowSelectionError}

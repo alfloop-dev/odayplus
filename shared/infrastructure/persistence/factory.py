@@ -96,6 +96,7 @@ class PersistenceBundle:
     # memory/SQLite construction path while allowing API and worker callers to
     # share one registry repository when it is available.
     forecastops_policy_repository: Any = None
+    current_model_admission: Any = None
 
 
     @property
@@ -107,6 +108,16 @@ class PersistenceBundle:
         return self.mode == "postgresql" and bool(
             getattr(self.engine, "is_production", False)
         )
+
+    def score_execution_service(self, *, model_runtime: Any = None) -> Any:
+        from models.shared_ml.current_model_admission import CurrentModelAdmissionPort
+        from modules.sitescore.application.score_delivery import ScoreExecutionJobRepository
+        from modules.sitescore.application.score_execution import SiteScoreExecutionService
+        admission = self.current_model_admission
+        if admission is None:
+            admission = CurrentModelAdmissionPort(runtime=model_runtime,
+                registry_repository=self.learninghub_repository, engine=self.engine)
+        return SiteScoreExecutionService(ScoreExecutionJobRepository(self, model_admission=admission))
 
     def listing_repository_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("listing_repository", tenant_id)

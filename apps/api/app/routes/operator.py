@@ -129,6 +129,7 @@ def create_operator_router(
     netplan_repository_for_tenant: Any | None = None,
     priceops_repository_for_tenant: Any | None = None,
     model_runtime: Any | None = None,
+    score_execution_service: Any | None = None,
     avm_production_executor: Any | None = None,
     avm_depreciation_version_pin: str | None = None,
     avm_rollback_receipt: DepreciationRollbackReceipt | None = None,
@@ -738,6 +739,10 @@ def create_operator_router(
                         tenant_id,
                     ),
                     model_runtime=require_model_runtime(),
+                    current_model_admission=getattr(
+                        getattr(score_execution_service, "repository", None), "model_admission", None,
+                    ),
+                    execution_service=score_execution_service,
                     require_canonical=True,
                     tenant_id=tenant_id,
                 )
@@ -970,6 +975,7 @@ def create_operator_router(
                     "sitescore", Action.EXECUTE, engine=authz_engine
                 ),
                 service_resolver=scoring_resolver,
+                execution_service=score_execution_service,
                 read_scope_snapshot_fn=network_read_scope_snapshot,
                 allow_reset=allow_test_reset,
             )

@@ -172,14 +172,18 @@ class ODayWorker:
             INTAKE_SITESCORE_JOB_TYPE,
             IntakeScoreJobRepository,
         )
-
-        canonical_score_job = job.job_type == INTAKE_SITESCORE_JOB_TYPE
+        from modules.sitescore.application.score_delivery import (
+            SITESCORE_EXECUTION_JOB_TYPE,
+            ScoreExecutionJobRepository,
+        )
+        canonical_score_job = job.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}
+        score_owner = ScoreExecutionJobRepository if job.job_type == SITESCORE_EXECUTION_JOB_TYPE else IntakeScoreJobRepository
 
         def score_heartbeat(job_id: str, *, expected_version: int, fence_token: int) -> int:
             # This adapter renews both the authoritative SQL lease and its
             # delivery lease in one transaction. Resolve it lazily so a
             # dependency failure enters the heartbeat's ownership handling.
-            return IntakeScoreJobRepository(self.persistence).heartbeat(
+            return score_owner(self.persistence).heartbeat(
                 job_id, expected_version=expected_version, fence_token=fence_token,
             )
 

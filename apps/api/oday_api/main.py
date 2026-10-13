@@ -1142,8 +1142,9 @@ else:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_authorization import authorize_intake_action
             from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+            from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
 
-            if body.job_type == INTAKE_SITESCORE_JOB_TYPE:
+            if body.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}:
                 raise HTTPException(
                     status.HTTP_400_BAD_REQUEST,
                     {"code": "JOB_TYPE_NOT_SUPPORTED", "message": "Score jobs require an independently reviewed promotion"},
@@ -1326,6 +1327,7 @@ else:
         ) -> dict[str, Any] | None:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+            from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
 
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
             if job.job_type == "forecast":
@@ -1343,6 +1345,32 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
+            elif job.job_type == SITESCORE_EXECUTION_JOB_TYPE:
+                from apps.api.app.routes.operator_modules.network_scoring import (
+                    execution_http_error,
+                )
+                from modules.sitescore.application.score_delivery import ScoreExecutionJobRepository
+                from modules.sitescore.application.score_execution import SiteScoreExecutionService
+                principal = principal_from_headers(request.headers)
+                if not principal.authenticated:
+                    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
+                if not principal.tenant_id or job_tenant != principal.tenant_id:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                try:
+                    owner = ScoreExecutionJobRepository(bundle)
+                    with bundle.engine.lock:
+                        owner._tenant(principal.tenant_id)
+                        row = owner._row(job.job_id, principal.tenant_id)
+                        if row is None or not row["payload"].get("execution_request_id"):
+                            raise HTTPException(404, "job not found")
+                        receipt = SiteScoreExecutionService(owner).get(row["payload"]["execution_request_id"], principal=principal)
+                        if receipt is None or receipt["jobId"] != job.job_id or receipt["candidateSiteId"] != row["payload"]["candidate_site_id"]:
+                            raise HTTPException(404, "job not found")
+                        return receipt
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    raise execution_http_error(exc) from exc
             elif job.job_type == INTAKE_SITESCORE_JOB_TYPE:
                 from modules.listing.application.intake_authorization import authorize_intake_action
                 from modules.listing.application.intake_score_delivery import (
@@ -1504,8 +1532,11 @@ else:
         def _authorized_job_response(job: Any, request: Request) -> dict[str, Any]:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+            from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
 
             authorized_resource = _authorize_job_access(job, request)
+            if job.job_type == SITESCORE_EXECUTION_JOB_TYPE:
+                return authorized_resource
             if job.job_type == INTAKE_SITESCORE_JOB_TYPE:
                 from apps.api.app.routes.listings import JobReceipt, _job_receipt_payload
 
@@ -1538,13 +1569,14 @@ else:
         ) -> dict[str, Any]:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+            from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
             from shared.auth import Action, rbac_allows
             from shared.infrastructure.persistence.job_queue import JobFenceRejectedError
 
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
-            if job.job_type == INTAKE_SITESCORE_JOB_TYPE:
+            if job.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}:
                 _authorize_job_access(job, request)
                 raise HTTPException(
                     status.HTTP_400_BAD_REQUEST,
@@ -2397,6 +2429,7 @@ else:
                 netplan_repository_for_tenant=netplan_repository_for_tenant,
                 priceops_repository_for_tenant=priceops_repository_for_tenant,
                 model_runtime=model_runtime,
+                score_execution_service=(bundle.score_execution_service(model_runtime=model_runtime) if bundle.is_production else None),
                 avm_production_executor=avm_production_executor,
                 avm_depreciation_version_pin=avm_dep_pin,
                 avm_rollback_receipt=avm_rollback_receipt,

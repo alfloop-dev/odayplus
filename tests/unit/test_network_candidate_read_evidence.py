@@ -6,7 +6,6 @@ import json
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,8 +19,6 @@ from modules.opsboard.application.network_scoring import (
     NetworkScoringGateError,
     NetworkScoringService,
 )
-from modules.sitescore.application.candidate_features import feature_from_candidate
-from modules.sitescore.domain.scoring import Interval, SiteScoreRecommendation, SiteScoreReport
 from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
 from shared.auth import DataClassification, Principal, Role, Scope
 from shared.domain.models import AddressLocation, CandidateSite, Listing
@@ -377,34 +374,21 @@ def test_feature_build_occurs_only_for_explicit_eligible_score_with_exact_draft_
 ) -> None:
     draft = _draft(hard_rules=[])
     feature_calls: list[tuple[Any, str]] = []
-    execution_features: list[Any] = []
 
-    def build_feature(actual_draft: Any, *, tenant_id: str) -> Any:
+    def forbidden_feature(actual_draft: Any, *, tenant_id: str) -> Any:
         feature_calls.append((actual_draft, tenant_id))
-        return feature_from_candidate(actual_draft, tenant_id=tenant_id)
+        raise AssertionError("Request/read may not hydrate or infer worker features")
 
-    band = Interval(100.0, 200.0, 300.0)
-    report = SiteScoreReport(
-        candidate_site_id=draft.candidate_site.candidate_site_id, sitescore_run_id="synthetic-run",
-        target_format_code="synthetic-format", recommendation=SiteScoreRecommendation.WAIT,
-        m1=band, m3=band, m6=band, m12=band, payback_period=Interval(12, 24, 36),
-        payback_p50_months=24, rent_reasonableness=0.5, cannibalization_risk=0.2,
-        comparable_stores=2, key_positive_factors=(), key_negative_factors=(), confidence=0.0,
-        model_version="synthetic-model", feature_version="synthetic-view",
-        feature_snapshot_time=AT, prediction_origin_time=AT, scored_at=AT,
-    )
+    class QueuedOwner:
+        def create(self, command: Any, *, principal: Any) -> Any:
+            assert command.candidate_site_id == draft.candidate_site.candidate_site_id
+            assert principal.tenant_id == TENANT
+            return {"status": "QUEUED", "result": None, "candidateSiteId": command.candidate_site_id}
 
-    class StubReportService:
-        def __init__(self, **kwargs: Any) -> None:
-            assert kwargs["require_production_model"] is True
-
-        def score_candidates_with_execution(self, features: list[Any]) -> Any:
-            execution_features.extend(features)
-            return SimpleNamespace(reports=[report])
-
-    monkeypatch.setattr(network_scoring, "feature_from_candidate", build_feature)
-    monkeypatch.setattr(network_scoring, "SiteScoreReportService", StubReportService)
+    from modules.sitescore.domain.execution import ScoreExecutionCommand
+    monkeypatch.setattr(network_scoring, "feature_from_candidate", forbidden_feature)
     service = _service(draft)
+    service._execution_service = QueuedOwner()
     snapshot = service.snapshot()
     assert feature_calls == []
     assert "canonicalDraft" not in json.dumps(snapshot)
@@ -412,12 +396,13 @@ def test_feature_build_occurs_only_for_explicit_eligible_score_with_exact_draft_
     result = service.score_candidate(
         candidate_id=draft.candidate_site.candidate_site_id, actor_role_id="expansionManager",
         actor_name=None, idempotency_key=None, correlation_id=None,
+        execution_command=ScoreExecutionCommand(draft.candidate_site.candidate_site_id, "synthetic-saved-report", 1, 7,
+            "Synthetic queued request", "synthetic-key", "synthetic-correlation"),
+        principal=_principal(DataClassification.CONFIDENTIAL),
     )
-    assert len(feature_calls) == 1
-    assert feature_calls[0][0] is draft
-    assert feature_calls[0][1] == TENANT
-    assert execution_features == [feature_from_candidate(draft, tenant_id=TENANT)]
-    assert result["scorecard"]["score"] is None
+    assert feature_calls == []
+    assert result["executionRequest"]["status"] == "QUEUED"
+    assert result["executionRequest"]["result"] is None
     assert service._model_runtime.calls == 0
     assert "canonicalDraft" not in json.dumps(result)
     assert "canonicalTenantId" not in json.dumps(result)

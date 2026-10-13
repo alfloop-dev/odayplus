@@ -1,4 +1,4 @@
-import type { CandidateReadField, CandidateWorkflowStage, ScoringCandidate } from "./networkScoringTypes";
+import type { CandidateNativeWorkflowReads, CandidateReadField, CandidateWorkflowStage, ScoringCandidate } from "./networkScoringTypes";
 
 // R7 Package10: the binding standalone artifact (1aefb806...) and canonical
 // source (cc4e6ae9...) share this original order. Supplemental reads do not
@@ -38,17 +38,26 @@ function workflowUnavailableReason(candidate: ScoringCandidate, stage: Candidate
   return read?.reason || PRODUCER_REASONS[stage];
 }
 
-export function candidateMatchesPipeline(candidate: ScoringCandidate, filter: CandidatePipelineFilter) {
+export function candidateMatchesPipeline(candidate: ScoringCandidate, filter: CandidatePipelineFilter, native?: CandidateNativeWorkflowReads) {
   if (filter === "all") return true;
+  if (filter === "compare") return candidate.inCompare;
+  if (native) return native[candidate.id]?.availability === "recorded" && native[candidate.id].stage === filter;
   if (filter === "needdata") return !candidate.gate.passed;
   if (filter === "ready") return !candidate.scored && candidate.gate.passed;
   if (filter === "evaluated") return candidate.scored;
-  if (filter === "compare") return candidate.inCompare;
   return workflowMatch(candidate, filter) === true;
 }
 
-export function candidatePipelineControls(candidates: ScoringCandidate[]) {
+export function candidatePipelineControls(candidates: ScoringCandidate[], native?: CandidateNativeWorkflowReads) {
   return CANDIDATE_PIPELINE.map((stage) => {
+    if (native) {
+      const unsupported = stage.id === "scoring" || stage.id === "shortlisted";
+      const unknown = stage.id !== "all" && (unsupported || candidates.some((candidate) => native[candidate.id]?.availability !== "recorded"));
+      return { ...stage, count: unknown ? null : candidates.filter((candidate) => candidateMatchesPipeline(candidate, stage.id, native)).length,
+        available: !unknown, reason: unsupported ? PRODUCER_REASONS[stage.id as CandidateWorkflowStage]
+          : unknown ? [...new Set(candidates.map((candidate) => native[candidate.id]?.reason ?? "流程關聯尚未核驗。"))].join(" ")
+            : stage.id === "ready" ? "資料齊備；評分資格仍需核驗模型、來源與特徵時點。" : null };
+    }
     const unknown = stage.id in PRODUCER_REASONS
       && (candidates.length === 0 || candidates.some((candidate) => workflowMatch(candidate, stage.id as CandidateWorkflowStage) === null));
     return {

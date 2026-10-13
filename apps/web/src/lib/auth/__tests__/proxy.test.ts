@@ -430,3 +430,48 @@ async function productionSessionCookie(): Promise<string> {
     SECRET,
   );
 }
+
+describe("actual actor caller constraint forwarding", () => {
+  it("forwards If-Actor-Match while stripping browser bearer and identity grants", () => {
+    const result = buildUpstreamHeaders({
+      requestHeaders: new Headers({
+        "If-Actor-Match": "account-current", authorization: "Bearer browser-forged-token",
+        "x-subject-id": "browser-forged-subject", "x-tenant-id": "browser-forged-tenant", "x-roles": "admin",
+      }),
+      accessToken: "server-owned-token", allowLegacyIdentity: false,
+    });
+    expect(result.get("if-actor-match")).toBe("account-current");
+    expect(result.get("authorization")).toBe("Bearer server-owned-token");
+    expect(result.get("x-subject-id")).toBeNull();
+    expect(result.get("x-tenant-id")).toBeNull();
+    expect(result.get("x-roles")).toBeNull();
+  });
+
+  it("carries actual request constraint through production proxy without granting browser identity", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    const cookie = await productionSessionCookie();
+    const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("if-actor-match")).toBe("account-123");
+      expect(headers.get("authorization")).toBe("Bearer real-access-token");
+      expect(headers.get("x-serverless-authorization")).toBe("Bearer server-service-token");
+      expect(headers.get("x-subject-id")).toBeNull();
+      expect(headers.get("x-tenant-id")).toBeNull();
+      expect(headers.get("x-roles")).toBeNull();
+      return new Response("{}", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const request = new NextRequest("https://web.example/api/v1/operator/bootstrap", {
+      headers: {
+        "If-Actor-Match": "account-123", authorization: "Bearer browser-forged-token",
+        "x-subject-id": "browser-forged-subject", "x-tenant-id": "browser-forged-tenant", "x-roles": "admin",
+      },
+    });
+    request.cookies.set(webSessionCookieName, cookie);
+    const response = await proxyApiRequest(request, "/api/v1/operator/bootstrap", {
+      NODE_ENV: "production", ODP_API_BASE_URL: "https://api.internal.example", ODP_API_SERVICE_AUDIENCE: "https://api.internal.example",
+    }, { resolveServiceIdentityToken: async () => "server-service-token" });
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+});

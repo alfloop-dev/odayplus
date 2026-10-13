@@ -107,6 +107,7 @@ class ScoreAttempt:
 
 
 class IntakeScoreJobRepository:
+    job_type = INTAKE_SITESCORE_JOB_TYPE
     def __init__(self, persistence: Any):
         self.persistence = persistence
         self.engine = persistence.engine
@@ -132,7 +133,7 @@ class IntakeScoreJobRepository:
     def _authenticate_reference(self, job: JobRecord) -> str:
         """Authenticate opaque delivery metadata before loading business input."""
         payload = job.payload
-        if (job.job_type != INTAKE_SITESCORE_JOB_TYPE
+        if (job.job_type != self.job_type
                 or set(payload) != {"job_id", "tenant_id", "attempt_token"}
                 or payload.get("job_id") != job.job_id):
             raise ScoreDeliveryDenied("SITESCORE_ATTEMPT_TOKEN_DENIED")
@@ -154,7 +155,7 @@ class IntakeScoreJobRepository:
         row = self.engine.query_one(
             ("SELECT * FROM workflow.jobs WHERE job_id=? AND tenant_id=? AND job_type=? FOR UPDATE"
              if lock else "SELECT * FROM workflow.jobs WHERE job_id=? AND tenant_id=? AND job_type=?"),
-            (job_id, tenant, INTAKE_SITESCORE_JOB_TYPE),
+            (job_id, tenant, self.job_type),
         )
         if row is not None:
             for key in ("payload", "result", "last_error"):
@@ -284,14 +285,14 @@ class IntakeScoreJobRepository:
                 "INSERT INTO workflow.jobs(job_id,tenant_id,job_type,aggregate_type,aggregate_id,"
                 "status,checkpoint,max_attempts,timeout_at,payload,correlation_id,idempotency_key,attempt_token_sha256) "
                 "VALUES(?,?,?,'candidate_site',?,'QUEUED','SCORE_QUEUED',?,?,?::jsonb,?,?,?)",
-                (job_id, tenant, INTAKE_SITESCORE_JOB_TYPE, promotion["candidate_site_id"],
+                (job_id, tenant, self.job_type, promotion["candidate_site_id"],
                  retry_policy["max_attempts"],
                  # This is the existing enqueue deadline, not an inference SLA.
                  (now + timedelta(seconds=30)).isoformat(), json.dumps(payload), correlation,
                  f"intake-sitescore:{tenant}:{promotion['promotion_decision_id']}", hashlib.sha256(token.encode()).hexdigest()),
             )
             delivery, created = self.queue.enqueue(JobRequest(
-                job_type=INTAKE_SITESCORE_JOB_TYPE, job_id=job_id,
+                job_type=self.job_type, job_id=job_id,
                 idempotency_key=f"intake-sitescore:{tenant}:{promotion['promotion_decision_id']}",
                 payload={"job_id": job_id, "tenant_id": tenant, "attempt_token": token},
             ), correlation_id=correlation)
@@ -351,7 +352,7 @@ class IntakeScoreJobRepository:
                 or not hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), row["attempt_token_sha256"])):
             raise ScoreDeliveryDenied("SITESCORE_ATTEMPT_TOKEN_DENIED")
         current = self.queue.get(job.job_id)
-        if (current is None or current.job_type != INTAKE_SITESCORE_JOB_TYPE
+        if (current is None or current.job_type != self.job_type
                 or current.payload != payload or current.status != JobStatus.RUNNING
                 or current.fence_token != job.fence_token or current.locked_by != job.locked_by
                 or current.lease_expires_at is None or current.lease_expires_at <= self._now()):
@@ -442,6 +443,9 @@ class IntakeScoreJobRepository:
             key: promotion[key] for key in ("promotion_decision_id", "intake_id", "listing_id", "status", "decision_type", "candidate_site_id", "site_score_job_id", "version")
         }, promotion=True)
 
+    def _parent_ready(self, row: dict, promotion: dict, accepted: bool) -> bool:
+        return accepted or promotion["status"] == "SCORE_QUEUED"
+
     def begin_attempt(self, job: JobRecord) -> ScoreAttempt | None:
         tenant = self._authenticate_reference(job)
         with self._unit(job.job_id, tenant) as (row, intake, promotion, candidate):
@@ -454,7 +458,7 @@ class IntakeScoreJobRepository:
             current = self._delivery(job, row)
             accepted = self._accepted(row, promotion)
             if (row["status"] not in {"QUEUED", "RETRYING", "RUNNING"}
-                    or (not accepted and promotion["status"] != "SCORE_QUEUED")):
+                    or not self._parent_ready(row, promotion, accepted)):
                 raise JobFenceRejectedError("SITESCORE_PARENT_OR_STATE_CHANGED")
             now = self._now()
             if row["status"] == "RETRYING" and (not row["next_attempt_at"] or _time(row["next_attempt_at"]) > now):
@@ -527,6 +531,28 @@ class IntakeScoreJobRepository:
             raise JobFenceRejectedError("SITESCORE_RESULT_FENCE_REJECTED")
         return current
 
+    def pin_model_admission(self, job: JobRecord, attempt: ScoreAttempt, receipt: dict) -> None:
+        """Persist current production model facts under the actual job fence."""
+        if self._authenticate_reference(job) != attempt.tenant_id:
+            raise ScoreDeliveryDenied("SITESCORE_ATTEMPT_TENANT_DENIED")
+        with self._unit(job.job_id, attempt.tenant_id) as (row, intake, promotion, candidate):
+            self._check_attempt(job, attempt, row, intake, promotion, candidate)
+            existing = row["payload"].get("model_admission")
+            if existing is not None and existing != receipt:
+                raise ScoreDeliveryDenied("SITESCORE_CURRENT_MODEL_CHANGED")
+            if existing is None:
+                payload = deepcopy(row["payload"])
+                payload["model_admission"] = deepcopy(receipt)
+                self._update(row, payload=payload)
+                attempt.token["version"] = row["version"] - payload.get("heartbeat_count", 0)
+                self._audit(row, intake, "sitescore.model_admission_pinned", row["payload"]["actor_id"])
+
+    def check_publication(self, job: JobRecord, attempt: ScoreAttempt) -> None:
+        # Reentered only inside commit_success, after any held model guard may
+        # have waited; fresh DB clock checks precede all result writes.
+        with self._unit(job.job_id, attempt.tenant_id) as (row, intake, promotion, candidate):
+            self._check_attempt(job, attempt, row, intake, promotion, candidate)
+
     def commit_success(self, job: JobRecord, attempt: ScoreAttempt, persist_callback: Callable[[], dict]) -> dict:
         if self._authenticate_reference(job) != attempt.tenant_id:
             raise ScoreDeliveryDenied("SITESCORE_ATTEMPT_TENANT_DENIED")
@@ -542,11 +568,34 @@ class IntakeScoreJobRepository:
             self._audit(row, intake, "sitescore.completed", row["payload"]["actor_id"])
             return self._receipt(row)
 
+    def _failure_fence(self, job: JobRecord, attempt: ScoreAttempt, row: dict) -> JobRecord:
+        """An owned failure has no inference/publication authority.
+
+        Source/model withdrawal must stop results, while the authenticated
+        attempt can still settle its own status under both current leases.
+        """
+        current = self._delivery(job, row)
+        intake, promotion, candidate = self._parents(row, live=True)
+        if (row["status"] != "RUNNING" or row["cancellation_requested_at"]
+                or row["fence_token"] != attempt.token["fence"]
+                or row["version"] != attempt.token["version"] + row["payload"].get("heartbeat_count", 0)
+                or row["payload"]["generation"] != attempt.token["generation"]
+                or not row["lease_expires_at"] or _time(row["lease_expires_at"]) <= self._now()
+                or not self._accepted(row, promotion)
+                or self._fingerprint(intake, promotion, candidate) != attempt.token["fingerprint"]):
+            raise JobFenceRejectedError("SITESCORE_RESULT_FENCE_REJECTED")
+        return current
+
     def fail_attempt(self, job: JobRecord, attempt: ScoreAttempt, error_code: str, retryable: bool) -> dict:
         if self._authenticate_reference(job) != attempt.tenant_id:
             raise ScoreDeliveryDenied("SITESCORE_ATTEMPT_TENANT_DENIED")
         with self._unit(job.job_id, attempt.tenant_id) as (row, intake, promotion, candidate):
-            current = self._check_attempt(job, attempt, row, intake, promotion, candidate)
+            current = self._failure_fence(job, attempt, row)
+            if retryable:
+                try:
+                    self._check_attempt(job, attempt, row, intake, promotion, candidate)
+                except ScoreDeliveryDenied as exc:
+                    error_code, retryable = str(exc), False
             if retryable and row["attempt"] < row["max_attempts"]:
                 policy = row["payload"]["retry_policy"]
                 due = self._now() + timedelta(seconds=policy["backoff_seconds"][row["attempt"] - 1])
@@ -587,14 +636,15 @@ class IntakeScoreJobRepository:
         if not self._accepted(row, promotion):
             self._promotion(promotion, "SCORE_FAILED")
         failed = _with_candidate_status(candidate, "SCORING_FAILED")
-        self._repository(str(row["tenant_id"])).save_candidate(failed)
+        if candidate.candidate_site.site_status not in {"approved", "opened"}:
+            self._repository(str(row["tenant_id"])).save_candidate(failed)
         self._event(row, "sitescore.failed", "sitescore_worker", "SiteScoreFailedV1", {
             "candidate_site_id": row["payload"]["candidate_site_id"], "site_score_job_id": job.job_id,
             "error_code": error_code, "retryable": retryable, "attempt": row["attempt"],
         })
         if exhausted:
             self._event(row, "job.dead_lettered", "job_platform", "JobDeadLetteredV1", {
-                "job_id": job.job_id, "job_type": INTAKE_SITESCORE_JOB_TYPE,
+                "job_id": job.job_id, "job_type": self.job_type,
                 "checkpoint": row["checkpoint"], "attempt": row["attempt"],
                 "error_code": error_code, "dead_lettered_at": dead_lettered_at.isoformat(),
             }, job_event=True)
@@ -626,6 +676,7 @@ class IntakeScoreJobRepository:
             self._repository(tenant_id).save_candidate(candidate)
             payload = deepcopy(row["payload"])
             payload["generation"] += 1
+            payload.pop("model_admission", None)
             payload["actor_id"] = actor_id
             payload["prediction_origin_time"] = self._now().isoformat()
             payload["admission"] = admission

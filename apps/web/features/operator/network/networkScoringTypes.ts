@@ -46,6 +46,17 @@ export type CandidateReadEvidence = {
   fields: Record<"address" | "geocode" | "rent" | "area" | "floor" | "hardRule" | "sourceConfidence", CandidateReadField>;
 };
 
+export type CurrentScoreAdmission = {
+  candidateId: string;
+  listingId: string;
+  addressId: string;
+  checkedAt: string | null;
+  currentInputs: { state: "verified" | "blocked" | "unverified"; reasonCode: string | null };
+  source: CurrentScoreAdmission["currentInputs"];
+  pit: CurrentScoreAdmission["currentInputs"];
+  model: CurrentScoreAdmission["currentInputs"];
+};
+
 // A future producer can supply these reads without turning model outcomes or
 // comparison membership into a persisted human workflow state.
 export type CandidateWorkflowStage = "scoring" | "shortlisted" | "pendingreview" | "approved" | "rejected" | "onhold";
@@ -59,6 +70,30 @@ export type CandidateWorkflowRead = {
   status: string | null;
   reason: string | null;
 };
+
+// Read identities derived from already authorized snapshots. A historical
+// decision never replaces the latest report expectation or grants approval.
+export type CandidateReviewReadTarget = {
+  candidateId: string;
+  listingId: string;
+  reviewId: string;
+  reportId: string;
+  reportVersion: number;
+  latestReportId: string | null;
+  latestReportVersion: number | null;
+  generation: number;
+  relation: "current" | "historical";
+};
+export type CandidateNativeStage = "needdata" | "ready" | "evaluated" | "pendingreview" | "approved" | "rejected" | "onhold";
+export type CandidateNativeWorkflowRead = {
+  candidateId: string;
+  stage: CandidateNativeStage | null;
+  availability: "recorded" | "unavailable" | "conflict";
+  lifecycle: string | null;
+  reason: string;
+  review: CandidateReviewReadTarget | null;
+};
+export type CandidateNativeWorkflowReads = Readonly<Record<string, CandidateNativeWorkflowRead>>;
 
 export type ScoringCandidate = {
   id: string;
@@ -78,6 +113,7 @@ export type ScoringCandidate = {
   reviewId?: string | null;
   inCompare: boolean;
   readEvidence?: CandidateReadEvidence;
+  currentAdmission?: CurrentScoreAdmission;
   pipelineEvidence?: Partial<Record<CandidateWorkflowStage, CandidateWorkflowRead>>;
 };
 
@@ -193,3 +229,45 @@ export function recommendationTone(recommendation: ScoreRecommendation | null): 
   if (recommendation === "REJECT") return "risk";
   return "watch";
 }
+
+export type ScoreExecutionContext = {
+  tenantId: string;
+  candidateSiteId: string;
+  reportId: string;
+  reportVersion: number;
+  jobVersion: number;
+  originalJobId: string;
+  predecessorJobId: string;
+  activeExecutionRequest?: ScoreExecutionReceipt | null;
+};
+
+export type ScoreExecutionReceipt = {
+  source: "canonical";
+  created: boolean;
+  executionRequestId: string;
+  candidateSiteId: string;
+  jobId: string;
+  status: "QUEUED" | "RUNNING" | "RETRYING" | "SUCCEEDED" | "FAILED" | "DEAD_LETTER" | "CANCELLED";
+  actualVersion: number;
+  jobVersion: number | null;
+  baseReportId: string;
+  baseReportVersion: number;
+  result: { report_id: string; report_version: number; sitescore_run_id: string; prediction_run_id: string; model_version: string } | null;
+  lastError: { code: string; retryable: boolean } | null;
+  correlationId: string;
+};
+
+
+/** The current accepted command; shared request GET keeps its original creator/correlation. */
+export type ScoreExecutionCommandReceipt = {
+  operation: "create" | "retry";
+  actorSubjectId: string;
+  tenantId: string;
+  idempotencyKey: string;
+  correlationId: string;
+  executionRequestId: string;
+  jobId: string;
+};
+
+export type ScoreExecutionCommandIntent = Pick<ScoreExecutionCommandReceipt,
+  "operation" | "actorSubjectId" | "tenantId" | "idempotencyKey" | "correlationId">;

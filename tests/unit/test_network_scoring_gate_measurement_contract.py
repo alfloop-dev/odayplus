@@ -6,22 +6,16 @@ approval is exercised. A completed historical report is not eligibility.
 
 from dataclasses import replace
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from modules.listing.domain.models import CandidateSiteDraft
-from modules.opsboard.application import network_scoring
 from modules.opsboard.application.network_scoring import (
     NetworkScoringGateError,
     NetworkScoringService,
 )
-from modules.sitescore.domain.scoring import (
-    Interval,
-    SiteScoreRecommendation,
-    SiteScoreReport,
-)
+from modules.sitescore.domain.scoring import SiteScoreReport
 from shared.domain import AddressLocation, CandidateSite, Listing
 
 TENANT = "synthetic-measurement-gate-tenant"
@@ -191,36 +185,31 @@ def test_zero_coordinate_is_present_in_the_data_gate(latitude: float, longitude:
 def test_valid_score_still_reaches_existing_exact_executor_without_real_inference(monkeypatch: pytest.MonkeyPatch) -> None:
     record = draft()
     received = []
-    band = Interval(100.0, 200.0, 300.0)
-    report = SiteScoreReport(
-        candidate_site_id=record.candidate_site.candidate_site_id, sitescore_run_id="synthetic-measurement-run",
-        target_format_code="synthetic-format", recommendation=SiteScoreRecommendation.INVESTIGATE,
-        m1=band, m3=band, m6=band, m12=band, payback_period=Interval(12, 24, 36), payback_p50_months=24,
-        rent_reasonableness=0.5, cannibalization_risk=0.2, comparable_stores=2,
-        key_positive_factors=(), key_negative_factors=(), confidence=0.0,
-        model_version="synthetic-executor-boundary-model", feature_version="synthetic-view",
-        feature_snapshot_time=AT, prediction_origin_time=AT, scored_at=AT,
-    )
+    # The qualified measurement gate stays positive; fresh execution is now
+    # admitted by its explicit owner rather than a synchronous report service.
+    class StubOwner:
+        def create(self, command: Any, *, principal: Any) -> Any:
+            received.append(command)
+            return {"status": "QUEUED", "result": None, "candidateSiteId": command.candidate_site_id}
 
-    class StubExecutor:
-        def __init__(self, **kwargs: Any) -> None:
-            assert kwargs["require_production_model"] is True
-
-        def score_candidates_with_execution(self, features: list[Any]) -> Any:
-            received.extend(features)
-            return SimpleNamespace(reports=[report])
-
-    monkeypatch.setattr(network_scoring, "SiteScoreReportService", StubExecutor)
+    from modules.sitescore.domain.execution import ScoreExecutionCommand
+    from shared.auth import Principal, Role, Scope
     scorer = service(record)
+    scorer._execution_service = StubOwner()
+    command = ScoreExecutionCommand(record.candidate_site.candidate_site_id, "synthetic-saved-report", 1, 7,
+                                    "Synthetic qualified boundary", "synthetic-key", "synthetic-correlation")
     result = scorer.score_candidate(
         candidate_id=record.candidate_site.candidate_site_id, actor_role_id="expansionManager", actor_name=None,
-        idempotency_key=None, correlation_id=None,
+        idempotency_key=None, correlation_id=None, execution_command=command,
+        principal=Principal("synthetic-actor", frozenset({Role.EXPANSION_USER}), Scope(tenant_id=TENANT)),
     )
+    assert scorer.snapshot()["candidates"][0]["gate"]["passed"] is True
     assert len(received) == 1
     assert received[0].candidate_site_id == record.candidate_site.candidate_site_id
-    assert received[0].monthly_rent == record.listing.rent_amount
-    assert received[0].area_ping == record.listing.area_ping
-    assert received[0].geocode_confidence == record.address.geocode_confidence
-    assert result["candidate"]["modelVersion"] == report.model_version
-    assert result["scorecard"]["score"] is None
+    fields = scorer.snapshot()["candidates"][0]["readEvidence"]["fields"]
+    assert fields["rent"]["value"] == record.listing.rent_amount
+    assert fields["area"]["value"] == record.listing.area_ping
+    assert fields["geocode"]["value"] == record.address.geocode_confidence
+    assert result["executionRequest"]["status"] == "QUEUED"
+    assert result["executionRequest"]["result"] is None
     assert scorer._model_runtime.calls == 0
