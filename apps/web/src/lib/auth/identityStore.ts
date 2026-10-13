@@ -30,8 +30,8 @@ export interface PasswordCredential {
 }
 
 export interface IdentityStore {
-  /** Find an active account by username (case-insensitive, within any tenant). */
-  findAccountByUsername(username: string): Promise<IdentityAccount | null>;
+  /** Resolve a tenant-qualified username; omitted selector must be globally unambiguous. */
+  findAccountByUsername(username: string, tenantId?: string): Promise<IdentityAccount | null>;
   /** Resolve a session account without trusting the browser subject. */
   findAccountById?(accountId: string): Promise<IdentityAccount | null>;
   /** Resolve an OIDC identity only when it is explicitly linked. */
@@ -86,16 +86,19 @@ export class PostgresIdentityStore implements IdentityStore {
     return this._argon2;
   }
 
-  async findAccountByUsername(username: string): Promise<IdentityAccount | null> {
+  async findAccountByUsername(username: string, tenantId?: string): Promise<IdentityAccount | null> {
     const pool = await this.pool();
     const result = await pool.query(
       `SELECT account_id, tenant_id, username, email, status
        FROM identity.accounts
        WHERE lower(username) = lower($1)
-       LIMIT 1`,
-      [username.trim()],
+         AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
+       LIMIT 2`,
+      [username.trim(), tenantId ?? null],
     );
-    if (result.rows.length === 0) return null;
+    // Never choose an arbitrary tenant's credential when the browser omitted
+    // the selector. It selects an account, never supplies session authority.
+    if (result.rows.length !== 1) return null;
     const row = result.rows[0];
     return {
       accountId: row.account_id,
@@ -292,7 +295,7 @@ export class MockIdentityStore implements IdentityStore {
     }>,
   ) {
     for (const e of entries ?? []) {
-      this.accounts.set(e.username.toLowerCase(), {
+      this.accounts.set(e.accountId, {
         accountId: e.accountId,
         tenantId: e.tenantId,
         username: e.username,
@@ -305,9 +308,12 @@ export class MockIdentityStore implements IdentityStore {
     }
   }
 
-  async findAccountByUsername(username: string): Promise<IdentityAccount | null> {
-    const entry = this.accounts.get(username.trim().toLowerCase());
-    if (!entry) return null;
+  async findAccountByUsername(username: string, tenantId?: string): Promise<IdentityAccount | null> {
+    const matches = [...this.accounts.values()].filter(entry =>
+      entry.username.toLowerCase() === username.trim().toLowerCase() &&
+      (tenantId === undefined || entry.tenantId === tenantId));
+    if (matches.length !== 1) return null;
+    const entry = matches[0];
     return {
       accountId: entry.accountId,
       tenantId: entry.tenantId,

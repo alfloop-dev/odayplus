@@ -7,10 +7,13 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import pytest
+
 from delivery_toolchain.release import consume_dev_smoke as c
 
 
-def test_native_real_urllib_never_follows_cookie_issuing_intermediate_redirect():
+@pytest.mark.parametrize("mode", ["redirect", "header-loss"])
+def test_native_real_urllib_never_loses_intermediate_cookie_custody(mode):
     calls = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -43,7 +46,17 @@ def test_native_real_urllib_never_follows_cookie_issuing_intermediate_redirect()
             cookie = self.headers.get("Cookie", "")
             calls.append((self.command, self.path, cookie))
             if self.path == "/ordinary":
-                self.reply(302, {}, "owned-b", "/terminal")
+                if mode == "header-loss":
+                    self.send_response(200)
+                    self.send_header(
+                        "Set-Cookie",
+                        f"{c._SESSION_COOKIE}=owned-b; Path=/; Secure; HttpOnly; SameSite=Lax",
+                    )
+                    for i in range(110):
+                        self.send_header(f"X-Header-{i}", "x")
+                    self.end_headers()  # Actual stdlib >100-header parser refusal.
+                else:
+                    self.reply(302, {}, "owned-b", "/terminal")
             elif self.path == "/terminal":
                 self.reply(200, {"subject": "offline-user"})
             else:
@@ -87,7 +100,12 @@ def test_native_real_urllib_never_follows_cookie_issuing_intermediate_redirect()
         assert web.uncertainty_latched and not any(path == "/terminal" for _, path, _ in calls)
         assert not web.cleanup_owned_sessions()
         logouts = [cookie for method, path, cookie in calls if path == "/auth/logout"]
-        assert logouts == [f"{c._SESSION_COOKIE}=owned-a", f"{c._SESSION_COOKIE}=owned-b"]
+        assert logouts == [
+            f"{c._SESSION_COOKIE}=owned-a",
+            *([f"{c._SESSION_COOKIE}=owned-b"] if mode == "redirect" else []),
+        ]
+        assert len(logouts) == len(set(logouts))
+        # Header-loss B was not safely recovered; NEVER claim its revocation.
     finally:
         server.shutdown()
         server.server_close()

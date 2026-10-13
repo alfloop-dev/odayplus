@@ -13,6 +13,7 @@ from tests.security.test_dev_smoke_recovery import recovery_http_reply
 from tests.security.test_dev_smoke_recovery_gate import foreground_gate as foreground_gate
 from tests.security.test_dev_smoke_recovery_gate import tls_recovery_server as tls_recovery_server
 
+_ACTUAL_GATE_ROUNDTRIP = r._ForegroundGateHTTPSClient._roundtrip
 COOKIE = "offline-new-response-cookie"
 HEADER = (
     f"Set-Cookie: __Host-oday_web_session={COOKIE}; Path=/; Secure; HttpOnly; SameSite=Lax\r\n"
@@ -171,6 +172,54 @@ def test_actual_observation_header_parse_loss_never_claims_completed_cleanup(
         with pytest.raises(r.RecoveryRefused):
             owner.cleanup()
         assert calls == before
+
+
+def test_foreground_gate_actual_header_parser_loss_keeps_cleanup_unknown(
+    foreground_gate, tls_recovery_server, monkeypatch
+):
+    with foreground_gate() as (
+        driver,
+        actions,
+        owner,
+        budget,
+        p,
+        calls,
+        sessions,
+        original,
+        target,
+        events,
+    ):
+        fake = r._ForegroundGateHTTPSClient._roundtrip
+        triggered = []
+        extra = HEADER + (b"X-Large: " + b"x" * 60000 + b"\r\n") * 9
+        with tls_recovery_server(recovery_http_reply(b'{"ok":true}', extra=extra)) as (
+            origin,
+            ca,
+            requests,
+        ):
+
+            def route(client, method, path, **kwargs):
+                if (
+                    not client._api
+                    and path == "/auth/session"
+                    and not triggered
+                    and budget._active[0] == "gate"
+                ):
+                    triggered.append(True)
+                    actual = r._ForegroundGateHTTPSClient(
+                        driver, api=False, origin=origin, address="127.0.0.1", ca_pem=ca
+                    )
+                    return _ACTUAL_GATE_ROUNDTRIP(actual, method, path, **kwargs)
+                return fake(client, method, path, **kwargs)
+
+            monkeypatch.setattr(r._ForegroundGateHTTPSClient, "_roundtrip", route)
+            with pytest.raises(r.RecoveryRefused):
+                driver.execute(actions)
+            assert triggered and len(requests) == 1
+        result = driver.stop_and_cleanup(actions)
+        assert result["own_session_cleanup"] == "unknown" and driver._unknown_login
+        logouts = [cookie for operation, cookie, *_ in calls if operation == "logout"]
+        assert len(logouts) == len(set(logouts)) and COOKIE not in logouts
 
 
 @pytest.mark.parametrize("phase", ["ordinary", "cleanup"])

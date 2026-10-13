@@ -496,9 +496,8 @@ def mask_listing(principal: Principal, listing: dict[str, Any]) -> dict[str, Any
 def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
     """Mask fields based on principal clearance and field classification."""
     clearance = principal.scope.clearance if principal.authenticated else DataClassification.PUBLIC
-    if clearance >= DataClassification.RESTRICTED:
-        return intake
-
+    # Canonical field classifications may exceed RESTRICTED; never skip the
+    # per-field decision merely because the principal has a high clearance.
     masked = intake.copy()
 
     # Mask the canonical v1 FieldValue collection according to each field's

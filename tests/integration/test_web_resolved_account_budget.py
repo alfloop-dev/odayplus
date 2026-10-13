@@ -15,7 +15,7 @@ from tests.integration.test_dev_smoke_recovery import identity_stack as identity
 from tests.integration.test_dev_smoke_recovery import recovery as recovery
 
 
-@pytest.mark.parametrize("selection", ["password-change", "login"])
+@pytest.mark.parametrize("selection", ["password-change", "login", "tenant-login-selection"])
 def test_production_pg_same_username_does_not_reset_other_tenant_budget(
     recovery: Any, selection: str
 ) -> None:
@@ -50,7 +50,9 @@ def test_production_pg_same_username_does_not_reset_other_tenant_budget(
         [
             str(binary),
             "run",
-            "src/lib/auth/__tests__/resolvedAccountBudgetPg.test.ts",
+            "src/lib/auth/__tests__/tenantLoginPg.test.ts"
+            if selection == "tenant-login-selection"
+            else "src/lib/auth/__tests__/resolvedAccountBudgetPg.test.ts",
             "-t",
             selection,
         ],

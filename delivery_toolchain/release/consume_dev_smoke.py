@@ -603,8 +603,6 @@ class _ObservedWeb:
             self._unknown()
             return gate.HttpResponse(status=0, error="native consumer ambiguous cookie refused")
         state = self._owned.get(cookie) if cookie else None
-        identity_read = (method == "GET" and path == "/api/v1/platform/release-identity"
-            and self._expected_release is not None and state is not None and not state["logout_attempted"])
         if self._latch.latched and not (state is not None and (
                 (method == "GET" and path in _REVOCATION_READS)
                 or (method == "POST" and path == "/auth/logout" and not state["logout_attempted"]))):
@@ -622,6 +620,8 @@ class _ObservedWeb:
                 # send another authenticated request before custody inspection.
                 kwargs["follow_redirects"] = False
                 response = self.client.request(method, path, **kwargs)
+                if response.failed or getattr(response, "custody_uncertain", False):
+                    self._unknown()  # Ordinary reads can issue authority too.
                 pairs, ambiguous = _response_cookie_pairs(response)
                 if method == "POST" and path == "/login":
                     issued, unsafe = self._retain_login_cookies(pairs)
@@ -686,10 +686,9 @@ class _ObservedWeb:
                         self.ack_times.append(_aware(event["timestamp"]))
             return response
         except Exception:
-            # Lost login, lost own logout, or lost/timed-out post-logout
-            # revocation read for an owned cookie: all UNKNOWN, never retried.
-            if identity_read or (method == "POST" and path == "/login") or (state is not None and state["logout_attempted"]):
-                self._unknown()
+            # A lost ordinary response may also hide newly issued authority.
+            # Fail-stop all ambiguous transport/fence outcomes, not only login.
+            self._unknown()
             return gate.HttpResponse(status=0, error="native consumer bounded request refused")
 
 

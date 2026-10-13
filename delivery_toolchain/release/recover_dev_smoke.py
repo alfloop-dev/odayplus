@@ -2321,6 +2321,7 @@ class _ForegroundGateHTTPSClient:
         from delivery_toolchain.e2e import check_live_e2e_gate as gate
 
         response = connection = raw = tls = None
+        submitted, headers_inspected = False, False
         owner, config, transport = self._owner, self._owner._config, self._transport
         try:
             path = gate._safe_request_path(path)
@@ -2370,11 +2371,13 @@ class _ForegroundGateHTTPSClient:
             connection = http.client.HTTPConnection(transport._host, transport._port)
             connection.auto_open = 0
             connection.sock = _DeadlineSocket(tls, deadline, 524288)
+            submitted = True  # Even a partially sent GET may issue authority.
             connection.request(method, path, body=encoded, headers=request_headers)
             response = connection.getresponse()
             # Retain a bounded newly issued own cookie BEFORE body decoding.
             # An ambiguous/malformed login remains UNKNOWN, never a login retry.
             pairs = gate._set_cookie_pairs(response.headers)
+            headers_inspected = True
             cookies = {name: value for name, value in pairs if name}
             if not self._api and path != "/login" and any(value for _, value in pairs):
                 for name, value in pairs:
@@ -2446,6 +2449,8 @@ class _ForegroundGateHTTPSClient:
             return gate.HttpResponse(response.status, payload, location=response.headers.get("Location", ""),
                                      cookies=cookies)
         except Exception:
+            if not self._api and submitted and not headers_inspected:
+                owner._unknown_login = True
             # Includes transport/header/body/timer failures. Do not return an
             # error response that would permit later probes after uncertainty.
             raise RecoveryRefused("RECOVERY_GATE_TRANSPORT_STOPPED") from None

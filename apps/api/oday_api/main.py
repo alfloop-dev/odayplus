@@ -1391,6 +1391,17 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
+                _, scope = _normalize_batch_item_scope(job.payload, "forecast-job")
+                # The entire stored forecast object is serialized/executed, not
+                # a projected collection. Enforce every restricted axis before
+                # new work or actual idempotent replay can be acknowledged.
+                checks = (("storeId", principal.scope.permits_store),
+                          ("brandId", principal.scope.permits_brand),
+                          ("regionId", principal.scope.permits_region),
+                          ("assignedAreaId", principal.scope.permits_assigned_area),
+                          ("heatZoneId", principal.scope.permits_heat_zone))
+                if scope.get("tenantId") != active_tenant_id or not all(check(scope.get(axis)) for axis, check in checks):
+                    raise HTTPException(403, detail="SCOPE_DENIED")
             elif job.job_type in ("batch-listing-intake", "assisted-listing-intake"):
                 active_tenant_id = batch_intake_job_tenant(request, action="view")
                 if not job_tenant or job_tenant != active_tenant_id:

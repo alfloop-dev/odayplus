@@ -224,6 +224,10 @@ function renderLoginFormHtml(options: {
         <input type="text" id="username" name="username" autocomplete="username" required autofocus />
       </div>
       <div class="form-group">
+        <label for="tenantId">租戶 ID（同名帳號必填）</label>
+        <input type="text" id="tenantId" name="tenantId" autocomplete="off" placeholder="選填租戶 UUID" />
+      </div>
+      <div class="form-group">
         <label for="password">密碼</label>
         <input type="password" id="password" name="password" autocomplete="current-password" required />
       </div>
@@ -406,6 +410,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // 2. Parse request payload
   let username = "";
   let password = "";
+  let tenantId = "";
   let returnTo = "/operator";
   const contentType = request.headers.get("content-type") || "";
 
@@ -413,6 +418,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     try {
       const json = (await request.json()) as Record<string, unknown>;
       username = typeof json.username === "string" ? json.username : "";
+      tenantId = json.tenantId === undefined ? "" : typeof json.tenantId === "string" ? json.tenantId : "invalid";
       password = typeof json.password === "string" ? json.password : "";
       if (typeof json.returnTo === "string") {
         returnTo = json.returnTo;
@@ -428,6 +434,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const formData = await request.formData();
       username = String(formData.get("username") || "");
       password = String(formData.get("password") || "");
+      tenantId = String(formData.get("tenantId") || "");
       const r = formData.get("returnTo");
       if (r) returnTo = String(r);
     } catch {
@@ -521,7 +528,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // 4. Authenticate credentials
   let resolvedAccountId: string | undefined;
-  const authResult = await authenticateLocalCredentials(username, password, { reserveAccount: async (id) => {
+  const authResult = await authenticateLocalCredentials(username, password, { tenantId, reserveAccount: async (id) => {
     resolvedAccountId = id;
     // Source already reserved above, do NOT double-charge it at resolution.
     return (await throttle.beginAccountAttempt(id, null)).allowed;

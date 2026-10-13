@@ -145,6 +145,8 @@ export async function authenticateLocalCredentials(
     environment?: Record<string, string | undefined>;
     fetchImpl?: typeof fetch;
     identityStore?: IdentityStore | null;
+    /** Untrusted lookup selector only; durable account still owns JWT/session tenant. */
+    tenantId?: string;
     /** Resolved durable budget before ANY account password verification. */
     reserveAccount?: (accountId: string) => Promise<boolean>;
     mockAccounts?: Map<
@@ -161,8 +163,9 @@ export async function authenticateLocalCredentials(
 ): Promise<LocalAuthResult> {
   const username = (usernameInput || "").normalize("NFKC").trim();
   const password = (passwordInput || "").normalize("NFKC");
+  const tenantId = options.tenantId?.trim().toLowerCase() || undefined;
 
-  if (!username || !password) {
+  if (!username || !password || (tenantId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(tenantId))) {
     await dummyTimingEqualization();
     return {
       ok: false,
@@ -174,7 +177,7 @@ export async function authenticateLocalCredentials(
   // Check if mock accounts were provided (e.g. for unit testing or test environments)
   if (options.mockAccounts) {
     const candidate = options.mockAccounts.get(username.toLowerCase());
-    if (!candidate) {
+    if (!candidate || (tenantId !== undefined && candidate.tenantId !== tenantId)) {
       await dummyTimingEqualization();
       return {
         ok: false,
@@ -219,8 +222,8 @@ export async function authenticateLocalCredentials(
 
   if (store) {
     try {
-      const account = await store.findAccountByUsername(username);
-      if (!account) {
+      const account = await store.findAccountByUsername(username, tenantId);
+      if (!account || (tenantId !== undefined && account.tenantId.toLowerCase() !== tenantId)) {
         await store.dummyVerify();
         return {
           ok: false,
@@ -314,7 +317,7 @@ export async function authenticateLocalCredentials(
 
   // Dev fallback: non-production without DB
   const env = options.environment ?? process.env;
-  if (!isProductionWebRuntime(env)) {
+  if (!isProductionWebRuntime(env) && tenantId === undefined) {
     // In development / testing mode, support standard test users if no external store
     if (
       (username === "admin" && password === "Admin12345678!") ||

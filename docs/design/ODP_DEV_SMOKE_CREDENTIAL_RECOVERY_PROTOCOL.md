@@ -1104,4 +1104,10 @@ Staff job access requires affirmative stored ownership; no missing-owner fallbac
 Every unsafe cookie-capable shared BFF method verifies Origin before session or
 upstream work. Submitted-request loss before complete header inspection also keeps
 custody UNKNOWN, even when no safe value was recoverable; cleanup cannot infer
-revocation from missing headers. These source repairs do not confer acceptance.
+revocation from missing headers. Native and foreground-gate transports preserve
+the same incomplete-header uncertainty and stop preliminary failed probes. Forecast
+objects require complete caller scope before enqueue/read/replay. Tenant-local
+usernames resolve through explicit tenant selection or globally unique lookup,
+never arbitrary tenant rows; returned durable account still owns session authority.
+Canonical per-field masking runs even at RESTRICTED clearance. These source repairs
+do not confer acceptance.

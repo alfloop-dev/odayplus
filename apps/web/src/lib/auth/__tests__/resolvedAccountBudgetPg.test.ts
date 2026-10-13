@@ -36,9 +36,9 @@ describe.skipIf(!url)("actual PG resolved account verification budget", () => {
         const now = Math.floor(Date.now()/1000);
         cookies[i] = await sealWebSessionReference({kind:"web-session",sid:sids[i],issuedAt:now,expiresAt:now+3600});
       }
-      // Use ACTUAL SQL username resolution, not assumed global uniqueness or a
-      // mocked choice. The other tenant is the victim whose session is held.
-      const resolved = await identity.findAccountByUsername("shared.offline");
+      // Use ACTUAL tenant-qualified SQL resolution, never an arbitrary global
+      // row. The other tenant is the victim whose session is held.
+      const resolved = await identity.findAccountByUsername("shared.offline", tenants[0]);
       const other = ids.indexOf(resolved!.accountId); expect(other).toBeGreaterThanOrEqual(0);
       const victim = 1-other; const before = await identity.getPasswordCredential(ids[victim]);
       const change = (i:number, password:string) => {
@@ -52,7 +52,7 @@ describe.skipIf(!url)("actual PG resolved account verification budget", () => {
       expect(verify).toHaveBeenCalledTimes(4);
       if(kind==="password-change") expect((await change(other,passwords[other])).status).toBe(200);
       else {
-        const req = new NextRequest("https://ops.oday.plus/login",{method:"POST",body:JSON.stringify({username:"shared.offline",password:passwords[other]})});
+        const req = new NextRequest("https://ops.oday.plus/login",{method:"POST",body:JSON.stringify({username:"shared.offline",password:passwords[other],tenantId:tenants[other]})});
         req.headers.set("origin","https://ops.oday.plus");req.headers.set("content-type","application/json");
         expect((await login(req)).status).toBe(200);
       }

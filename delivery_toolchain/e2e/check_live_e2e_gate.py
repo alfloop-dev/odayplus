@@ -466,6 +466,9 @@ class HttpResponse:
     # multiplicity stays visible. ``None`` means the response was constructed
     # in-process, not parsed from raw headers. Memory-only; never in repr.
     set_cookie_pairs: tuple[tuple[str, str], ...] | None = field(default=None, repr=False, compare=False)
+    # Transport could not fully inspect headers. No captured cookie is NOT
+    # evidence that a submitted request issued no authority. Memory only.
+    custody_uncertain: bool = field(default=False, repr=False, compare=False)
 
     @property
     def failed(self) -> bool:
@@ -637,6 +640,7 @@ class UrllibHttpClient:
                 status=0, error=f"{type(exc).__name__} for {safe_path}",
                 cookies=received.cookies if received is not None else {},
                 set_cookie_pairs=received.set_cookie_pairs if received is not None else None,
+                custody_uncertain=received is None,
             )
 
 
@@ -1920,7 +1924,10 @@ def _check_dev_admin_session(
         users_probe = web.request(
             "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
         )
-        if not users_probe.failed and users_probe.status == 403 and _payload_mentions(users_probe, "PASSWORD_CHANGE_REQUIRED"):
+        if users_probe.failed:
+            _check(checks, False, "session:users_probe", "Authenticated preliminary read failed; stop before more login work", "session")
+            return
+        if users_probe.status == 403 and _payload_mentions(users_probe, "PASSWORD_CHANGE_REQUIRED"):
             _check(
                 checks,
                 False,
