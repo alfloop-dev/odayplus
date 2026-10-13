@@ -1278,6 +1278,12 @@ export type NetworkRebalanceSnapshotResponse = {
 export type NetworkScoringActorPayload = {
   actorName?: string | null;
   actorRoleId?: string;
+  expectedActorSubjectId?: string | null;
+  expectedJobVersion?: number | null;
+  expectedReportId?: string | null;
+  expectedReportVersion?: number | null;
+  expectedTenantId?: string | null;
+  reason?: string | null;
 };
 
 /** NetworkScoringBatchPayload */
@@ -1285,6 +1291,12 @@ export type NetworkScoringBatchPayload = {
   actorName?: string | null;
   actorRoleId?: string;
   candidateIds?: string[] | null;
+  expectedActorSubjectId?: string | null;
+  expectedJobVersion?: number | null;
+  expectedReportId?: string | null;
+  expectedReportVersion?: number | null;
+  expectedTenantId?: string | null;
+  reason?: string | null;
 };
 
 /** NetworkScoringComparePayload */
@@ -1292,6 +1304,12 @@ export type NetworkScoringComparePayload = {
   actorName?: string | null;
   actorRoleId?: string;
   candidateIds: string[];
+  expectedActorSubjectId?: string | null;
+  expectedJobVersion?: number | null;
+  expectedReportId?: string | null;
+  expectedReportVersion?: number | null;
+  expectedTenantId?: string | null;
+  reason?: string | null;
 };
 
 /** Per-role notification delivery preferences. */
@@ -1778,6 +1796,15 @@ export type ScopePayload = {
   region_ids?: string[];
   store_ids?: string[];
   tenant_id?: string;
+};
+
+/** ScoreExecutionRetryPayload */
+export type ScoreExecutionRetryPayload = {
+  expectedActorSubjectId?: string | null;
+  expectedJobVersion: number;
+  expectedTenantId?: string | null;
+  expectedVersion: number;
+  reason: string;
 };
 
 /** SegmentMetricPayload */
@@ -2315,8 +2342,11 @@ export const API_PATHS = {
   "/api/v1/operator/network-reviews/{review_id}/decide": ["POST"],
   "/api/v1/operator/network-scoring": ["GET"],
   "/api/v1/operator/network-scoring/": ["GET"],
+  "/api/v1/operator/network-scoring/candidates/{candidate_id}/execution-context": ["GET"],
   "/api/v1/operator/network-scoring/candidates/{candidate_id}/score": ["POST"],
   "/api/v1/operator/network-scoring/compare": ["POST"],
+  "/api/v1/operator/network-scoring/execution-requests/{request_id}": ["GET"],
+  "/api/v1/operator/network-scoring/execution-requests/{request_id}/retry": ["POST"],
   "/api/v1/operator/network-scoring/reset": ["POST"],
   "/api/v1/operator/network-scoring/score": ["POST"],
   "/api/v1/operator/privacy/export": ["POST"],

@@ -69,6 +69,14 @@ export function buildNetworkTabHref(
 }
 
 export const CANDIDATE_SELECTION_PARAM = "candidate";
+export const REVIEW_SELECTION_PARAM = "review";
+
+export function parseReviewSelection(params: { toString(): string }): { id: string | null; invalid: boolean } {
+  const values = new URLSearchParams(params.toString()).getAll(REVIEW_SELECTION_PARAM);
+  if (!values.length) return { id: null, invalid: false };
+  if (!values[0].trim() || values.some((value) => value !== values[0])) return { id: null, invalid: true };
+  return { id: values[0], invalid: false };
+}
 
 /** The exact workflow candidate is reloadable only within its read chain. */
 export function isCandidateWorkflowTab(tabIndex: number): boolean {
@@ -85,6 +93,7 @@ export function candidateWorkflowNavigationParams(
   const candidateId = isCandidateWorkflowTab(tabIndex)
     ? explicitCandidate || (extraParams?.zone ? null : currentCandidateId) : null;
   const params = candidateId ? candidateNavigationParams(candidateId, existing) : new URLSearchParams(existing.toString());
+  params.delete(REVIEW_SELECTION_PARAM);
   params.delete(CANDIDATE_SELECTION_PARAM);
   params.delete("zone");
   for (const [key, value] of Object.entries(extraParams ?? {})) params.set(key, value);
@@ -104,7 +113,7 @@ export function parseCandidateSelection(params: { toString(): string }): { id: s
 /** Candidate and intake selection have separate URL owners. */
 export function candidateNavigationParams(candidateId: string, existing: { toString(): string }): URLSearchParams {
   const params = new URLSearchParams(existing.toString());
-  for (const key of ["zone", "selected", "dialog", "section", "field", "decision", "receipt", "compare"]) {
+  for (const key of ["zone", "selected", "dialog", "section", "field", "decision", "receipt", "compare", REVIEW_SELECTION_PARAM]) {
     params.delete(key);
   }
   params.set(CANDIDATE_SELECTION_PARAM, candidateId);

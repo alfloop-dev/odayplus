@@ -834,7 +834,11 @@ def build_default_registry() -> JobRegistry:
     from modules.opsboard.application.store_ops_audit_delivery import (
         JOB_TYPE as STORE_OPS_AUDIT_JOB_TYPE,
     )
-    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from modules.sitescore.application.intake_score_worker import (
+        handle_intake_score,
+        handle_score_execution,
+    )
+    from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
     from shared.audit.canonical_delivery import JOB_TYPE as CANONICAL_AUDIT_JOB_TYPE
     from shared.audit.durable_delivery import JOB_TYPE as DURABLE_AUDIT_JOB_TYPE
 
@@ -843,6 +847,7 @@ def build_default_registry() -> JobRegistry:
     registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)
     registry.register(INTAKE_JOB_TYPE, handle_assisted_listing_intake)
     registry.register(INTAKE_SITESCORE_JOB_TYPE, handle_intake_score)
+    registry.register(SITESCORE_EXECUTION_JOB_TYPE, handle_score_execution)
     registry.register(BATCH_LISTING_INTAKE_JOB_TYPE, handle_batch_listing_intake)
     registry.register(STORE_OPS_AUDIT_JOB_TYPE, handle_store_ops_audit_delivery)
     registry.register(CANONICAL_AUDIT_JOB_TYPE, handle_canonical_audit_delivery)

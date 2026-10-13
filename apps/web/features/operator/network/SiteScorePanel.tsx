@@ -7,6 +7,7 @@ import {
   recommendationTone,
   type ScoreCard,
   type ScoringCandidate,
+  type ScoreExecutionReceipt,
 } from "./networkScoringTypes";
 
 // SiteScorePanel owns the "SiteScore Lab" tab. It renders the R4 scorecard for
@@ -35,17 +36,23 @@ export function SiteScorePanel({
   onSelectCandidate,
   selectionError,
   rescoreUnavailableReason,
+  executionRequest,
+  executionError,
+  requireRescoreReason,
 }: {
   busyCandidateId?: string | null;
   candidates: ScoringCandidate[];
   fallbackRows: SiteScoreLabRow[];
   modelVersion?: string | null;
-  onRescore?: (candidateId: string) => void;
+  onRescore?: (candidateId: string, reason?: string) => void;
   scorecards: ScoreCard[];
   selectedCandidateId?: string | null;
   onSelectCandidate?: (candidateId: string) => void;
   selectionError?: string | null;
   rescoreUnavailableReason?: string | null;
+  executionRequest?: ScoreExecutionReceipt | null;
+  executionError?: string | null;
+  requireRescoreReason?: boolean;
 }) {
   const cards = scorecards.length ? scorecards : fallbackRows.flatMap((row) => {
     const card = fallbackToCard(row);
@@ -85,6 +92,9 @@ export function SiteScorePanel({
           {modelVersion ?? cards[0]?.modelVersion ?? "尚無評分模型資訊"} · 需求／租金／侵蝕／回本四構面
         </span>
       </div>
+
+      {executionRequest ? <p role="status" data-testid="sitescore-execution-status">{executionRequest.candidateSiteId} · 評分工作 {executionRequest.status}{executionRequest.status === "SUCCEEDED" ? ` · 報告版本 ${executionRequest.result?.report_version}` : " · 已保存報告仍可查閱"}</p> : null}
+      {executionError ? <p role="alert">{executionError}</p> : null}
 
       {blocked.length ? (
         <div className={styles.complianceBanner} data-testid="sitescore-gate-banner">
@@ -139,6 +149,8 @@ export function SiteScorePanel({
                   key={card.id}
                   onRescore={onRescore}
                   rescoreUnavailableReason={rescoreUnavailableReason}
+                  requireRescoreReason={requireRescoreReason}
+                  retryFailedRequest={Boolean(executionRequest && ["FAILED", "CANCELLED"].includes(executionRequest.status) && executionRequest.candidateSiteId === card.id)}
                 />
               ))}
             </section>
@@ -190,13 +202,18 @@ function ScoreReport({
   hidden,
   onRescore,
   rescoreUnavailableReason,
+  requireRescoreReason,
+  retryFailedRequest,
 }: {
   busy: boolean;
   card: ScoreCard;
   hidden: boolean;
-  onRescore?: (candidateId: string) => void;
+  onRescore?: (candidateId: string, reason?: string) => void;
   rescoreUnavailableReason?: string | null;
+  requireRescoreReason?: boolean;
+  retryFailedRequest?: boolean;
 }) {
+  const [reason, setReason] = useState("");
   const tone = recommendationTone(card.recommendation);
   return (
     <article
@@ -268,16 +285,17 @@ function ScoreReport({
         </div>
       ) : null}
 
+      {requireRescoreReason ? <label>重新評分原因<input aria-label={`重新評分原因 ${card.id}`} value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} /></label> : null}
       <button
         className={styles.detailPrimaryButton}
         data-testid={`sitescore-rescore-${card.id}`}
-        disabled={busy || !onRescore || Boolean(rescoreUnavailableReason)}
-        onClick={() => { if (!busy && !rescoreUnavailableReason) onRescore?.(card.id); }}
+        disabled={busy || !onRescore || Boolean(rescoreUnavailableReason) || Boolean(requireRescoreReason && !reason.trim())}
+        onClick={() => { if (!busy && !rescoreUnavailableReason) requireRescoreReason ? onRescore?.(card.id, reason) : onRescore?.(card.id); }}
         type="button"
       >
-        {busy ? "評分中…" : "重新評分（Re-run SiteScore）"}
+        {busy ? "評分中…" : retryFailedRequest ? "重試這次評分工作" : "重新評分（Re-run SiteScore）"}
       </button>
-      {rescoreUnavailableReason ? <p className={styles.muted} data-testid={`sitescore-rescore-qualification-${card.id}`}>{rescoreUnavailableReason}</p> : null}
+      {rescoreUnavailableReason || requireRescoreReason && !reason.trim() ? <p className={styles.muted} data-testid={`sitescore-rescore-qualification-${card.id}`}>{rescoreUnavailableReason ?? "目前工作與再評分資格尚未確認；已保存報告仍可查閱。"}</p> : null}
     </article>
   );
 }

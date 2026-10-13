@@ -241,19 +241,38 @@ class DurableSiteScoreRepository:
     def tenant_id(self) -> str:
         return getattr(self._store, "tenant_id", "")
 
+    @contextmanager
+    def report_guard(self, candidate_site_id: str) -> Iterator[None]:
+        """Serialize report version allocation for this exact tenant/candidate."""
+        if not isinstance(candidate_site_id, str) or not candidate_site_id.strip():
+            raise ValueError("candidate_site_id is required for a report guard")
+        engine = self.engine
+        with engine.lock, engine.transaction():
+            if getattr(engine, "dialect", None) == "postgresql":
+                key = "sitescore.reports:" + json.dumps(
+                    [self.tenant_id, candidate_site_id], separators=(",", ":")
+                )
+                engine.query_one(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                    (key,),
+                )
+            yield
+
     def save_report(self, report: SiteScoreReport) -> SiteScoreReport:
-        version = self._store.count_in_group(self._C, report.candidate_site_id) + 1
-        versioned = report.with_version(
-            report_version=version,
-            report_id=f"sitescore-report-{uuid4()}",
-        )
-        self._store.append_version(
-            self._C,
-            versioned.report_id,
-            versioned,
-            group_key=versioned.candidate_site_id,
-        )
-        return versioned
+        with self.report_guard(report.candidate_site_id):
+            version = self._store.count_in_group(self._C, report.candidate_site_id) + 1
+            versioned = report.with_version(
+                report_version=version,
+                report_id=f"sitescore-report-{uuid4()}",
+            )
+            self._store.append_version(
+                self._C,
+                versioned.report_id,
+                versioned,
+                group_key=versioned.candidate_site_id,
+            )
+            return versioned
+
 
     def latest(self, candidate_site_id: str) -> SiteScoreReport | None:
         return self._store.latest_in_group(self._C, candidate_site_id)
@@ -1414,13 +1433,14 @@ class DurableLearningHubRepository:
     # -- model versions ---------------------------------------------------
 
     def save_model_version(self, model_version: ModelVersion) -> ModelVersion:
-        self._store.put(
-            self._VERSIONS,
-            model_version.model_id,
-            model_version,
-            group_key=model_version.model_name,
-        )
-        return model_version
+        with self.release_recovery_guard(model_version.model_name):
+            self._store.put(
+                self._VERSIONS,
+                model_version.model_id,
+                model_version,
+                group_key=model_version.model_name,
+            )
+            return model_version
 
     def get_model_version(self, model_name: str, version: str) -> ModelVersion | None:
         return self._store.get(self._VERSIONS, f"{model_name}:{version}")
@@ -1434,13 +1454,14 @@ class DurableLearningHubRepository:
     # -- model cards ------------------------------------------------------
 
     def save_model_card(self, model_card: ModelCard) -> ModelCard:
-        self._store.put(
-            self._CARDS,
-            f"{model_card.model_name}:{model_card.model_version}",
-            model_card,
-            group_key=model_card.model_name,
-        )
-        return model_card
+        with self.release_recovery_guard(model_card.model_name):
+            self._store.put(
+                self._CARDS,
+                f"{model_card.model_name}:{model_card.model_version}",
+                model_card,
+                group_key=model_card.model_name,
+            )
+            return model_card
 
     def get_model_card(self, model_name: str, version: str) -> ModelCard | None:
         return self._store.get(self._CARDS, f"{model_name}:{version}")
@@ -1448,8 +1469,9 @@ class DurableLearningHubRepository:
     # -- validation runs --------------------------------------------------
 
     def save_validation_run(self, validation_run: ValidationRun) -> ValidationRun:
-        self._store.put(self._VALIDATIONS, validation_run.validation_run_id, validation_run)
-        return validation_run
+        with self.release_recovery_guard(validation_run.model_name):
+            self._store.put(self._VALIDATIONS, validation_run.validation_run_id, validation_run)
+            return validation_run
 
     def get_validation_run(self, validation_run_id: str) -> ValidationRun | None:
         return self._store.get(self._VALIDATIONS, validation_run_id)
@@ -1457,19 +1479,20 @@ class DurableLearningHubRepository:
     # -- backtest receipts ------------------------------------------------
 
     def save_backtest_receipt(self, receipt: BacktestReceipt) -> BacktestReceipt:
-        self._store.put(
-            self._BACKTEST_RECEIPTS,
-            f"{receipt.model_name}:{receipt.model_version}",
-            receipt,
-            group_key=receipt.model_name,
-        )
-        self._store.put(
-            self._BACKTEST_RECEIPTS,
-            receipt.receipt_id,
-            receipt,
-            group_key=receipt.model_name,
-        )
-        return receipt
+        with self.release_recovery_guard(receipt.model_name):
+            self._store.put(
+                self._BACKTEST_RECEIPTS,
+                f"{receipt.model_name}:{receipt.model_version}",
+                receipt,
+                group_key=receipt.model_name,
+            )
+            self._store.put(
+                self._BACKTEST_RECEIPTS,
+                receipt.receipt_id,
+                receipt,
+                group_key=receipt.model_name,
+            )
+            return receipt
 
     def get_backtest_receipt(self, model_name: str, version: str) -> BacktestReceipt | None:
         return self._store.get(self._BACKTEST_RECEIPTS, f"{model_name}:{version}")
@@ -1501,37 +1524,40 @@ class DurableLearningHubRepository:
         return self._store.get(self._ALIASES, self._alias_doc_id(model_name, alias))
 
     def _set_alias_pointer(self, model_name: str, alias: ModelAlias, version: str | None) -> None:
-        self._store.put(
-            self._ALIASES,
-            self._alias_doc_id(model_name, alias),
-            version,
-            group_key=model_name,
-        )
+        with self.release_recovery_guard(model_name):
+            self._store.put(
+                self._ALIASES,
+                self._alias_doc_id(model_name, alias),
+                version,
+                group_key=model_name,
+            )
 
     def set_alias(self, model_name: str, alias: ModelAlias, version: str) -> ModelVersion:
-        model_version = self.get_model_version(model_name, version)
-        if model_version is None:
-            raise ModelRegistryError(f"unknown model version {model_name}:{version}")
+        with self.release_recovery_guard(model_name):
+            model_version = self.get_model_version(model_name, version)
+            if model_version is None:
+                raise ModelRegistryError(f"unknown model version {model_name}:{version}")
 
-        previous_version = self._get_alias_pointer(model_name, alias)
-        if previous_version:
-            previous = self.get_model_version(model_name, previous_version)
-            if previous is not None:
-                self.save_model_version(previous.with_aliases(previous.aliases - {alias}))
+            previous_version = self._get_alias_pointer(model_name, alias)
+            if previous_version:
+                previous = self.get_model_version(model_name, previous_version)
+                if previous is not None:
+                    self.save_model_version(previous.with_aliases(previous.aliases - {alias}))
 
-        self._set_alias_pointer(model_name, alias, version)
-        updated = model_version.with_aliases(model_version.aliases | {alias})
-        self.save_model_version(updated)
-        return updated
+            self._set_alias_pointer(model_name, alias, version)
+            updated = model_version.with_aliases(model_version.aliases | {alias})
+            self.save_model_version(updated)
+            return updated
 
     def clear_alias(self, model_name: str, alias: ModelAlias) -> None:
-        version = self._get_alias_pointer(model_name, alias)
-        if version is None:
-            return
-        self._set_alias_pointer(model_name, alias, None)
-        model_version = self.get_model_version(model_name, version)
-        if model_version is not None:
-            self.save_model_version(model_version.with_aliases(model_version.aliases - {alias}))
+        with self.release_recovery_guard(model_name):
+            version = self._get_alias_pointer(model_name, alias)
+            if version is None:
+                return
+            self._set_alias_pointer(model_name, alias, None)
+            model_version = self.get_model_version(model_name, version)
+            if model_version is not None:
+                self.save_model_version(model_version.with_aliases(model_version.aliases - {alias}))
 
     def get_alias(self, model_name: str, alias: ModelAlias) -> ModelVersion | None:
         version = self._get_alias_pointer(model_name, alias)
@@ -1542,11 +1568,17 @@ class DurableLearningHubRepository:
     # -- release decisions ------------------------------------------------
 
     def save_release_decision(self, decision: ReleaseDecisionRecord) -> ReleaseDecisionRecord:
-        self._store.put(self._RELEASES, decision.release_id, decision)
-        return decision
+        with self.release_recovery_guard(decision.model_name):
+            self._store.put(self._RELEASES, decision.release_id, decision)
+            return decision
 
     def delete_release_decision(self, release_id: str) -> None:
-        self._store.put(self._RELEASES, release_id, None)
+        with self._store.engine.lock:
+            decision = self.get_release_decision(release_id)
+            if decision is None:
+                return
+            with self.release_recovery_guard(decision.model_name):
+                self._store.put(self._RELEASES, release_id, None)
 
     def get_release_decision(self, release_id: str) -> object | None:
         return self._store.get(self._RELEASES, release_id)
@@ -1557,42 +1589,43 @@ class DurableLearningHubRepository:
         ]
 
     def save_release_saga(self, saga):
-        from modules.learninghub.infrastructure.repositories import (
-            LearningHubReleaseConflict,
-            assert_release_saga_fence,
-        )
+        with self.release_recovery_guard(saga.model_name):
+            from modules.learninghub.infrastructure.repositories import (
+                LearningHubReleaseConflict,
+                assert_release_saga_fence,
+            )
 
-        engine = self._store.engine
-        pointer_id = f"{saga.model_name}:{saga.idempotency_key}"
-        with engine.lock:
-            if getattr(engine, "dialect", None) == "postgresql":
-                engine.query_one(
-                    "SELECT doc_id FROM durable_documents "
-                    "WHERE collection = ? AND doc_id = ? FOR UPDATE",
-                    (self._RELEASE_SAGAS, saga.release_id),
+            engine = self._store.engine
+            pointer_id = f"{saga.model_name}:{saga.idempotency_key}"
+            with engine.lock:
+                if getattr(engine, "dialect", None) == "postgresql":
+                    engine.query_one(
+                        "SELECT doc_id FROM durable_documents "
+                        "WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                        (self._RELEASE_SAGAS, saga.release_id),
+                    )
+                existing_release_id = self._store.get(
+                    self._RELEASE_SAGA_IDEMPOTENCY,
+                    pointer_id,
                 )
-            existing_release_id = self._store.get(
-                self._RELEASE_SAGA_IDEMPOTENCY,
-                pointer_id,
-            )
-            if existing_release_id is not None and existing_release_id != saga.release_id:
-                raise LearningHubReleaseConflict(
-                    f"idempotency key already belongs to release {existing_release_id}"
+                if existing_release_id is not None and existing_release_id != saga.release_id:
+                    raise LearningHubReleaseConflict(
+                        f"idempotency key already belongs to release {existing_release_id}"
+                    )
+                assert_release_saga_fence(self.get_release_saga(saga.release_id), saga)
+                self._store.put(
+                    self._RELEASE_SAGAS,
+                    saga.release_id,
+                    saga,
+                    group_key=saga.model_name,
                 )
-            assert_release_saga_fence(self.get_release_saga(saga.release_id), saga)
-            self._store.put(
-                self._RELEASE_SAGAS,
-                saga.release_id,
-                saga,
-                group_key=saga.model_name,
-            )
-            self._store.put(
-                self._RELEASE_SAGA_IDEMPOTENCY,
-                pointer_id,
-                saga.release_id,
-                group_key=saga.model_name,
-            )
-        return saga
+                self._store.put(
+                    self._RELEASE_SAGA_IDEMPOTENCY,
+                    pointer_id,
+                    saga.release_id,
+                    group_key=saga.model_name,
+                )
+            return saga
 
     def get_release_saga(self, release_id):
         return self._store.get(self._RELEASE_SAGAS, release_id)
@@ -1627,21 +1660,7 @@ class DurableLearningHubRepository:
         *,
         expected_revision: int,
     ) -> Iterator[int]:
-        with self._release_locks_guard:
-            lock = self._release_locks.setdefault(model_name, RLock())
-        with lock:
-            engine = self._store.engine
-            if getattr(engine, "dialect", None) == "postgresql":
-                with engine.transaction():
-                    engine.query_one(
-                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
-                        (f"learninghub.release:{model_name}",),
-                    )
-                    yield from self._guard_release_revision(
-                        model_name,
-                        expected_revision=expected_revision,
-                    )
-                return
+        with self.release_recovery_guard(model_name):
             yield from self._guard_release_revision(
                 model_name,
                 expected_revision=expected_revision,
@@ -1649,20 +1668,24 @@ class DurableLearningHubRepository:
 
     @contextmanager
     def release_recovery_guard(self, model_name: str) -> Iterator[None]:
-        with self._release_locks_guard:
-            lock = self._release_locks.setdefault(model_name, RLock())
-        with lock:
-            engine = self._store.engine
-            if getattr(engine, "dialect", None) == "postgresql":
-                with engine.transaction():
+        """Hold the actual model writer key without reserving a new revision.
+
+        Every path enters the engine lock before a per-model Python lock. The
+        SQL model key then protects the same authority across engine instances
+        and processes. This order also permits scoring to enter from its outer
+        transaction without deadlocking with a registry writer.
+        """
+        engine = self._store.engine
+        with engine.lock:
+            with self._release_locks_guard:
+                lock = self._release_locks.setdefault(model_name, RLock())
+            with lock, engine.transaction():
+                if getattr(engine, "dialect", None) == "postgresql":
                     engine.query_one(
-                        "SELECT pg_advisory_xact_lock("
-                        "hashtextextended(?, 0)) AS locked",
+                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
                         (f"learninghub.release:{model_name}",),
                     )
-                    yield
-                return
-            yield
+                yield
 
     def _guard_release_revision(
         self,

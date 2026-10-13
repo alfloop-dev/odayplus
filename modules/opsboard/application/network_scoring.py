@@ -28,7 +28,11 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from models.shared_ml.production_runtime import ProductionModelRuntimeError
+from models.shared_ml.production_runtime import (
+    ProductionModelApprovalError,
+    ProductionModelLineageError,
+    ProductionModelRuntimeError,
+)
 from modules.listing.application.candidate_score_context import (
     CandidateScoreContextReader,
     unverified_current_admission,
@@ -42,7 +46,6 @@ from modules.sitescore.application.candidate_features import (
     feature_from_candidate,
     none_safe_min,
 )
-from modules.sitescore.application.reporting import SiteScoreReportService
 from modules.sitescore.domain.scoring import SiteScoreReport
 from shared.auth import Principal
 from shared.domain.models import MEASUREMENT_MEASURED
@@ -359,10 +362,14 @@ class NetworkScoringService:
         require_canonical: bool = False,
         tenant_id: str = "",
         current_context_reader: CandidateScoreContextReader | None = None,
+        current_model_admission: Any | None = None,
+        execution_service: Any | None = None,
     ) -> None:
+        self._execution_service = execution_service
         self._seed_fixtures = seed_fixtures
         self._listing_repository = listing_repository
         self._current_context_reader = current_context_reader
+        self._current_model_admission = current_model_admission
         self._sitescore_repository = sitescore_repository
         self._model_runtime = model_runtime
         self._require_canonical = require_canonical
@@ -476,7 +483,13 @@ class NetworkScoringService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        execution_command: Any = None,
+        principal: Principal | None = None,
     ) -> dict[str, Any]:
+        if self._require_canonical and self._execution_service is not None:
+            if execution_command is None or principal is None:
+                raise NetworkScoringRuntimeUnavailable("SITESCORE_EXECUTION_COMMAND_REQUIRED")
+            return {"executionRequest": self._execution_service.create(execution_command, principal=principal), "correlationId": correlation_id}
         cache_key = ("score", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
             return _copy(self._idempotency_cache[cache_key])
@@ -490,7 +503,8 @@ class NetworkScoringService:
             )
 
         if self._require_canonical:
-            scorecard = self._run_canonical_score(candidate)
+            self._validate_canonical_input(candidate)
+            raise NetworkScoringRuntimeUnavailable("SITESCORE_EXECUTION_OWNER_UNAVAILABLE")
         else:
             scorecard = self._build_scorecard(candidate)
         self._scores[candidate_id] = scorecard
@@ -526,6 +540,8 @@ class NetworkScoringService:
         idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        if self._require_canonical:
+            raise NetworkScoringRuntimeUnavailable("SITESCORE_EXECUTION_BATCH_CONTEXT_REQUIRED")
         cache_key = ("batch", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
             return _copy(self._idempotency_cache[cache_key])
@@ -541,10 +557,7 @@ class NetworkScoringService:
                     {"candidateId": candidate_id, "reason": gate["blockNote"], "missing": gate["missing"]}
                 )
                 continue
-            if self._require_canonical:
-                self._scores[candidate_id] = self._run_canonical_score(candidate)
-            else:
-                self._scores[candidate_id] = self._build_scorecard(candidate)
+            self._scores[candidate_id] = self._build_scorecard(candidate)
             scored.append(candidate_id)
 
         scorecards = self._sorted_scorecards()
@@ -768,6 +781,28 @@ class NetworkScoringService:
             current_admission = unverified_current_admission(
                 draft, "SITESCORE_CURRENT_CONTEXT_UNAVAILABLE",
             )
+        if self._require_canonical:
+            from models.shared_ml.current_model_admission import CurrentModelAdmissionPort
+            from modules.sitescore.domain.scoring import SITESCORE_FEATURE_VERSION
+
+            observer = self._current_model_admission
+            context_reader = self._current_context_reader
+            if (isinstance(observer, CurrentModelAdmissionPort) and context_reader is not None
+                    and observer.engine is context_reader.engine
+                    and getattr(context_reader, "tenant_id", None) == self._tenant_id
+                    and observer.tenant_id in (None, self._tenant_id)
+                    and getattr(getattr(observer.registry_repository, "_store", None), "tenant_id", None)
+                    in (None, self._tenant_id)):
+                try:
+                    observer.read(service="sitescore", expected_feature_schema_version=SITESCORE_FEATURE_VERSION)
+                    current_admission["model"] = {"state": "verified", "reasonCode": None}
+                except (ProductionModelApprovalError, ProductionModelLineageError) as exc:
+                    current_admission["model"] = {"state": "blocked", "reasonCode": exc.code}
+                except ProductionModelRuntimeError as exc:
+                    current_admission["model"] = {"state": "unverified", "reasonCode": exc.code}
+                except Exception:
+                    current_admission["model"] = {"state": "unverified", "reasonCode": "SITESCORE_CURRENT_MODEL_ADMISSION_UNVERIFIED"}
+                current_admission["checkedAt"] = datetime.now(UTC).isoformat()
         listing = draft.listing if hasattr(draft, "listing") else draft["listing"]
         address = draft.address if hasattr(draft, "address") else draft["address"]
         candidate = draft.candidate_site if hasattr(draft, "candidate_site") else draft["candidate_site"]
@@ -834,32 +869,23 @@ class NetworkScoringService:
             "canonicalTenantId": tenant_id,
         }
 
-    def _run_canonical_score(self, candidate: dict[str, Any]) -> dict[str, Any]:
-        self._require_canonical_dependencies()
+    def _validate_canonical_input(self, candidate: dict[str, Any]) -> None:
+        # A read-only input error remains specific. Validation cannot enqueue,
+        # infer or publish without the authoritative execution request owner.
+        from models.model_ready.contracts import MODEL_SPECS
+        from models.shared_ml.production_runtime import _validate_live_rows
+        from modules.sitescore.domain.scoring import to_sitescore_model_row
         try:
-            execution = SiteScoreReportService(
-                repository=self._sitescore_repository,
-                model_runtime=self._model_runtime,
-                require_production_model=True,
-            ).score_candidates_with_execution([
-                feature_from_candidate(
-                    candidate["canonicalDraft"], tenant_id=candidate["canonicalTenantId"],
-                ),
-            ])
-        except ProductionModelRuntimeError as exc:
-            raise NetworkScoringRuntimeUnavailable(
-                str(exc),
-                code=getattr(exc, "code", "SITESCORE_RUNTIME_UNAVAILABLE"),
-            ) from exc
-        except ValueError as exc:
-            # Incomplete / stale point-in-time feature contract: fail closed,
-            # but as a permanent data gap rather than a transient outage.
-            raise NetworkScoringRuntimeUnavailable(
-                str(exc),
-                code=getattr(exc, "code", "SITESCORE_FEATURE_CONTRACT_INCOMPLETE"),
-            ) from exc
-        report = execution.reports[0]
-        return self._scorecard_from_report(report)
+            feature = feature_from_candidate(candidate["canonicalDraft"], tenant_id=candidate["canonicalTenantId"])
+            spec = MODEL_SPECS["sitescore"]
+            _validate_live_rows([to_sitescore_model_row(feature)], service="sitescore",
+                expected_feature_schema_version=spec.feature_schema_version, required_features=spec.feature_columns)
+        except (ProductionModelRuntimeError, ValueError) as exc:
+            raise NetworkScoringRuntimeUnavailable(str(exc), code="SITESCORE_FEATURE_CONTRACT_INCOMPLETE") from exc
+
+    def _run_canonical_score(self, candidate: dict[str, Any]) -> dict[str, Any]:
+        self._validate_canonical_input(candidate)
+        raise NetworkScoringRuntimeUnavailable("SITESCORE_EXECUTION_OWNER_UNAVAILABLE")
 
     @staticmethod
     def _scorecard_from_report(report: SiteScoreReport) -> dict[str, Any]:

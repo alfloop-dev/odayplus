@@ -39,6 +39,7 @@ from modules.priceops import (
     PriceOpsService,
     PricingPlanItem,
 )
+from modules.sitescore.application.candidate_features import feature_from_candidate
 from modules.sitescore.application.reporting import SiteScoreReportService
 from shared.domain import AddressLocation, CandidateSite, Listing
 from shared.infrastructure.persistence import (
@@ -422,6 +423,10 @@ def test_scoring_invokes_canonical_runtime_persists_and_isolates_tenant(
         ),
     )
     try:
+        execution = SiteScoreReportService(repository=first.sitescore("tenant-a"), model_runtime=runtime,
+            require_production_model=True, runtime_mode="test").score_candidates_with_execution([
+                feature_from_candidate(first.listing("tenant-a").list_candidates()[0], tenant_id="tenant-a"),
+            ])
         with TestClient(first.app()) as client:
             snapshot = client.get(
                 f"{BASE}/network-scoring",
@@ -438,13 +443,15 @@ def test_scoring_invokes_canonical_runtime_persists_and_isolates_tenant(
             )
         assert snapshot.status_code == 200, snapshot.text
         assert [row["id"] for row in snapshot.json()["candidates"]] == [candidate_id]
-        assert scored.status_code == 200, scored.text
+        assert scored.status_code == 503, scored.text
+        assert scored.json()["detail"]["message"] == "SITESCORE_EXECUTION_OWNER_UNAVAILABLE"
+        assert len(runtime.calls) == 1
         assert runtime.calls[0]["service"] == "sitescore"
         assert runtime.calls[0]["rows"][0]["tenant_id"] == "tenant-a"
         assert runtime.calls[0]["rows"][0]["h3_index"] == "892000000000001"
         assert runtime.calls[0]["rows"][0]["view_version"] == "candidate-site-view-v2"
         assert (
-            scored.json()["scorecard"]["modelVersion"]
+            execution.reports[0].model_version
             == "sitescore:mlflow-production-test"
         )
         assert first.sitescore("tenant-a").latest(candidate_id) is not None
@@ -1384,12 +1391,15 @@ def test_operator_convert_carries_point_in_time_contract_into_scoring(
     ``_candidate_to_dict``/``_dict_to_candidate`` and reach the model row.
     """
 
-    runtime = RecordingSiteScoreRuntime()
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from modules.sitescore.tests.test_sitescore_production_runtime import RecordingRuntime
+    from tests.integration.test_intake_score_delivery_postgresql import _claim
+    runtime = RecordingRuntime()
     harness = _postgres_listing_harness(bridge_database, monkeypatch, runtime)
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
-            _approve_convertible_listing(bridge_database, harness, client)
+            accepted = _approve_convertible_listing(bridge_database, harness, client)
             converted = client.post(
                 f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
                 headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-live-1"),
@@ -1398,13 +1408,12 @@ def test_operator_convert_carries_point_in_time_contract_into_scoring(
             assert converted.status_code == 200, converted.text
             candidate_id = converted.json()["candidate"]["id"]
 
-            scored = client.post(
-                f"{BASE}/network-scoring/candidates/{candidate_id}/score",
-                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="score-convert-1"),
-                json={"actorRoleId": "siteReviewer"},
-            )
+            handle_intake_score(_claim(harness.bundle, accepted["site_score_job_id"]), harness.bundle, model_runtime=runtime)
+            scored = client.get(f"{BASE}/network-scoring", headers=_headers(TENANT, subject=MANAGER))
 
         assert scored.status_code == 200, scored.text
+        assert scored.json()["scorecards"][0]["id"] == candidate_id
+        assert scored.json()["scorecards"][0]["reportVersion"] == 1
         row = runtime.calls[0]["rows"][0]
         assert row["prior_90d_cell_net_revenue"] == 180_000.0
         assert row["prior_90d_cell_transaction_count"] == 30
@@ -1441,12 +1450,15 @@ def test_operator_listing_write_does_not_wipe_candidate_features(
     all four point-in-time features set to ``None``.
     """
 
-    runtime = RecordingSiteScoreRuntime()
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from modules.sitescore.tests.test_sitescore_production_runtime import RecordingRuntime
+    from tests.integration.test_intake_score_delivery_postgresql import _claim
+    runtime = RecordingRuntime()
     harness = _postgres_listing_harness(bridge_database, monkeypatch, runtime)
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
-            _approve_convertible_listing(bridge_database, harness, client)
+            accepted = _approve_convertible_listing(bridge_database, harness, client)
             first = client.post(
                 f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
                 headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-nowipe-1"),
@@ -1462,13 +1474,12 @@ def test_operator_listing_write_does_not_wipe_candidate_features(
             assert second.status_code == 200, second.text
             candidate_id = second.json()["candidate"]["id"]
 
-            scored = client.post(
-                f"{BASE}/network-scoring/candidates/{candidate_id}/score",
-                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="score-nowipe-1"),
-                json={"actorRoleId": "siteReviewer"},
-            )
+            handle_intake_score(_claim(harness.bundle, accepted["site_score_job_id"]), harness.bundle, model_runtime=runtime)
+            scored = client.get(f"{BASE}/network-scoring", headers=_headers(TENANT, subject=MANAGER))
 
         assert scored.status_code == 200, scored.text
+        assert scored.json()["scorecards"][0]["id"] == candidate_id
+        assert scored.json()["scorecards"][0]["reportVersion"] == 1
         draft = harness.listing("00000000-0000-0000-0000-000000000001").list_candidates()[0]
         assert draft.prior_90d_cell_net_revenue == 180_000.0
         assert draft.feature_snapshot_time is not None
@@ -1524,11 +1535,15 @@ def test_operator_convert_without_cell_aggregates_still_fails_closed(
     revenue was never resolved has to fail closed as a permanent data gap.
     """
 
-    harness = _postgres_listing_harness(bridge_database, monkeypatch)
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from modules.sitescore.tests.test_sitescore_production_runtime import RecordingRuntime
+    from tests.integration.test_intake_score_delivery_postgresql import _claim, _physical
+    runtime = RecordingRuntime()
+    harness = _postgres_listing_harness(bridge_database, monkeypatch, runtime)
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001", prior_revenue=None)
     try:
         with TestClient(harness.app()) as client:
-            _approve_convertible_listing(bridge_database, harness, client)
+            accepted = _approve_convertible_listing(bridge_database, harness, client)
             converted = client.post(
                 f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
                 headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-gap-1"),
@@ -1537,17 +1552,14 @@ def test_operator_convert_without_cell_aggregates_still_fails_closed(
             assert converted.status_code == 200, converted.text
             candidate_id = converted.json()["candidate"]["id"]
 
-            scored = client.post(
-                f"{BASE}/network-scoring/candidates/{candidate_id}/score",
-                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="score-gap-1"),
-                json={"actorRoleId": "siteReviewer"},
-            )
+            handle_intake_score(_claim(harness.bundle, accepted["site_score_job_id"]), harness.bundle, model_runtime=runtime)
 
-        assert scored.status_code == 503, scored.text
-        detail = scored.json()["detail"]
-        assert "prior_90d_cell_net_revenue" in detail["message"]
-        assert detail["code"] == "SITESCORE_FEATURE_CONTRACT_INCOMPLETE"
-        assert detail["retryable"] is False
+        failed = _physical(bridge_database, accepted["site_score_job_id"])
+        assert failed["status"] == "FAILED"
+        assert failed["last_error"]["retryable"] is False
+        assert runtime.calls == []
+        assert harness.sitescore(TENANT).latest(candidate_id) is None
+
     finally:
         harness.close()
 

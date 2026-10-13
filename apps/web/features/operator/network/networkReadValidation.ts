@@ -118,6 +118,26 @@ function validPipelineEvidence(value: unknown): boolean {
     && (read.matches === null || typeof read.matches === "boolean")
     && text(read.producer) && nullableText(read.recordId) && nullableText(read.status) && nullableText(read.reason));
 }
+function validCurrentAdmission(value: unknown): boolean {
+  if (value === undefined) return true;
+  return readObject(value) && readId(value.candidateId) && readId(value.listingId) && readId(value.addressId)
+    && nullableText(value.checkedAt) && ["currentInputs", "source", "pit", "model"].every((key) => {
+      const fact = value[key];
+      return readObject(fact) && oneOf(fact.state, ["verified", "blocked", "unverified"]) && nullableText(fact.reasonCode);
+    });
+}
+export function hasVerifiedCurrentScoreAdmission(candidate: unknown): boolean {
+  if (!readObject(candidate) || !validCurrentAdmission(candidate.currentAdmission)
+    || !readObject(candidate.currentAdmission) || !readObject(candidate.readEvidence)
+    || !readObject(candidate.gate) || !validGate(candidate.gate) || candidate.gate.passed !== true
+    || !oneOf(candidate.gate.state, ["ready", "warn"])) return false;
+  const admission = candidate.currentAdmission;
+  return admission.candidateId === candidate.id && admission.listingId === candidate.listingId
+    && candidate.readEvidence.source === "canonical" && candidate.readEvidence.candidateId === candidate.id
+    && candidate.readEvidence.listingId === admission.listingId && candidate.readEvidence.addressId === admission.addressId
+    && readId(admission.checkedAt) && Number.isFinite(Date.parse(admission.checkedAt))
+    && ["currentInputs", "source", "pit", "model"].every((key) => readObject(admission[key]) && admission[key].state === "verified");
+}
 export function hasNetworkScoringRenderShape(value: unknown): boolean {
   if (!readObject(value)) return false;
   return optionalText(value.modelVersion)
@@ -127,7 +147,53 @@ export function hasNetworkScoringRenderShape(value: unknown): boolean {
       && text(candidate.stage) && validGate(candidate.gate) && typeof candidate.scored === "boolean"
       && nullableNumber(candidate.score) && nullableRecommendation(candidate.recommendation)
       && typeof candidate.inCompare === "boolean" && optionalText(candidate.listingId) && optionalText(candidate.reviewId)
-      && validReadEvidence(candidate.readEvidence) && validPipelineEvidence(candidate.pipelineEvidence))
+      && validReadEvidence(candidate.readEvidence) && validPipelineEvidence(candidate.pipelineEvidence)
+      && validCurrentAdmission(candidate.currentAdmission))
     && rows(value.scorecards, validScorecard) && validCompare(value.compare)
     && Array.isArray(value.compareSet) && value.compareSet.every(readId);
+}
+
+const version = (value: unknown): value is number => Number.isSafeInteger(value) && typeof value === "number" && value > 0;
+export function hasScoreExecutionContext(value: unknown): value is import("./networkScoringTypes").ScoreExecutionContext {
+  return readObject(value) && readId(value.tenantId) && readId(value.candidateSiteId) && readId(value.reportId)
+    && version(value.reportVersion) && version(value.jobVersion)
+    && readId(value.originalJobId) && readId(value.predecessorJobId)
+    && (value.activeExecutionRequest === undefined || value.activeExecutionRequest === null
+      || hasScoreExecutionReceipt(value.activeExecutionRequest) && value.activeExecutionRequest.candidateSiteId === value.candidateSiteId);
+}
+export function hasScoreExecutionReceipt(value: unknown): value is import("./networkScoringTypes").ScoreExecutionReceipt {
+  if (!readObject(value) || value.source !== "canonical" || typeof value.created !== "boolean"
+    || !readId(value.executionRequestId) || !readId(value.candidateSiteId) || !readId(value.jobId)
+    || !oneOf(value.status, ["QUEUED", "RUNNING", "RETRYING", "SUCCEEDED", "FAILED", "DEAD_LETTER", "CANCELLED"])
+    || !version(value.actualVersion) || !(value.jobVersion === null || version(value.jobVersion))
+    || !readId(value.baseReportId) || !version(value.baseReportVersion) || !readId(value.correlationId)) return false;
+  const result = value.result;
+  if (!(result === null || readObject(result) && readId(result.report_id) && version(result.report_version)
+    && readId(result.sitescore_run_id) && readId(result.prediction_run_id) && readId(result.model_version))) return false;
+  if (value.status === "SUCCEEDED" && result === null) return false;
+  return value.lastError === null || readObject(value.lastError) && text(value.lastError.code) && typeof value.lastError.retryable === "boolean";
+}
+
+
+/** Current sealed/server-owned session readback; persona storage is not this authority. */
+export function hasCanonicalScoreSession(value: unknown): value is { subject: string; expiresAt: number } {
+  return readObject(value) && readId(value.subject) && typeof value.expiresAt === "number"
+    && Number.isSafeInteger(value.expiresAt) && value.expiresAt > Math.floor(Date.now() / 1000);
+}
+
+export function hasScoreExecutionCommandReceipt(value: unknown): value is import("./networkScoringTypes").ScoreExecutionCommandReceipt {
+  return readObject(value) && oneOf(value.operation, ["create", "retry"])
+    && [value.actorSubjectId, value.tenantId, value.idempotencyKey, value.correlationId,
+      value.executionRequestId, value.jobId].every(readId);
+}
+
+export function scoreExecutionCommandReceiptMatches(
+  value: unknown,
+  intent: import("./networkScoringTypes").ScoreExecutionCommandIntent,
+  request: Pick<import("./networkScoringTypes").ScoreExecutionReceipt, "executionRequestId" | "jobId">,
+): boolean {
+  return hasScoreExecutionCommandReceipt(value) && value.operation === intent.operation
+    && value.actorSubjectId === intent.actorSubjectId && value.tenantId === intent.tenantId
+    && value.idempotencyKey === intent.idempotencyKey && value.correlationId === intent.correlationId
+    && value.executionRequestId === request.executionRequestId && value.jobId === request.jobId;
 }

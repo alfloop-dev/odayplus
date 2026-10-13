@@ -19,6 +19,7 @@ from models.shared_ml.production_runtime import (
     ProductionModelLineageError,
     ProductionModelRuntimeError,
 )
+from modules.listing.application.intake_score_delivery import ScoreDeliveryDenied
 from modules.sitescore.application.reporting import SiteScoreReportService
 from modules.sitescore.domain.scoring import SiteScoreReport
 from shared.domain import Prediction, PredictionRun, SiteScoreRun
@@ -56,6 +57,10 @@ class _JobResultRepository(DurableSiteScoreRepository):
                 raise ValueError("SITESCORE_JOB_RESULT_CONFLICT")
 
     def save_report(self, report: SiteScoreReport) -> SiteScoreReport:
+        with self.report_guard(report.candidate_site_id):
+            return self._save_report_locked(report)
+
+    def _save_report_locked(self, report: SiteScoreReport) -> SiteScoreReport:
         if report.candidate_site_id != self._candidate_id:
             raise ValueError("SITESCORE_RESULT_CANDIDATE_MISMATCH")
         existing = self.get_report(self.report_id)
@@ -107,11 +112,14 @@ def handle_intake_score(
     persistence: PersistenceBundle,
     *,
     model_runtime: ProductionModelRuntime | None = None,
+    _execution_delivery: Any = None,
+    model_admission: Any = None,
 ) -> None:
     """Registry handler; explicit runtime injection is for local integration proofs."""
     from modules.listing.application.intake_score_delivery import IntakeScoreJobRepository
 
-    delivery = IntakeScoreJobRepository(persistence)
+    fresh = _execution_delivery is not None
+    delivery = _execution_delivery or IntakeScoreJobRepository(persistence)
     attempt = delivery.begin_attempt(job)
     if attempt is None:
         return
@@ -130,8 +138,26 @@ def handle_intake_score(
             or getattr(getattr(listing_repository, "_store", None), "engine", None) is not engine):
         raise NonRetryableJobError("SITESCORE_TRANSACTION_BINDING_UNAVAILABLE")
 
+    production_authority = delivery.model_admission if fresh else model_admission
+    pinned_model = None
     try:
         runtime = model_runtime if model_runtime is not None else MlflowProductionModelRuntime.from_environment()
+        if not fresh and production_authority is None and (model_runtime is None or isinstance(runtime, MlflowProductionModelRuntime)):
+            from models.shared_ml.current_model_admission import CurrentModelAdmissionPort
+            production_authority = CurrentModelAdmissionPort(runtime=runtime,
+                registry_repository=persistence.learninghub_repository, engine=engine)
+        if production_authority is not None:
+            if getattr(production_authority, "runtime", None) is None:
+                production_authority.runtime = runtime
+            if fresh:
+                pinned_model = delivery.model_receipt(attempt)
+            else:
+                from modules.sitescore.domain.scoring import SITESCORE_FEATURE_VERSION
+                pinned_model = production_authority.read(service="sitescore", expected_feature_schema_version=SITESCORE_FEATURE_VERSION)
+                delivery.pin_model_admission(job, attempt, pinned_model)
+            from modules.sitescore.domain.scoring import SITESCORE_FEATURE_VERSION
+            if production_authority.read(service="sitescore", expected_feature_schema_version=SITESCORE_FEATURE_VERSION) != pinned_model:
+                raise ProductionModelApprovalError("SITESCORE_CURRENT_MODEL_CHANGED")
         service = SiteScoreReportService(
             repository=reports, model_runtime=runtime,
             require_production_model=True, runtime_mode="production",
@@ -144,12 +170,16 @@ def handle_intake_score(
                 or execution.reports[0].candidate_site_id != attempt.candidate_site_id
                 or execution.model_inference is None):
             raise ValueError("SITESCORE_RESULT_CANDIDATE_MISMATCH")
+        if production_authority is not None:
+            production_authority.verify_inference(pinned_model, execution.model_inference)
+            if production_authority.read(service="sitescore", expected_feature_schema_version=SITESCORE_FEATURE_VERSION) != pinned_model:
+                raise ProductionModelApprovalError("SITESCORE_CURRENT_MODEL_CHANGED")
     except JobFenceRejectedError:
         raise
-    except (ProductionModelRuntimeError, ValueError, TimeoutError, ConnectionError) as exc:
+    except (ProductionModelRuntimeError, ScoreDeliveryDenied, ValueError, TimeoutError, ConnectionError) as exc:
         permanent = isinstance(exc, (
             ProductionModelApprovalError, ProductionModelLineageError,
-            ProductionModelInputError, ValueError,
+            ProductionModelInputError, ScoreDeliveryDenied, ValueError,
         ))
         delivery.fail_attempt(
             job, attempt, error_code=getattr(exc, "code", "SITESCORE_INFERENCE_UNAVAILABLE"),
@@ -157,7 +187,7 @@ def handle_intake_score(
         )
         return
 
-    def persist() -> dict[str, Any]:
+    def persist_records() -> dict[str, Any]:
         # The bridge invokes this only after its fresh parent/job/fence checks,
         # and rolls every report, candidate, audit and receipt write back together.
         saved = service.persist_execution(
@@ -173,7 +203,7 @@ def handle_intake_score(
             raise ValueError("SITESCORE_CANDIDATE_UNAVAILABLE")
         candidate = deepcopy(candidate)
         original_site = candidate.candidate_site
-        candidate.candidate_site = replace(original_site, site_status="scored")
+        candidate.candidate_site = replace(original_site, site_status=original_site.site_status if fresh else "scored")
         formal = {field.name for field in fields(original_site)}
         for name, value in vars(original_site).items():
             if name not in formal:
@@ -193,7 +223,52 @@ def handle_intake_score(
             "model_lineage": execution.model_inference.to_audit_metadata(),
         }
 
-    delivery.commit_success(job, attempt, persist)
+    def persist() -> dict[str, Any]:
+        if production_authority is None or fresh:
+            return persist_records()
+        with reports.report_guard(attempt.candidate_site_id):
+            with production_authority.guard(pinned_model, tenant_id=attempt.tenant_id):
+                delivery.check_publication(job, attempt)
+                return persist_records()
+
+    if not fresh:
+        try:
+            delivery.commit_success(job, attempt, persist)
+        except ProductionModelRuntimeError as exc:
+            delivery.fail_attempt(job, attempt, error_code=getattr(exc, "code", str(exc)), retryable=False)
+        return
+    try:
+        delivery.commit_success(job, attempt, persist)
+    except JobFenceRejectedError:
+        if not delivery.settle_cancelled_attempt(job, attempt):
+            raise
+    except (ProductionModelRuntimeError, ScoreDeliveryDenied, ValueError) as exc:
+        delivery.fail_attempt(job, attempt, error_code=getattr(exc, "code", str(exc)), retryable=False)
 
 
-__all__ = ["handle_intake_score"]
+def handle_score_execution(job: JobRecord, persistence: PersistenceBundle, *,
+                           model_runtime: ProductionModelRuntime | None = None,
+                           model_admission: Any = None) -> None:
+    from modules.sitescore.application.score_delivery import ScoreExecutionJobRepository
+    if model_admission is None:
+        model_admission = getattr(persistence, "current_model_admission", None)
+    if model_runtime is None:
+        model_runtime = getattr(model_admission, "runtime", None)
+        if model_runtime is None:
+            try:
+                model_runtime = MlflowProductionModelRuntime.from_environment()
+            except ProductionModelRuntimeError:
+                # Missing runtime enters the authenticated owner's admission
+                # failure/settlement; never generic worker success or inference.
+                model_runtime = None
+    if model_admission is None:
+        from models.shared_ml.current_model_admission import CurrentModelAdmissionPort
+        model_admission = CurrentModelAdmissionPort(runtime=model_runtime,
+            registry_repository=persistence.learninghub_repository, engine=persistence.engine)
+    if getattr(model_admission, "runtime", None) is None and model_runtime is not None:
+        model_admission.runtime = model_runtime
+    delivery = ScoreExecutionJobRepository(persistence, model_admission=model_admission)
+    handle_intake_score(job, persistence, model_runtime=model_runtime, _execution_delivery=delivery)
+
+
+__all__ = ["handle_intake_score", "handle_score_execution"]

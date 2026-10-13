@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import styles from "../networkFindAreas.module.css";
 import type { ReviewQueueRow } from "../networkFindAreasViewModel";
-import { recommendationTone, type ScoreRecommendation } from "./networkScoringTypes";
+import { recommendationTone, type CandidateReviewReadTarget, type ScoreRecommendation } from "./networkScoringTypes";
 import { ReviewDecisionDialog } from "./ReviewDecisionDialog";
 import { formatReviewConfidence, formatReviewScore, hasRecordedReviewReport, isReviewPending } from "./networkReviewProjection";
 import {
@@ -37,7 +37,11 @@ export function ReviewPanel({
   onSelectCandidate,
   selectionError,
   fixtureCandidateContext = false,
+  explicitReadTarget,
+  explicitSelectionError,
 }: {
+  explicitReadTarget?: CandidateReviewReadTarget | null;
+  explicitSelectionError?: string | null;
   reviews: ReviewItem[];
   fallbackRows: ReviewQueueRow[];
   canDecide?: boolean;
@@ -66,7 +70,7 @@ export function ReviewPanel({
   useEffect(() => {
     setHistorySelection(null);
     setDialogAction(null);
-  }, [workflowCandidateId, expectedReport?.reportId, expectedReport?.reportVersion, fixtureCandidateContext]);
+  }, [workflowCandidateId, expectedReport?.reportId, expectedReport?.reportVersion, fixtureCandidateContext, explicitReadTarget?.reviewId, explicitSelectionError]);
 
   const exactReviews = items.filter((item) => {
     const identity = item as ReviewItem & { reportId?: string; reportVersion?: number };
@@ -86,9 +90,16 @@ export function ReviewPanel({
   const currentReviews = fixtureLegacyCurrent ? fixtureCandidateReviews : exactReviews;
   const historical = historySelection?.candidateId === workflowCandidateId
     ? items.find((item) => item.id === historySelection?.reviewId && item.candidateId === workflowCandidateId) : undefined;
-  const selected = selectionError ? undefined : workflowCandidateId ? historical ?? (currentReviews.length === 1 ? currentReviews[0] : undefined)
+  const explicitRows = explicitReadTarget && explicitReadTarget.candidateId === workflowCandidateId
+    ? items.filter((item) => item.id === explicitReadTarget.reviewId && item.candidateId === explicitReadTarget.candidateId
+      && item.reportId === explicitReadTarget.reportId && item.reportVersion === explicitReadTarget.reportVersion)
+    : [];
+  const selected = selectionError || explicitSelectionError ? undefined : explicitReadTarget
+    ? explicitRows.length === 1 ? explicitRows[0] : undefined
+    : workflowCandidateId ? historical ?? (currentReviews.length === 1 ? currentReviews[0] : undefined)
     : items.find((item) => item.id === selectedId) ?? items[0];
-  const selectedIsCurrentReport = !workflowCandidateId || currentReviews.length === 1 && selected?.id === currentReviews[0].id;
+  const selectedIsCurrentReport = explicitReadTarget?.relation !== "historical"
+    && (!workflowCandidateId || currentReviews.length === 1 && selected?.id === currentReviews[0].id);
   const pendingCount = items.filter(isReviewPending).length;
 
   async function submitDecision(form: ReviewDecisionForm) {
@@ -153,7 +164,7 @@ export function ReviewPanel({
             {items.map((item) => (
               <button
                 className={styles.reviewQueueCard}
-                data-active={selected?.id === item.id ? "true" : undefined}
+                data-active={selected?.id === item.id ? "true" : "false"}
                 data-testid={`review-card-${item.id}`}
                 key={item.id}
                 onClick={() => { setSelectedId(item.id); setHistorySelection({ reviewId: item.id, candidateId: item.candidateId }); onSelectCandidate?.(item.candidateId); }}
@@ -181,6 +192,12 @@ export function ReviewPanel({
 
           <div className={styles.reviewDetail}>
             {selectionError ? <p role="status">{selectionError}</p> : null}
+            {explicitSelectionError ? <p role="status" data-testid="review-explicit-target-unavailable">{explicitSelectionError}</p> : null}
+            {explicitReadTarget && selected ? <p role="status" data-testid="review-historical-target-context">
+              指定審核 {explicitReadTarget.reviewId} · 凍結報告 {explicitReadTarget.reportId} v{explicitReadTarget.reportVersion}。
+              {expectedReport ? ` 最新報告 ${expectedReport.reportId} v${expectedReport.reportVersion}。` : " 最新報告尚未核驗。"}
+              {explicitReadTarget.relation === "historical" ? "歷史紀錄僅供查閱，未套用為最新版報告的決策。" : "此審核只對應上述報告版本。"}
+            </p> : null}
             {workflowCandidateId && !selectedIsCurrentReport ? <p role="status">目前報告的人審關聯尚未唯一核對；可查閱歷史項目，未套用為目前報告的決策。</p> : null}
             {selected ? (
               <ReviewDetail
