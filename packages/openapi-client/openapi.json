@@ -5986,6 +5986,47 @@
         "title": "NetworkListingMergePayload",
         "type": "object"
       },
+      "NetworkListingRadarReadResponse": {
+        "additionalProperties": true,
+        "description": "Narrow read contract preserving the existing authorized snapshot fields.",
+        "properties": {
+          "listings": {
+            "items": {
+              "$ref": "#/components/schemas/NetworkListingReadResponse"
+            },
+            "title": "Listings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "listings"
+        ],
+        "title": "NetworkListingRadarReadResponse",
+        "type": "object"
+      },
+      "NetworkListingReadResponse": {
+        "additionalProperties": true,
+        "description": "The recorded hard-rule verdict; other authorized listing fields survive.",
+        "properties": {
+          "hardRuleFailures": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Recorded hard-rule failures. Null or absent means unmeasured, not passed. An empty array means a recorded check found no failures; a nonempty array names recorded failures. This field alone does not authorize promotion.",
+            "title": "Hardrulefailures"
+          }
+        },
+        "title": "NetworkListingReadResponse",
+        "type": "object"
+      },
       "NetworkRebalanceCounts": {
         "additionalProperties": true,
         "properties": {
@@ -7544,6 +7585,18 @@
           },
           "status": {
             "$ref": "#/components/schemas/PromotionStatus"
+          },
+          "target_format_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Target code persisted with this decision, verbatim; null for historical receipts without one.",
+            "title": "Target Format Code"
           },
           "version": {
             "minimum": 1.0,
@@ -33569,9 +33622,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Network Listings Api V1 Operator Network Listings Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkListingRadarReadResponse"
                 }
               }
             },
@@ -33712,9 +33763,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Network Listings Api V1 Operator Network Listings  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkListingRadarReadResponse"
                 }
               }
             },

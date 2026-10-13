@@ -681,3 +681,155 @@ def test_committed_acceptance_audit_is_append_only(bridge_database, monkeypatch)
         _assert_no_result(bundle, receipt["candidate_site_id"])
     finally:
         bundle.engine.close()
+
+
+def _wait_for_database_lock(database, pid, *, timeout=5):
+    """Observe a real blocked PostgreSQL connection, without a timing-only guess."""
+    from time import monotonic
+
+    deadline = monotonic() + timeout
+    with database.connect(autocommit=True) as conn:
+        while monotonic() < deadline:
+            row = conn.execute("SELECT wait_event_type FROM pg_stat_activity WHERE pid=%s", (pid,)).fetchone()
+            if row and row[0] == "Lock":
+                return True
+            Event().wait(0.01)
+    return False
+
+
+@pytest.mark.parametrize("writer_kind", ["operator_repository", "assisted_store"])
+def test_late_metadata_insert_waits_for_score_result_transaction(bridge_database, monkeypatch, writer_kind):
+    from modules.sitescore.application.intake_score_worker import (
+        _JobResultRepository,
+        handle_intake_score,
+    )
+    from shared.infrastructure.persistence.assisted_listing_intake import DurableAssistedIntakeStore
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
+
+    bundle = _bundle(bridge_database, monkeypatch)
+    writer_bundle = None
+    callback_entered, callback_release, writer_started = Event(), Event(), Event()
+    writer_pid = []
+    try:
+        _, listing_id, receipt = _approved_score(bridge_database, bundle, _promotion_client(bundle))
+        job_id = receipt["site_score_job_id"]
+        repo = bundle.listing_repository_for_tenant(TENANT)
+        collection = repo._store._collection(DurableAssistedIntakeRepository._LISTING_META)
+        # A domain-only recorded verdict is valid. There is no row to lock,
+        # which is exactly the gap in SELECT FOR UPDATE without writer locking.
+        bundle.engine.execute("DELETE FROM durable_documents WHERE collection=? AND doc_id=?", (collection, listing_id))
+        assert repo.get_listing(listing_id).hard_rule_failures == []
+        writer_bundle = _bundle(bridge_database, monkeypatch)
+        writer_repo = writer_bundle.listing_repository_for_tenant(TENANT)
+        metadata = (DurableAssistedIntakeRepository(writer_repo._store) if writer_kind == "operator_repository"
+                    else DurableAssistedIntakeStore(writer_repo._store))
+        original = _JobResultRepository.save_report
+
+        def hold_inside_result_transaction(self, report):
+            callback_entered.set()
+            assert callback_release.wait(15), "Test must release the result transaction"
+            return original(self, report)
+
+        monkeypatch.setattr(_JobResultRepository, "save_report", hold_inside_result_transaction)
+
+        def insert_revocation():
+            with writer_bundle.engine.lock:
+                writer_pid.append(writer_bundle.engine.query_one("SELECT pg_backend_pid() AS pid")["pid"])
+                writer_started.set()
+                metadata.save_listing_metadata(listing_id, {"hardRuleFailures": ["late-recorded-failure"]})
+            return writer_bundle.engine.query_one("SELECT clock_timestamp() AS committed_after")["committed_after"]
+
+        runtime = RecordingRuntime()
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            worker = executor.submit(handle_intake_score, _claim(bundle, job_id), bundle, model_runtime=runtime)
+            writer = None
+            try:
+                assert callback_entered.wait(15), "Worker must reach the real persistence callback"
+                writer = executor.submit(insert_revocation)
+                assert writer_started.wait(5)
+                assert _wait_for_database_lock(bridge_database, writer_pid[0]), "Late metadata insertion bypassed the worker's missing-row lock"
+                assert not writer.done()
+            finally:
+                callback_release.set()
+                worker.result(timeout=15)
+                if writer is not None:
+                    committed_after = writer.result(timeout=15)
+        current = _physical(bridge_database, job_id)
+        assert current["status"] == "SUCCEEDED" and len(runtime.calls) == 1
+        assert datetime.fromisoformat(current["acknowledged_at"]) <= datetime.fromisoformat(str(committed_after))
+        assert len(bundle._scoped_repository("sitescore_repository", TENANT).history(receipt["candidate_site_id"])) == 1
+        assert metadata.get_listing_metadata(listing_id)["hardRuleFailures"] == ["late-recorded-failure"]
+        # The exact scoped partition received the write; no unscoped copy was
+        # created merely to acquire the right advisory key.
+        assert writer_bundle.engine.query_one("SELECT doc_id FROM durable_documents WHERE collection=? AND doc_id=?",
+                                               (DurableAssistedIntakeRepository._LISTING_META, listing_id)) is None
+    finally:
+        callback_release.set()
+        if writer_bundle is not None:
+            writer_bundle.engine.close()
+        bundle.engine.close()
+
+
+def test_metadata_lock_wait_past_lease_cannot_publish_score(bridge_database, monkeypatch):
+    from time import monotonic
+
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
+
+    bundle = _bundle(bridge_database, monkeypatch)
+    inferred, finish_inference = Event(), Event()
+    try:
+        _, listing_id, receipt = _approved_score(bridge_database, bundle, _promotion_client(bundle))
+        job_id = receipt["site_score_job_id"]
+        claimed = _claim(bundle, job_id)
+        repo = bundle.listing_repository_for_tenant(TENANT)
+        collection = repo._store._collection(DurableAssistedIntakeRepository._LISTING_META)
+
+        class HeldRuntime(RecordingRuntime):
+            def infer(self, **kwargs):
+                result = super().infer(**kwargs)
+                inferred.set()
+                assert finish_inference.wait(15)
+                return result
+
+        runtime = HeldRuntime()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            worker = executor.submit(handle_intake_score, claimed, bundle, model_runtime=runtime)
+            try:
+                assert inferred.wait(15)
+                with bridge_database.connect(autocommit=False) as locker:
+                    row = locker.execute("SELECT doc_id FROM odp_runtime.durable_documents WHERE collection=%s AND doc_id=%s FOR UPDATE",
+                                         (collection, listing_id)).fetchone()
+                    assert row is not None
+                    # A deliberately short local lease supplies real DB-clock
+                    # expiry; no production timeout/backoff policy is inferred.
+                    with bridge_database.connect() as conn:
+                        expires = conn.execute("UPDATE workflow.jobs SET lease_expires_at=clock_timestamp()+interval '3 seconds' WHERE job_id=%s RETURNING lease_expires_at", (job_id,)).fetchone()[0]
+                        conn.execute("UPDATE odp_runtime.durable_jobs SET lease_expires_at=%s WHERE job_id=%s", (expires, job_id))
+                    finish_inference.set()
+                    observed_wait = False
+                    deadline = monotonic() + 5
+                    with bridge_database.connect(autocommit=True) as observer:
+                        while monotonic() < deadline:
+                            blocked = observer.execute("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%%durable_documents%%FOR UPDATE%%'").fetchone()[0]
+                            observed_wait = observed_wait or bool(blocked)
+                            if observer.execute("SELECT clock_timestamp() >= %s", (expires,)).fetchone()[0]:
+                                break
+                            Event().wait(0.01)
+                    assert observed_wait, "The test must exercise a genuine metadata lock wait"
+                    locker.commit()
+                with pytest.raises(JobFenceRejectedError):
+                    worker.result(timeout=15)
+            finally:
+                finish_inference.set()
+        assert len(runtime.calls) == 1
+        assert _physical(bridge_database, job_id)["status"] != "SUCCEEDED"
+        _assert_no_result(bundle, receipt["candidate_site_id"])
+        assert _promotion(bundle, receipt["promotion_decision_id"])["status"] == "COMPLETED"
+    finally:
+        finish_inference.set()
+        bundle.engine.close()

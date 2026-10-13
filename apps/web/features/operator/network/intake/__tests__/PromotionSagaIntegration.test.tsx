@@ -68,6 +68,8 @@ const SCORE_JOB_ID = "33333333-3333-4333-8333-333333333333";
 const CANDIDATE_ID = "44444444-4444-4444-8444-444444444444";
 const PROPOSER_ID = "00000000-0000-0000-0000-000000000101";
 const REVIEWER_ID = "00000000-0000-0000-0000-000000000102";
+// Explicit test input, not a product option or approved business format.
+const SYNTHETIC_TARGET_FORMAT = "synthetic-manual-format:Saga/v1";
 
 function readyIntake(overrides: Partial<AssistedIntake> = {}): AssistedIntake {
   return {
@@ -112,6 +114,7 @@ function pendingReviewReceipt(proposerSubjectId = PROPOSER_ID) {
     promotion_decision_id: DECISION_ID,
     intake_id: INTAKE_ID,
     listing_id: "LST-440",
+    target_format_code: SYNTHETIC_TARGET_FORMAT,
     status: "PENDING_REVIEW" as const,
     decision_type: "STANDARD" as const,
     proposer_subject_id: proposerSubjectId,
@@ -250,6 +253,9 @@ async function openPromotionPanel() {
 }
 
 function fillAndSubmitRequestForm() {
+  fireEvent.change(screen.getByTestId("promotion-target-format"), {
+    target: { value: SYNTHETIC_TARGET_FORMAT },
+  });
   fireEvent.change(screen.getByTestId("promotion-request-reason"), {
     target: { value: "熱區缺口與租金符合門檻，申請晉升。" },
   });
@@ -279,7 +285,8 @@ describe("promotion saga — live operator route integration", () => {
     });
     vi.stubGlobal("fetch", fetchStub);
     render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={REVIEWER_ID} />);
-    fireEvent.click(await screen.findByTestId(`intake-inbox-row-${INTAKE_ID}`));
+    const row = await screen.findByTestId(`intake-inbox-row-${INTAKE_ID}`);
+    await act(async () => { fireEvent.click(row); });
     await waitFor(() => expect(screen.getByTestId("sitescore-job-state")).toHaveTextContent(jobStatus));
     outcome = "SUCCEEDED";
     fireEvent.click(screen.getByTestId("promotion-refresh-btn"));
@@ -401,9 +408,36 @@ describe("promotion saga — live operator route integration", () => {
     expect(screen.queryByTestId("promotion-request-form")).not.toBeInTheDocument();
     expect(screen.getByTestId("promotion-candidate-id").textContent).toBe(CANDIDATE_ID);
     expect(screen.getByTestId("sitescore-job-version").textContent).toContain("4");
+    expect(screen.getByTestId("promotion-receipt")).toHaveTextContent(SYNTHETIC_TARGET_FORMAT);
     expect(
       requestsTo(captured, "POST", `/api/v1/intakes/${INTAKE_ID}/promotion-requests`),
     ).toHaveLength(0);
+  });
+
+  it("reviews the persisted target code after reloading a pending decision", async () => {
+    const { captured, routes, fetchStub } = buildFetchStub(readyIntake());
+    const persistedCode = "synthetic-persisted-format:Reload/v2";
+    routes[`GET /api/v1/intakes/${INTAKE_ID}/promotion-decision`] = () =>
+      Response.json({ ...pendingReviewReceipt(), target_format_code: persistedCode });
+    vi.stubGlobal("fetch", fetchStub);
+
+    render(
+      <AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId={REVIEWER_ID} />,
+    );
+    fireEvent.click(await screen.findByTestId(`intake-inbox-row-${INTAKE_ID}`));
+    await screen.findByTestId("promotion-second-actor-ok");
+    expect(screen.queryByTestId("promotion-request-form")).not.toBeInTheDocument();
+    expect(screen.getByTestId("promotion-receipt")).toHaveTextContent(persistedCode);
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("promotion-review-reason"), {
+        target: { value: "核對伺服器保存的測試店型後覆核。" },
+      });
+      fireEvent.click(screen.getByTestId("promotion-review-ack"));
+    });
+    await act(async () => { fireEvent.click(screen.getByTestId("promotion-approve-btn")); });
+    expect(screen.getByTestId("promotion-review-summary")).toHaveTextContent(persistedCode);
+    expect(screen.getByTestId("promotion-review-summary")).not.toHaveTextContent(SYNTHETIC_TARGET_FORMAT);
+    expect(requestsTo(captured, "POST", `/api/v1/intakes/${INTAKE_ID}/promotion-requests`)).toHaveLength(0);
   });
 
   it("drives request → second-actor review → score replay through the generated client", async () => {
@@ -417,6 +451,7 @@ describe("promotion saga — live operator route integration", () => {
     await openPromotionPanel();
 
     // ---- 1. explicit promotion request -----------------------------------
+    expect(screen.getByTestId("promotion-target-format")).toHaveValue("");
     fillAndSubmitRequestForm();
 
     await waitFor(() => {
@@ -427,7 +462,7 @@ describe("promotion saga — live operator route integration", () => {
     expect(requestCall.headers["if-match"]).toBe('W/"3"');
     expect(requestCall.headers["idempotency-key"]).toMatch(/^promotion-request-/);
     expect(requestCall.headers["x-correlation-id"]).toBeTruthy();
-    expect(requestCall.body.target_format_code).toBe("FMT-STANDARD-STORE");
+    expect(requestCall.body.target_format_code).toBe(SYNTHETIC_TARGET_FORMAT);
     expect(requestCall.body.reason).toContain("申請晉升");
     expect(requestCall.body.risk_acknowledged).toBe(true);
     expect(requestCall.body.gate_snapshot_sha256).toMatch(/^[a-f0-9]{64}$/);
@@ -453,6 +488,7 @@ describe("promotion saga — live operator route integration", () => {
       "data-screen-label",
       "Dialog Promotion 核准",
     );
+    expect(screen.getByTestId("promotion-review-summary")).toHaveTextContent(SYNTHETIC_TARGET_FORMAT);
     fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
 
     await waitFor(() => {
@@ -546,6 +582,8 @@ describe("promotion saga — live operator route integration", () => {
 
     // The retry must reuse the SAME key — that is the no-duplicate guarantee.
     expect(secondAttempt.headers["idempotency-key"]).toBe(firstAttempt.headers["idempotency-key"]);
+    expect(secondAttempt.body).toEqual(firstAttempt.body);
+    expect(secondAttempt.body.target_format_code).toBe(SYNTHETIC_TARGET_FORMAT);
 
     // And the server-flagged replay is labeled to the operator.
     await screen.findByTestId("idempotency-replayed-indicator");

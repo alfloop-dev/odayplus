@@ -1,3 +1,5 @@
+import type { NetworkListingReadResponse } from "@oday-plus/openapi-client";
+
 export const OPERATOR_ROLE_IDS = [
   "opsLead",
   "supportLead",
@@ -302,7 +304,8 @@ export type Listing = {
   longitude?: number | null;
   h3Index?: string | null;
   duplicateOfId?: string;
-  hardRuleFailures: string[];
+  /** Unknown checks must remain distinct from a recorded empty failure list. */
+  hardRuleFailures: NetworkListingReadResponse["hardRuleFailures"];
   candidateId?: string;
 };
 

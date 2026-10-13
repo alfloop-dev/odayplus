@@ -187,6 +187,37 @@ class IntakeScoreJobRepository:
         # still agree. Rebinding a job fingerprint cannot repair a stale input.
         stored = {k: v for k, v in vars(candidate.listing).items() if k != "listing_status"}
         current = {k: v for k, v in vars(listing).items() if k != "listing_status"}
+        # Current tenant-scoped operator evidence can withdraw a verdict or
+        # conflict with the immutable candidate inputs after enqueue/inference.
+        # Historical null PIT metadata means unmeasured, not a revision of a
+        # nonnull canonical measurement. A present null verdict does revoke it.
+        from shared.infrastructure.persistence.operator_network_listings import (
+            DurableAssistedIntakeRepository,
+        )
+
+        metadata = self.store._read_locked(
+            repo._store._collection(DurableAssistedIntakeRepository._LISTING_META),
+            candidate.candidate_site.listing_id,
+        ) or {}
+        for attribute, key in (
+            ("prior_90d_cell_net_revenue", "prior90dCellNetRevenue"),
+            ("prior_90d_cell_transaction_count", "prior90dCellTransactionCount"),
+            ("prior_90d_cell_store_count", "prior90dCellStoreCount"),
+            ("feature_snapshot_time", "featureSnapshotTime"),
+            ("hard_rule_failures", "hardRuleFailures"),
+        ):
+            if key not in metadata or (metadata[key] is None and attribute != "hard_rule_failures"):
+                continue
+            value = metadata[key]
+            if attribute == "feature_snapshot_time":
+                try:
+                    value = _time(value)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ScoreDeliveryDenied("SITESCORE_CURRENT_INPUT_UNAVAILABLE") from exc
+            current[attribute] = value
+        failures = current.get("hard_rule_failures")
+        if not isinstance(failures, list) or failures:
+            raise ScoreDeliveryDenied("SITESCORE_CURRENT_HARD_RULE_GATE_DENIED")
         if _digest(stored) != _digest(current) or _digest(candidate.address) != _digest(address):
             raise ScoreDeliveryDenied("SITESCORE_CANDIDATE_INPUT_STALE")
         if (listing.listing_status != "candidate"
@@ -525,10 +556,16 @@ class IntakeScoreJobRepository:
                 or not self._accepted(row, promotion)
                 or self._fingerprint(intake, promotion, candidate) != attempt.token["fingerprint"]):
             raise JobFenceRejectedError("SITESCORE_RESULT_FENCE_REJECTED")
+        self._current_inputs(attempt.tenant_id, candidate)
         if validate_score_admission(self.engine, intake, candidate) != row["payload"]["admission"]:
             raise JobFenceRejectedError("SITESCORE_ADMISSION_CHANGED")
         if score_retry_policy() != row["payload"].get("retry_policy"):
             raise JobFenceRejectedError("SITESCORE_RETRY_POLICY_CHANGED")
+        # Evidence locks may have blocked past the original lease deadline.
+        # Recheck both leases against the DB clock before publishing anything.
+        current = self._delivery(job, row)
+        if _time(row["lease_expires_at"]) <= self._now():
+            raise JobFenceRejectedError("SITESCORE_RESULT_FENCE_REJECTED")
         return current
 
     def commit_success(self, job: JobRecord, attempt: ScoreAttempt, persist_callback: Callable[[], dict]) -> dict:

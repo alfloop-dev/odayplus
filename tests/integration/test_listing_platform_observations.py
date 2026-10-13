@@ -478,6 +478,7 @@ def test_candidate_promotion_saga_with_platform_observations_and_benchmarks() ->
         "h3Index": "8928308281bffff",
         "geocode_confidence": 0.95,
         "geocodeConfidence": 0.95,
+        "hardRuleFailures": [],
         "property_id": "PROP-TPE-DAAN-001",
         "listing_obs_id": "OBS-591-99881122",
         "rent_benchmark": SAMPLE_RENT_BENCHMARK.to_dict(),

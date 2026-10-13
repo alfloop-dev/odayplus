@@ -268,3 +268,33 @@ these boundaries only. Production model approval, live object integrity,
 denial/replay audit delivery, physical property reconciliation, cross-listing
 active-candidate uniqueness, full visual/UAT evidence and release authority
 remain separate acceptance criteria.
+
+## Explicit target format and recorded hard-rule evidence
+
+The approved V1 request accepts an explicitly supplied `target_format_code`
+string of 1–64 characters. There is no approved enumeration or tenant catalog
+in this contract. The request UI starts empty and preserves the exact entered
+code, including case and whitespace; it does not infer a format from area or
+select a fixture value. Drafts and retry keys stay with the same Intake and
+survive version refresh, but do not carry over to a different Intake.
+
+The promotion receipt now adds an optional nullable `target_format_code` copied
+from the persisted decision. Request, lookup, review and replay return that
+same value. The independent reviewer sees it in the receipt and confirmation;
+a historical missing value remains unavailable and cannot be filled from a
+browser draft to enable approval. This additive response field is an
+implementation enhancement; no new format catalog or membership policy is
+introduced or assumed to be approved.
+
+`hardRuleFailures` is nullable: missing/null means unmeasured, an explicitly
+recorded empty array means no recorded failures, and a nonempty array means
+failed rules. Both canonical promotion and live compatibility conversion need
+a recorded passing verdict. Synthetic fixtures must seed that evidence
+explicitly; geocoding or a missing field cannot imply a passing verdict.
+
+Live legacy conversion cannot create a candidate without the canonical
+promotion request and independent review. Compatibility resynchronization
+requires an existing candidate and matching tenant/listing/candidate/target
+approval with distinct proposer and reviewer. The writer must preserve the
+original creator, property/observation lineage and measured point-in-time
+features. No historical business record is migrated by this change.

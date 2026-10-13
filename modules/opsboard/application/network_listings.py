@@ -670,6 +670,7 @@ class NetworkListingService:
             "geocodeConfidence": None,
             "sourceUrl": lst.snapshot_id,
             "snapshotId": lst.snapshot_id or None,
+            "hardRuleFailures": _copy(getattr(lst, "hard_rule_failures", None)),
         }
         for name in _LISTING_LINEAGE_FIELDS:
             value = getattr(lst, name, None)
@@ -819,8 +820,9 @@ class NetworkListingService:
         from shared.domain.models import CandidateSite
         listing = self._listing(d["listingId"])
         lst_obj, addr_obj, _ = self._dict_to_listing(listing)
-
-        cand_site = CandidateSite(
+        previous = next((candidate for candidate in self._listing_repository.list_candidates()
+                         if candidate.candidate_site.candidate_site_id == d["id"]), None) if self._listing_repository else None
+        cand_site = replace(previous.candidate_site, site_status=d["status"]) if previous else CandidateSite(
             candidate_site_id=d["id"],
             listing_id=d["listingId"],
             address_id=addr_obj.address_id,
@@ -839,15 +841,16 @@ class NetworkListingService:
                 f"({heat_zone_id!r}); refusing to persist a candidate site "
                 "with an unknown heat zone"
             )
-        # feasibility_flags are the recorded hard-rule verdict, not something to
-        # re-derive here: recomputing on every sync silently rewrote
-        # hardRule.pass / missingEvidence for existing candidates. An absent key
-        # means "no recorded failures", which is what the writer stores.
-        return CandidateSiteDraft(
+        # Preserve the recorded verdict. Unknown is not an empty passing list.
+        flags = d.get("feasibilityFlags")
+        if not self._seed_fixtures and (not isinstance(flags, list)
+                or not all(isinstance(item, str) for item in flags)):
+            raise ValueError("HARD_RULE_EVIDENCE_REQUIRED: candidate verdict is unknown")
+        draft = CandidateSiteDraft(
             listing=lst_obj,
             address=addr_obj,
             candidate_site=cand_site,
-            feasibility_flags=tuple(d.get("feasibilityFlags") or ()),
+            feasibility_flags=tuple(flags or ()),
             heat_zone_id=heat_zone_id,
             listing_source=listing.get("sourceId") or "",
             status=ListingPipelineStatus.CANDIDATE,
@@ -880,6 +883,16 @@ class NetworkListingService:
                 _first_present(d, "featureSnapshotTime", "feature_snapshot_time")
             ),
         )
+        if previous is not None:
+            # The operator projection does not carry every canonical lineage
+            # field. Preserve those persisted facts during a compatibility write.
+            return replace(previous, **{name: getattr(draft, name) for name in (
+                "candidate_site", "feasibility_flags", "heat_zone_id",
+                "score", "recommendation", "model_version",
+                "dataset_snapshot_id", "review_id", "prior_90d_cell_net_revenue",
+                "prior_90d_cell_transaction_count", "prior_90d_cell_store_count", "feature_snapshot_time",
+            )})
+        return draft
 
     def _sync_listing_to_repo(self, listing_id: str) -> None:
         if self._listing_repository is not None:
@@ -1083,6 +1096,7 @@ class NetworkListingService:
             },
         }
 
+    @_atomic_intake_submission
     def convert_listing(
         self,
         *,
@@ -1103,8 +1117,14 @@ class NetworkListingService:
         if write.replayed_response is not None:
             return write.replayed_response
 
+        if not self._seed_fixtures:
+            self._load_listings()
+            self._load_candidates()
         listing = self._listing(listing_id)
-        if listing.get("hardRuleFailures"):
+        failures = listing.get("hardRuleFailures")
+        if not isinstance(failures, list) or not all(isinstance(item, str) for item in failures):
+            raise NetworkListingPolicyError("HARD_RULE_EVIDENCE_REQUIRED: recorded hard-rule verdict is required")
+        if failures:
             raise NetworkListingPolicyError(
                 f"{listing_id} cannot convert until hard-rule failures are resolved"
             )
@@ -1112,6 +1132,28 @@ class NetworkListingService:
             raise NetworkListingConflict(f"{listing_id} is {listing.get('status')} and cannot convert")
 
         existing = self._candidate_for_listing(listing_id)
+        if not self._seed_fixtures:
+            # This compatibility writer may resync an independently approved
+            # candidate, but it cannot create one or establish approval itself.
+            target = existing.get("targetFormatCode") if existing else None
+            approved = any(
+                promotion.get("tenant_id") == self._tenant_id
+                and promotion.get("listing_id") == listing_id
+                and promotion.get("candidate_site_id") == (existing or {}).get("id")
+                and promotion.get("decision_type") == "STANDARD"
+                and promotion.get("status") in {"SCORE_QUEUED", "COMPLETED"}
+                and promotion.get("target_format_code") == target
+                and bool(promotion.get("reviewed_at"))
+                and bool(promotion.get("proposer_subject_id") or promotion.get("proposer"))
+                and bool(promotion.get("reviewer_subject_id") or promotion.get("reviewer"))
+                and (promotion.get("proposer_subject_id") or promotion.get("proposer"))
+                    != (promotion.get("reviewer_subject_id") or promotion.get("reviewer"))
+                for promotion in self._intakes.list_promotions()
+            )
+            if existing is None or not isinstance(target, str) or not 1 <= len(target) <= 64 or not approved:
+                raise NetworkListingPolicyError(
+                    "PROMOTION_APPROVAL_REQUIRED: use the canonical intake promotion request and independent review"
+                )
         created = existing is None
         if existing is None:
             candidate_id = "CS-1001" if listing_id == "L-2024" else f"CS-{1000 + len(self._state['candidates']) + 1}"
@@ -1344,8 +1386,9 @@ class NetworkListingService:
             correlation_id=correlation_id,
             metadata={
                 "reason": reason,
-                "hardRuleFailures": list(listing.get("hardRuleFailures", [])),
-                "sourceEvidenceCount": len(listing.get("sourceEvidence", [])),
+                "hardRuleFailures": _copy(listing.get("hardRuleFailures")),
+                "sourceEvidenceCount": (len(listing["sourceEvidence"])
+                                        if isinstance(listing.get("sourceEvidence"), list) else None),
                 "before": {
                     "status": before_status,
                 },

@@ -220,6 +220,7 @@ def _seed_repository(geocode_confidence: float) -> InMemoryListingRepository:
         # to stand in for the geocode confidence below.
         confidence=1.0,
     )
+    object.__setattr__(listing, "hard_rule_failures", [])
     address = AddressLocation(
         address_id=ADDRESS_ID,
         raw_address="台北市信義區信義路 1 號",
@@ -330,6 +331,105 @@ def _review(
             idempotency_key=key,
         ),
     )
+
+
+@pytest.mark.parametrize("verdict", [None, False, "", {}, 0, [None], ["recorded_failure"]])
+@pytest.mark.parametrize("checkpoint", ["request", "review"])
+def test_unknown_or_failed_hard_rules_never_advance_promotion(verdict, checkpoint):
+    repo = _seed_repository(geocode_confidence=0.95)
+    service = _promotion_service(repo)
+    decision = _request(service) if checkpoint == "review" else None
+    object.__setattr__(repo.get_listing(LISTING_ID), "hard_rule_failures", verdict)
+    with pytest.raises(DomainValidationError, match="hard.rule"):
+        if decision:
+            _review(service, decision["promotion_decision_id"])
+        else:
+            _request(service)
+    assert repo.list_candidates() == []
+    if decision:
+        assert service.promotion_repository.get_promotion(decision["promotion_decision_id"])["status"] == "PENDING_REVIEW"
+    else:
+        assert service.promotion_repository.list_promotions() == []
+
+
+@pytest.mark.parametrize("verdict", [None, ["new_recorded_failure"]])
+@pytest.mark.parametrize("checkpoint", ["request", "review"])
+def test_new_metadata_verdict_replaces_previously_persisted_pass(tmp_path, verdict, checkpoint):
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
+    from shared.infrastructure.persistence.repositories import DurableListingRepository
+
+    engine = SqliteEngine(tmp_path / "verdict-retraction.sqlite3")
+    try:
+        store = SqliteDocumentStore(engine)
+        repo = DurableListingRepository(store)
+        source = _seed_repository(0.95)
+        listing = source.get_listing(LISTING_ID)
+        address = source.get_address(ADDRESS_ID)
+        repo.save_listing(listing, address, ListingDedupKey(
+            source_id=listing.source_id, source_listing_id=listing.source_listing_id,
+            normalized_address=address.normalized_address, rent_amount=listing.rent_amount,
+            area_ping=listing.area_ping,
+        ))
+        metadata = DurableAssistedIntakeRepository(store)
+        metadata.save_listing_metadata(LISTING_ID, {"hardRuleFailures": []})
+        service = _promotion_service(repo)
+        adapter = service.listing_repository
+        adapter.save_listing(adapter.get_listing(LISTING_ID))
+        assert repo.get_listing(LISTING_ID).hard_rule_failures == []
+        decision = _request(service) if checkpoint == "review" else None
+        metadata.save_listing_metadata(LISTING_ID, {"hardRuleFailures": verdict})
+        with pytest.raises(DomainValidationError, match="hard.rule"):
+            if decision:
+                _review(service, decision["promotion_decision_id"])
+            else:
+                _request(service)
+        assert repo.list_candidates() == []
+        assert adapter.get_listing(LISTING_ID)["hardRuleFailures"] == verdict
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize(("domain_value", "metadata_value", "conflict"), [
+    (0.0, None, False), (0.0, 0.0, False), (None, 0.0, False), (0.0, 99.0, True),
+])
+def test_point_in_time_metadata_preserves_measured_zero_and_rejects_conflict(
+    tmp_path, domain_value, metadata_value, conflict,
+):
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
+    from shared.infrastructure.persistence.repositories import DurableListingRepository
+
+    engine = SqliteEngine(tmp_path / "pit-authority.sqlite3")
+    try:
+        store = SqliteDocumentStore(engine)
+        repo = DurableListingRepository(store)
+        source = _seed_repository(0.95)
+        listing, address = source.get_listing(LISTING_ID), source.get_address(ADDRESS_ID)
+        object.__setattr__(listing, "prior_90d_cell_net_revenue", domain_value)
+        repo.save_listing(listing, address, ListingDedupKey(
+            source_id=listing.source_id, source_listing_id=listing.source_listing_id,
+            normalized_address=address.normalized_address, rent_amount=listing.rent_amount,
+            area_ping=listing.area_ping,
+        ))
+        DurableAssistedIntakeRepository(store).save_listing_metadata(
+            LISTING_ID, {"prior90dCellNetRevenue": metadata_value},
+        )
+        adapter = V1ListingRepositoryAdapter(repo)
+        if conflict:
+            with pytest.raises(DomainValidationError, match="RECORDED_FEATURE_EVIDENCE_CONFLICT"):
+                adapter.get_domain_listing(LISTING_ID)
+        else:
+            assert adapter.get_domain_listing(LISTING_ID).prior_90d_cell_net_revenue == 0.0
+        assert repo.get_listing(LISTING_ID).prior_90d_cell_net_revenue == domain_value
+    finally:
+        engine.close()
 
 
 class TestPromotionSagaFailsClosedOnGeocodeFailure:

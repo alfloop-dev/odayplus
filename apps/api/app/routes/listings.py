@@ -618,6 +618,10 @@ else:
         risk_acknowledged: bool = False
 
     class PromotionDecisionReceipt(BaseModel):
+        target_format_code: str | None = Field(
+            default=None,
+            description="Target code persisted with this decision, verbatim; null for historical receipts without one.",
+        )
         promotion_decision_id: UuidString
         intake_id: UuidString
         listing_id: UuidString
@@ -1550,10 +1554,56 @@ else:
             return None
 
         def get_domain_listing(self, listing_id: str) -> Any | None:
-            return self.repo.get_listing(listing_id)
+            from modules.listing.domain.intake_states import DenialCode
+
+            listing = self.repo.get_listing(listing_id)
+            if listing is None:
+                return None
+            # The operator writer has always persisted these measured inputs
+            # in tenant-scoped metadata. Carry those records into canonical
+            # promotion without inventing values or mutating the stored row.
+            document_store = getattr(self.repo, "_store", None)
+            metadata = {}
+            if document_store is not None:
+                from shared.infrastructure.persistence.operator_network_listings import (
+                    DurableAssistedIntakeRepository,
+                )
+
+                metadata = DurableAssistedIntakeRepository(document_store).get_listing_metadata(listing_id)
+            listing = copy.copy(listing)
+            for attribute, key in (
+                ("prior_90d_cell_net_revenue", "prior90dCellNetRevenue"),
+                ("prior_90d_cell_transaction_count", "prior90dCellTransactionCount"),
+                ("prior_90d_cell_store_count", "prior90dCellStoreCount"),
+                ("feature_snapshot_time", "featureSnapshotTime"),
+                ("hard_rule_failures", "hardRuleFailures"),
+            ):
+                if key in metadata:
+                    value = metadata[key]
+                    if attribute == "feature_snapshot_time" and isinstance(value, str):
+                        try:
+                            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                        except ValueError as exc:
+                            raise DomainValidationError(
+                                DenialCode.SOURCE_POLICY_DENIED, "RECORDED_FEATURE_TIME_INVALID",
+                            ) from exc
+                    if attribute != "hard_rule_failures":
+                        # Legacy writers persisted null placeholders for PIT
+                        # fields. They cannot erase a separately recorded domain
+                        # measurement; conflicting real values must fail closed.
+                        if value is None:
+                            continue
+                        recorded = getattr(listing, attribute, None)
+                        if recorded is not None and recorded != value:
+                            raise DomainValidationError(
+                                DenialCode.SOURCE_POLICY_DENIED,
+                                f"RECORDED_FEATURE_EVIDENCE_CONFLICT: {attribute}",
+                            )
+                    object.__setattr__(listing, attribute, value)
+            return listing
 
         def get_listing(self, listing_id: str) -> Any | None:
-            listing = self.repo.get_listing(listing_id)
+            listing = self.get_domain_listing(listing_id)
             if not listing:
                 return None
             address = self.get_address(listing.address_id)
@@ -1583,6 +1633,7 @@ else:
                 "confidence": listing.effective_confidence,
                 "confidenceProvenance": listing.effective_confidence_provenance,
                 "snapshot_id": listing.snapshot_id,
+                "hardRuleFailures": getattr(listing, "hard_rule_failures", None),
             }
             for attr in (
                 "property_id",
@@ -1635,7 +1686,7 @@ else:
 
         def save_listing(self, listing_dict: dict[str, Any]) -> None:
             listing_id = listing_dict["id"]
-            existing_listing = self.repo.get_listing(listing_id)
+            existing_listing = self.get_domain_listing(listing_id)
             if existing_listing:
                 from dataclasses import replace
 

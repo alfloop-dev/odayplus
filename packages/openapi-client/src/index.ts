@@ -50,6 +50,7 @@ import type {
   IntakeSubmitPayload as GeneratedIntakeSubmitPayload,
   NetworkListingActorPayload as GeneratedNetworkListingActorPayload,
   NetworkListingMergePayload as GeneratedNetworkListingMergePayload,
+  NetworkListingReadResponse,
   ErrorEnvelope,
   ReasonCommand,
   AssignmentTransferRequest,
@@ -2048,7 +2049,8 @@ export type NetworkListingRadarSnapshot = {
     floor: string;
     frontageMeters: number | null;
     geocodeConfidence: number | null;
-    hardRuleFailures: string[];
+    /** Null or absent means unmeasured; [] records no failures, not promotion authorization. */
+    hardRuleFailures: NetworkListingReadResponse["hardRuleFailures"];
     hardRuleSummary: string;
     sourceEvidence: string[];
     fitScore: number | null;

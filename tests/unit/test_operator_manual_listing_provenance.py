@@ -298,7 +298,7 @@ def test_candidate_sync_preserves_explicit_target_format_and_unset_default(targe
     repository.save_listing(listing, address, key)
     service = _service(repository)
     candidate = {"id": "candidate-a", "listingId": row["id"], "status": "CANDIDATE",
-                 "heatZoneId": "HZ-02"}
+                 "heatZoneId": "HZ-02", "feasibilityFlags": []}
     if target_format is not None:
         candidate["targetFormatCode"] = target_format
     service.save_candidate(candidate)
@@ -309,3 +309,65 @@ def test_candidate_sync_preserves_explicit_target_format_and_unset_default(targe
     assert restored["targetFormatCode"] == (target_format or "")
     reloaded.save_candidate(restored)
     assert repository.list_candidates()[0].candidate_site.target_format_code == (target_format or "")
+
+
+def _legacy_convert_state():
+    state = _service().export_state()
+    state["listings"] = [{**_measured_listing(), "hardRuleFailures": []}]
+    state["candidates"] = [{"id": "recorded-candidate", "listingId": "measured-listing",
+                            "targetFormatCode": "Recorded exact format", "status": "new"}]
+    promotion = {"promotion_decision_id": "recorded-promotion", "tenant_id": TENANT,
+                 "listing_id": "measured-listing", "candidate_site_id": "recorded-candidate",
+                 "decision_type": "STANDARD", "status": "SCORE_QUEUED",
+                 "target_format_code": "Recorded exact format", "reviewed_at": "2026-10-13T00:00:00+00:00",
+                 "proposer_subject_id": ACTOR, "reviewer_subject_id": "00000000-0000-0000-0000-000000000102"}
+    return state, promotion
+
+
+@pytest.mark.parametrize("change", [
+    {"tenant_id": "other-tenant"}, {"listing_id": "other-listing"},
+    {"candidate_site_id": "other-candidate"}, {"decision_type": "LEGACY_RECONCILED"},
+    {"status": "PENDING_REVIEW"}, {"status": "REJECTED"}, {"reviewed_at": None},
+    {"proposer_subject_id": None}, {"reviewer_subject_id": ACTOR},
+    {"reviewer_subject_id": None}, {"target_format_code": "other-format"},
+])
+def test_legacy_convert_requires_matching_recorded_independent_approval(change):
+    state, promotion = _legacy_convert_state()
+    intakes = InMemoryAssistedIntakeRepository()
+    intakes.save_promotion({**promotion, **change})
+    service = NetworkListingService(intake_repository=intakes, initial_state=state,
+                                    seed_fixtures=False, tenant_id=TENANT)
+    before = service.export_state()
+    with pytest.raises(NetworkListingPolicyError, match="PROMOTION_APPROVAL_REQUIRED"):
+        service.convert_listing(listing_id="measured-listing", actor_role_id="site_reviewer",
+                                actor_name=ACTOR, idempotency_key="legacy-denied", correlation_id="legacy-denied")
+    assert service.export_state() == before
+    assert intakes.list_idempotency_records() == []
+
+
+@pytest.mark.parametrize("verdict", [None, False, 0, "", {}, [None]])
+def test_legacy_convert_unknown_hard_rule_evidence_is_not_a_pass(verdict):
+    state, promotion = _legacy_convert_state()
+    state["listings"][0]["hardRuleFailures"] = verdict
+    intakes = InMemoryAssistedIntakeRepository()
+    intakes.save_promotion(promotion)
+    service = NetworkListingService(intake_repository=intakes, initial_state=state,
+                                    seed_fixtures=False, tenant_id=TENANT)
+    before = service.export_state()
+    with pytest.raises(NetworkListingPolicyError, match="HARD_RULE_EVIDENCE_REQUIRED"):
+        service.convert_listing(listing_id="measured-listing", actor_role_id="site_reviewer",
+                                actor_name=ACTOR, idempotency_key="legacy-verdict", correlation_id="legacy-verdict")
+    assert service.export_state() == before
+
+
+def test_archive_keeps_unknown_hard_rules_unknown():
+    state, _ = _legacy_convert_state()
+    state["listings"][0]["hardRuleFailures"] = None
+    state["listings"][0]["sourceEvidence"] = None
+    service = NetworkListingService(initial_state=state, seed_fixtures=False, tenant_id=TENANT)
+    result = service.archive_listing(listing_id="measured-listing", reason="Recorded archive request",
+                                     actor_role_id="site_reviewer", actor_name=ACTOR,
+                                     idempotency_key="archive-unknown", correlation_id="archive-unknown")
+    assert result["listing"]["hardRuleFailures"] is None
+    assert result["auditEvent"]["metadata"]["hardRuleFailures"] is None
+    assert result["auditEvent"]["metadata"]["sourceEvidenceCount"] is None

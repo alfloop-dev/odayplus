@@ -52,6 +52,8 @@ import {
 } from "./_operatorBackendLock";
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
+// Deliberate test input, not a production catalog choice.
+const SYNTHETIC_TARGET_FORMAT = "synthetic-manual-format:Audit/v1";
 
 const URLS = {
   clean: "https://www.synthetic.example/detail-77120345.html", // → READY / NEW
@@ -1031,6 +1033,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     const pgPage = await page.context().newPage();
     const { api, scenario } = await openPgScenario(pgPage);
     try {
+      await expect(pgPage.getByTestId("promotion-target-format")).toHaveValue("");
+      await pgPage.getByTestId("promotion-target-format").fill(SYNTHETIC_TARGET_FORMAT);
       await pgPage.getByTestId("promotion-request-reason").fill("Audit test canonical promotion reason");
       await pgPage.getByTestId("promotion-request-ack").check();
       const [requested] = await Promise.all([
@@ -1040,15 +1044,19 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       expect(requested.status(), await requested.text()).toBe(202);
       const requestReceipt = await requested.json();
       expect(requestReceipt.status).toBe("PENDING_REVIEW");
+      expect(requested.request().postDataJSON().target_format_code).toBe(SYNTHETIC_TARGET_FORMAT);
+      expect(requestReceipt.target_format_code).toBe(SYNTHETIC_TARGET_FORMAT);
       await expect(pgPage.getByTestId("promotion-self-review-denied")).toBeVisible();
       await pgPage.setExtraHTTPHeaders({ "x-subject-id": scenario.reviewer_id, "x-tenant-id": scenario.tenant_id,
         "x-roles": "expansion_user,site_reviewer", "x-operator-role": "expansion-manager" });
       await pgPage.evaluate((actor) => sessionStorage.setItem("oday.operator.subject", actor), scenario.reviewer_id);
       await pgPage.reload();
       await expect(pgPage.getByTestId("promotion-second-actor-ok")).toBeVisible();
+      await expect(pgPage.getByTestId("promotion-receipt")).toContainText(SYNTHETIC_TARGET_FORMAT);
       await pgPage.getByTestId("promotion-review-reason").fill("Audit test independent review reason");
       await pgPage.getByTestId("promotion-review-ack").check();
       await pgPage.getByTestId("promotion-approve-btn").click();
+      await expect(pgPage.getByTestId("promotion-review-summary")).toContainText(SYNTHETIC_TARGET_FORMAT);
       const [reviewed] = await Promise.all([
         pgPage.waitForResponse((r) => r.url().includes("/actions/review") && r.request().method() === "POST"),
         pgPage.getByTestId("promotion-confirm-approve-btn").click(),
@@ -1056,6 +1064,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       expect(reviewed.status(), await reviewed.text()).toBe(200);
       const reviewReceipt = await reviewed.json();
       expect(reviewReceipt.status).toBe("SCORE_QUEUED");
+      expect(reviewReceipt.target_format_code).toBe(SYNTHETIC_TARGET_FORMAT);
       const evidenceResponse = await api.get(`/_synthetic/evidence/${scenario.scenario_id}`);
       expect(evidenceResponse.status(), await evidenceResponse.text()).toBe(200);
       const evidence = await evidenceResponse.json();
@@ -1063,7 +1072,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       expect(requestAudit).toMatchObject({ actor_subject_id: scenario.proposer_id, action: "intake.promotion_requested",
         resource_id: requestReceipt.promotion_decision_id, result: "SUCCEEDED", before_value: null });
       expect(requestAudit.after_value).toMatchObject({ listing_id: scenario.listing_id, intake_id: scenario.intake_id,
-        reason: "Audit test canonical promotion reason", status: "PENDING_REVIEW" });
+        reason: "Audit test canonical promotion reason", status: "PENDING_REVIEW", target_format_code: SYNTHETIC_TARGET_FORMAT });
       expect(requestAudit.correlation_id).toBe((await requested.request().allHeaders())["x-correlation-id"]);
       expect(requestAudit.occurred_at).toBeTruthy();
       const reviewAudit = evidence.audits.find((event: any) => event.audit_event_id === reviewReceipt.audit_event_id);

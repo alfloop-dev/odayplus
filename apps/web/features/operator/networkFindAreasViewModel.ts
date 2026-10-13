@@ -520,7 +520,7 @@ function buildListingRadar(
   return listings.map((listing) => {
     const source = sourceById.get(listing.sourceId);
     const hardRuleMeasured = Array.isArray(listing.hardRuleFailures);
-    const hardRuleFailures = hardRuleMeasured ? listing.hardRuleFailures : [];
+    const hardRuleFailures = Array.isArray(listing.hardRuleFailures) ? listing.hardRuleFailures : [];
     const isDuplicate = listing.status === "duplicate" || Boolean(listing.duplicateOfId);
     const tone: NetworkTone =
       listing.status === "hardfail" || hardRuleFailures.length > 0

@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.app.routes._common import reset_allowed_guard
 from apps.api.app.routes.operator_modules.live_service import resolve_service
@@ -169,6 +169,29 @@ class IntakePromotePayload(RiskDisclosurePayload):
     """Promotion carries no extra fields beyond the risk disclosure."""
 
 
+class NetworkListingReadResponse(BaseModel):
+    """The recorded hard-rule verdict; other authorized listing fields survive."""
+
+    model_config = ConfigDict(extra="allow")
+
+    hardRuleFailures: list[str] | None = Field(
+        default=None,
+        description=(
+            "Recorded hard-rule failures. Null or absent means unmeasured, not passed. "
+            "An empty array means a recorded check found no failures; a nonempty "
+            "array names recorded failures. This field alone does not authorize promotion."
+        ),
+    )
+
+
+class NetworkListingRadarReadResponse(BaseModel):
+    """Narrow read contract preserving the existing authorized snapshot fields."""
+
+    model_config = ConfigDict(extra="allow")
+
+    listings: list[NetworkListingReadResponse]
+
+
 def create_network_listings_sub_router(
     service: NetworkListingService,
     *,
@@ -213,8 +236,10 @@ def create_network_listings_sub_router(
         resource_label="network listing",
     )
 
-    @router.get("", dependencies=[Depends(require_view_permission_fn)])
-    @router.get("/", dependencies=[Depends(require_view_permission_fn)])
+    @router.get("", dependencies=[Depends(require_view_permission_fn)],
+                response_model=NetworkListingRadarReadResponse)
+    @router.get("/", dependencies=[Depends(require_view_permission_fn)],
+                response_model=NetworkListingRadarReadResponse)
     def get_network_listings(
         request: Request,
         selected_heat_zone_id: str | None = Query(default=None, alias="selectedHeatZoneId"),

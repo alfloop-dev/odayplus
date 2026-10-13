@@ -943,3 +943,54 @@ def test_actual_fifth_failed_attempt_settles_canonical_dead_letter(bridge_databa
         _assert_no_result(bundle, receipt["candidate_site_id"])
     finally:
         bundle.engine.close()
+
+
+@pytest.mark.parametrize("timing", ["before_attempt", "during_inference"])
+@pytest.mark.parametrize("change", ["verdict_missing", "verdict_failed", "pit_changed"])
+def test_current_operator_metadata_revocation_cannot_publish_score(bridge_database, monkeypatch, timing, change):
+    from modules.listing.application.intake_score_delivery import ScoreDeliveryDenied
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
+
+    bundle = _bundle(bridge_database, monkeypatch)
+    try:
+        _, listing_id, receipt = _approved_score(bridge_database, bundle, _promotion_client(bundle))
+        claimed = _claim(bundle, receipt["site_score_job_id"])
+        repo = bundle.listing_repository_for_tenant(TENANT)
+        metadata = DurableAssistedIntakeRepository(repo._store)
+
+        def revoke():
+            values = metadata.get_listing_metadata(listing_id)
+            if change == "pit_changed":
+                values["prior90dCellStoreCount"] = 99
+            else:
+                values["hardRuleFailures"] = None if change == "verdict_missing" else ["synthetic-recorded-failure"]
+            metadata.save_listing_metadata(listing_id, values)
+            # The canonical snapshot remains unchanged: checking only that
+            # duplicate would miss the current operator evidence withdrawal.
+            assert repo.get_listing(listing_id).hard_rule_failures == []
+
+        class RevokedMetadataRuntime(RecordingRuntime):
+            def infer(self, **kwargs):
+                result = super().infer(**kwargs)
+                revoke()
+                return result
+
+        runtime = RevokedMetadataRuntime()
+        if timing == "before_attempt":
+            revoke()
+            handle_intake_score(claimed, bundle, model_runtime=runtime)
+            assert runtime.calls == []
+        else:
+            with pytest.raises((ScoreDeliveryDenied, JobFenceRejectedError)):
+                handle_intake_score(claimed, bundle, model_runtime=runtime)
+            assert len(runtime.calls) == 1
+        _assert_no_result(bundle, receipt["candidate_site_id"])
+        assert _physical(bridge_database, claimed.job_id)["status"] != "SUCCEEDED"
+        bundle.assisted_intake_store.refresh(TENANT)
+        expected = "SCORE_FAILED" if timing == "before_attempt" else "COMPLETED"
+        assert bundle.assisted_intake_store.promotions[receipt["promotion_decision_id"]]["status"] == expected
+    finally:
+        bundle.engine.close()

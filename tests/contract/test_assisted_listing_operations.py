@@ -983,6 +983,11 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
         ),
     )
 
+    # This positive synthetic fixture records a completed hard-rule check.
+    listing = repository.get_listing(target_listing_id)
+    assert listing is not None
+    object.__setattr__(listing, "hard_rule_failures", [])
+
     # 9. requestCandidatePromotion (POST /api/v1/intakes/{id}/promotion-requests)
 
     promo_payload = {
@@ -1000,7 +1005,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
             "If-Match": f'W/"{version_after_reopen}"'
         }
     )
-    assert resp_promo.status_code == 202
+    assert resp_promo.status_code == 202, resp_promo.text
     promo_receipt = resp_promo.json()
     assert promo_receipt["status"] == "PENDING_REVIEW"
     promo_id = promo_receipt["promotion_decision_id"]

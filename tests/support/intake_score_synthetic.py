@@ -80,7 +80,8 @@ def ready_scenario(database_url, bundle, client):
                       area_ping=22, floor="1F", frontage_m=5, confidence=0.9, snapshot_id=snapshot_id)
     for name, value in {"property_id": str(uuid4()), "listing_obs_id": str(uuid4()),
                         "prior_90d_cell_net_revenue": 1_800_000.0, "prior_90d_cell_transaction_count": 720,
-                        "prior_90d_cell_store_count": 4, "feature_snapshot_time": captured}.items():
+                        "prior_90d_cell_store_count": 4, "feature_snapshot_time": captured,
+                        "hard_rule_failures": []}.items():
         object.__setattr__(listing, name, value)
     address = AddressLocation(address_id=listing.address_id, raw_address="Synthetic browser measured address",
                               normalized_address="Synthetic browser measured address", latitude=25.033964,

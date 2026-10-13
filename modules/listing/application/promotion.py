@@ -142,11 +142,7 @@ class PromotionService:
                 f"Listing status {listing.get('status')} is not eligible for promotion"
             )
 
-        if listing.get("hardRuleFailures"):
-            raise DomainValidationError(
-                DenialCode.WORKFLOW_STATE_DENIED,
-                "Listing has hard rule failures"
-            )
+        self._assert_recorded_hard_rules(listing)
 
         # Validate candidate gate (listing fields validation)
         validation_errors = self._validate_listing_fields(listing)
@@ -634,6 +630,7 @@ class PromotionService:
         `_validate_listing_fields` reads a mapping, while a domain `Listing`
         keeps address, cell and geocode confidence on a separate record.
         """
+        self._assert_recorded_hard_rules(listing)
         if hasattr(listing, "get"):
             errors = self._validate_listing_fields(listing)
             address_obj = None
@@ -664,6 +661,20 @@ class PromotionService:
                 f"Candidate gate failed at promotion: missing {', '.join(errors)}"
             )
         return address_obj
+
+    @staticmethod
+    def _assert_recorded_hard_rules(listing: Any) -> None:
+        failures = (listing.get("hardRuleFailures") if hasattr(listing, "get")
+                    else getattr(listing, "hard_rule_failures", None))
+        if not isinstance(failures, list) or not all(isinstance(item, str) for item in failures):
+            raise DomainValidationError(
+                DenialCode.SOURCE_POLICY_DENIED,
+                "HARD_RULE_EVIDENCE_REQUIRED: recorded hard-rule verdict is required",
+            )
+        if failures:
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED, "Listing has hard rule failures",
+            )
 
     def _validate_listing_fields(self, listing: dict[str, Any]) -> list[str]:
         errors = []

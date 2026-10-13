@@ -84,6 +84,7 @@ def test_durable_promotion_preserves_requested_format_and_candidate(
         frontage_m=5,
         confidence=0.9,
     )
+    object.__setattr__(listing, "hard_rule_failures", [])
     address = AddressLocation(
         address_id=listing.address_id,
         raw_address="新北市板橋區府中路 26 號 1F",
@@ -181,6 +182,7 @@ def _synthetic_measured_listing_app():
         snapshot_id="SNAP-SYNTHETIC-MEASURED-77120345", confidence=0.92,
     )
     object.__setattr__(listing, "property_id", "00000000-0000-0000-0000-000000009001")
+    object.__setattr__(listing, "hard_rule_failures", [])
     address = AddressLocation(
         address_id=listing.address_id, raw_address="新北市新莊區興德路 30 號 1F",
         normalized_address="新北市新莊區興德路30號1F",

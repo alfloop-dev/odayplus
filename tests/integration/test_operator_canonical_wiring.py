@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
 import uvloop
@@ -54,7 +57,7 @@ from shared.infrastructure.persistence.operator_network_listings import (
 from shared.infrastructure.persistence.repositories import DurableDecisionStore
 from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 from solver.netplan import NetPlanConstraints
-from tests.intake_registry_fixture import MANAGER
+from tests.intake_registry_fixture import APPROVER, MANAGER, TENANT
 from tests.integration.test_intake_registry_calendar_postgresql import _bundle as _postgres_bundle
 from tests.integration.test_operator_intake_workflow_postgresql import (
     bridge_database as bridge_database,
@@ -190,6 +193,7 @@ class CanonicalHarness:
     def app(self) -> FastAPI:
         app = FastAPI()
         app.state.job_queue = self.bundle.job_queue
+        app.state.persistence_bundle = self.bundle
 
         @app.middleware("http")
         async def correlation_id(request: Request, call_next: Any) -> Any:
@@ -221,6 +225,13 @@ class CanonicalHarness:
             ),
             prefix="/api/v1",
         )
+        if getattr(self.bundle, "assisted_intake_workflow_policy", None) is not None:
+            from apps.api.app.routes.listings import create_assisted_intake_router
+
+            app.include_router(create_assisted_intake_router(
+                self.bundle.assisted_intake_store,
+                workflow_policy=self.bundle.assisted_intake_workflow_policy,
+            ), prefix="/api/v1")
         return app
 
     def close(self) -> None:
@@ -235,10 +246,16 @@ def _postgres_listing_harness(database, monkeypatch, runtime=None):
     database; their SiteScore runtime remains an explicit recording double.
     """
     bundle = _postgres_bundle(database, monkeypatch)
+    monkeypatch.setenv("ODP_INTAKE_SCORE_ATTEMPT_SIGNING_KEY", "synthetic-canonical-writer-test-signing-key")
+    monkeypatch.setenv("ODP_INTAKE_SCORE_RETRY_POLICY_JSON", json.dumps({
+        "policy_id": "synthetic-canonical-writer-retry", "version": 1,
+        "max_attempts": 5, "backoff_seconds": [10, 30, 120, 600],
+    }))
     # This suite persists feature timestamps as datetime objects. The bridge
     # fixture's local Clock subclass cannot be pickled, and this suite has no
     # Intake/SLA wall-clock assertions requiring that synthetic clock.
     monkeypatch.setattr("modules.opsboard.application.network_listings.datetime", datetime)
+    monkeypatch.setattr("apps.api.app.routes.listings.datetime", datetime)
     assert bundle.engine.dialect == "postgresql"
     assert bundle.assisted_intake_store._engine is bundle.engine
     assert bundle.assisted_intake_workflow_policy is not None
@@ -1256,9 +1273,11 @@ def _seed_convertible_listing(
         area_ping=18,
         floor="1F",
         frontage_m=6,
-        snapshot_id=f"snapshot-{listing_id}",
+        snapshot_id=str(uuid4()),
         confidence=0.94,
     )
+    object.__setattr__(listing, "property_id", str(uuid4()))
+    object.__setattr__(listing, "listing_obs_id", str(uuid4()))
     repository = harness.listing(tenant_id)
     repository.save_listing(
         listing,
@@ -1290,14 +1309,71 @@ def _seed_convertible_listing(
     )
 
 
+def _approve_convertible_listing(database, harness, client):
+    """Real request/review creates the candidate from the original metadata seed.
+
+    No candidate, promotion decision or approval is written by the test. Only
+    measured source admission is an explicit local synthetic input.
+    """
+    from apps.api.app.routes.listings import V1ListingRepositoryAdapter
+    from tests.integration.test_intake_score_delivery_postgresql import _seed_manual_admission
+    from tests.integration.test_operator_intake_promotion_postgresql import (
+        _request,
+        _review,
+        _reviewer_headers,
+    )
+    from tests.integration.test_operator_intake_workflow_postgresql import (
+        _headers as intake_headers,
+    )
+
+    direct = client.post(
+        f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+        headers=_headers(TENANT, subject=MANAGER, idempotency_key="direct-convert-before-approval"),
+        json={"actorRoleId": "expansionManager", "target_format_code": "FORGED-TARGET"},
+    )
+    assert direct.status_code == 422, direct.text
+    assert "PROMOTION_APPROVAL_REQUIRED" in direct.text
+    assert harness.listing(TENANT).list_candidates() == []
+    with database.connect() as conn:
+        for role in ("site_reviewer", "expansion_user"):
+            conn.execute("INSERT INTO identity.account_roles(account_id,role,granted_by) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+                         (APPROVER, role, "isolated-synthetic-writer-test"))
+    base = f"{BASE}/network-listings/intake"
+    submitted = client.post(base + "/submit", json={"url": "https://rent.591.com.tw/synthetic-writer"}, headers=intake_headers())
+    assert submitted.status_code == 200, submitted.text
+    iid = submitted.json()["id"]
+    corrected = client.post(f"{base}/{iid}/correct", json={"fields": {"floor": "1F"}, "reason": "Synthetic recorded input",
+                            "riskSummary": "Synthetic local writer coverage", "riskAcknowledged": True},
+                            headers=intake_headers(key="synthetic-writer-correct"))
+    assert corrected.status_code == 200, corrected.text
+    decided = client.post(f"{base}/{iid}/decide", json={"action": "revise", "targetListingId": _CONVERTIBLE_LISTING_ID,
+                          "reason": "Synthetic measured listing", "riskSummary": "Synthetic local writer coverage", "riskAcknowledged": True},
+                          headers=_reviewer_headers("synthetic-writer-decide"))
+    assert decided.status_code == 200, decided.text
+    intake = decided.json()
+    # Read through the real metadata adapter; do not move PIT values onto the
+    # stored Listing or construct/save a CandidateSiteDraft in the fixture.
+    listing = V1ListingRepositoryAdapter(harness.listing(TENANT)).get_domain_listing(_CONVERTIBLE_LISTING_ID)
+    _seed_manual_admission(database, harness.bundle, intake, listing)
+    requested = _request(client, intake, key="synthetic-writer-request")
+    assert requested.status_code == 202, requested.text
+    assert requested.json()["proposer_subject_id"] == MANAGER
+    reviewed = _review(client, requested.json(), key="synthetic-writer-review")
+    assert reviewed.status_code == 200, reviewed.text
+    receipt = reviewed.json()
+    assert receipt["reviewer_subject_id"] == APPROVER != MANAGER
+    assert receipt["candidate_site_id"]
+    return receipt
+
+
 @pytest.mark.requires_live_env
 def test_operator_convert_carries_point_in_time_contract_into_scoring(
     bridge_database, monkeypatch,
 ) -> None:
     """B2: the production writer — not the test — must supply the v2 contract.
 
-    Drives ``POST /listings/{id}/convert`` through the API and then scores the
-    candidate it created. Nothing here calls ``repository.save_candidate``, so a
+    Drives canonical request/review, then the approved-candidate compatibility
+    writer ``POST /listings/{id}/convert``, and scores the resulting candidate. Nothing here calls ``repository.save_candidate``, so a
     pass proves the point-in-time features survive
     ``_candidate_to_dict``/``_dict_to_candidate`` and reach the model row.
     """
@@ -1307,6 +1383,7 @@ def test_operator_convert_carries_point_in_time_contract_into_scoring(
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
+            _approve_convertible_listing(bridge_database, harness, client)
             converted = client.post(
                 f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
                 headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-live-1"),
@@ -1339,6 +1416,10 @@ def test_operator_convert_carries_point_in_time_contract_into_scoring(
         assert draft.prior_90d_cell_transaction_count == 30
         assert draft.prior_90d_cell_store_count == 1
         assert draft.feature_snapshot_time is not None
+        assert draft.candidate_site.target_format_code == "FORMAT-B"
+        assert draft.candidate_site.created_by == APPROVER
+        assert draft.property_entity_id == draft.listing.property_id
+        assert draft.listing_observation_id == draft.listing.listing_obs_id
     finally:
         harness.close()
 
@@ -1359,6 +1440,7 @@ def test_operator_listing_write_does_not_wipe_candidate_features(
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
+            _approve_convertible_listing(bridge_database, harness, client)
             first = client.post(
                 f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
                 headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-nowipe-1"),
@@ -1391,6 +1473,42 @@ def test_operator_listing_write_does_not_wipe_candidate_features(
 
 
 @pytest.mark.requires_live_env
+def test_approved_candidate_resync_preserves_queued_worker_authority(bridge_database, monkeypatch):
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from modules.sitescore.tests.test_sitescore_production_runtime import RecordingRuntime
+    from tests.integration.test_intake_score_delivery_postgresql import _claim, _physical
+
+    harness = _postgres_listing_harness(bridge_database, monkeypatch)
+    _seed_convertible_listing(harness, TENANT)
+    try:
+        with TestClient(harness.app()) as client:
+            receipt = _approve_convertible_listing(bridge_database, harness, client)
+            repo = harness.listing(TENANT)
+            before = deepcopy(repo.list_candidates()[0])
+            result = client.post(
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers(TENANT, subject=MANAGER, idempotency_key="resync-queued-candidate"),
+                json={"actorRoleId": "expansionManager"},
+            )
+            assert result.status_code == 200, result.text
+            assert result.json()["created"] is False
+            after = repo.list_candidates()[0]
+            assert vars(after) == vars(before)
+            assert vars(after.listing) == vars(before.listing)
+            runtime = RecordingRuntime()
+            handle_intake_score(_claim(harness.bundle, receipt["site_score_job_id"]),
+                                harness.bundle, model_runtime=runtime)
+            physical = _physical(bridge_database, receipt["site_score_job_id"])
+            assert physical["status"] == "SUCCEEDED"
+            assert len(runtime.calls) == 1
+            assert runtime.calls[0]["rows"][0]["prior_90d_cell_net_revenue"] == 180_000.0
+            assert harness.sitescore(TENANT).get_report(physical["result"]["report_id"]) is not None
+            assert repo.list_candidates()[0].candidate_site.candidate_site_id == receipt["candidate_site_id"]
+    finally:
+        harness.close()
+
+
+@pytest.mark.requires_live_env
 def test_operator_convert_without_cell_aggregates_still_fails_closed(
     bridge_database, monkeypatch,
 ) -> None:
@@ -1404,6 +1522,7 @@ def test_operator_convert_without_cell_aggregates_still_fails_closed(
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001", prior_revenue=None)
     try:
         with TestClient(harness.app()) as client:
+            _approve_convertible_listing(bridge_database, harness, client)
             converted = client.post(
                 f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
                 headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-gap-1"),
@@ -1456,6 +1575,7 @@ def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
+            _approve_convertible_listing(bridge_database, harness, client)
             converted = client.post(
                 f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
                 headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key=f"convert-hz-{label}"),
@@ -1505,6 +1625,7 @@ def test_operator_candidate_write_rejects_missing_heat_zone_key(
     _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
+            _approve_convertible_listing(bridge_database, harness, client)
             converted = client.post(
                 f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
                 headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-hz-missing"),

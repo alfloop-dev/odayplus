@@ -103,6 +103,8 @@ def test_promotion_api_contract_flow() -> None:
         rent_amount=50000.0,
         area_ping=25.0,
     )
+    # This positive synthetic fixture records a completed hard-rule check.
+    object.__setattr__(listing, "hard_rule_failures", [])
     repository.save_listing(listing, address, key)
 
     # 2. Request promotion (None -> REQUESTED -> VALIDATING)
@@ -234,6 +236,10 @@ def test_operator_intake_cannot_invent_delivery_without_a_canonical_dispatcher(m
             area_ping=18.0,
         ),
     )
+    # Record the fixture verdict; absence must continue to fail in production.
+    listing = app.state.listing_repository.get_listing(target_listing_id)
+    assert listing is not None
+    object.__setattr__(listing, "hard_rule_failures", [])
     operator_record = app.state.operator_intake_repository.intakes[intake["id"]]
     operator_record["matchResult"]["targetListingId"] = target_listing_id
     app.state.operator_intake_repository.save_intake(operator_record)

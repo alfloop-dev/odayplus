@@ -492,7 +492,14 @@ class DurableAssistedIntakeStore:
         listing_id: str,
         metadata: dict[str, Any],
     ) -> None:
-        self._store.put(self._LISTING_META, listing_id, metadata)
+        with self._engine.lock:
+            collection = (self._store._collection(self._LISTING_META)
+                          if hasattr(self._store, "_collection") else self._LISTING_META)
+            # This store is PostgreSQL-only. Use the reader's exact partitioned
+            # advisory key before an upsert can insert a previously absent row.
+            self._engine.query_one("SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                                   (f"{collection}:{listing_id}",))
+            self._store.put(self._LISTING_META, listing_id, metadata)
 
     def get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
         return self._store.get(self._CANDIDATE_META, candidate_id) or {}

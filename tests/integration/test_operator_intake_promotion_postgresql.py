@@ -60,6 +60,8 @@ def _ready_intake(db, bundle, client):
     # names. The complete property reconciliation workflow is outside this test.
     object.__setattr__(listing, "property_id", str(uuid4()))
     object.__setattr__(listing, "listing_obs_id", str(uuid4()))
+    # Explicit synthetic recorded passing verdict, independent of geocoding.
+    object.__setattr__(listing, "hard_rule_failures", [])
     address = AddressLocation(address_id=listing.address_id,
                               raw_address="Synthetic measured address", normalized_address="Synthetic measured address",
                               geocode_confidence=0.95, h3_res_9="8929a1d4d67ffff")
@@ -113,9 +115,9 @@ def _ready_admitted_intake(db, bundle, client):
     return intake, listing_id
 
 
-def _request(client, record, *, key="synthetic-promotion-request", actor=MANAGER, extra_headers=None):
+def _request(client, record, *, key="synthetic-promotion-request", actor=MANAGER, extra_headers=None, target_format_code="FORMAT-B"):
     return client.post(f"/api/v1/intakes/{record['id']}/promotion-requests",
-                       json={"target_format_code": "FORMAT-B", "reason": "Synthetic independent review",
+                       json={"target_format_code": target_format_code, "reason": "Synthetic independent review",
                              "gate_snapshot_sha256": "a" * 64, "risk_acknowledged": True},
                        headers={**_headers(actor, key=key), "If-Match": f'W/"{record["version"]}"',
                                 **(extra_headers or {})})
@@ -148,9 +150,11 @@ def test_canonical_promotion_positive_restart_and_replay(bridge_database, monkey
     try:
         client = _promotion_client(bundle)
         record, listing_id = _ready_admitted_intake(bridge_database, bundle, client)
-        requested = _request(client, record)
+        target = "  Synthetic-MixedCase-9  "
+        requested = _request(client, record, target_format_code=target)
         assert requested.status_code == 202, requested.text
         decision = requested.json()
+        assert decision["target_format_code"] == target
         assert decision["intake_id"] == record["id"]
         assert decision["listing_id"] == listing_id
         assert decision["proposer_subject_id"] == MANAGER
@@ -158,6 +162,7 @@ def test_canonical_promotion_positive_restart_and_replay(bridge_database, monkey
         reviewed = _review(client, decision, extra_headers={"x-correlation-id": review_correlation})
         assert reviewed.status_code == 200, reviewed.text
         receipt = reviewed.json()
+        assert receipt["target_format_code"] == target
         assert receipt["status"] == "SCORE_QUEUED"
         assert receipt["reviewer_subject_id"] == APPROVER
         assert receipt["proposer_subject_id"] == MANAGER
@@ -178,11 +183,11 @@ def test_canonical_promotion_positive_restart_and_replay(bridge_database, monkey
         candidate = candidates[0]
         assert candidate.candidate_site.candidate_site_id == receipt["candidate_site_id"]
         assert candidate.candidate_site.listing_id == listing_id
-        assert candidate.candidate_site.target_format_code == "FORMAT-B"
+        assert candidate.candidate_site.target_format_code == target
         assert candidate.candidate_site.created_by == APPROVER
         events = bundle.outbox_repository.get_unpublished_events()
         created = [event for event in events if event.event_type == "candidate.created"]
-        assert len(created) == 1 and created[0].payload["target_format_code"] == "FORMAT-B"
+        assert len(created) == 1 and created[0].payload["target_format_code"] == target
         assert candidate.property_entity_id == created[0].payload["property_id"]
         assert repo.get_listing(listing_id).property_id == candidate.property_entity_id
         before = _snapshot(bundle)
@@ -212,7 +217,7 @@ def test_canonical_promotion_positive_restart_and_replay(bridge_database, monkey
         assert bundle.job_queue.get(receipt["site_score_job_id"]) is not None
         bundle.assisted_intake_store.refresh(TENANT)
         assert receipt["site_score_job_id"] not in bundle.assisted_intake_store.jobs
-        assert _request(client, record).json() == decision
+        assert _request(client, record, target_format_code=target).json() == decision
         replayed = _review(client, decision)
         assert replayed.status_code == 200 and replayed.json() == receipt, replayed.text
         assert replayed.headers["idempotency-replayed"] == "true"

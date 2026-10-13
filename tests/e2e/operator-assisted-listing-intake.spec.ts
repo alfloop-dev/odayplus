@@ -25,6 +25,8 @@ import {
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
 const PG_CASE = /^canonical (4:|5 and 6:)/;
+// Explicit isolated fixture input; never a production default or catalog entry.
+const SYNTHETIC_TARGET_FORMAT = "synthetic-manual-format:Browser/v1";
 
 const URLS = {
   clean: "https://www.synthetic.example/detail-77120345.html",
@@ -120,6 +122,8 @@ async function requestPromotion(page: Page) {
   await expect(page.getByTestId("promotion-request-form")).toBeVisible({
     timeout: 15_000,
   });
+  await expect(page.getByTestId("promotion-target-format")).toHaveValue("");
+  await page.getByTestId("promotion-target-format").fill(SYNTHETIC_TARGET_FORMAT);
   await page
     .getByTestId("promotion-request-reason")
     .fill("商圈缺口、租金與坪效門檻已核對，提出 Candidate Site 晉升申請。");
@@ -134,6 +138,7 @@ async function requestPromotion(page: Page) {
     page.getByTestId("promotion-request-submit").click(),
   ]);
   const headers = await request.allHeaders();
+  expect(request.postDataJSON().target_format_code).toBe(SYNTHETIC_TARGET_FORMAT);
   expect(headers["x-operator-role"]).toBe("expansion-manager");
   expect(headers["x-roles"]?.split(",").sort()).toEqual(
     ["expansion_user", "site_reviewer"].sort(),
@@ -142,12 +147,14 @@ async function requestPromotion(page: Page) {
     response.status(),
     `promotion request failed: ${await response.text()}`,
   ).toBe(202);
+  expect((await response.json()).target_format_code).toBe(SYNTHETIC_TARGET_FORMAT);
   await expect(page.getByTestId("promotion-receipt")).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByTestId("promotion-receipt-status")).toContainText(
     "PENDING_REVIEW",
   );
+  await expect(page.getByTestId("promotion-receipt")).toContainText(SYNTHETIC_TARGET_FORMAT);
   return {
     decisionId:
       (await page.getByTestId("promotion-decision-id").textContent())?.trim() ??
@@ -308,6 +315,7 @@ async function approvePgPromotion(page: Page, scenario: PgScenario) {
   await page.getByTestId("promotion-approve-btn").click();
   await expect(page.getByTestId("promotion-confirmation-dialog")).toBeVisible();
   await expect(page.getByTestId("promotion-review-summary")).toContainText(scenario.reviewer_id);
+  await expect(page.getByTestId("promotion-review-summary")).toContainText(SYNTHETIC_TARGET_FORMAT);
   const [response] = await Promise.all([
     page.waitForResponse((r) => r.url().includes("/actions/review") && r.request().method() === "POST"),
     page.getByTestId("promotion-confirm-approve-btn").click(),
@@ -315,6 +323,7 @@ async function approvePgPromotion(page: Page, scenario: PgScenario) {
   expect([200, 202], await response.text()).toContain(response.status());
   const receipt = await response.json();
   expect(receipt.status).toBe("SCORE_QUEUED");
+  expect(receipt.target_format_code).toBe(SYNTHETIC_TARGET_FORMAT);
   await expect(page.getByTestId("promotion-receipt-status")).toContainText("SCORE_QUEUED");
   await expect(page.getByTestId("sitescore-job-state")).toContainText("QUEUED");
   return receipt;

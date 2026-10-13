@@ -3454,6 +3454,13 @@
           "correlation_id"
         ],
         "properties": {
+          "target_format_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Target code persisted with this decision, verbatim; null for historical receipts without one."
+          },
           "promotion_decision_id": {
             "type": "string",
             "format": "uuid"

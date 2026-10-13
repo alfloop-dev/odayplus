@@ -1201,6 +1201,17 @@ export type NetworkListingMergePayload = {
   targetListingId: string;
 };
 
+/** Narrow read contract preserving the existing authorized snapshot fields. */
+export type NetworkListingRadarReadResponse = {
+  listings: NetworkListingReadResponse[];
+};
+
+/** The recorded hard-rule verdict; other authorized listing fields survive. */
+export type NetworkListingReadResponse = {
+  /** Recorded hard-rule failures. Null or absent means unmeasured, not passed. An empty array means a recorded check found no failures; a nonempty array names recorded failures. This field alone does not authorize promotion. */
+  hardRuleFailures?: string[] | null;
+};
+
 /** NetworkRebalanceCounts */
 export type NetworkRebalanceCounts = {
   pendingApprovals?: number;
@@ -1467,6 +1478,8 @@ export type PromotionDecisionReceipt = {
   reviewer_subject_id?: string | null;
   site_score_job_id?: string | null;
   status: PromotionStatus;
+  /** Target code persisted with this decision, verbatim; null for historical receipts without one. */
+  target_format_code?: string | null;
   version: number;
 };
 

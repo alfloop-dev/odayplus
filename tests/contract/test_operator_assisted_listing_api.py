@@ -286,6 +286,8 @@ def test_created_listing_keeps_address_but_requires_measured_geocode_for_promoti
     repository = app.state.listing_repository
     listing = repository.get_listing(listing_id)
     assert listing is not None
+    # Explicit synthetic hard-rule evidence isolates the geocode gate below.
+    object.__setattr__(listing, "hard_rule_failures", [])
     assert listing.address_id == f"ADDR-{listing_id}"
     address = next(item for item in repository.addresses if item.address_id == listing.address_id)
     assert address.normalized_address
@@ -460,6 +462,9 @@ def test_promote_intake_contract_test() -> None:
     )
     object.__setattr__(listing, "property_id", str(uuid4()))
     object.__setattr__(listing, "listing_obs_id", str(uuid4()))
+    # Seed the explicit synthetic verdict before the local service captures
+    # its projection; the revise command then preserves it in domain/metadata.
+    object.__setattr__(listing, "hard_rule_failures", [])
     address = AddressLocation(
         address_id=listing.address_id,
         raw_address="Synthetic measured promotion address",
@@ -510,6 +515,9 @@ def test_promote_intake_contract_test() -> None:
     assert decided.status_code == 200, decided.text
     assert decided.json()["stage"] == "READY"
     assert decided.json()["matchResult"]["targetListingId"] == listing.listing_id
+    assert app.state.operator_intake_repository.get_listing_metadata(
+        listing.listing_id
+    )["hardRuleFailures"] == []
 
     # Try promote without reason -> expect 422
     bad_promote = client.post(
@@ -530,7 +538,7 @@ def test_promote_intake_contract_test() -> None:
         },
         headers=_write_headers("good-promote"),
     )
-    assert promote_resp.status_code == 200
+    assert promote_resp.status_code == 200, promote_resp.text
     res_data = promote_resp.json()
     assert res_data["status"] == "PENDING_REVIEW"
     assert "candidate" not in res_data
