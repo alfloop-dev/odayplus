@@ -209,6 +209,20 @@ export type AssignmentTransferRequest = {
   target_owner_subject_id: string;
 };
 
+/** AssignmentTransferTarget */
+export type AssignmentTransferTarget = {
+  display_name: string;
+  owner_role: string;
+  subject_id: string;
+};
+
+/** AssignmentTransferTargetPage */
+export type AssignmentTransferTargetPage = {
+  assignment_id: string;
+  assignment_version: number;
+  items: AssignmentTransferTarget[];
+};
+
 /** Write body for POST /operator/store-ops/issues/{issue_id}/attachments. */
 export type AttachmentUploadRequest = {
   actorName?: string | null;
@@ -2080,6 +2094,7 @@ export const API_PATHS = {
   "/api/v1/assignments/{assignment_id}/actions/claim": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/complete": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/transfer": ["POST"],
+  "/api/v1/assignments/{assignment_id}/transfer-targets": ["GET"],
   "/api/v1/audit/events": ["GET"],
   "/api/v1/audit/evidence/export": ["POST"],
   "/api/v1/audit/evidence/exports": ["GET"],

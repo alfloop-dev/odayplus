@@ -532,8 +532,8 @@ describe("PromotionReviewPanel — lost response, receipts and conflicts (accept
     const transportError = {
       status: 0,
       code: "ODP-INTAKE-TIMEOUT",
-      summary: "連線逾時 — 後端未在時限內回應，本次操作未寫入。",
-      nextAction: "請確認網路連線後重試；你輸入的內容已保留。",
+      summary: "連線逾時 — 後端未在時限內回應，操作結果尚未確認。",
+      nextAction: "你輸入的內容已保留；請確認網路連線後查詢狀態，或使用同一 Idempotency-Key 重試。",
       correlationId: null,
       occurredAt: "2026-07-22T10:00:00Z",
       retryable: true,

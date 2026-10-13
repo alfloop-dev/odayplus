@@ -53,6 +53,7 @@ import type {
   ErrorEnvelope,
   ReasonCommand,
   AssignmentTransferRequest,
+  AssignmentTransferTargetPage,
   AssignmentReceipt,
   AssignmentRequest,
   SlaPauseRequest,
@@ -1553,6 +1554,16 @@ export class OdpApiClient {
       idempotencyKey: options.idempotencyKey,
       ifMatch: options.ifMatch,
     });
+  }
+
+  listAssignmentTransferTargets(
+    assignmentId: string,
+    options: { correlationId?: string } = {},
+  ): Promise<AssignmentTransferTargetPage> {
+    return this.request<AssignmentTransferTargetPage>(
+      `/api/v1/assignments/${encodeURIComponent(assignmentId)}/transfer-targets`,
+      { method: "GET", correlationId: options.correlationId },
+    );
   }
 
   transferAssignment(

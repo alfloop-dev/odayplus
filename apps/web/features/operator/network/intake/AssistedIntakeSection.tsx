@@ -27,7 +27,7 @@ import type {
   PromotionReviewInput,
 } from "./PromotionReviewPanel";
 import type { ScoreReplayInput } from "./SiteScoreJobStatus";
-import { TransferIntakeDialog } from "./TransferIntakeDialog";
+import { TransferIntakeDialog, type TransferTargetOption } from "./TransferIntakeDialog";
 import { PauseSlaDialog } from "./PauseSlaDialog";
 import {
   buildIntakeClient,
@@ -36,6 +36,7 @@ import {
   newIdempotencyKey,
   newIntakeActionIdempotencyKey,
   newCorrelationId,
+  toIntakeApiError,
   type IntakeApiError,
 } from "./intakeClient";
 import { canPerform, canView } from "./intakePermissions";
@@ -143,6 +144,12 @@ export function AssistedIntakeSection({
   const [toast, setToast] = useState<string | null>(null);
   const [assignmentReceipts, setAssignmentReceipts] = useState<Record<string, AssignmentReceipt>>({});
   const [slaReceipts, setSlaReceipts] = useState<Record<string, SlaReceipt>>({});
+  const [transferTargets, setTransferTargets] = useState<{
+    client: ReturnType<typeof buildIntakeClient>;
+    assignmentId: string | null; version: number | null;
+    options: TransferTargetOption[]; loading: boolean; error: string | null;
+  }>({ client: null, assignmentId: null, version: null, options: [], loading: false, error: null });
+  const [transferTargetsRefresh, setTransferTargetsRefresh] = useState(0);
 
   // ---- Candidate promotion saga (ODP-INTAKE-UX-PROMOTION-001) -------------
   // Receipts are keyed by intake id and only ever set from server responses:
@@ -194,6 +201,15 @@ export function AssistedIntakeSection({
   );
   const activeClient = useRef(client);
   activeClient.current = client;
+  const commandContext = JSON.stringify([selectedId, dialog, asgKind]);
+  const activeCommandContext = useRef({ value: commandContext, generation: 0 });
+  if (activeCommandContext.current.value !== commandContext) {
+    activeCommandContext.current = { value: commandContext, generation: activeCommandContext.current.generation + 1 };
+  }
+  const resourceIntents = useRef(new Map<string, {
+    key: string; correlationId: string; version: number; conflict: boolean;
+  }>());
+  const resourceCommandPending = useRef(false);
   const refreshGeneration = useRef(0);
   // Every submit attempt reuses one key so a network retry cannot double-create.
   const submitKeyRef = useRef<string | null>(null);
@@ -600,233 +616,117 @@ export function AssistedIntakeSection({
     void refresh();
   }
 
+  async function runResourceCommand<T extends AssignmentReceipt | SlaReceipt>(input: {
+    kind: "assignment" | "sla";
+    action: string;
+    authority: { id: string; version: number };
+    payload: object;
+    send: (options: { idempotencyKey: string; correlationId: string; ifMatch: string }) => Promise<T>;
+    successMessage: string;
+    closeDialog?: boolean;
+  }) {
+    if (!client || !selected || busy || resourceCommandPending.current) return;
+    const intakeId = selected.id;
+    const contextGeneration = activeCommandContext.current.generation;
+    const isCurrent = () => client === activeClient.current && contextGeneration === activeCommandContext.current.generation;
+    const signature = JSON.stringify([
+      operatorSubjectId(activeRoleId, sessionSubjectId), activeRoleId, intakeId,
+      input.kind, input.authority.id, input.action, input.payload,
+    ]);
+    let intent = resourceIntents.current.get(signature);
+    // Unknown outcomes keep the original If-Match even if a subsequent read
+    // has advanced: that read alone does not prove which command committed.
+    // Only a confirmed conflict plus a new resource version starts a new try.
+    if (!intent || (intent.conflict && intent.version !== input.authority.version)) {
+      intent = { key: newIntakeActionIdempotencyKey(intakeId, input.action),
+        correlationId: newCorrelationId(), version: input.authority.version, conflict: false };
+      resourceIntents.current.set(signature, intent);
+    }
+    resourceCommandPending.current = true;
+    setBusy(true);
+    setActionError(null);
+    try {
+      const receipt = await input.send({ idempotencyKey: intent.key,
+        correlationId: intent.correlationId, ifMatch: `W/"${intent.version}"` });
+      const receiptId = receipt && (input.kind === "assignment"
+        ? (receipt as AssignmentReceipt).assignment_id : (receipt as SlaReceipt).sla_instance_id);
+      if (receiptId !== input.authority.id || validResourceVersion(receipt?.version) === null) {
+        if (isCurrent()) setActionError({ status: 0, code: "ODP-INTAKE-ACK-MISMATCH",
+          summary: "回覆收據與本次操作資源不符，操作結果尚未確認。",
+          nextAction: "請保留輸入並查詢狀態，或使用同一 Idempotency-Key 重試。",
+          occurredAt: new Date().toISOString(), correlationId: intent.correlationId, retryable: true });
+        return;
+      }
+      resourceIntents.current.delete(signature);
+      if (!isCurrent()) return;
+      if (input.kind === "assignment") {
+        setAssignmentReceipts((previous) => ({ ...previous, [intakeId]: receipt as AssignmentReceipt }));
+      } else {
+        setSlaReceipts((previous) => ({ ...previous, [intakeId]: receipt as SlaReceipt }));
+      }
+      setToast(input.successMessage);
+      const getResult = await intakeApi.get(client, intakeId);
+      if (!isCurrent()) return;
+      if (getResult.ok) applyRecord(getResult.value);
+      if (input.closeDialog) updateUrlState({ dialog: "detail" });
+      void refresh();
+    } catch (error: unknown) {
+      const mapped = toIntakeApiError(error);
+      if (mapped.status === 409) intent.conflict = true;
+      if (isCurrent()) setActionError(mapped.status === 409 ? {
+        ...mapped, nextAction: "請重新整理資源狀態與版本；已輸入的內容會保留。",
+      } : mapped);
+    } finally {
+      resourceCommandPending.current = false;
+      setBusy(false);
+    }
+  }
+
   async function handleClaim() {
     if (!client || !selected || busy) return;
     const authority = guardAssignmentResource(selected, assignmentReceipts[selected.id]);
     const subjectId = operatorSubjectId(activeRoleId, sessionSubjectId);
-    if (!authority.ok) {
-      setActionError(authority.error);
-      return;
-    }
-    if (
-      !isClaimableAssignmentStatus(selected.assignmentStatus) ||
-      !canPerform("correct", activeRoleId) ||
-      !subjectId
-    ) return;
-    setBusy(true);
-    setActionError(null);
-
-    const key = newIntakeActionIdempotencyKey(selected.id, "claim-asg");
-    const correlationId = newCorrelationId();
-
-    try {
-      const receipt = await client.claimAssignment(
-        authority.id,
-        { reason: "Claiming existing assignment" },
-        { idempotencyKey: key, correlationId, ifMatch: `W/"${authority.version}"` },
-      );
-
-      setToast(`已成功認領收件！指派 ID: ${receipt.assignment_id}`);
-      if (receipt) {
-        setAssignmentReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
-      }
-
-      const getResult = await intakeApi.get(client, selected.id);
-      if (getResult.ok) {
-        applyRecord(getResult.value);
-      }
-      void refresh();
-    } catch (err: any) {
-      setActionError({
-        code: err.code || "CLAIM_ERROR",
-        summary: err.message || "認領收件時發生錯誤",
-        occurredAt: err.occurredAt || "UNAVAILABLE",
-        nextAction: "請稍後再試",
-        status: err.status,
-        retryable: false,
-        correlationId: err.correlationId,
-      });
-    } finally {
-      setBusy(false);
-    }
+    if (!authority.ok) { setActionError(authority.error); return; }
+    if (!isClaimableAssignmentStatus(selected.assignmentStatus) ||
+        !canPerform("correct", activeRoleId) || !subjectId) return;
+    const payload = { reason: "Claiming existing assignment" };
+    await runResourceCommand({ kind: "assignment", action: "claim-asg", authority, payload,
+      send: (options) => client.claimAssignment(authority.id, payload, options),
+      successMessage: `已成功認領收件！指派 ID: ${authority.id}` });
   }
 
   async function handleTransferSubmit(payload: {
-    target_owner_subject_id: string;
-    target_owner_role: string;
-    handoff_note: string;
+    target_owner_subject_id: string; target_owner_role: string; handoff_note: string;
   }) {
     if (!client || !selected || busy) return;
-    setBusy(true);
-    setActionError(null);
-
     const authority = guardAssignmentResource(selected, assignmentReceipts[selected.id]);
-    if (!authority.ok) {
-      setActionError(authority.error);
-      setBusy(false);
-      return;
-    }
-
-    const key = newIntakeActionIdempotencyKey(selected.id, "transfer-asg");
-    const correlationId = newCorrelationId();
-
-    try {
-      const receipt = await client.transferAssignment(
-        authority.id,
-        {
-          target_owner_subject_id: payload.target_owner_subject_id,
-          target_owner_role: payload.target_owner_role,
-          handoff_note: payload.handoff_note,
-          reason: payload.handoff_note,
-        },
-        {
-          idempotencyKey: key,
-          correlationId,
-          ifMatch: `W/"${authority.version}"`,
-        }
-      );
-
-      setToast(`已成功轉交收件！`);
-      if (receipt) {
-        setAssignmentReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
-      }
-
-      const getResult = await intakeApi.get(client, selected.id);
-      if (getResult.ok) {
-        applyRecord(getResult.value);
-      }
-      updateUrlState({ dialog: "detail" });
-      void refresh();
-    } catch (err: any) {
-      setActionError({
-        code: err.code || "TRANSFER_ERROR",
-        summary: err.message || "轉交收件時發生錯誤",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請檢查對象角色或狀態",
-        status: err.status,
-        retryable: false,
-        correlationId: err.correlationId,
-      });
-    } finally {
-      setBusy(false);
-    }
+    if (!authority.ok) { setActionError(authority.error); return; }
+    const body = { target_owner_subject_id: payload.target_owner_subject_id,
+      target_owner_role: payload.target_owner_role, handoff_note: payload.handoff_note, reason: payload.handoff_note };
+    await runResourceCommand({ kind: "assignment", action: "transfer-asg", authority, payload: body,
+      send: (options) => client.transferAssignment(authority.id, body, options),
+      successMessage: "已成功轉交收件！", closeDialog: true });
   }
 
-  async function handlePauseSubmit(payload: {
-    expected_resume_at: string;
-    reason: string;
-  }) {
+  async function handlePauseSubmit(payload: { expected_resume_at: string; reason: string }) {
     if (!client || !selected || busy) return;
-    setBusy(true);
-    setActionError(null);
-
     const authority = guardSlaResource(selected, slaReceipts[selected.id]);
-    if (!authority.ok) {
-      setActionError(authority.error);
-      setBusy(false);
-      return;
-    }
-    if (!isActiveSlaState(selected.slaState)) {
-      setBusy(false);
-      return;
-    }
-
-    const key = newIntakeActionIdempotencyKey(selected.id, "pause-sla");
-    const correlationId = newCorrelationId();
-
-    try {
-      const receipt = await client.pauseSla(
-        authority.id,
-        {
-          reason: payload.reason,
-          expected_resume_at: payload.expected_resume_at,
-        },
-        {
-          idempotencyKey: key,
-          correlationId,
-          ifMatch: `W/"${authority.version}"`,
-        }
-      );
-
-      setToast(`SLA 已暫停！`);
-      if (receipt) {
-        setSlaReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
-      }
-
-      const getResult = await intakeApi.get(client, selected.id);
-      if (getResult.ok) {
-        applyRecord(getResult.value);
-      }
-      updateUrlState({ dialog: "detail" });
-      void refresh();
-    } catch (err: any) {
-      setActionError({
-        code: err.code || "PAUSE_ERROR",
-        summary: err.message || "暫停 SLA 時發生錯誤",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請稍後再試",
-        status: err.status,
-        retryable: false,
-        correlationId: err.correlationId,
-      });
-    } finally {
-      setBusy(false);
-    }
+    if (!authority.ok) { setActionError(authority.error); return; }
+    if (!isActiveSlaState(selected.slaState)) return;
+    const body = { reason: payload.reason, expected_resume_at: payload.expected_resume_at };
+    await runResourceCommand({ kind: "sla", action: "pause-sla", authority, payload: body,
+      send: (options) => client.pauseSla(authority.id, body, options),
+      successMessage: "SLA 已暫停！", closeDialog: true });
   }
 
   async function handleResumeSla() {
     if (!client || !selected || busy) return;
-    setBusy(true);
-    setActionError(null);
-
     const authority = guardSlaResource(selected, slaReceipts[selected.id]);
-    if (!authority.ok) {
-      setActionError(authority.error);
-      setBusy(false);
-      return;
-    }
-    if (selected.slaState !== "PAUSED") {
-      setBusy(false);
-      return;
-    }
-
-    const key = newIntakeActionIdempotencyKey(selected.id, "resume-sla");
-    const correlationId = newCorrelationId();
-
-    try {
-      const receipt = await client.resumeSla(
-        authority.id,
-        { reason: "Manual resume SLA" },
-        {
-          idempotencyKey: key,
-          correlationId,
-          ifMatch: `W/"${authority.version}"`,
-        }
-      );
-
-      setToast(`SLA 已恢復計時！`);
-      if (receipt) {
-        setSlaReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
-      }
-
-      const getResult = await intakeApi.get(client, selected.id);
-      if (getResult.ok) {
-        applyRecord(getResult.value);
-      }
-      void refresh();
-    } catch (err: any) {
-      setActionError({
-        code: err.code || "RESUME_ERROR",
-        summary: err.message || "恢復 SLA 時發生錯誤",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請稍後再試",
-        status: err.status,
-        retryable: false,
-        correlationId: err.correlationId,
-      });
-    } finally {
-      setBusy(false);
-    }
+    if (!authority.ok) { setActionError(authority.error); return; }
+    if (selected.slaState !== "PAUSED") return;
+    const payload = { reason: "Manual resume SLA" };
+    await runResourceCommand({ kind: "sla", action: "resume-sla", authority, payload,
+      send: (options) => client.resumeSla(authority.id, payload, options), successMessage: "SLA 已恢復計時！" });
   }
 
   // ---- Promotion saga handlers (all four v1 calls go through intakeApi) ---
@@ -950,11 +850,20 @@ export function AssistedIntakeSection({
   }
 
   async function handleConflictRefresh() {
-    if (!client || !selected) return;
-    setActionError(null);
-    const getResult = await intakeApi.get(client, selected.id);
-    if (getResult.ok) {
-      applyRecord(getResult.value);
+    if (!client || !selected || busy) return;
+    const contextGeneration = activeCommandContext.current.generation;
+    setBusy(true);
+    try {
+      const getResult = await intakeApi.get(client, selected.id);
+      if (client !== activeClient.current || contextGeneration !== activeCommandContext.current.generation) return;
+      if (getResult.ok) {
+        applyRecord(getResult.value);
+        setActionError(null);
+      } else {
+        setActionError(getResult.error);
+      }
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -979,6 +888,28 @@ export function AssistedIntakeSection({
   const slaResourceVersion = selected
     ? authoritativeSlaVersion(selected, slaReceipts[selected.id])
     : null;
+  const transferAssignmentId = selected?.assignmentId ?? null;
+  useEffect(() => {
+    if (!client || dialog !== "assignmentSla" || asgKind !== "transfer" ||
+        !canManageAssignment || !transferAssignmentId || assignmentResourceVersion === null) return;
+    let cancelled = false;
+    const current = { client, assignmentId: transferAssignmentId, version: assignmentResourceVersion };
+    setTransferTargets({ ...current, options: [], loading: true, error: null });
+    void intakeApi.listAssignmentTransferTargets(client, transferAssignmentId).then((result) => {
+      if (cancelled || client !== activeClient.current) return;
+      if (!result.ok) {
+        setTransferTargets({ ...current, options: [], loading: false, error: result.error.summary });
+      } else if (result.value.assignment_id !== transferAssignmentId || result.value.assignment_version !== assignmentResourceVersion) {
+        setTransferTargets({ ...current, options: [], loading: false, error: "指派版本已變更，請重新整理後選擇轉交對象。" });
+      } else {
+        setTransferTargets({ ...current, loading: false, error: null, options: result.value.items.map((target) => ({
+          id: target.subject_id, name: target.display_name, role: target.owner_role,
+        })) });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [client, dialog, asgKind, canManageAssignment, transferAssignmentId, assignmentResourceVersion, transferTargetsRefresh]);
+  const transferTargetsCurrent = transferTargets.client === client && transferTargets.assignmentId === transferAssignmentId && transferTargets.version === assignmentResourceVersion;
   const canClaimAssignment =
     canManageAssignment &&
     assignmentResourceVersion !== null &&
@@ -1196,6 +1127,13 @@ export function AssistedIntakeSection({
           }}
           onSubmit={handleTransferSubmit}
           record={selected}
+          resourceVersion={assignmentResourceVersion}
+          targetOptions={transferTargetsCurrent ? transferTargets.options : []}
+          targetsLoading={!transferTargetsCurrent || transferTargets.loading}
+          targetsError={transferTargetsCurrent ? transferTargets.error : null}
+          onTargetsRefresh={() => {
+            void handleConflictRefresh().then(() => setTransferTargetsRefresh((value) => value + 1));
+          }}
           onConflictRefresh={handleConflictRefresh}
         />
       ) : null}
@@ -1210,6 +1148,7 @@ export function AssistedIntakeSection({
           }}
           onSubmit={handlePauseSubmit}
           record={selected}
+          resourceVersion={slaResourceVersion}
           onConflictRefresh={handleConflictRefresh}
         />
       ) : null}
@@ -1241,7 +1180,10 @@ export function authoritativeAssignmentVersion(
     assignmentVersion?: unknown;
     assignment_version?: unknown;
   };
-  return validResourceVersion(receipt?.version ?? raw.assignmentVersion ?? raw.assignment_version);
+  return latestResourceVersion(
+    raw.assignmentVersion ?? raw.assignment_version,
+    record.assignmentId && receipt?.assignment_id === record.assignmentId ? receipt?.version : undefined,
+  );
 }
 
 export function authoritativeSlaVersion(
@@ -1252,7 +1194,21 @@ export function authoritativeSlaVersion(
     slaVersion?: unknown;
     sla_version?: unknown;
   };
-  return validResourceVersion(receipt?.version ?? raw.slaVersion ?? raw.sla_version);
+  return latestResourceVersion(
+    raw.slaVersion ?? raw.sla_version,
+    record.slaInstanceId && receipt?.sla_instance_id === record.slaInstanceId ? receipt?.version : undefined,
+  );
+}
+
+function latestResourceVersion(recordVersion: unknown, receiptVersion: unknown): number | null {
+  // Versions increase monotonically within one resource. Keep a command
+  // receipt useful while GET catches up, but never let historical evidence
+  // override a newer snapshot obtained by conflict refresh.
+  const current = validResourceVersion(recordVersion);
+  const acknowledged = validResourceVersion(receiptVersion);
+  if (current === null) return acknowledged;
+  if (acknowledged === null) return current;
+  return Math.max(current, acknowledged);
 }
 
 type ResourceAuthority =
@@ -1306,7 +1262,7 @@ function unavailableResourceError(code: string, authority: string): IntakeApiErr
  * (ADD-006 §3.3). Fractions, strings, null and undefined are equally unusable.
  */
 export function validResourceVersion(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 ? value : null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : null;
 }
 
 export function buildInboxReturnHref(

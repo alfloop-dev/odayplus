@@ -27,6 +27,7 @@ from modules.listing.domain.intake_states import (
     Actor,
     AssignmentAggregate,
     AssignmentState,
+    AssignmentStateMachine,
     PrincipalRole,
     TransitionContext,
 )
@@ -64,6 +65,30 @@ def authorize_assignment_read(store: Any, record: Mapping[str, Any], policy: Any
     if scope != intake["scope"]:
         raise IntakeWorkflowUnavailable("Provider changed the authorized assignment scope")
     return intake, sla, schedule
+
+
+def list_assignment_transfer_targets(
+    store: Any, record: Mapping[str, Any], policy: Any, actor_id: str,
+) -> dict[str, Any]:
+    intake, _sla, schedule = authorize_assignment_read(store, record, policy, actor_id)
+    scope = deepcopy(intake["scope"])
+    items = policy.list_assignment_transfer_targets(
+        scope, schedule, actor_id=actor_id,
+        current_owner_subject_id=record["owner_subject_id"],
+        current_owner_role=record["owner_role"],
+    )
+    if scope != intake["scope"]:
+        raise IntakeWorkflowUnavailable("Provider changed the authorized assignment scope")
+    if AssignmentState.TRANSFERRED not in AssignmentStateMachine.LEGAL_TRANSITIONS.get(
+        AssignmentState(record["status"]), set(),
+    ):
+        # No selectable recipient can make a forbidden state transition valid.
+        items = []
+    return {
+        "assignment_id": record["assignment_id"],
+        "assignment_version": record["version"],
+        "items": items,
+    }
 
 
 def change_assignment(

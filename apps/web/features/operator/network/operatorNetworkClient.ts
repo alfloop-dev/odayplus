@@ -104,7 +104,8 @@ export function toOperatorApiError(
     };
   }
 
-  // AbortError (client timeout) and network failures never reach the server.
+  // A timeout or lost connection does not establish whether the server wrote
+  // the command; callers preserve its idempotency key until the outcome is known.
   const isAbort = error instanceof Error && error.name === "AbortError";
   return {
     status: 0,

@@ -10,6 +10,7 @@ from uuid import UUID
 import pytest
 
 from shared.infrastructure.persistence.postgresql import (
+    _REQUIRED_RELATIONS,
     PostgresEngine,
     PostgreSQLConfigurationError,
     PostgreSQLSchemaError,
@@ -171,6 +172,30 @@ def test_exact_applied_runtime_fingerprint_skips_locking_ddl() -> None:
     assert not any("CREATE" in sql or "ALTER" in sql for sql, _ in connection.statements)
     lookup = connection.statements[-1]
     assert lookup[1][0].startswith("000008_postgresql_runtime_persistence:sha256:")
+    assert connection.transaction_depth == 0
+
+
+@pytest.mark.parametrize(
+    "missing_relation",
+    ["odp_runtime.durable_sequences", "odp_runtime.notification_inapp_inbox"],
+)
+def test_applied_runtime_fingerprint_does_not_bypass_missing_runtime_relation(
+    missing_relation: str,
+) -> None:
+    connection = FakeConnection()
+    connection.responses.extend(
+        [[], [{"relation": "odp_runtime.schema_migrations"}], [{"migration_id": "applied"}], []]
+    )
+    connection.responses.extend(
+        [{"relation": None if relation == missing_relation else relation}]
+        for relation in _REQUIRED_RELATIONS
+    )
+    with pytest.raises(PostgreSQLSchemaError, match=missing_relation):
+        PostgresEngine(
+            "postgresql://app:secret@db.example.test/oday",
+            pool=FakePool(connection),
+        )
+    assert not any("CREATE" in sql or "ALTER" in sql for sql, _ in connection.statements)
     assert connection.transaction_depth == 0
 
 

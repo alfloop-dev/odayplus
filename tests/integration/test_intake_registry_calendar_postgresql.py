@@ -466,6 +466,59 @@ def test_assignment_transitions_and_sla_completion_are_durable_atomic_and_replay
         assert store.assignments[aid]["status"] == "CLAIMED"
         assert claimed.json()["audit_event_id"] in store.workflow_audits
 
+        def directory():
+            return client.get(
+                f"/api/v1/assignments/{aid}/transfer-targets", headers=headers(OWNER),
+            )
+
+        expected_directory = {
+            "assignment_id": aid,
+            "assignment_version": claimed.json()["version"],
+            "items": [{"subject_id": MANAGER, "display_name": MANAGER,
+                       "owner_role": "site-reviewer"}],
+        }
+        assert directory().json() == expected_directory
+        if failure is None:
+            # Prove the SQL implementation does not cache recipient identity grants.
+            with db.connect() as conn:
+                conn.execute("UPDATE identity.accounts SET status='disabled' WHERE account_id=%s", (MANAGER,))
+            assert directory().json()["items"] == []
+            with db.connect() as conn:
+                conn.execute("UPDATE identity.accounts SET status='active' WHERE account_id=%s", (MANAGER,))
+            assert directory().json() == expected_directory
+            store.refresh(TENANT)
+            fields = ("intakes", "assignments", "slas", "workflow_audits", "workflow_outbox", "replays")
+            before_revoked_transfer = deepcopy(tuple(getattr(store, field) for field in fields))
+            for invalidate_scope in (
+                "UPDATE identity.account_scopes SET brand_ids='null'::jsonb WHERE account_id=%s",
+                "DELETE FROM identity.account_scopes WHERE account_id=%s",
+            ):
+                with db.connect() as conn:
+                    conn.execute(invalidate_scope, (MANAGER,))
+                assert directory().json()["items"] == []
+                revoked = client.post(
+                    f"/api/v1/assignments/{aid}/actions/transfer",
+                    json={"target_owner_subject_id": MANAGER, "target_owner_role": "site-reviewer",
+                          "reason": "Synthetic scope revocation check", "handoff_note": "Synthetic handoff"},
+                    headers={**headers(OWNER), "Idempotency-Key": "synthetic-revoked-scope-transfer",
+                             "If-Match": f'W/"{claimed.json()["version"]}"'},
+                )
+                assert revoked.status_code == 403, revoked.text
+                store.refresh(TENANT)
+                assert tuple(getattr(store, field) for field in fields) == before_revoked_transfer
+            with db.connect() as conn:
+                conn.execute("INSERT INTO identity.account_scopes(account_id,brand_ids) VALUES (%s,%s)",
+                             (MANAGER, Jsonb(["outside-intake-scope"])))
+            assert directory().json()["items"] == []
+            with db.connect() as conn:
+                conn.execute("UPDATE identity.account_scopes SET brand_ids='[]'::jsonb WHERE account_id=%s", (MANAGER,))
+                conn.execute("DELETE FROM identity.account_roles WHERE account_id=%s", (MANAGER,))
+            assert directory().json()["items"] == []
+            with db.connect() as conn:
+                conn.execute("INSERT INTO identity.account_roles(account_id,role,granted_by) VALUES (%s,%s,'isolated-synthetic-test')",
+                             (MANAGER, Role.SITE_REVIEWER.value))
+            assert directory().json() == expected_directory
+
         def command(action, body, actor, version):
             return client.post(
                 f"/api/v1/assignments/{aid}/actions/{action}",

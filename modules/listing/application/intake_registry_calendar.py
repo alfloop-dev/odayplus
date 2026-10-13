@@ -244,7 +244,7 @@ class RegistryIntakeWorkflowPolicy:
                 or str(account.tenant_id) != scope["tenant_id"]
             ):
                 raise PermissionError("Account is not active in the workflow tenant")
-            grant = self._identities.get_account_scope(account.account_id)
+            grant = self._identities.get_account_scope(account.account_id, require_explicit=True)
             if not self._scope_allows(grant, scope):
                 raise PermissionError("Account is outside the workflow scope")
             return account, self._identities.get_account_roles(account.account_id)
@@ -483,6 +483,53 @@ class RegistryIntakeWorkflowPolicy:
             raise PermissionError("Only owner or manager may change this assignment")
         if action not in {"claim", "transfer", "complete"}:
             raise PermissionError("Unknown assignment command")
+
+    def list_assignment_transfer_targets(
+        self, scope: Mapping[str, Any], schedule: SlaSchedule, *, actor_id: str,
+        current_owner_subject_id: str, current_owner_role: str,
+    ) -> list[dict[str, str]]:
+        """Read eligible recipients without inventing a command or justification."""
+        self.authorize_assignment_action(
+            schedule, scope, actor_id=actor_id,
+            owner_subject_id=current_owner_subject_id, owner_role=current_owner_role,
+            action="transfer",
+        )
+        policy, _calendar = self._bound(schedule, scope)
+        if not all(policy.reads(key) for key in (
+            "actor_account", "target_account", "requested_due_at",
+        )):
+            raise IntakeWorkflowUnavailable("Transfer policy does not declare runtime inputs")
+        bindings = policy.parameters.get("assignee_role_bindings")
+        try:
+            if not isinstance(bindings, Mapping) or not bindings:
+                raise ValueError("missing assignment role bindings")
+            roles = []
+            for name, role in bindings.items():
+                if _required_text(name, "assignment role") != name:
+                    raise ValueError("assignment role keys must be canonical")
+                roles.append((name, Role(role)))
+        except (TypeError, ValueError) as exc:
+            raise IntakeWorkflowUnavailable("Assignment role bindings are unavailable") from exc
+        targets = []
+        for candidate in self._identities.list_scoped_active_accounts(scope["tenant_id"]):
+            subject_id = str(candidate.account_id)
+            if UUID(subject_id) == UUID(current_owner_subject_id):
+                continue
+            try:
+                # Re-read active status, tenant, roles and every resource scope axis.
+                account, account_roles = self._account(subject_id, scope)
+            except PermissionError:
+                continue
+            for owner_role, required_role in roles:
+                if required_role in account_roles:
+                    targets.append({
+                        "subject_id": subject_id,
+                        "display_name": account.display_name.strip() or subject_id,
+                        "owner_role": owner_role,
+                    })
+        return sorted(targets, key=lambda row: (
+            row["display_name"], row["subject_id"], row["owner_role"],
+        ))
 
     def resolve_transfer(
         self,

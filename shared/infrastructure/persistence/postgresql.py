@@ -38,6 +38,7 @@ _PRAGMA_TABLE_INFO = re.compile(
     re.IGNORECASE,
 )
 _REQUIRED_RELATIONS = (
+    "odp_runtime.durable_sequences",
     "odp_runtime.durable_audit_events",
     "odp_runtime.durable_documents",
     "odp_runtime.operator_comments",
@@ -48,6 +49,7 @@ _REQUIRED_RELATIONS = (
     "odp_runtime.notification_deduplication",
     "odp_runtime.notification_preferences",
     "odp_runtime.notification_receipts",
+    "odp_runtime.notification_inapp_inbox",
     "core.address_locations",
     "core.brands",
     "core.machine_cycles",

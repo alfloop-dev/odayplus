@@ -58,6 +58,11 @@ class IntakeWorkflowPolicy(Protocol):
                          current_owner_subject_id: str, current_owner_role: str, owner_subject_id: str,
                          owner_role: str, requested_due_at: datetime, reason: str) -> IntakeWorkflowPlan: ...
 
+    def list_assignment_transfer_targets(
+        self, scope: Mapping[str, Any], schedule: SlaSchedule, *, actor_id: str,
+        current_owner_subject_id: str, current_owner_role: str,
+    ) -> list[dict[str, str]]: ...
+
     def completion_requirements(self, scope: Mapping[str, Any], schedule: SlaSchedule) -> tuple[Any, ...]: ...
 
 

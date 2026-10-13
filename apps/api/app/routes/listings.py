@@ -21,6 +21,7 @@ from modules.listing.application.assignment_sla import AssignmentSlaService
 from modules.listing.application.intake_assignment_commands import (
     authorize_assignment_read,
     change_assignment,
+    list_assignment_transfer_targets,
 )
 from modules.listing.application.intake_completion import IntakeWorkIncomplete
 from modules.listing.application.intake_correction_lineage import apply_field, correction_values
@@ -510,6 +511,16 @@ else:
         due_at: DateTimeString
         version: int
         audit_event_id: UuidString
+
+    class AssignmentTransferTarget(BaseModel):
+        subject_id: UuidString
+        display_name: str
+        owner_role: str
+
+    class AssignmentTransferTargetPage(BaseModel):
+        assignment_id: UuidString
+        assignment_version: int
+        items: list[AssignmentTransferTarget]
 
     class AssignmentTransferRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
@@ -4248,6 +4259,36 @@ else:
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return AssignmentReceipt(**val)
+
+        @router.get(
+            "/assignments/{assignment_id}/transfer-targets",
+            operation_id="listAssignmentTransferTargets",
+            response_model=AssignmentTransferTargetPage,
+            responses=api_error_responses(403, 404, 422, 503),
+        )
+        def get_assignment_transfer_targets(
+            assignment_id: UuidString,
+            request: Request,
+            response: Response,
+            tenant_id: str = Depends(require_actor),
+        ) -> AssignmentTransferTargetPage:
+            current = active.assignments.get(assignment_id)
+            if current is None:
+                raise HTTPException(404, "assignment not found")
+            if current.get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+            principal = get_principal(request)
+            require_workflow_resource_scope(principal, current)
+            try:
+                result = list_assignment_transfer_targets(
+                    active, current, workflow_policy, principal.subject_id,
+                )
+            except PermissionError as exc:
+                raise HTTPException(403, "OWNERSHIP_REQUIRED") from exc
+            except Exception as exc:
+                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+            response.headers["Cache-Control"] = "no-store"
+            return AssignmentTransferTargetPage(**result)
 
         @router.post(
             "/assignments/{assignment_id}/actions/transfer",

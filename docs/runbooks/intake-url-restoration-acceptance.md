@@ -41,6 +41,14 @@ keys use that API's existing default. They are not represented as captured
 time or lexical SLA-state order: neither is the requested timestamp. Actual
 submission/deadline sort admission remains a separate API/data requirement.
 
+The wider UI handoff section 8.1 also requires distinct source, submitted-by,
+owner/assignment, last-observed/updated, masked/restricted, and retryable
+filter or saved-view dimensions. The currently supported query fields above
+do not implement all of those dimensions. Preserving an unrelated URL value,
+or matching text through `search`, is not evidence that its required filter
+exists. Their API, canonical data fields, controls, and restoration proofs
+remain open acceptance work.
+
 `/intake/{id}` takes precedence over query selection. A legacy
 `#intake/{encoded-id}` is converted using replace navigation when no explicit
 selection/path is present. Malformed or ambiguous links never choose another

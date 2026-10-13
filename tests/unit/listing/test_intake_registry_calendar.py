@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import pytest
 
@@ -39,6 +40,58 @@ def test_weekend_holiday_lunch_and_timezone_produce_registry_checkpoints():
     assert plan.schedule.breach_at == datetime(2026, 10, 13, 3, 30, tzinfo=UTC)
     calendar = RegistryBusinessCalendar.from_policy(_calendar_row())
     assert calendar.working_duration_between(AT, plan.schedule.due_at) == timedelta(minutes=120)
+
+
+@pytest.mark.parametrize("binding", [
+    {" another-role ": "expansion_user"}, {"another-role": "unknown_role"},
+    {"": "expansion_user"}, {"another-role": None},
+    {" expansion-staff ": "expansion_user"},
+])
+def test_transfer_directory_rejects_malformed_additional_policy_binding(binding):
+    policy = _workflow_row()
+    params = deepcopy(policy.parameters)
+    params["assignee_role_bindings"].update(binding)
+    provider, _, _ = _provider(policy=replace(policy, parameters=params))
+    scope = {"tenant_id": TENANT}
+    schedule = provider.resolve_initial(scope, AT).schedule
+    with pytest.raises(IntakeWorkflowUnavailable):
+        provider.list_assignment_transfer_targets(
+            scope, schedule, actor_id=MANAGER,
+            current_owner_subject_id=OWNER, current_owner_role="expansion-staff",
+        )
+
+
+def test_transfer_directory_preserves_distinct_authorized_roles_for_same_account():
+    policy = _workflow_row()
+    params = deepcopy(policy.parameters)
+    params["assignee_role_bindings"].update({
+        "manager-recipient": "site_reviewer", "alternate-manager": "site_reviewer",
+    })
+    provider, _, _ = _provider(policy=replace(policy, parameters=params))
+    scope = {"tenant_id": TENANT}
+    schedule = provider.resolve_initial(scope, AT).schedule
+    items = provider.list_assignment_transfer_targets(
+        scope, schedule, actor_id=MANAGER,
+        current_owner_subject_id=OWNER, current_owner_role="expansion-staff",
+    )
+    assert {(row["subject_id"], row["owner_role"]) for row in items} == {
+        (MANAGER, "manager-recipient"), (MANAGER, "alternate-manager"),
+    }
+
+
+@pytest.mark.parametrize("account_id", [APPROVER, MANAGER, OWNER])
+def test_assignment_registry_requires_explicit_scope_for_each_authority(account_id):
+    provider, identities, _ = _provider()
+    scope = {"tenant_id": TENANT}
+    schedule = provider.resolve_initial(scope, AT).schedule
+    identities._scopes.pop(UUID(account_id))
+    error = IntakeWorkflowUnavailable if account_id == APPROVER else PermissionError
+    with pytest.raises(error):
+        provider.resolve_assignment(
+            scope, schedule, actor_id=MANAGER, owner_subject_id=OWNER,
+            owner_role="expansion-staff", requested_due_at=schedule.due_at,
+            reason="Synthetic assignment must retain an explicit scope grant",
+        )
 
 
 def test_lunch_break_and_microseconds_are_not_counted_as_work():

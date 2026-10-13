@@ -109,6 +109,129 @@ def _cancel(journey):
     assert r.status_code == 200, r.text
 
 
+def _targets(journey, actor=OWNER):
+    client, _, _, aid, _, _ = journey
+    return client.get(f"/api/v1/assignments/{aid}/transfer-targets", headers=_headers(actor))
+
+
+def test_transfer_directory_returns_live_authorized_uuid_targets_without_mutations(journey):
+    _, store, _, aid, identities, _ = journey
+    account = identities.find_account_by_id(TARGET)
+    identities.save_account(replace(account, display_name="Synthetic recipient"))
+    before = _snapshot(store)
+    for actor in (OWNER, MANAGER):
+        response = _targets(journey, actor)
+        assert response.status_code == 200, response.text
+        assert response.headers["cache-control"] == "no-store"
+        assert response.json() == {
+            "assignment_id": aid,
+            "assignment_version": store.assignments[aid]["version"],
+            "items": [{"subject_id": TARGET, "display_name": "Synthetic recipient",
+                       "owner_role": "expansion-staff"}],
+        }
+        assert account.email not in response.text
+    assert _snapshot(store) == before
+
+
+@pytest.mark.parametrize("mode", ["disabled", "cross_tenant", "role_revoked", "scope_missing"])
+def test_transfer_directory_omits_revoked_or_foreign_recipients(journey, mode):
+    _, _, _, _, identities, _ = journey
+    assert len(_targets(journey).json()["items"]) == 1
+    account = identities.find_account_by_id(TARGET)
+    if mode == "disabled":
+        identities.save_account(replace(account, status="disabled"))
+    elif mode == "cross_tenant":
+        identities.save_account(replace(account, tenant_id=uuid4()))
+    elif mode == "role_revoked":
+        identities.set_account_roles(TARGET, {Role.SITE_REVIEWER})
+    else:
+        identities._scopes.pop(UUID(TARGET))
+    response = _targets(journey)
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == []
+
+
+@pytest.mark.parametrize("axis", [
+    "brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids", "modules",
+])
+def test_transfer_directory_enforces_every_recipient_scope_axis(journey, axis):
+    _, _, _, _, identities, _ = journey
+    identities.set_account_scope(TARGET, Scope(tenant_id=TENANT, **{axis: frozenset({"other"})}))
+    response = _targets(journey)
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == []
+
+
+@pytest.mark.parametrize("mode", ["nonowner", "disabled_actor", "foreign_actor", "narrow_actor", "owner_role_revoked"])
+def test_transfer_directory_denies_unauthorized_actor_or_revoked_owner(journey, mode):
+    _, store, _, _, identities, _ = journey
+    actor = TARGET if mode == "nonowner" else OWNER
+    if mode in {"disabled_actor", "foreign_actor"}:
+        account = identities.find_account_by_id(actor)
+        identities.save_account(replace(account, **(
+            {"status": "disabled"} if mode == "disabled_actor" else {"tenant_id": uuid4()}
+        )))
+    elif mode == "narrow_actor":
+        identities.set_account_scope(actor, Scope(tenant_id=TENANT, brand_ids=frozenset({"other"})))
+    elif mode == "owner_role_revoked":
+        identities.set_account_roles(OWNER, {Role.DATA_OWNER})
+    before = _snapshot(store)
+    response = _targets(journey, actor)
+    assert response.status_code == 403, response.text
+    assert TARGET not in response.text
+    assert _snapshot(store) == before
+
+
+def test_transfer_directory_requires_registry_and_current_policy_approval(journey):
+    _, store, _, aid, identities, _ = journey
+    app = FastAPI()
+    app.include_router(listings.create_assisted_intake_router(store), prefix="/api/v1")
+    response = TestClient(app).get(
+        f"/api/v1/assignments/{aid}/transfer-targets", headers=_headers(OWNER),
+    )
+    assert response.status_code == 503
+    from tests.intake_registry_fixture import APPROVER
+    identities.save_account(replace(identities.find_account_by_id(APPROVER), status="disabled"))
+    assert _targets(journey).status_code == 503
+
+
+def test_transfer_directory_does_not_offer_targets_for_illegal_transition(journey):
+    response = _action(journey, "transfer", body={
+        "target_owner_subject_id": TARGET, "target_owner_role": "expansion-staff",
+        "reason": "Synthetic transfer", "handoff_note": "Synthetic verified handoff",
+    })
+    assert response.status_code == 200, response.text
+    response = _targets(journey, TARGET)
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == []
+
+
+@pytest.mark.parametrize("state", ["UNASSIGNED", "COMPLETED", "TRANSFERRED", "ESCALATED"])
+def test_transfer_directory_follows_all_forbidden_transfer_states(journey, state):
+    _, store, _, aid, _, _ = journey
+    store.assignments[aid]["status"] = state
+    response = _targets(journey)
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == []
+
+
+@pytest.mark.parametrize("revocation", ["role", "scope"])
+def test_transfer_write_revalidates_recipient_after_directory_read(journey, revocation):
+    _, store, _, _, identities, _ = journey
+    assert _targets(journey).json()["items"][0]["subject_id"] == TARGET
+    if revocation == "role":
+        identities.set_account_roles(TARGET, {Role.SITE_REVIEWER})
+    else:
+        identities._scopes.pop(UUID(TARGET))
+    before = _snapshot(store)
+    response = _action(journey, "transfer", body={
+        "target_owner_subject_id": TARGET, "target_owner_role": "expansion-staff",
+        "reason": "Synthetic transfer", "handoff_note": "Synthetic verified handoff",
+    })
+    assert response.status_code == 403, response.text
+    assert _snapshot(store) == before
+
+
 def _snapshot(store):
     return deepcopy(
         tuple(

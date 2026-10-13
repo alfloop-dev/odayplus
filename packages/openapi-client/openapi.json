@@ -1125,6 +1125,57 @@
         "title": "AssignmentTransferRequest",
         "type": "object"
       },
+      "AssignmentTransferTarget": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "owner_role": {
+            "title": "Owner Role",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "display_name",
+          "owner_role"
+        ],
+        "title": "AssignmentTransferTarget",
+        "type": "object"
+      },
+      "AssignmentTransferTargetPage": {
+        "properties": {
+          "assignment_id": {
+            "format": "uuid",
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "assignment_version": {
+            "title": "Assignment Version",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssignmentTransferTarget"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "assignment_version",
+          "items"
+        ],
+        "title": "AssignmentTransferTargetPage",
+        "type": "object"
+      },
       "AttachmentUploadRequest": {
         "description": "Write body for POST /operator/store-ops/issues/{issue_id}/attachments.",
         "properties": {
@@ -12430,6 +12481,79 @@
           }
         },
         "summary": "Transfer Assignment",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/assignments/{assignment_id}/transfer-targets": {
+      "get": {
+        "operationId": "listAssignmentTransferTargets",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentTransferTargetPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Get Assignment Transfer Targets",
         "tags": [
           "assisted-listing-intake"
         ]

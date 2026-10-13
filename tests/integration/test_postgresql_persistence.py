@@ -28,7 +28,7 @@ from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.factory import build_persistence
 from shared.infrastructure.persistence.job_queue import DurableJobQueue, JobFenceRejectedError
-from shared.infrastructure.persistence.postgresql import PostgresEngine
+from shared.infrastructure.persistence.postgresql import PostgresEngine, PostgreSQLSchemaError
 from shared.infrastructure.persistence.repositories import TenantScopeRequiredError
 from shared.jobs.queue import JobRequest, JobStatus
 
@@ -287,6 +287,39 @@ def test_the_migration_job_provisions_every_relation_the_bundle_requires(
     try:
         # Raises PostgreSQLSchemaError naming whatever is missing.
         engine.validate_schema()
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize(
+    "missing_relation",
+    ["odp_runtime.durable_sequences", "odp_runtime.notification_inapp_inbox"],
+)
+def test_applied_bootstrap_refuses_missing_runtime_table_without_repair(
+    intake_blank_db: Any, missing_relation: str,
+) -> None:
+    from psycopg import sql
+
+    _provision_canonical_schema(intake_blank_db)
+    engine = PostgresEngine(intake_blank_db.url())
+    try:
+        applied = engine.query(
+            "SELECT migration_id FROM odp_runtime.schema_migrations "
+            "WHERE migration_id LIKE ?",
+            ("000008_postgresql_runtime_persistence:sha256:%",),
+        )
+        assert len(applied) == 1
+        with intake_blank_db.connect() as connection:
+            connection.execute(
+                sql.SQL("DROP TABLE {}").format(sql.Identifier(*missing_relation.split(".")))
+            )
+        with pytest.raises(PostgreSQLSchemaError, match=missing_relation):
+            PostgresEngine(intake_blank_db.url(), pool=engine._pool)
+        assert engine.query_one("SELECT to_regclass(?) AS relation", (missing_relation,)) == {"relation": None}
+        assert engine.query_one(
+            "SELECT migration_id FROM odp_runtime.schema_migrations WHERE migration_id = ?",
+            (applied[0]["migration_id"],),
+        ) == applied[0]
     finally:
         engine.close()
 
