@@ -99,3 +99,7 @@ ai-status.json.lock
 
 # Claude Code local permissions (machine-specific paths)
 .claude/settings.local.json
+# This private third-party fork ships reviewed upstream distribution sources.
+# Its dist files are source inputs; ordinary build outputs remain ignored.
+!packages/third-party/eslint-plugin-next/dist/
+!packages/third-party/eslint-plugin-next/dist/**

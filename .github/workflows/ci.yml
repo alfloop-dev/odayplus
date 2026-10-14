@@ -376,6 +376,9 @@ jobs:
       - name: Run Node workspace checks
         run: make node-check
 
+      - name: Verify patched Next ESLint traversal and security controls
+        run: node --test tests/security/next-eslint-glob-security.test.cjs
+
   # product is the required status check context. It aggregates the parallel
   # product verification lanes (lint/unit, db, api-contract, security, node).
   # It always runs, inspecting `needs` to ensure all required lanes succeeded
