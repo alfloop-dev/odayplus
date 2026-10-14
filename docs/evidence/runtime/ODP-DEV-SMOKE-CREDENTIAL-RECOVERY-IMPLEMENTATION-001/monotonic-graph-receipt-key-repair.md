@@ -70,3 +70,19 @@ UNKNOWN, quarantine, NULL binding, UNKNOWN cleanup and preflight HOLD remain. No
 canonical run/publication, reset/reenrollment, dispatch/resubmission, approval,
 merge/finalization, live recovery, deployment, cloud/IAM or business/data/model/F11
 effects are authorized.
+
+## Subsequent dropped-edge composition
+
+Normal seven-file3261d5109 retained the above fixes. Its fresh SAST passed32.404s,
+but an additional frozen-source pure counterexample showed that a rejected member
+edge could re-add a dictionary key removed by a stricter projection. Two both-alias
+GET/actual replay controls reproduced the private attribute-name disclosure on
+unchanged3261 production, preserving PUBLIC content and stored snapshots.
+The owned waiting selection coordinator was stopped and its verified owned job
+process group terminated: terminal143/191.681s, clean checkout. This is intentional
+cancellation, NOT timeout, comprehensive completion or success. No unrelated
+process was signalled; all artifacts remain in monotonic-keys-3261d5109/.
+A normal successor makes null-edge replacement conditional on the key surviving
+stronger dictionary projection; deleted attributes can never be recreated. Expanded
+graph/receipt/operator policy controls pass. All fresh immutable proofs are still
+required; no3261 measurement transfers and no earlier rejected report is erased.

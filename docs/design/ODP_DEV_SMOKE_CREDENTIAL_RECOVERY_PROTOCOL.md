@@ -1168,3 +1168,5 @@ Sensitive container keys participate in discovery. Authority-schema mutation tes
 use valid versioned envelopes and assert each intended rejection reason; missing-
 version coverage remains separate. Fixture mutants are diagnostic, not production
 vulnerabilities or comprehensive success. All earlier HOLDs and caps remain.
+A rejected member-edge rewrite must not recreate a dictionary attribute already
+removed by a stronger projection; removals dominate all subsequent null rewrites.

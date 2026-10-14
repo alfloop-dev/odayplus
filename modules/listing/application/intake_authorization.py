@@ -696,7 +696,10 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
             original.pop(key, None)
         original.update({key: value for key, value in puts.items() if key not in drops})
     for parent, key in replaced_edges:
-        parent[key] = None
+        # A stronger dictionary projection may have removed this member key.
+        # Nulling an invalid edge must not recreate the excluded attribute.
+        if isinstance(parent, list) or key in parent:
+            parent[key] = None
     for node in nodes:
         entries = list(node.items()) if isinstance(node, dict) else enumerate(node)
         for key, value in entries:

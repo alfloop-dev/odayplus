@@ -80,7 +80,7 @@ def test_existing_malformed_fields_never_escape_read_or_actual_replay(
 @pytest.mark.parametrize("canonical_value", [True, False, "legacy", "unclassified-alias",
     "legacy-weaker-last", "legacy-stricter-last", "bad-dict", "bad-list", "bad-field-list",
     "bad-legacy-member", "nested-legacy", "nested-canonical", "bad-classification", "bad-path",
-    "snapshot-public", "snapshot-internal", "snapshot-confidential"])
+    "snapshot-public", "snapshot-internal", "snapshot-confidential", "mixed-container-drop"])
 def test_standalone_classified_summary_receipt_replaces_unsupported_values(
     monkeypatch, alias, job_app, canonical_value
 ):
@@ -139,6 +139,9 @@ def test_standalone_classified_summary_receipt_replaces_unsupported_values(
     if canonical_value in ("snapshot-public", "snapshot-internal", "snapshot-confidential"):
         alias_value = {"nested":secret}
         private = {"rawSnapshot":alias_value,"originalUrl":f"https://example.invalid/{secret}"}
+    if canonical_value == "mixed-container-drop":
+        alias_value = {"classification":"HIGHLY_RESTRICTED",secret:[secret]}
+        private = {"parsedFields":alias_value}
     expect_hidden = canonical_value != "snapshot-confidential"
     public = {"classification": "PUBLIC", "effective": "visible-public"}
     record = JobRecord(
