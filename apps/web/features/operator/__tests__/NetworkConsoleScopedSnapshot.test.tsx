@@ -15,6 +15,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole } from "../OperatorConsole";
 import { resolveNetworkCountState } from "../NetworkFindAreasWorkspace";
 
+// Existing business assertions keep their transport premise: a current
+// canonical session precedes protected shell reads. No principal/grant is
+// derived from this unit-test response.
+function stubAuthenticatedFetch(read: typeof fetch) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
+    ? Promise.resolve(new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })) : read(input, init)));
+}
+
 const nav = vi.hoisted(() => ({ search: "ws=network" }));
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 
@@ -189,7 +199,7 @@ function stubProductionFetch(snapshot: unknown, denyScoring = false, reviews?: u
     }
     return jsonResponse({ detail: "not routed" }, 503);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubAuthenticatedFetch( fetchMock);
   return { legacyDomainPaths, networkListingUrls };
 }
 

@@ -4906,8 +4906,46 @@ class DurableListingRepository:
         self._store.put(self._DEDUP, key.source_key, True)
         self._store.put(self._DEDUP, key.property_key, True)
 
+    @contextmanager
+    def candidate_guard(self, candidate_id: str) -> Iterator[None]:
+        """Owned review writes and ordinary candidate writers share this fence.
+
+        Report publishers acquire report_guard before this guard. Review owners
+        use that same order; this primitive never acquires a report/job lock.
+        """
+        engine = self._store.engine
+        with engine.lock, engine.transaction():
+            if getattr(engine, "dialect", None) == "postgresql":
+                key = "listing.candidate:" + json.dumps([self.tenant_id, candidate_id], separators=(",", ":"))
+                engine.query_one("SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked", (key,))
+            elif not engine._conn.in_transaction:
+                engine.execute("BEGIN IMMEDIATE")
+            yield
+
     def save_candidate(self, candidate: CandidateSiteDraft) -> None:
-        self._store.put(self._CANDIDATES, candidate.candidate_site.candidate_site_id, candidate)
+        # A report/delivery refresh owns score fields, never the human review
+        # pointer or lifecycle. Preserve those fields from the physical row so
+        # a stale full draft cannot erase a concurrently committed submission.
+        from copy import deepcopy
+        from dataclasses import replace
+        candidate_id = candidate.candidate_site.candidate_site_id
+        with self.candidate_guard(candidate_id):
+            existing = self._store.get(self._CANDIDATES, candidate_id)
+            if existing is not None and (existing.review_id or existing.candidate_site.site_status in {"approved", "opened"}):
+                candidate = deepcopy(candidate)
+                candidate.review_id = existing.review_id
+                candidate.candidate_site = replace(candidate.candidate_site, site_status=existing.candidate_site.site_status)
+            self._store.put(self._CANDIDATES, candidate_id, candidate)
+
+    def save_review_candidate(self, candidate: CandidateSiteDraft, *, expected_review_id: str | None,
+                              expected_state: str) -> None:
+        candidate_id = candidate.candidate_site.candidate_site_id
+        with self.candidate_guard(candidate_id):
+            existing = self._store.get(self._CANDIDATES, candidate_id)
+            if (existing is None or existing.review_id != expected_review_id
+                    or existing.candidate_site.site_status != expected_state):
+                raise ValueError("CANDIDATE_REVIEW_PRECONDITION_CONFLICT")
+            self._store.put(self._CANDIDATES, candidate_id, candidate)
 
     def list_candidates(self) -> list[CandidateSiteDraft]:
         return self._store.list_all(self._CANDIDATES)
@@ -4952,7 +4990,20 @@ class DurableDecisionStore:
         self._store.put(self._DECISIONS, decision.decision_id, decision)
 
     def save_report(self, decision_id: str, report: SiteScoreReport) -> None:
-        self._store.put(self._REPORTS, decision_id, report)
+        """Every retained-report writer shares the immutable insert contract."""
+        self.retain_report_once(decision_id, report)
+
+    def retain_report_once(self, decision_id: str, report: SiteScoreReport) -> None:
+        if not self._store.put_if_absent(self._REPORTS, decision_id, report):
+            if self.get_report(decision_id) != report:
+                raise ValueError("DECISION_RETAINED_REPORT_IMMUTABLE")
+
+    def save_decision_version(self, decision: SiteScoreDecision, *, expected_version: int) -> None:
+        base = getattr(self._store, "_store", self._store)
+        collection = (self._store._collection(self._DECISIONS)
+                      if hasattr(self._store, "_collection") else self._DECISIONS)
+        if not base.replace_version(collection, decision.decision_id, decision, expected_version=expected_version):
+            raise ValueError("DECISION_VERSION_CONFLICT")
 
     def get_decision(self, decision_id: str) -> SiteScoreDecision | None:
         return self._store.get(self._DECISIONS, decision_id)

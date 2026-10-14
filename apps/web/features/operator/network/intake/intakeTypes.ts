@@ -183,7 +183,8 @@ export function queueCounts(records: AssistedIntake[]): IntakeQueueCounts {
 }
 
 /** Trim a canonical URL for the fixed-width queue cell without losing identity. */
-export function shortUrl(url: string, max = 34): string {
+export function shortUrl(url: string | null, max = 34): string {
+  if (url === null) return "UNAVAILABLE";
   const stripped = url.replace(/^https?:\/\/(www\.)?/, "");
   return stripped.length > max ? `${stripped.slice(0, max)}…` : stripped;
 }

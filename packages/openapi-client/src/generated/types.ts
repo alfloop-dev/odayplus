@@ -1335,7 +1335,11 @@ export type OpenCasePayload = {
 /** OpenDecisionPayload */
 export type OpenDecisionPayload = {
   created_by: string;
+  expected_actor_subject_id?: string | null;
+  expected_tenant_id?: string | null;
   report_id: string;
+  reviewer_group_id?: string | null;
+  submission_summary?: string | null;
 };
 
 /** PlaceHoldPayload */
@@ -1722,6 +1726,23 @@ export type ReviewDecisionRequest = {
   reason: string;
   requested_changes?: string[];
   risk_acknowledged?: boolean;
+};
+
+/** ReviewSubmissionPayload */
+export type ReviewSubmissionPayload = {
+  decisionId: string | null;
+  expectedActorSubjectId: string;
+  expectedCandidateDigest: string;
+  expectedCandidateReviewId: string | null;
+  expectedCandidateState: string;
+  expectedDecisionVersion?: number | null;
+  expectedLatestReportId: string;
+  expectedLatestReportVersion: number;
+  expectedReportId: string;
+  expectedReportVersion: number;
+  expectedTenantId: string;
+  reviewerGroupId: string;
+  submissionSummary: string;
 };
 
 /** RiskReasonCommand */
@@ -2128,6 +2149,9 @@ export type apps__api__app__routes__operator_modules__growth__SubmitPayload = {
 export type apps__api__app__routes__sitescore__DecisionPayload = {
   action: string;
   actor: string;
+  expected_actor_subject_id?: string | null;
+  expected_tenant_id?: string | null;
+  expected_version?: number | null;
   reason?: string;
 };
 
@@ -2338,6 +2362,8 @@ export const API_PATHS = {
   "/api/v1/operator/network-rebalance/stores/{store_id}/submit-review": ["POST"],
   "/api/v1/operator/network-reviews": ["GET"],
   "/api/v1/operator/network-reviews/": ["GET"],
+  "/api/v1/operator/network-reviews/candidates/{candidate_id}/submission-context": ["GET"],
+  "/api/v1/operator/network-reviews/candidates/{candidate_id}/submit": ["POST"],
   "/api/v1/operator/network-reviews/reset": ["POST"],
   "/api/v1/operator/network-reviews/{review_id}/decide": ["POST"],
   "/api/v1/operator/network-scoring": ["GET"],

@@ -1916,6 +1916,7 @@ else:
         from shared.infrastructure.persistence.operator_domains import (
             TenantScopedDocumentStore,
         )
+        from shared.infrastructure.persistence.postgresql import PostgresEngine
         from shared.infrastructure.persistence.repositories import (
             DurableDecisionStore,
         )
@@ -2291,12 +2292,24 @@ else:
                 runtime_mode=domain_runtime_mode,
             ),
         )
+        def sitescore_report_repository_for_tenant(tenant_id: str) -> Any | None:
+            if site_repository is bundle.sitescore_repository:
+                return bundle._scoped_repository("sitescore_repository", tenant_id)
+            if getattr(site_repository, "tenant_id", None) == tenant_id:
+                return site_repository
+            return None
+
         mount_versioned(
             api,
             create_sitescore_router(
                 repository=site_repository,
+                require_canonical_report_reads=isinstance(bundle.engine, PostgresEngine),
+                sitescore_repository_for_tenant=(
+                    sitescore_report_repository_for_tenant if bundle.is_durable else None
+                ),
                 workflow=decision_workflow,
                 sitescore_decision_repository_for_tenant=sitescore_decision_store_for_tenant,
+                review_service_resolver=bundle.network_review_resolver(hooks=decision_workflow.hooks),
                 realization_hook=realization_hook,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("sitescore"),
@@ -2429,7 +2442,14 @@ else:
                 netplan_repository_for_tenant=netplan_repository_for_tenant,
                 priceops_repository_for_tenant=priceops_repository_for_tenant,
                 model_runtime=model_runtime,
-                score_execution_service=(bundle.score_execution_service(model_runtime=model_runtime) if bundle.is_production else None),
+                # Composition probes may expose production flags without the
+                # factory's canonical SQL authority. Keep their reads available;
+                # fresh commands still require the actual same-engine owner.
+                score_execution_service=(
+                    bundle.score_execution_service(model_runtime=model_runtime)
+                    if bundle.is_production and isinstance(bundle.engine, PostgresEngine)
+                    else None
+                ),
                 avm_production_executor=avm_production_executor,
                 avm_depreciation_version_pin=avm_dep_pin,
                 avm_rollback_receipt=avm_rollback_receipt,

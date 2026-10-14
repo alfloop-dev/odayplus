@@ -6803,9 +6803,53 @@
             "title": "Created By",
             "type": "string"
           },
+          "expected_actor_subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Actor Subject Id"
+          },
+          "expected_tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Tenant Id"
+          },
           "report_id": {
             "title": "Report Id",
             "type": "string"
+          },
+          "reviewer_group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Group Id"
+          },
+          "submission_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submission Summary"
           }
         },
         "required": [
@@ -9347,6 +9391,111 @@
         "title": "ReviewDecisionRequest",
         "type": "object"
       },
+      "ReviewSubmissionPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "decisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decisionid"
+          },
+          "expectedActorSubjectId": {
+            "minLength": 1,
+            "title": "Expectedactorsubjectid",
+            "type": "string"
+          },
+          "expectedCandidateDigest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Expectedcandidatedigest",
+            "type": "string"
+          },
+          "expectedCandidateReviewId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedcandidatereviewid"
+          },
+          "expectedCandidateState": {
+            "minLength": 1,
+            "title": "Expectedcandidatestate",
+            "type": "string"
+          },
+          "expectedDecisionVersion": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expecteddecisionversion"
+          },
+          "expectedLatestReportId": {
+            "minLength": 1,
+            "title": "Expectedlatestreportid",
+            "type": "string"
+          },
+          "expectedLatestReportVersion": {
+            "exclusiveMinimum": 0.0,
+            "title": "Expectedlatestreportversion",
+            "type": "integer"
+          },
+          "expectedReportId": {
+            "minLength": 1,
+            "title": "Expectedreportid",
+            "type": "string"
+          },
+          "expectedReportVersion": {
+            "exclusiveMinimum": 0.0,
+            "title": "Expectedreportversion",
+            "type": "integer"
+          },
+          "expectedTenantId": {
+            "minLength": 1,
+            "title": "Expectedtenantid",
+            "type": "string"
+          },
+          "reviewerGroupId": {
+            "minLength": 1,
+            "title": "Reviewergroupid",
+            "type": "string"
+          },
+          "submissionSummary": {
+            "minLength": 1,
+            "title": "Submissionsummary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedReportId",
+          "expectedReportVersion",
+          "expectedLatestReportId",
+          "expectedLatestReportVersion",
+          "decisionId",
+          "expectedCandidateReviewId",
+          "expectedCandidateState",
+          "expectedCandidateDigest",
+          "submissionSummary",
+          "reviewerGroupId",
+          "expectedActorSubjectId",
+          "expectedTenantId"
+        ],
+        "title": "ReviewSubmissionPayload",
+        "type": "object"
+      },
       "RiskReasonCommand": {
         "additionalProperties": false,
         "properties": {
@@ -11387,6 +11536,39 @@
             "minLength": 1,
             "title": "Actor",
             "type": "string"
+          },
+          "expected_actor_subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Actor Subject Id"
+          },
+          "expected_tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Tenant Id"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
           },
           "reason": {
             "default": "",
@@ -37289,6 +37471,280 @@
         ]
       }
     },
+    "/api/v1/operator/network-reviews/candidates/{candidate_id}/submission-context": {
+      "get": {
+        "operationId": "submission_context_api_v1_operator_network_reviews_candidates__candidate_id__submission_context_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "decisionId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Decisionid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Submission Context",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/network-reviews/candidates/{candidate_id}/submit": {
+      "post": {
+        "operationId": "submit_review_api_v1_operator_network_reviews_candidates__candidate_id__submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Correlation-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewSubmissionPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Submit Review",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
     "/api/v1/operator/network-reviews/reset": {
       "post": {
         "operationId": "reset_network_reviews_api_v1_operator_network_reviews_reset_post",
@@ -48656,6 +49112,40 @@
     "/api/v1/sitescore/decisions": {
       "post": {
         "operationId": "open_decision_api_v1_sitescore_decisions_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -48871,6 +49361,22 @@
             "schema": {
               "title": "Decision Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
             }
           }
         ],

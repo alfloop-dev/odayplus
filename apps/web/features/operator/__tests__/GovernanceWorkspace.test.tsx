@@ -6,6 +6,15 @@ import { OperatorConsole } from "../OperatorConsole";
 import { normalizeGovernanceStatusBoard } from "../governance/governanceEnvelope";
 import type { GovernanceViewState } from "../governance/governanceUrlState";
 
+// Preserve the existing protected-read premise while the shell now rechecks
+// the canonical session. This is unit transport data, not a grant/principal.
+function stubAuthenticatedFetch(read: typeof fetch) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
+    ? Promise.resolve(new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })) : read(input, init)));
+}
+
 const snapshot = {
   approvals: [{
     id: "APR-LIVE-1",
@@ -84,7 +93,7 @@ describe("Governance URL target and decision ownership", () => {
   function reads() {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE","true");
     const fetchMock=vi.fn(async (input:RequestInfo|URL,_init?:RequestInit) => new Response(JSON.stringify(String(input).endsWith("/snapshot") ? twoRecords : {items:[]}),{status:200}));
-    vi.stubGlobal("fetch",fetchMock);return fetchMock;
+    stubAuthenticatedFetch(fetchMock);return fetchMock;
   }
 
   it("keeps the requested second approval and evidence after asynchronous snapshot loading", async () => {
@@ -126,7 +135,7 @@ describe("Governance URL target and decision ownership", () => {
     const fetchMock=vi.fn((input:RequestInfo|URL,init?:RequestInit)=>init?.method==="POST"
       ? new Promise<Response>(resolve=>{settle=resolve;})
       : Promise.resolve(new Response(JSON.stringify(String(input).endsWith("/snapshot")?twoRecords:{items:[]}),{status:200})));
-    vi.stubGlobal("fetch",fetchMock);
+    stubAuthenticatedFetch(fetchMock);
     const view=render(<GovernanceWorkspace roleId="ops-lead" viewState={target} />);
     await screen.findByRole("heading",{name:second.title});
     fireEvent.change(screen.getByLabelText(/決策理由/),{target:{value:"Reason belongs only to the second approval"}});
@@ -163,7 +172,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
       ],
     };
     expect(inspectGovernanceSnapshot(canonical)).toBe("ready");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(canonical), { status: 200 })));
+    stubAuthenticatedFetch( vi.fn(async () => new Response(JSON.stringify(canonical), { status: 200 })));
     render(<GovernanceWorkspace roleId="pm-audit" canDecide={false} />);
     await screen.findByTestId("governance-workspace");
     fireEvent.click(screen.getByTestId("governance-tab-statusBoard"));
@@ -202,7 +211,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
         headers: { "Content-Type": "application/json" },
       });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<GovernanceWorkspace roleId="ops-lead" />);
     expect(await screen.findByTestId("governance-workspace")).toBeInTheDocument();
@@ -230,7 +239,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
       }
       return new Response(JSON.stringify(decidingSnapshot));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
     const onApprove = vi.fn();
     render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onApprove }} />);
     await screen.findByRole("heading", { name: snapshot.approvals[0].title });
@@ -245,7 +254,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
 
   it("does not accept another approval's acknowledgement", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
-    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify(init?.method === "POST"
+    stubAuthenticatedFetch( vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify(init?.method === "POST"
       ? { approvalId: "wrong-approval", action: "approve", status: "approved", finalDecision: "Approved" }
       : decidingSnapshot))));
     const onApprove = vi.fn();
@@ -262,7 +271,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => init?.method === "POST"
       ? new Promise(resolve => { settle = resolve; })
       : Promise.resolve(new Response(JSON.stringify(decidingSnapshot))));
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
     render(<GovernanceWorkspace roleId="ops-lead" />);
     await screen.findByRole("heading", { name: snapshot.approvals[0].title });
     fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
@@ -281,7 +290,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
 
   it("blocks seed governance payloads instead of rendering local approvals", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
         ...snapshot,
         source: "fixture-governance-replay",
@@ -301,7 +310,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
 
   it("retains governance fixtures in local mode when the API is unavailable", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    stubAuthenticatedFetch( vi.fn().mockRejectedValue(new Error("offline")));
 
     render(<GovernanceWorkspace roleId="ops-lead" />);
 
@@ -311,7 +320,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
 
   it("matches the Package 10 approval center and switches selected evidence", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify(snapshot), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -341,7 +350,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<GovernanceWorkspace roleId="ops-lead" />);
     await screen.findByTestId("governance-workspace");
@@ -356,7 +365,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
 
   it("renders dense decision, audit, evidence package and status surfaces", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify(snapshot), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -441,7 +450,7 @@ function stubConsoleGovernance(governanceSnapshot: unknown) {
     }
     return new Response(JSON.stringify({ detail: "not routed" }), { status: 503, headers: { "Content-Type": "application/json" } });
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubAuthenticatedFetch( fetchMock);
   return { fetchMock, writes };
 }
 

@@ -222,6 +222,8 @@ def create_network_scoring_sub_router(
             principal = request.state.operator_principal
             context = execution_owner(request).context(candidate_id, principal=principal)
             return {**context, "tenantId": principal.tenant_id}
+        except HTTPException:
+            raise
         except Exception as exc:
             raise execution_http_error(exc) from exc
 
@@ -251,6 +253,8 @@ def create_network_scoring_sub_router(
                 correlation_id=correlation)
             return {"executionRequest": receipt,
                     "commandReceipt": command_receipt("retry", principal, receipt, idempotency_key, correlation)}
+        except HTTPException:
+            raise
         except Exception as exc:
             raise execution_http_error(exc) from exc
 

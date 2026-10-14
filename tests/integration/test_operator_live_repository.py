@@ -734,7 +734,10 @@ def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -
         )
 
         # Write canonical records through actual API / canonical writer paths with tenant header
-        app1 = create_app(persistence=bundle1)
+        # The legacy local batch producer must write the same durable tenant
+        # namespace read by the canonical owner, using the actual report service.
+        app1 = create_app(persistence=bundle1, sitescore_repository=
+            bundle1._scoped_repository("sitescore_repository", "tenant-canonical"))
         with TestClient(app1) as client1:
             headers = {
                 "x-tenant-id": "tenant-canonical",
@@ -756,12 +759,16 @@ def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -
                             "snapshot_id": "snap-canonical",
                             "rent_amount": 2000.0,
                             "area_ping": 50.0,
+                            "latitude": 25.026,
+                            "longitude": 121.543,
+                            "floor": "1F",
                         }
                     ],
                     "source_id": "src-canonical",
                 },
             )
             assert res_list.status_code == 202, res_list.text
+            candidate_id = res_list.json()["candidates"][0]["candidateSiteId"]
 
             # 2. HeatZone batch score job
             res_hz = client1.post(
@@ -802,7 +809,7 @@ def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -
                 json={
                     "features": [
                         {
-                            "candidate_site_id": "cand-canonical-1",
+                            "candidate_site_id": candidate_id,
                             "heat_zone_score": 80.0,
                             "monthly_rent": 50000.0,
                             "area_ping": 30.0,
@@ -816,10 +823,15 @@ def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -
 
             res_dec = client1.post(
                 "/api/v1/sitescore/decisions",
-                headers=headers,
+                headers={**headers, "If-Actor-Match": headers["x-subject-id"],
+                         "Idempotency-Key": "canonical-writer-submit"},
                 json={
                     "report_id": report_id,
                     "created_by": "user-canonical",
+                    "expected_actor_subject_id": headers["x-subject-id"],
+                    "expected_tenant_id": headers["x-tenant-id"],
+                    "submission_summary": "Review the imported canonical candidate and saved report.",
+                    "reviewer_group_id": "site_reviewer",
                 },
             )
             assert res_dec.status_code == 201, res_dec.text

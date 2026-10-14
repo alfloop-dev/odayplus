@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import styles from "../networkFindAreas.module.css";
+import type { ReviewSubmissionOffer } from "./networkReviewSubmissionTypes";
 import type { CandidatePipelineRow } from "../networkFindAreasViewModel";
 import {
   candidateGateDisplayRows,
@@ -41,7 +42,11 @@ export function CandidatePanel({
   onSelectCandidate,
   nativeWorkflow,
   onViewReview,
+  submissionOffers,
+  onRequestSubmission,
 }: {
+  submissionOffers?: Record<string, ReviewSubmissionOffer>;
+  onRequestSubmission?: (offer: ReviewSubmissionOffer) => void;
   nativeWorkflow?: CandidateNativeWorkflowReads;
   onViewReview?: (target: CandidateReviewReadTarget) => void;
   selectedCandidateId?: string | null;
@@ -208,6 +213,11 @@ export function CandidatePanel({
                   </div>
                   <small className={styles.candidateSnapshot}>{row.datasetSnapshotId}</small>
                   <div className={styles.rowActions}>
+                    {submissionOffers?.[row.id] ? <button data-testid={`candidate-submit-review-${row.id}`}
+                      disabled={isBusy || !onRequestSubmission} type="button" onClick={(event) => {
+                        event.stopPropagation(); onRequestSubmission?.(submissionOffers[row.id]);
+                      }}>{submissionOffers[row.id].newRound ? "新版報告另開審查"
+                        : submissionOffers[row.id].decisionId ? "再次送審" : "送審（SiteScore Review）"}</button> : null}
                     {nativeWorkflow?.[row.id]?.review ? <button
                       data-testid={`candidate-row-view-review-${row.id}`} disabled={!onViewReview || isBusy}
                       onClick={(event) => { event.stopPropagation(); const target = nativeWorkflow[row.id].review; if (target) onViewReview?.(target); }} type="button">
@@ -257,7 +267,7 @@ export function CandidatePanel({
           <aside className={`${styles.listingDetailPanel} ${styles.candidateDetailPanel}`} aria-label="資料完整度 Gate detail">
             {selected ? (
               <GateDetail candidate={selected} nativeWorkflow={nativeWorkflow?.[selected.id]} canonical={nativeWorkflow !== undefined}
-                onViewReview={onViewReview} onScore={onScore} onToggleCompare={onToggleCompare} busy={busyCandidateId === selected.id} />
+                onViewReview={onViewReview} submissionOffer={submissionOffers?.[selected.id]} onRequestSubmission={onRequestSubmission} onScore={onScore} onToggleCompare={onToggleCompare} busy={busyCandidateId === selected.id} />
             ) : (
               <div className={styles.emptyState} data-testid="candidate-selection-unavailable">{missingSelection ?? "No candidate selected"}</div>
             )}
@@ -300,7 +310,11 @@ function GateDetail({
   nativeWorkflow,
   canonical,
   onViewReview,
+  submissionOffer,
+  onRequestSubmission,
 }: {
+  submissionOffer?: ReviewSubmissionOffer;
+  onRequestSubmission?: (offer: ReviewSubmissionOffer) => void;
   nativeWorkflow?: CandidateNativeWorkflowRead;
   canonical?: boolean;
   onViewReview?: (target: CandidateReviewReadTarget) => void;
@@ -316,7 +330,9 @@ function GateDetail({
   const reviewTarget = nativeWorkflow?.review;
   const scoreAction = !canonical && !activeStage && !candidate.scored && candidate.gate.passed;
   const viewReviewAction = activeStage === "pendingreview" && reviewTarget && onViewReview;
-  const primaryLabel = activeStage === "onhold" ? "恢復處理"
+  const submissionAction = canonical && submissionOffer && onRequestSubmission;
+  const primaryLabel = submissionAction ? (submissionOffer.newRound ? "新版報告另開審查"
+    : submissionOffer.decisionId ? "再次送審（凍結報告）" : "送審（SiteScore Review）") : activeStage === "onhold" ? "恢復處理"
     : activeStage === "approved" ? "已核准 — 待納入展店計畫"
       : activeStage === "rejected" ? "未通過 — 已結案"
         : activeStage === "pendingreview" ? `查看審核 ${reviewTarget?.reviewId ?? candidate.pipelineEvidence?.pendingreview?.recordId ?? ""}`
@@ -329,7 +345,7 @@ function GateDetail({
                 : candidate.gate.state === "geo" ? "要求人工確認地址（鎖評分）"
                   : candidate.gate.state === "hard" ? "標記不適合／退回物件"
                     : "補資料（鎖評分）";
-  const primaryReason = viewReviewAction ? "查看既有審核紀錄；核決仍由伺服器核驗實際權限與目前報告。"
+  const primaryReason = submissionAction ? "填寫送審摘要並選擇審核群組；實際资格、報告版本與送審結果由正式紀錄核對。" : viewReviewAction ? "查看既有審核紀錄；核決仍由伺服器核驗實際權限與目前報告。"
     : canonical && activeStage === "ready" ? "初次評分受理與原始工作狀態尚未接通；資料齊備不代表可執行。再評分請查閱已保存報告的 SiteScore。"
       : canonical && nativeWorkflow ? nativeWorkflow.reason
       : scoreAction ? "資料完整度通過；評分服務仍會核驗模型、來源與特徵時點。"
@@ -391,9 +407,9 @@ function GateDetail({
       <div className={styles.candidateWorkflowActions}>
       <button
         className={styles.detailPrimaryButton}
-        data-testid={viewReviewAction ? `candidate-view-review-${candidate.id}` : `candidate-detail-score-${candidate.id}`}
-        disabled={busy || !(scoreAction && onScore || viewReviewAction)}
-        onClick={() => { if (viewReviewAction && reviewTarget) onViewReview?.(reviewTarget); else if (scoreAction) onScore?.(candidate.id); }}
+        data-testid={submissionAction ? `candidate-detail-submit-review-${candidate.id}` : viewReviewAction ? `candidate-view-review-${candidate.id}` : `candidate-detail-score-${candidate.id}`}
+        disabled={busy || !(submissionAction || scoreAction && onScore || viewReviewAction)}
+        onClick={() => { if (submissionAction && submissionOffer) onRequestSubmission?.(submissionOffer); else if (viewReviewAction && reviewTarget) onViewReview?.(reviewTarget); else if (scoreAction) onScore?.(candidate.id); }}
         title={primaryReason}
         type="button"
       >

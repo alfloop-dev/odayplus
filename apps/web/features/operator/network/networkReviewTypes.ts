@@ -84,8 +84,14 @@ export type NetworkReviewsSnapshot = {
     recommendation?: ScoreRecommendation;
     model_version?: string | null;
     created_by?: string;
+    created_by_verified?: boolean;
+    submitted_by?: string | null;
+    submission_actor_verified?: boolean;
+    submission_summary?: string | null;
+    reviewer_group_id?: string | null;
     created_at?: string;
     version?: number;
+    previous_decision_id?: string | null;
     tenant_id?: string;
     network_action?: ReviewDecisionAction | null;
     conditions?: string | null;
@@ -98,7 +104,7 @@ export type NetworkReviewsSnapshot = {
       required_data?: string[] | null; override_ack?: boolean | null;
       actor_role_id?: string | null; approval_id?: string | null;
       tenant_id?: string | null; report_id?: string | null; report_version?: number | null;
-      model_version?: string | null; version?: number | null }[];
+      model_version?: string | null; version?: number | null; previous_decision_id?: string | null }[];
   }[];
   decisionMapping?: Record<string, string>;
   counts?: { reviews: number; pending: number; decided: number };

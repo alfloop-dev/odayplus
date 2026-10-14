@@ -18,11 +18,14 @@ const review: ReviewItem = {
 describe("R7 Review decision dialog", () => {
   afterEach(cleanup);
 
-  it("focuses the labelled reason and closes with Escape without submitting", () => {
+  it("focuses the labelled reason, retains confirmation after Escape, and permits explicit cancellation without submitting", () => {
     const onClose=vi.fn(), onSubmit=vi.fn();
     render(<ReviewDecisionDialog action="GO" review={review} onClose={onClose} onSubmit={onSubmit} />);
     expect(screen.getByLabelText("決策原因（必填 — 寫入 Decision Log）")).toHaveFocus();
     fireEvent.keyDown(screen.getByRole("dialog"), { key:"Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name:"取消" }));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onSubmit).not.toHaveBeenCalled();
   });

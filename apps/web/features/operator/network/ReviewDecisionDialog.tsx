@@ -42,9 +42,10 @@ export function ReviewDecisionDialog({
   const [requiredData, setRequiredData] = useState("");
   const [ack, setAck] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [escapeBlocked, setEscapeBlocked] = useState(false);
   const formId = useId();
   const requestClose = () => { if (!submitting) onClose(); };
-  const panelRef = useModalDialogBehavior({ dismissible: !submitting, onClose: requestClose });
+  const panelRef = useModalDialogBehavior({ dismissible: false, onClose: requestClose, onEscapeBlocked: () => setEscapeBlocked(true) });
   useEffect(() => {
     if (submitting) panelRef.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus();
   }, [submitting, panelRef]);
@@ -106,6 +107,7 @@ export function ReviewDecisionDialog({
         </div>
 
         <div className={styles.reviewDialogBody}>
+          {escapeBlocked ? <p className={styles.muted} role="status">決策確認視窗需以「取消」按鈕關閉（防誤觸 Esc）</p> : null}
           <div className={styles.reviewDialogSub}>
             {review.id} · SiteScore {review.recommendation} {formatReviewScore(review.score)} → {finalLabel}
           </div>
