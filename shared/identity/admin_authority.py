@@ -19,6 +19,19 @@ class AdminAuthorityRefused(Exception):
     """Static refusal, never principal/SQL/provider details."""
 
 
+def decode_identity_grant(value: Any, actual_type: Any, expected_type: str) -> Any:
+    """Decode normalized JSON only with authoritative SQL type provenance."""
+    if actual_type != expected_type or expected_type not in {"array", "object"}:
+        raise ValueError("invalid persisted identity grant type")
+    decoded = json.loads(value) if isinstance(value, str) else value
+    if expected_type == "array":
+        if not isinstance(decoded, list) or any(not isinstance(v, str) or not v.strip() for v in decoded):
+            raise ValueError("invalid persisted identity grant array")
+    elif not isinstance(decoded, dict):
+        raise ValueError("invalid persisted identity grant object")
+    return decoded
+
+
 def checked_admin_authority(
     engine: Any, principal: Principal | None, *, tenant: str
 ) -> tuple[str, str]:
@@ -74,18 +87,23 @@ def checked_admin_authority(
         ):
             raise AdminAuthorityRefused()
     scope = engine.query_one(
-        "SELECT modules,clearance FROM identity.account_scopes WHERE account_id=? FOR SHARE",
+        "SELECT brand_ids,region_ids,store_ids,assigned_area_ids,heat_zone_ids,modules,clearance, "
+        "jsonb_typeof(brand_ids) AS brand_ids_json_type, "
+        "jsonb_typeof(region_ids) AS region_ids_json_type, "
+        "jsonb_typeof(store_ids) AS store_ids_json_type, "
+        "jsonb_typeof(assigned_area_ids) AS assigned_area_ids_json_type, "
+        "jsonb_typeof(heat_zone_ids) AS heat_zone_ids_json_type, "
+        "jsonb_typeof(modules) AS modules_json_type "
+        "FROM identity.account_scopes WHERE account_id=? FOR SHARE",
         (actor,),
     )
     if scope is not None:
         try:
-            modules = scope["modules"]
-            if isinstance(modules, str):
-                modules = json.loads(modules)
+            axes = {axis: decode_identity_grant(scope[axis], scope[f"{axis}_json_type"], "array")
+                    for axis in ("brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids", "modules")}
+            modules = axes["modules"]
             if (
-                not isinstance(modules, list)
-                or any(not isinstance(v, str) for v in modules)
-                or (modules and "operator_console" not in modules)
+                (modules and "operator_console" not in modules)
                 or DataClassification[scope["clearance"]] < DataClassification.CONFIDENTIAL
             ):
                 raise ValueError

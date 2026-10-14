@@ -33,7 +33,7 @@ from shared.audit import AuditEvent
 from shared.auth import DataClassification, Principal, Role
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 
-from .admin_authority import AdminAuthorityRefused, checked_admin_authority
+from .admin_authority import AdminAuthorityRefused, checked_admin_authority, decode_identity_grant
 from .credential_service import CredentialService
 from .password_policy import PasswordPolicy
 
@@ -377,7 +377,8 @@ class InvitationService:
             tenant = ref["tenant_id"]
             self._lock_tenant(tenant)
             row = self._engine.query_one(
-                "SELECT * FROM identity.invitations WHERE invitation_id = ? "
+                "SELECT *, jsonb_typeof(preset_roles) AS roles_json_type, "
+                "jsonb_typeof(preset_scope) AS scope_json_type FROM identity.invitations WHERE invitation_id = ? "
                 "AND token_hash = ? AND tenant_id = ? FOR UPDATE", (invitation_id, token_hash, tenant),
             )
             now = self._now()
@@ -389,9 +390,9 @@ class InvitationService:
             # PostgresEngine normalizes JSONB columns to JSON text (the same
             # repository contract used by durable identity administration).
             try:
-                preset_roles = json.loads(row["preset_roles"])
-                preset_scope = json.loads(row["preset_scope"])
-            except (TypeError, ValueError):
+                preset_roles = decode_identity_grant(row["preset_roles"], row["roles_json_type"], "array")
+                preset_scope = decode_identity_grant(row["preset_scope"], row["scope_json_type"], "object")
+            except (KeyError, TypeError, ValueError):
                 raise InvitationRefused("INVITATION_PRESET_INVALID") from None
             must_change = False
             account_scope = _scope(tenant)

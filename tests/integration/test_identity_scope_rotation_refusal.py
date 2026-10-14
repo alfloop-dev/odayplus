@@ -295,3 +295,203 @@ def test_rotation_required_jobs_are_denied_once_with_verified_actor_and_domain_a
         assert not errors, errors
     finally:
         client.close()
+
+
+from tests.integration.test_dev_smoke_recovery import identity_stack as identity_stack
+from tests.integration.test_dev_smoke_recovery import recovery as recovery
+
+
+def test_native_json_scope_after_wait_is_not_admin_authority(stack, monkeypatch):
+    from tests.integration.test_invitation_authority_wait import PATH, client, pending
+
+    s = stack
+    actor = _bootstrap_admin(s)
+    _rotate_password(s, actor)
+    _q(
+        s,
+        "INSERT INTO identity.account_scopes(account_id) VALUES(%s) RETURNING account_id",
+        (actor,),
+    )
+    headers = _sign_in(s, actor)
+    c, engine = client(s, s.boundary)
+    try:
+        for axis in (
+            "modules",
+            "brand_ids",
+            "region_ids",
+            "store_ids",
+            "assigned_area_ids",
+            "heat_zone_ids",
+        ):
+            for malformed in ("[]", '["operator_console"]'):
+
+                def change(conn, axis=axis, malformed=malformed):
+                    conn.execute(
+                        f"UPDATE identity.account_scopes SET {axis}=%s::jsonb WHERE account_id=%s",
+                        (json.dumps(malformed), actor),
+                    )
+
+                with monkeypatch.context() as scoped:
+                    response = pending(
+                        s,
+                        engine,
+                        c,
+                        headers,
+                        PATH,
+                        {"email": "native-wait@example.invalid"},
+                        change,
+                        scoped,
+                    )
+                assert response.status_code == 403
+                assert _q(s, "SELECT count(*) FROM identity.invitations") == [(0,)]
+                assert _q(
+                    s, f"SELECT {axis} FROM identity.account_scopes WHERE account_id=%s", (actor,)
+                ) == [(malformed,)]
+                _q(
+                    s,
+                    f"UPDATE identity.account_scopes SET {axis}='[]'::jsonb WHERE account_id=%s RETURNING account_id",
+                    (actor,),
+                )
+        assert (
+            c.post(PATH, headers=headers, json={"email": "valid-wait@example.invalid"}).status_code
+            == 201
+        )
+    finally:
+        c.close()
+        engine.close()
+
+
+def test_native_json_recovery_target_axes_are_not_identity_snapshots(recovery):
+    from shared.identity.dev_smoke_recovery import TARGET_ACCOUNT_ID, RecoveryRefused
+    from tests.integration.test_dev_smoke_recovery import old_events, snapshot
+
+    s = recovery
+    for axis in (
+        "modules",
+        "brand_ids",
+        "region_ids",
+        "store_ids",
+        "assigned_area_ids",
+        "heat_zone_ids",
+    ):
+        _q(
+            s,
+            f"UPDATE identity.account_scopes SET {axis}=%s::jsonb WHERE account_id=%s RETURNING account_id",
+            (json.dumps("[]"), TARGET_ACCOUNT_ID),
+        )
+        before = snapshot(s)
+        old = old_events(s)
+        with pytest.raises(RecoveryRefused, match="RECOVERY_IDENTITY_DRIFT"):
+            s.recovery.reserve(s.principal, s.plan)
+        assert snapshot(s) == before and old_events(s) == old
+        _q(
+            s,
+            f"UPDATE identity.account_scopes SET {axis}='[]'::jsonb WHERE account_id=%s RETURNING account_id",
+            (TARGET_ACCOUNT_ID,),
+        )
+    root = s.recovery.reserve(s.principal, s.plan)
+    assert root.stage == "reserved"
+    _q(
+        s,
+        "UPDATE identity.account_scopes SET modules=%s::jsonb WHERE account_id=%s RETURNING account_id",
+        (json.dumps("[]"), TARGET_ACCOUNT_ID),
+    )
+    before = snapshot(s)
+    with pytest.raises(RecoveryRefused, match="RECOVERY_IDENTITY_DRIFT"):
+        s.capabilities.issue(s.principal, root)
+    assert snapshot(s) == before
+    assert _q(s, "SELECT count(*) FROM identity.dev_smoke_recovery_capabilities") == [(0,)]
+    _q(
+        s,
+        "UPDATE identity.account_scopes SET modules='[]'::jsonb WHERE account_id=%s RETURNING account_id",
+        (TARGET_ACCOUNT_ID,),
+    )
+    cap = s.capabilities.issue(s.principal, root)
+    _q(
+        s,
+        "UPDATE identity.account_scopes SET store_ids=%s::jsonb WHERE account_id=%s RETURNING account_id",
+        (json.dumps("[]"), TARGET_ACCOUNT_ID),
+    )
+    before = snapshot(s)
+    from tests.integration.test_dev_smoke_recovery import consume
+
+    with pytest.raises(RecoveryRefused, match="RECOVERY_IDENTITY_DRIFT"):
+        consume(s, root, cap)
+    assert snapshot(s) == before
+    assert _q(s, "SELECT consumed_at FROM identity.dev_smoke_recovery_capabilities") == [(None,)]
+    assert _q(s, "SELECT attempt_count FROM identity.dev_smoke_recovery_budget") == [(1,)]
+    _q(
+        s,
+        "UPDATE identity.account_scopes SET store_ids='[]'::jsonb WHERE account_id=%s RETURNING account_id",
+        (TARGET_ACCOUNT_ID,),
+    )
+    assert consume(s, root, cap)["status"] == "rotated"
+
+
+def test_native_json_old_invitation_preset_refuses_recovery(recovery):
+    from shared.identity.dev_smoke_recovery import INVITATION_ID, RecoveryRefused
+    from shared.identity.invitation_service import _scope
+    from tests.integration.test_dev_smoke_recovery import TENANT_ID, old_events, snapshot
+
+    s = recovery
+    for field, value in [("preset_roles", ["platform_admin"]), ("preset_scope", _scope(TENANT_ID))]:
+        _q(
+            s,
+            f"UPDATE identity.invitations SET {field}=%s::jsonb WHERE invitation_id=%s RETURNING invitation_id",
+            (json.dumps(json.dumps(value)), INVITATION_ID),
+        )
+        before = snapshot(s)
+        old = old_events(s)
+        with pytest.raises(RecoveryRefused, match="RECOVERY_INVITATION_PROVENANCE_INVALID"):
+            s.recovery.reserve(s.principal, s.plan)
+        assert snapshot(s) == before and old_events(s) == old
+        _q(
+            s,
+            f"UPDATE identity.invitations SET {field}=%s::jsonb WHERE invitation_id=%s RETURNING invitation_id",
+            (json.dumps(value), INVITATION_ID),
+        )
+    assert s.recovery.reserve(s.principal, s.plan).stage == "reserved"
+
+
+def test_native_json_invitation_presets_cannot_create_accounts(stack):
+    from shared.identity.invitation_service import InvitationRefused, InvitationService, _scope
+
+    s = stack
+    actor = _bootstrap_admin(s)
+    _rotate_password(s, actor)
+    principal = s.boundary.authenticate(Credentials.from_headers(_sign_in(s, actor))).principal
+    service = InvitationService(engine=s.engine, audit_log=s.audit)
+    for index, (field, value) in enumerate(
+        [("preset_roles", ["platform_admin"]), ("preset_scope", _scope(TENANT))]
+    ):
+        issued = service.issue(principal, email=f"native-preset-{index}@example.invalid")
+        _q(
+            s,
+            f"UPDATE identity.invitations SET {field}=%s::jsonb WHERE invitation_id=%s RETURNING invitation_id",
+            (json.dumps(json.dumps(value)), issued.invitation_id),
+        )
+        accounts = _q(s, "SELECT account_id FROM identity.accounts ORDER BY account_id")
+        with pytest.raises(InvitationRefused, match="INVITATION_PRESET_INVALID"):
+            service.accept(
+                invitation_id=issued.invitation_id,
+                token=issued.token,
+                username=f"native-preset-{index}",
+                password="Disposable-Only-Strong-8392!",
+            )
+        assert _q(s, "SELECT account_id FROM identity.accounts ORDER BY account_id") == accounts
+        assert _q(
+            s,
+            "SELECT accepted_at FROM identity.invitations WHERE invitation_id=%s",
+            (issued.invitation_id,),
+        ) == [(None,)]
+        _q(
+            s,
+            f"UPDATE identity.invitations SET {field}=%s::jsonb WHERE invitation_id=%s RETURNING invitation_id",
+            (json.dumps(value), issued.invitation_id),
+        )
+        service.accept(
+            invitation_id=issued.invitation_id,
+            token=issued.token,
+            username=f"native-preset-{index}",
+            password="Disposable-Only-Strong-8392!",
+        )

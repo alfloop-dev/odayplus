@@ -627,7 +627,7 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
             continue
         visited.add(id(node))
         if isinstance(node, dict):
-            if "classification" in node and any(key in node for key in ("parsed", "normalized", "corrected", "effective")):
+            if "classification" in node:
                 view = mask_intake(principal, {"fields": [node]})["fields"][0]
                 node.clear()
                 node.update(view)

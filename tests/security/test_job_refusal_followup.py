@@ -77,8 +77,9 @@ def test_existing_malformed_fields_never_escape_read_or_actual_replay(
 
 
 @pytest.mark.parametrize("alias", ["/jobs", "/api/v1/jobs"])
+@pytest.mark.parametrize("canonical_value", [True, False])
 def test_standalone_classified_summary_receipt_replaces_unsupported_values(
-    monkeypatch, alias, job_app
+    monkeypatch, alias, job_app, canonical_value
 ):
     key, bundle, app = job_app
     boundary = boundary_for(key, modules=["listing"], clearance="CONFIDENTIAL")
@@ -89,6 +90,8 @@ def test_standalone_classified_summary_receipt_replaces_unsupported_values(
         "effective": "fixture-inline-private",
         "raw_value": "fixture-inline-private",
     }
+    if not canonical_value:
+        private.pop("effective")
     public = {"classification": "PUBLIC", "effective": "visible-public"}
     record = JobRecord(
         job_type="batch-listing-intake",

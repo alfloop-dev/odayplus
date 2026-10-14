@@ -6044,7 +6044,9 @@ def test_b41c_owner_scan_prunes_only_excluded_directories(tmp_path, monkeypatch)
     with pytest.raises(AssertionError, match="MetricDefinition sites without an explicit owner"):
         test_b41b_every_metric_definition_in_the_repo_declares_an_owner()
     # Expected-failure probes remain excluded by AST context, not file location.
-    source.write_text("with pytest.raises(ValueError):\\n    MetricDefinition('probe')\\n")
+    source.write_text("with pytest.raises(ValueError):\n    MetricDefinition('probe')\n")
+    import ast
+    assert isinstance(ast.parse(source.read_text()).body[0], ast.With)
     test_b41b_every_metric_definition_in_the_repo_declares_an_owner()
 
 

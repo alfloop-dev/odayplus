@@ -21,6 +21,7 @@ from shared.auth import Principal
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.postgresql import PostgresEngine
 
+from .admin_authority import decode_identity_grant
 from .credential_service import CredentialService
 from .dev_smoke_journal import (
     _CUSTODIAN,
@@ -170,7 +171,13 @@ class RecoveryJournal:
             "SELECT a.account_id::text AS subject_id, a.tenant_id::text AS tenant_id, "
             "a.username, a.email, a.display_name, a.status, a.created_by AS updated_by, "
             "s.brand_ids, s.region_ids, s.store_ids, s.assigned_area_ids, s.heat_zone_ids, "
-            "s.modules, s.clearance FROM identity.accounts a "
+            "s.modules, s.clearance, "
+            "jsonb_typeof(s.brand_ids) AS brand_ids_json_type, "
+            "jsonb_typeof(s.region_ids) AS region_ids_json_type, "
+            "jsonb_typeof(s.store_ids) AS store_ids_json_type, "
+            "jsonb_typeof(s.assigned_area_ids) AS assigned_area_ids_json_type, "
+            "jsonb_typeof(s.heat_zone_ids) AS heat_zone_ids_json_type, "
+            "jsonb_typeof(s.modules) AS modules_json_type FROM identity.accounts a "
             "JOIN identity.account_scopes s ON s.account_id = a.account_id "
             "WHERE a.account_id = ? FOR SHARE OF a, s", (account_id,),
         )
@@ -185,8 +192,11 @@ class RecoveryJournal:
         if row is None or credential is None:
             raise RecoveryRefused("RECOVERY_IDENTITY_DRIFT")
         scope = {"tenant_id": row["tenant_id"], "clearance": row["clearance"]}
-        for axis in ("brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids", "modules"):
-            scope[axis] = json.loads(row[axis])
+        try:
+            for axis in ("brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids", "modules"):
+                scope[axis] = decode_identity_grant(row[axis], row[f"{axis}_json_type"], "array")
+        except (KeyError, TypeError, ValueError):
+            raise RecoveryRefused("RECOVERY_IDENTITY_DRIFT") from None
         if row["tenant_id"] != TENANT_ID or row["status"] != "active" or scope != _scope(TENANT_ID):
             raise RecoveryRefused("RECOVERY_IDENTITY_DRIFT")
         return {k: row[k] for k in ("subject_id", "username", "email", "display_name", "status", "updated_by")} | {
@@ -277,15 +287,24 @@ class RecoveryJournal:
                 or DevSmokeBindingJournal(journal=old).inspect() is not None):
             raise RecoveryRefused("RECOVERY_OLD_LINEAGE_INVALID")
         invitation = self._engine.query_one(
-            "SELECT email, created_by, accepted_at, revoked_at, preset_roles, preset_scope "
+            "SELECT email, created_by, accepted_at, revoked_at, preset_roles, preset_scope, "
+            "jsonb_typeof(preset_roles) AS roles_json_type, "
+            "jsonb_typeof(preset_scope) AS scope_json_type "
             "FROM identity.invitations WHERE invitation_id = ? AND tenant_id = ? FOR SHARE",
             (INVITATION_ID, TENANT_ID),
         )
-        if (invitation is None or invitation["email"] != target["email"]
+        try:
+            if invitation is None:
+                raise ValueError
+            preset_roles = decode_identity_grant(invitation["preset_roles"], invitation["roles_json_type"], "array")
+            preset_scope = decode_identity_grant(invitation["preset_scope"], invitation["scope_json_type"], "object")
+        except (KeyError, TypeError, ValueError):
+            raise RecoveryRefused("RECOVERY_INVITATION_PROVENANCE_INVALID") from None
+        if (invitation["email"] != target["email"]
                 or invitation["created_by"] != PRESERVED_ACCOUNT_ID
                 or invitation["accepted_at"] is None or invitation["revoked_at"] is not None
-                or json.loads(invitation["preset_roles"]) != ["platform_admin"]
-                or json.loads(invitation["preset_scope"]) != _scope(TENANT_ID)):
+                or preset_roles != ["platform_admin"]
+                or preset_scope != _scope(TENANT_ID)):
             raise RecoveryRefused("RECOVERY_INVITATION_PROVENANCE_INVALID")
         projected = [{"event_id": e.event_id, "event_type": e.event_type, "actor": e.actor,
                       "resource": e.resource, "outcome": e.outcome, "correlation_id": e.correlation_id,
