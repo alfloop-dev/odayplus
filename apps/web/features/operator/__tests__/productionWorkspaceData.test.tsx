@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DesignStoreOpsWorkspace,
@@ -18,6 +18,7 @@ import {
 import { resolveGovernanceDecisionAuthority } from "../GovernanceWorkspace";
 import { HEAT_ZONE_FIXTURES, LISTING_FIXTURES, LISTING_SOURCE_FIXTURES } from "../fixtures";
 import { normalizeGovernanceActionAuthority } from "../governance/governanceLoader";
+import { STORE_OPS_REFRESH_EVENT } from "../storeOpsWorkflowTypes";
 import {
   operatorLoadFailureFromError,
   operatorLoadFailureFromResponse,
@@ -77,6 +78,218 @@ describe("production workspace data contracts", () => {
     const gate = await screen.findByTestId("operator-data-unavailable");
     await waitFor(() => expect(gate).toHaveAttribute("data-status", "empty"));
     expect(screen.queryByText("付款機前卡住＋付款失敗＋Google 負評")).not.toBeInTheDocument();
+  });
+
+  const canonicalStoreOpsPayload = {
+    source: "operator-store-ops-production",
+    stores: [{
+      id: "LIVE-STORE-1", name: "正式門市", district: "正式行政區", city: "台北市", manager: "正式負責人",
+      lights: { demand: "green", operations: "yellow", staffing: "green", margin: "green" }, riskScore: 15,
+    }],
+    issues: [{
+      id: "LIVE-ISSUE-1", title: "來源事件標題", storeId: "LIVE-STORE-1", storeName: "正式門市",
+      status: "new", severity: "medium", source: "multiSignal", ownerRoleId: "opsLead", ownerName: "正式負責人",
+      slaDueAt: "2026-10-14T12:00:00Z", createdAt: "2026-10-14T01:00:00Z", updatedAt: "2026-10-14T01:00:00Z",
+      evidenceIds: [], summary: "來源事件摘要",
+    }],
+    evidence: [], auditEvents: [], fourLightSummary: [], count: 1,
+  };
+
+  const unavailableStorePayloads: Array<[string, unknown]> = [
+    ["null", null], ["string", "unexpected"], ["number", 42], ["boolean", true],
+    ["array", []], ["array of snapshots", [canonicalStoreOpsPayload]],
+    ["missing collections", {}],
+    ...["issues", "stores", "evidence", "auditEvents"].flatMap((field): Array<[string, unknown]> => [
+      [`${field} object`, { ...canonicalStoreOpsPayload, [field]: {} }],
+      [`${field} null`, { ...canonicalStoreOpsPayload, [field]: null }],
+      [`${field} string`, { ...canonicalStoreOpsPayload, [field]: "unexpected" }],
+      [`${field} null row`, { ...canonicalStoreOpsPayload, [field]: [null] }],
+    ]),
+    ["issue object title", { ...canonicalStoreOpsPayload, issues: [{ ...canonicalStoreOpsPayload.issues[0], title: {} }] }],
+    ["issue nonarray evidence IDs", { ...canonicalStoreOpsPayload, issues: [{ ...canonicalStoreOpsPayload.issues[0], evidenceIds: {} }] }],
+    ["store missing lights", { ...canonicalStoreOpsPayload, stores: [{ ...canonicalStoreOpsPayload.stores[0], lights: null }] }],
+    ["store incomplete lights", { ...canonicalStoreOpsPayload, stores: [{ ...canonicalStoreOpsPayload.stores[0], lights: {} }] }],
+    ["store array-valued light", { ...canonicalStoreOpsPayload, stores: [{ ...canonicalStoreOpsPayload.stores[0], lights: {
+      ...canonicalStoreOpsPayload.stores[0].lights, demand: ["green"],
+    } }] }],
+    ["store unknown light", { ...canonicalStoreOpsPayload, stores: [{ ...canonicalStoreOpsPayload.stores[0], lights: {
+      ...canonicalStoreOpsPayload.stores[0].lights, demand: "unknown",
+    } }] }],
+    ["seed malformed collection", { ...canonicalStoreOpsPayload, source: "fixture-store-ops", issues: {} }],
+    ["seed malformed row", { ...canonicalStoreOpsPayload, source: "fixture-store-ops", stores: [null] }],
+  ];
+  it.each(unavailableStorePayloads)("keeps a successful unknown Store API %s unavailable without demo rows or a render crash", async (_shape, payload) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const onOpenWorkflow = vi.fn();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={onOpenWorkflow} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    expect(gate).toHaveAttribute("data-status", "empty");
+    expect(screen.queryByLabelText("門市 Issue queue")).not.toBeInTheDocument();
+    expect(screen.queryByText("14 台")).not.toBeInTheDocument();
+    expect(screen.queryByText("0 件 正常")).not.toBeInTheDocument();
+    expect(onOpenWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("preserves the initial local demo after a transport failure before any successful API response", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Owned test transport refusal")));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    await waitFor(() => expect(error).toHaveBeenCalled());
+    expect(screen.getByLabelText("ISS-1024 detail")).toBeInTheDocument();
+    expect(screen.getByText("14 台")).toBeInTheDocument();
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+  });
+
+  it("does not revive the initial demo after an empty successful response and a failed retry", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response("null", { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockRejectedValue(new Error("Owned retry transport refusal")));
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    expect(gate).toHaveAttribute("data-status", "empty");
+
+    fireEvent.click(screen.getByRole("button", { name: "重新載入" }));
+
+    await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
+    expect(screen.queryByLabelText("門市 Issue queue")).not.toBeInTheDocument();
+    expect(screen.queryByText("14 台")).not.toBeInTheDocument();
+  });
+
+  it("clears previously explicit seed rows when a successful refresh body is unknown", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...canonicalStoreOpsPayload, source: "fixture-store-ops" }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValue(new Response("null", { status: 200, headers: { "Content-Type": "application/json" } })));
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+    await screen.findByLabelText("LIVE-ISSUE-1 detail");
+    expect(screen.getByText("14 台")).toBeInTheDocument();
+
+    window.dispatchEvent(new Event(STORE_OPS_REFRESH_EVENT));
+
+    expect(await screen.findByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty");
+    expect(screen.queryByLabelText("LIVE-ISSUE-1 detail")).not.toBeInTheDocument();
+    expect(screen.queryByText("14 台")).not.toBeInTheDocument();
+  });
+
+  it("keeps an undecodable successful API body unavailable", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{invalid JSON", {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-status", "error"));
+    expect(screen.queryByLabelText("門市 Issue queue")).not.toBeInTheDocument();
+    expect(screen.queryByText("14 台")).not.toBeInTheDocument();
+  });
+
+  it("retains a valid explicitly seeded local response as a fixture", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...canonicalStoreOpsPayload, source: "fixture-store-ops",
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    await screen.findByLabelText("LIVE-ISSUE-1 detail");
+    expect(screen.getByText("14 台")).toBeInTheDocument();
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+  });
+
+  it.each(["true", "false"])("does not fill canonical Store API gaps with demo metrics or healthy evidence when production=%s", async (productionMode) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", productionMode);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(canonicalStoreOpsPayload), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    const detail = await screen.findByLabelText("LIVE-ISSUE-1 detail");
+    const strip = detail.querySelector('[class*="storeStrip"]')!;
+    expect(strip.children).toHaveLength(5);
+    expect(strip).toHaveTextContent("正式門市");
+    expect(within(strip as HTMLElement).getAllByText("不可用")).toHaveLength(3);
+    expect(strip).not.toHaveTextContent(/自助洗衣|14 台|18,420|14,200|9,500|NT\$/);
+    const fusion = within(detail).getByRole("heading", { name: "證據融合" }).closest("section")!;
+    expect(within(fusion).getAllByText("資料不可用")).toHaveLength(6);
+    expect(fusion).not.toHaveTextContent(/4\.8|0 件|正常|在線|健康|皆綠/);
+    expect(screen.getByLabelText("門市 Issue queue")).toBeInTheDocument();
+    expect(screen.getByLabelText("Action rail")).toBeInTheDocument();
+  });
+
+  it.each(["true", "false"])("renders source evidence titles without inventing ratings/status and keeps masked confidence or missing forecasts unavailable when production=%s", async (productionMode) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", productionMode);
+    const kinds = ["googleReview", "csCase", "camera", "payment", "iot", "forecastOps"];
+    const evidence = kinds.map((kind, index) => ({
+      id: `LIVE-EVIDENCE-${index}`, issueId: "LIVE-ISSUE-1", kind, title: `來源證據 ${kind}`,
+      sourceLabel: `正式來源 ${kind}`, summary: `來源摘要 ${kind}`, polarity: "neutral",
+      confidence: index === 0 ? null : 0.91, occurredAt: "2026-10-14T01:00:00Z",
+    }));
+    const payload = {
+      ...canonicalStoreOpsPayload,
+      issues: [{ ...canonicalStoreOpsPayload.issues[0], evidenceIds: evidence.map((row) => row.id) }], evidence,
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    const detail = await screen.findByLabelText("LIVE-ISSUE-1 detail");
+    const fusion = within(detail).getByRole("heading", { name: "證據融合" }).closest("section")!;
+    for (const kind of kinds) expect(within(fusion).getByText(`來源證據 ${kind}`)).toBeInTheDocument();
+    expect(fusion).not.toHaveTextContent(/★|未回覆|Zendesk 異常|交易延遲警告|Telemetry 警告|四燈評估警告|影像已解鎖/);
+    const panel = within(screen.getByRole("tabpanel"));
+    const confidence = panel.getByText("信心度").closest("div")!;
+    expect(confidence).toHaveTextContent("不可用");
+    expect(confidence).not.toHaveTextContent("0%");
+    fireEvent.click(screen.getByRole("tab", { name: "ForecastOps" }));
+    expect(screen.getByTestId("store-forecast-unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /28 天/ })).not.toBeInTheDocument();
+  });
+
+  it.each(["empty", "missing"])("keeps a partial canonical API with %s stores unavailable in local demo mode", async (storeArrayState) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const payload: Record<string, unknown> = { ...canonicalStoreOpsPayload, stores: [] };
+    if (storeArrayState === "missing") delete payload.stores;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    expect(gate).toHaveAttribute("data-status", "empty");
+    expect(screen.queryByLabelText("LIVE-ISSUE-1 detail")).not.toBeInTheDocument();
+    expect(screen.queryByText("14 台")).not.toBeInTheDocument();
+    expect(screen.queryByText("0 件 正常")).not.toBeInTheDocument();
+  });
+
+  it("preserves source-provided fixture confidence metadata while camera images remain purpose-locked", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Promise(() => {})));
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Camera" }));
+    const panel = within(screen.getByRole("tabpanel"));
+    expect(panel.getByText("信心度").closest("div")).toHaveTextContent("70%");
+    expect(panel.getByRole("button", { name: "輸入調閱目的以檢視" })).toBeInTheDocument();
+    expect(screen.getByText("14 台")).toBeInTheDocument();
   });
 
   it("classifies Store Ops seed, empty, and usable API payloads", () => {

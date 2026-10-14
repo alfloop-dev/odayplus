@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo } from "react";
-import type { AssistedIntake, MatchOutcome } from "@oday-plus/openapi-client";
+import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
-import { matchLabel, matchTone } from "./intakeTypes";
+import { matchConfidence, matchLabel, matchTone } from "./intakeTypes";
 
 export type TargetListingData = {
   id?: string;
@@ -81,7 +81,8 @@ export function ListingCompareTable({
   detailHref?: string;
 }) {
   const match = record.matchResult;
-  const outcome: MatchOutcome | undefined = match?.outcome;
+  const outcome = match?.outcome;
+  const confidence = matchConfidence(match?.confidence);
   const targetId = targetListing?.id || match?.targetListingId || "";
 
   // Extract parsed fields for easy lookup
@@ -218,19 +219,20 @@ export function ListingCompareTable({
     if (!match) {
       return `收件 ${record.id} 尚無比對結果。`;
     }
-    const targetText = targetId ? `目標物件 ${targetId}` : "尚無對應目標物件";
-    const outcomeText = outcome ? matchLabel(outcome) : "未知";
-    const agreeCount = match.agreeingSignals?.length ?? 0;
-    const conCount = match.contradictingSignals?.length ?? 0;
+    const targetText = targetId ? `目標物件 ${targetId}` : "目標物件 UNAVAILABLE";
+    const outcomeText = matchLabel(outcome);
+    const agreeCount = match.agreeingSignals?.length;
+    const conCount = match.contradictingSignals?.length;
     const conList = (match.contradictingSignals ?? []).map((s) => s.label).join("、");
-    const conText = conCount > 0 ? `，主要矛盾欄位包含：${conList}` : "，無重大矛盾。";
+    const conText = conCount === undefined ? "，矛盾訊號 UNAVAILABLE。"
+      : conCount > 0 ? `，主要矛盾欄位包含：${conList}` : "，無重大矛盾。";
 
     return (
-      `比對結果為 ${outcomeText} (${outcome || "N/A"})，對象為 ${targetText}。` +
-      `信心得分 ${(match.confidence * 100).toFixed(0)}%。` +
-      `包含 ${agreeCount} 項一致訊號，${conCount} 項矛盾訊號${conText}`
+      `比對結果為 ${outcomeText} (${outcome || "UNAVAILABLE"})，對象為 ${targetText}。` +
+      `信心得分 ${confidence === null ? "UNAVAILABLE" : `${(confidence * 100).toFixed(0)}%`}。` +
+      `包含 ${agreeCount ?? "UNAVAILABLE"} 項一致訊號，${conCount ?? "UNAVAILABLE"} 項矛盾訊號${conText}`
     );
-  }, [record.id, targetId, outcome, match]);
+  }, [record.id, targetId, outcome, match, confidence]);
 
   return (
     <div
@@ -240,9 +242,9 @@ export function ListingCompareTable({
     >
       <div className={styles.sectionHead}>
         <span>比對結果 MATCH REVIEW</span>
-        {outcome ? (
+        {match ? (
           <span className={styles.chip} data-testid="compare-outcome-badge" data-tone={matchTone(outcome)}>
-            {outcome} · {matchLabel(outcome)}
+            {outcome ?? "UNAVAILABLE"} · {matchLabel(outcome)}
           </span>
         ) : null}
         {targetId ? <span className={styles.metaSub}>目標對象：{targetId}</span> : null}
@@ -336,19 +338,19 @@ export function ListingCompareTable({
         <div>
           <span className={styles.metaCaption}>比對信心度 Confidence</span>
           <div className={styles.metaValue} data-testid="compare-confidence-val">
-            {match ? `${(match.confidence * 100).toFixed(1)}% (${match.confidence.toFixed(2)})` : "—"}
+            {confidence === null ? "UNAVAILABLE" : `${(confidence * 100).toFixed(1)}% (${confidence.toFixed(2)})`}
           </div>
         </div>
         <div>
           <span className={styles.metaCaption}>一致訊號 Agreeing</span>
           <div className={styles.metaValue} data-testid="compare-agree-count">
-            {match?.agreeingSignals?.length ?? 0} 項
+            {match?.agreeingSignals?.length ?? "UNAVAILABLE"} 項
           </div>
         </div>
         <div>
           <span className={styles.metaCaption}>矛盾訊號 Contradicting</span>
           <div className={styles.metaValue} data-testid="compare-con-count">
-            {match?.contradictingSignals?.length ?? 0} 項
+            {match?.contradictingSignals?.length ?? "UNAVAILABLE"} 項
           </div>
         </div>
       </div>

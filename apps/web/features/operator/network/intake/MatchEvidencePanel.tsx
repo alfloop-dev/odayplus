@@ -1,8 +1,8 @@
 "use client";
 
-import type { AssistedIntake, MatchOutcome } from "@oday-plus/openapi-client";
+import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
-import { matchLabel, matchTone } from "./intakeTypes";
+import { matchConfidence, matchLabel, matchTone } from "./intakeTypes";
 
 export function MatchEvidencePanel({
   record,
@@ -23,9 +23,11 @@ export function MatchEvidencePanel({
     );
   }
 
-  const outcome: MatchOutcome = match.outcome;
-  const targetId = match.targetListingId || "無指定標的";
-  const confidencePercent = (match.confidence * 100).toFixed(0);
+  const outcome = match.outcome;
+  const targetId = match.targetListingId || "UNAVAILABLE";
+  const confidence = matchConfidence(match.confidence);
+  const confidenceText = confidence === null ? "UNAVAILABLE" : confidence.toFixed(2);
+  const confidencePercent = confidence === null ? "UNAVAILABLE" : `${(confidence * 100).toFixed(0)}%`;
 
   return (
     <div
@@ -37,17 +39,17 @@ export function MatchEvidencePanel({
       <div className={styles.sectionHead}>
         <span>比對證據與結果 MATCH EVIDENCE & SIGNALS</span>
         <span className={styles.chip} data-testid="match-outcome-canonical-badge" data-tone={matchTone(outcome)}>
-          {outcome} · {matchLabel(outcome)}
+          {outcome ?? "UNAVAILABLE"} · {matchLabel(outcome)}
         </span>
         <span className={styles.sectionHeadHint}>
-          信心分數 {match.confidence.toFixed(2)} ({confidencePercent}%)
+          信心分數 {confidenceText} ({confidencePercent})
         </span>
       </div>
 
       {/* Screen reader readable summary */}
       <div className={styles.srSummary} data-testid="match-evidence-sr-summary" role="region" aria-label="比對訊號摘要" aria-live="polite">
-        比對結果 canonical code：{outcome}（{matchLabel(outcome)}），對應既有物件 ID：{targetId}，信心度 {match.confidence.toFixed(2)}。
-        變更與差異摘要：{match.summary}
+        比對結果 canonical code：{outcome ?? "UNAVAILABLE"}（{matchLabel(outcome)}），對應既有物件 ID：{targetId}，信心度 {confidenceText}。
+        變更與差異摘要：{match.summary || "UNAVAILABLE"}
       </div>
 
       {/* Auto-merge prohibition warning for POSSIBLE_MATCH */}
@@ -62,7 +64,7 @@ export function MatchEvidencePanel({
         <div>
           <span className={styles.metaCaption}>Canonical Code</span>
           <div className={styles.metaValue} data-testid="evidence-code-val">
-            <code>{outcome}</code>
+            <code>{outcome ?? "UNAVAILABLE"}</code>
           </div>
         </div>
         <div>
@@ -89,9 +91,11 @@ export function MatchEvidencePanel({
       <div className={styles.signals} style={{ marginTop: "12px" }}>
         <div className={styles.signalCol} data-testid="agreeing-signals-list">
           <div className={styles.signalHeadAgree}>
-            ✓ 一致訊號 AGREEING SIGNALS ({match.agreeingSignals?.length ?? 0})
+            ✓ 一致訊號 AGREEING SIGNALS ({match.agreeingSignals?.length ?? "UNAVAILABLE"})
           </div>
-          {(match.agreeingSignals ?? []).length === 0 ? (
+          {match.agreeingSignals == null ? (
+            <div className={styles.signalItem} data-testid="agreeing-signals-unavailable">UNAVAILABLE — API 未提供一致訊號</div>
+          ) : match.agreeingSignals.length === 0 ? (
             <div className={styles.signalItem}>— 無一致訊號 —</div>
           ) : (
             (match.agreeingSignals ?? []).map((signal) => (
@@ -107,9 +111,11 @@ export function MatchEvidencePanel({
 
         <div className={styles.signalCol} data-testid="contradicting-signals-list">
           <div className={styles.signalHeadCon}>
-            ✕ 矛盾訊號 CONTRADICTING SIGNALS ({(match.contradictingSignals ?? []).length})
+            ✕ 矛盾訊號 CONTRADICTING SIGNALS ({match.contradictingSignals?.length ?? "UNAVAILABLE"})
           </div>
-          {(match.contradictingSignals ?? []).length === 0 ? (
+          {match.contradictingSignals == null ? (
+            <div className={styles.signalItem} data-testid="contradicting-signals-unavailable">UNAVAILABLE — API 未提供矛盾訊號</div>
+          ) : match.contradictingSignals.length === 0 ? (
             <div className={styles.signalItem} style={{ color: "#1e7f4f" }}>
               ✓ 無矛盾訊號
             </div>

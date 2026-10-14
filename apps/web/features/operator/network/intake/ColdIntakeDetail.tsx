@@ -6,6 +6,7 @@ import { hasCanonicalScoreSession, readId, readObject } from "../networkReadVali
 import { payloadContainsSeedData } from "../../operatorDataMode";
 import { IntakeProcessingDetail } from "./IntakeProcessingDetail";
 import { intakeApi } from "./intakeClient";
+import { isMatchOutcome, matchConfidence } from "./intakeTypes";
 
 export type ColdIntakeDetailProps = { intakeId: string; onClose: () => void };
 
@@ -86,10 +87,10 @@ function hasColdIntakeRecord(value: unknown, id: string): value is AssistedIntak
   if (!readObject(value) || value.id !== id || payloadContainsSeedData(value)
     || !Number.isSafeInteger(value.version) || Number(value.version) < 1
     || !INTAKE_STAGES.includes(value.stage as AssistedIntake["stage"])
-    || !["policy", "policyLabel", "policyReason"].every((key) => typeof value[key] === "string")
+    || typeof value.policy !== "string"
     || !readObject(value.parsedFields) || !Array.isArray(value.auditEvents)) return false;
   const text = (v: unknown) => v === null || v === undefined || typeof v === "string";
-  if (!["originalUrl", "canonicalUrl", "parserVersion", "submitter", "owner", "heatZoneId", "sourceId", "snapshotId", "capturedAt", "correlationId",
+  if (!["policyLabel", "policyReason", "originalUrl", "canonicalUrl", "parserVersion", "submitter", "owner", "heatZoneId", "sourceId", "snapshotId", "capturedAt", "correlationId",
     "submittedAt", "submitted_at", "assignmentId", "assignmentStatus", "slaInstanceId", "slaState", "dueAt", "slaDueAt",
     "assignedOwner", "assignedQueue", "target_owner_role"].every((key) => text(value[key]))) return false;
   // The existing detail also renders legacy assignment metadata and history.
@@ -116,9 +117,12 @@ function hasColdIntakeRecord(value: unknown, id: string): value is AssistedIntak
   }
   if (value.matchResult != null) {
     const match = value.matchResult;
-    if (!readObject(match) || !["outcome", "outcomeLabel", "summary"].every((key) => typeof match[key] === "string")
-      || !text(match.targetListingId) || !["agreeingSignals", "contradictingSignals"].every((key) => Array.isArray(match[key])
-        && match[key].every((signal) => readObject(signal) && ["key", "label", "detail"].every((field) => typeof signal[field] === "string")))) return false;
+    if (!readObject(match) || match.outcome != null && !isMatchOutcome(match.outcome)
+      || !["outcomeLabel", "summary", "targetListingId"].every((key) => text(match[key]))
+      || match.confidence != null && matchConfidence(match.confidence) === null
+      || !["agreeingSignals", "contradictingSignals"].every((key) => match[key] == null
+        || Array.isArray(match[key]) && match[key].every((signal) => readObject(signal)
+          && ["key", "label", "detail"].every((field) => typeof signal[field] === "string")))) return false;
   }
   return true;
 }

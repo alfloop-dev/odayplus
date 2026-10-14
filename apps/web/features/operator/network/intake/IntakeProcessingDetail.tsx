@@ -325,7 +325,8 @@ export function hasAuthoritativeTargetEvidence(
   targetListing?: TargetListingData | null,
 ): boolean {
   const match = record.matchResult;
-  if (!match?.targetListingId || !targetListing || targetListing.id !== match.targetListingId) {
+  if (!match?.targetListingId || !["POSSIBLE_MATCH", "REVISION", "EXACT_DUPLICATE"].includes(match.outcome ?? "")
+    || !targetListing || targetListing.id !== match.targetListingId) {
     return false;
   }
   const hasValue = [

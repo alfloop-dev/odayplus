@@ -775,13 +775,25 @@ def test_actual_legacy_version_unknown_remains_unverified_no_default_one(tmp_pat
     harness.close()
 
 
-def test_human_approval_v1_latest_v2_does_not_invent_new_report_resubmission_policy(tmp_path):
-    harness, resolver, candidate, _, context = setup(tmp_path)
+def test_approved_v1_newer_v2_opens_separate_round_preserving_original_sql_graph(tmp_path):
+    from shared.infrastructure.persistence.repositories import DurableRealizedSiteStore
+    from shared.workflow.sitescore import CandidateSiteRealizationHook, DecisionStatus
+
+    harness, _, candidate, first, context = setup(tmp_path)
+    decisions = harness.decisions(TENANT)
+    approvals = DurableApprovalRepository(harness.scoped(TENANT))
+    realized = DurableRealizedSiteStore(harness.scoped(TENANT))
+    # Explicit same-engine real producer composition, not a fabricated row or
+    # a claim that the production realization callback is already wired.
+    resolver = harness.bundle.network_review_resolver(
+        hooks=(CandidateSiteRealizationHook(realized),)
+    )
     receipt = invoke(resolver, "submit_review", **arguments(context))
+    original_id = receipt["records"]["decisionId"]
     invoke(
         resolver,
         "decide_review",
-        review_id=receipt["records"]["decisionId"],
+        review_id=original_id,
         decision="GO",
         reason="Separate actor verifies the retained human approval inputs",
         actor_role_id="site_reviewer",
@@ -793,15 +805,85 @@ def test_human_approval_v1_latest_v2_does_not_invent_new_report_resubmission_pol
         idempotency_key="terminal-key",
         correlation_id="terminal-correlation",
     )
-    harness.sitescore(TENANT).save_report(
+    original = decisions.get_decision(original_id)
+    assert original.status is DecisionStatus.APPROVED
+    assert approvals.get(original.approval_id).approval_status == "approved"
+    assert realized.get(candidate).decision_id == original_id
+
+    def original_graph():
+        physical = deepcopy(harness.listing(TENANT).list_candidates()[0])
+        physical.review_id = None
+        return deepcopy({
+            "decision": decisions.get_decision(original_id),
+            "approval": approvals.get(original.approval_id),
+            "retainedV1": decisions.get_report(original_id),
+            "candidateExceptCurrentReviewPointer": physical,
+            "realizedSite": realized.get(candidate),
+        })
+
+    preserved = original_graph()
+    # The same saved report still cannot invent a second terminal review round.
+    before_same_report = durable_bytes(harness.bundle.engine)
+    with pytest.raises(NetworkReviewConflict, match="^NEWER_SAVED_REPORT_REQUIRED$"):
+        invoke(resolver, "submission_context", candidate_id=candidate, principal=AUTHOR)
+    assert durable_bytes(harness.bundle.engine) == before_same_report
+
+    second = harness.sitescore(TENANT).save_report(
         replace(report(), candidate_site_id=candidate, model_version="later-report-model")
     )
+    assert second.report_id != first.report_id and second.report_version == 2
     before = durable_bytes(harness.bundle.engine)
-    with pytest.raises(NetworkReviewConflict, match="TERMINAL"):
-        invoke(resolver, "submission_context", candidate_id=candidate, principal=AUTHOR)
+    next_context = invoke(
+        resolver, "submission_context", candidate_id=candidate, principal=AUTHOR
+    )
     assert durable_bytes(harness.bundle.engine) == before
-    assert len(harness.decisions(TENANT).list_decisions()) == 1
-    assert harness.listing(TENANT).list_candidates()[0].candidate_site.site_status == "approved"
+    assert original_graph() == preserved
+    assert next_context["source"] == "canonical" and next_context["canSubmit"] is True
+    assert next_context["pendingReview"] is None
+    assert next_context["actorSubjectId"] == AUTHOR.subject_id
+    assert next_context["tenantId"] == TENANT
+    assert next_context["previousReview"] == {
+        "decisionId": original_id, "decisionVersion": original.version,
+        "approvalId": original.approval_id, "approvalStatus": "approved",
+        "reportId": first.report_id, "reportVersion": first.report_version,
+        "modelVersion": first.model_version, "tenantId": TENANT,
+    }
+    assert next_context["target"]["decisionId"] is None
+    assert next_context["target"]["expectedDecisionVersion"] is None
+    assert next_context["target"]["expectedCandidateReviewId"] == original_id
+    assert next_context["target"]["expectedCandidateState"] == "approved"
+    assert next_context["target"]["expectedReportId"] == second.report_id
+    assert next_context["target"]["expectedReportVersion"] == second.report_version
+
+    next_arguments = arguments(next_context, idempotency_key="new-report-round-key")
+    new_receipt = invoke(resolver, "submit_review", **next_arguments)
+    new_id = new_receipt["records"]["decisionId"]
+    new = decisions.get_decision(new_id)
+    assert new_id != original_id and new.approval_id != original.approval_id
+    assert new.previous_decision_id == original_id
+    assert new.status is DecisionStatus.PENDING_REVIEW and new.version == 2
+    assert new.created_by == AUTHOR.subject_id and new.submitted_by == AUTHOR.subject_id
+    assert new.created_by_verified is True and new.submission_actor_verified is True
+    assert new.tenant_id == TENANT and new.candidate_site_id == candidate
+    assert new.report_id == second.report_id and new.report_version == second.report_version
+    assert new.model_version == second.model_version
+    assert decisions.get_report(new_id) == second
+    assert decisions.get_report(original_id) == first
+    new_approval = approvals.get(new.approval_id)
+    assert new_approval.decision_id == new_id
+    assert new_approval.approval_status == "pending"
+    assert new_receipt["commandReceipt"]["previousDecisionId"] == original_id
+    assert new_receipt["commandReceipt"]["candidateState"] == "approved"
+    physical = harness.listing(TENANT).list_candidates()[0]
+    assert physical.review_id == new_id and physical.candidate_site.site_status == "approved"
+    assert len(decisions.list_decisions()) == 2
+    assert original_graph() == preserved
+
+    before_replay = durable_bytes(harness.bundle.engine)
+    replay = invoke(resolver, "submit_review", **next_arguments)
+    assert replay["idempotentReplay"] is True and replay["records"] == new_receipt["records"]
+    assert durable_bytes(harness.bundle.engine) == before_replay
+    assert original_graph() == preserved and harness.runtime.calls == []
     harness.close()
 
 
