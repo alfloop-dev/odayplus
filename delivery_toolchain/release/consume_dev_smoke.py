@@ -815,10 +815,30 @@ def consume(*, inputs: NativeInputs, environment: dict[str, str], sha: str, dige
         # Canonical checks are unchanged; this wrapper also owns unconditional
         # cleanup on every evaluator exit, including early provenance refusal.
         # Never spawn the CLI or populate credential env/per-field fallback.
+        def work_clock() -> float:
+            moment = time.monotonic()
+            if moment >= started + 480 or latch.latched:
+                web._unknown()
+                raise ConsumerRefused()
+            return moment
+
+        def work_sleep(seconds: float) -> None:
+            remaining = started + 480 - work_clock()
+            # Sleep is outside request guards: never nest ITIMER_REAL contexts.
+            # Both the real timer and final clock fence protect the reserve.
+            try:
+                with _absolute_deadline(started + 480):
+                    time.sleep(min(seconds, remaining))
+                work_clock()
+            except ConsumerRefused:
+                web._unknown()
+                raise
+
+        work_clock()
         _, report = gate.evaluate_gate(config, http=api, web_http=web,
             worker_driver=gate.ScheduledWorkerDriver(), correlation_id=correlation,
-            now=datetime.now(UTC).isoformat())
-        if time.monotonic() >= started + 540 or not web.release_identity_verified or latch.latched:
+            now=datetime.now(UTC).isoformat(), monotonic=work_clock, sleep=work_sleep)
+        if time.monotonic() >= started + 480 or not web.release_identity_verified or latch.latched:
             raise ConsumerRefused()
         return safe_consumption_report(report, ack_times=web.ack_times, job_created=created,
                                        sha=sha, digest=digest, run_id=run_id)

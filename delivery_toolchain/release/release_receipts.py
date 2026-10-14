@@ -180,7 +180,7 @@ def _collect_keyed_secret_values(value: Any, output: list[str], *, key: str = ""
             if _is_sensitive_key(child_name) and isinstance(child_value, str):
                 output.append(child_value)
             _collect_keyed_secret_values(child_value, output, key=child_name)
-    elif isinstance(value, list):
+    elif isinstance(value, (list, tuple)):
         for child in value:
             _collect_keyed_secret_values(child, output, key=key)
 

@@ -943,6 +943,29 @@ else:
         # balancers that must not be asked to learn a version prefix.
         platform_router = APIRouter()
 
+        def _job_principal(request: Request) -> Any:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.auth import ANONYMOUS, Action
+            try:
+                return principal_from_headers(request.headers)
+            except HTTPException as exc:
+                principal = getattr(exc, "_verified_principal", ANONYMOUS)
+                _record_job_denial(exc, principal, request,
+                                   Action.VIEW if request.method == "GET" else Action.CREATE)
+                raise
+
+        def _validate_job_fields(payload: Any) -> None:
+            pending = [payload]
+            while pending:
+                node = pending.pop()
+                if isinstance(node, dict):
+                    if "fields" in node and (not isinstance(node["fields"], list)
+                            or any(not isinstance(field, dict) for field in node["fields"])):
+                        raise HTTPException(422, detail={"code": "JOB_FIELDS_INVALID"})
+                    pending.extend(node.values())
+                elif isinstance(node, list):
+                    pending.extend(node)
+
         def _job_audit_marker(request: Request) -> Any:
             marker = getattr(request.state, "job_denial_marker", None)
             if marker is None:
@@ -951,6 +974,7 @@ else:
             return marker
 
         def _record_job_denial(exc: HTTPException, principal: Any, request: Request, action: Any, job: Any = None) -> None:
+            exc._verified_principal = principal
             if exc.status_code not in (403, 404) or getattr(exc, "_job_denial_marker", None) is _job_audit_marker(request):
                 return
             from shared.audit import build_security_event
@@ -959,7 +983,7 @@ else:
             safe_reasons = {"JOB_MODULE_FORBIDDEN", "FORECAST_MODULE_FORBIDDEN", "MODULE_SCOPE_DENIED", "SCOPE_DENIED", "OWNERSHIP_REQUIRED",
                             "JOB_ITEM_SCOPE_INVALID", "BATCH_INTAKE_RETRY_FORBIDDEN", "JOB_TYPE_READ_FORBIDDEN",
                             "EXTERNAL_FETCH_VIEW_FORBIDDEN", "FORECAST_EXECUTE_FORBIDDEN", "BATCH_INTAKE_FORBIDDEN",
-                            "JOB_TYPE_CREATE_FORBIDDEN", "TENANT_SCOPE_MISMATCH"}
+                            "JOB_TYPE_CREATE_FORBIDDEN", "TENANT_SCOPE_MISMATCH", "PASSWORD_CHANGE_REQUIRED"}
             if not isinstance(reason, str) or reason not in safe_reasons:
                 reason = "JOB_AUTHORIZATION_DENIED"
             correlation_id = CorrelationContext.from_header(getattr(request.state, "correlation_id", None)).correlation_id
@@ -1168,12 +1192,14 @@ else:
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
-            from apps.api.oday_api.security.dependencies import principal_from_headers
 
             try:
                 return _enqueue_job_response(body, request, idempotency_key)
             except HTTPException as exc:
-                principal = principal_from_headers(request.headers)
+                from shared.auth import ANONYMOUS
+                # Rotation/authorization has already supplied the verified
+                # actor. Never repeat the dependency that caused the refusal.
+                principal = getattr(exc, "_verified_principal", ANONYMOUS)
                 audit_log.record(
                     AuditEvent(
                         event_type="job.enqueue",
@@ -1190,9 +1216,8 @@ else:
         def _enqueue_job_response(
             body: JobCreatePayload, request: Request, idempotency_key: str | None,
         ) -> dict[str, Any]:
-            from apps.api.oday_api.security.dependencies import principal_from_headers
             from shared.auth import Action
-            principal = principal_from_headers(request.headers)
+            principal = _job_principal(request)
             if not principal.authenticated:
                 raise HTTPException(401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
             try:
@@ -1260,6 +1285,7 @@ else:
                     for k, v in payload.items()
                     if k not in ("receipt", "summary", "delivery_state", "status", "_retry_count")
                 }
+                _validate_job_fields(payload)
                 raw_items = payload.get("items") or payload.get("rows")
                 principal = principal_from_headers(request.headers)
                 normalized_items: list[dict[str, Any]] = []
@@ -1427,9 +1453,8 @@ else:
                     raise
 
         def _authorize_job_access(job: Any, request: Request) -> None:
-            from apps.api.oday_api.security.dependencies import principal_from_headers
             from shared.auth import Action
-            principal = principal_from_headers(request.headers)
+            principal = _job_principal(request)
             try:
                 _check_job_access(job, request, principal)
             except HTTPException as exc:
@@ -1504,8 +1529,7 @@ else:
             return res
 
         def _get_job_response(job_id: str, request: Request) -> dict[str, Any]:
-            from apps.api.oday_api.security.dependencies import principal_from_headers
-            if not principal_from_headers(request.headers).authenticated:
+            if not _job_principal(request).authenticated:
                 raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
             job = job_queue.get(job_id)
             if job is None:
@@ -1517,10 +1541,9 @@ else:
             return _get_job_response(job_id, request)
 
         def _retry_job_response(job_id: str, body: JobRetryPayload | None, request: Request) -> dict[str, Any]:
-            from apps.api.oday_api.security.dependencies import principal_from_headers
             from shared.auth import Action
             # Authenticate BEFORE existence/state lookup, as generic GET does.
-            principal = principal_from_headers(request.headers)
+            principal = _job_principal(request)
             if not principal.authenticated:
                 raise HTTPException(401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
             try:
@@ -1578,6 +1601,9 @@ else:
                         },
                         headers={"WWW-Authenticate": "Bearer"},
                     )
+                # Unsupported mutation is not permission to discover another
+                # tenant's job or its type. Preserve400 only for visible jobs.
+                _authorize_job_access(job, request)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail={

@@ -508,12 +508,16 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
     # Mask the canonical v1 FieldValue collection according to each field's
     # declared classification. Field names are not a safe substitute for the
     # classification carried by the contract.
+    if "fields" in masked and not isinstance(masked["fields"], list) and clearance < DataClassification.RESTRICTED:
+        masked["fields"] = None
     if "fields" in masked and isinstance(masked["fields"], list):
         fields = []
         masked_field_paths = list(masked.get("masked_fields") or [])
         for field_info in masked["fields"]:
             if not isinstance(field_info, dict):
-                fields.append(field_info)
+                # No classification contract: legacy malformed values stay
+                # restricted, just like other unknown import columns.
+                fields.append(field_info if clearance >= DataClassification.RESTRICTED else None)
                 continue
 
             field_info_copy = field_info.copy()
@@ -529,6 +533,8 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
                 field_class = DataClassification.HIGHLY_RESTRICTED
 
             if clearance < field_class:
+                field_info_copy = {key: value for key, value in field_info_copy.items()
+                                   if key in {"field_path", "classification"}}
                 for value_key in ("parsed", "normalized", "corrected", "effective"):
                     field_info_copy[value_key] = None
                 field_info_copy["masked"] = True
@@ -624,10 +630,11 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
             if "classification" in node and any(key in node for key in ("parsed", "normalized", "corrected", "effective")):
                 view = mask_intake(principal, {"fields": [node]})["fields"][0]
                 node.update(view)
-            if isinstance(node.get("fields"), list):
+            if "fields" in node:
                 view = mask_intake(principal, {"fields": node["fields"]})
                 node["fields"] = view["fields"]
-                node["masked_fields"] = view["masked_fields"]
+                if "masked_fields" in view:
+                    node["masked_fields"] = view["masked_fields"]
             pending_nodes.extend(node.values())
         else:
             pending_nodes.extend(node)

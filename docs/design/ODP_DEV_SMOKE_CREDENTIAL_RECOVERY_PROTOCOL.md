@@ -1134,3 +1134,11 @@ empty/unrestricted sentinel or falling back to secondary grants. Runtime admissi
 shares the registry's GO human-signoff shape predicate before lease consumption;
 shape consistency is NOT actual human approval. All source/canonical/Human-Ops,
 operational/business/F11 HOLDs and original measurement limits remain unchanged.
+Malformed field collections cannot bypass restricted raw-data masking; new malformed
+collections refuse before enqueue. Persisted SQL scope restrictions validate runtime
+shapes rather than becoming unrestricted grants. Password-rotation refusals preserve
+verified actor/canonical and domain denial without re-authentication. Unsupported job
+retry requires visibility before revealing type. Native polling/sleep honors the480s
+work deadline and immediate uncertainty stop without consuming540s cleanup reserve.
+Receipt redaction discovers tuple-held secrets as well as their neutral-key echoes.
+These repairs do not authorize canonical publication, recovery, deployment or F11.

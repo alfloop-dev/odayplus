@@ -309,7 +309,11 @@ def _enforce_password_rotation(principal: Principal, boundary: Any) -> None:
         raise
     if must_change:
         if HTTPException is not None:
-            raise HTTPException(status_code=403, detail=PASSWORD_CHANGE_REQUIRED)
+            refusal = HTTPException(status_code=403, detail=PASSWORD_CHANGE_REQUIRED)
+            # Private exception context preserves the already verified actor
+            # for request-aware denial recording, without re-authentication.
+            refusal._verified_principal = principal
+            raise refusal
         raise AuthorizationError(
             Decision.deny("password change required", policy_id="identity.password_rotation")
         )

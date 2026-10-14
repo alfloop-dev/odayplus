@@ -652,7 +652,7 @@ def test_plain_env_flags_or_unsigned_jwt_are_not_native_proof(offline_signing_ke
 @pytest.mark.parametrize("failure", [None, "oidc", "source", "admission", "gate", "canonical",
     "canonical-users", "canonical-audit", "canonical-ack", "canonical-principal",
     "canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown",
-    "canonical-duplicate-cookie", "canonical-serving-identity", "canonical-read-cookie", "canonical-redirect-cookie", "canonical-header-loss", "canonical-header-defect"])
+    "canonical-duplicate-cookie", "canonical-serving-identity", "canonical-read-cookie", "canonical-redirect-cookie", "canonical-header-loss", "canonical-header-defect", "canonical-queued", "canonical-poll-uncertain"])
 def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatch, failure):
     # Entirely MOCKED authority/runtime; no network/live receipt. Proves wiring.
     import httpx
@@ -732,7 +732,18 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                 (f.base, "API_URL", c.API_ORIGIN), (f.base, "EXPECTED_SHA", SHA),
                 (f.base, "CORRELATION_ID", "corr-native-consumer-123")):
             monkeypatch.setattr(module, name, value)
-        api = f.base.FakeHttp(f.api_routes())
+        clock = f.base.FakeClock()
+        if failure in {"canonical-queued", "canonical-poll-uncertain"}:
+            from types import SimpleNamespace
+            # Test-only process-clock projection; never patch global time or
+            # relax native work/cleanup limits. Production guards remain real.
+            monkeypatch.setattr(c, "time", SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep))
+        api_routes = f.api_routes()
+        if failure in {"canonical-queued", "canonical-poll-uncertain"}:
+            api_routes[f"GET /api/v1/jobs/{f.base.JOB_ID}"] = (
+                f.base.terminal_job(f.base.JOB_ID, status="queued") if failure == "canonical-queued"
+                else f.base.response(0, error="fixture uncertain poll"))
+        api = f.base.FakeHttp(api_routes)
         api._bearer_token = "offline-generated-application"
         routes = f.web_routes(**{
             "GET /api/v1/operator/users [session]": f.base.response(200, {"users": [user]}),
@@ -842,6 +853,22 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
         monkeypatch.setattr(c.gate, "_web_client", lambda *args: web)
         canonical_evaluate = c.gate.evaluate_gate
         def inspected_evaluate(*args, **kwargs):
+            if failure in {"canonical-queued", "canonical-poll-uncertain"}:
+                # Parent lacks the guarded callbacks; fixture defaults expose
+                # its600s wait. Successor must supply the REAL native guards.
+                assert kwargs["web_http"].deadline == 480 and kwargs["web_http"].cleanup_deadline == 540
+                # Establish owned custody BEFORE a stalled worker; without this
+                # trigger, an empty logout assertion would prove no reserve.
+                login = kwargs["web_http"].request("POST", "/login", authenticated=False,
+                    body={"username": inputs.bundle.username, "password": inputs.bundle.password, "returnTo": c._FORM_RETURN_TO},
+                    headers={"content-type": "application/json", "accept": "application/json", "origin": c.WEB_ORIGIN})
+                assert login.status == 200 and kwargs["web_http"]._owned
+                kwargs.setdefault("monotonic", clock.monotonic)
+                kwargs.setdefault("sleep", clock.sleep)
+            else:
+                # Existing cases are synthetic wiring/custody proofs, not real
+                # polling latency measurements. Preserve configured intervals.
+                kwargs.update(monotonic=clock.monotonic, sleep=clock.sleep)
             checks, report = canonical_evaluate(*args, **kwargs)
             failed = [check.name for check in checks if check.ok is not True]
             if failure == "canonical" and failed:
@@ -877,7 +904,11 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                                for path, headers in web.headers_seen)
                     assert any(path == "GET /api/v1/auth/principal" and headers.get("cookie") == cookie
                                for path, headers in web.headers_seen)
-            uncertain = {"canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown",
+            if failure in {"canonical-queued", "canonical-poll-uncertain"}:
+                assert clock.value <= (480 if failure == "canonical-queued" else 10)
+                assert 540 - clock.value >= 60
+                assert any(path == "POST /auth/logout" for path, _ in web.headers_seen)
+            uncertain = {"canonical-queued", "canonical-poll-uncertain", "canonical-malformed-login", "canonical-lost-login", "canonical-logout-unknown",
                          "canonical-duplicate-cookie", "canonical-serving-identity", "canonical-read-cookie", "canonical-redirect-cookie", "canonical-header-loss", "canonical-header-defect"}
             owned_cookies = {f"{f.SESSION_COOKIE}={f.SESSION_VALUE}"}
             if failure in {"canonical-duplicate-cookie", "canonical-read-cookie", "canonical-redirect-cookie"}:
@@ -892,6 +923,7 @@ def test_composed_consumer_pipeline_is_fenced_and_drops_native_gh_env(monkeypatc
                             else seen.index("GET /api/v1/platform/release-identity") if failure == "canonical-serving-identity"
                             else seen.index("GET /api/v1/operator/users") if failure in {"canonical-header-loss", "canonical-header-defect"}
                             else next(i for i, (p, h) in enumerate(web.headers_seen) if p == "GET /auth/session" and h.get("cookie") == f"{f.SESSION_COOKIE}={f.SESSION_VALUE}") if failure in {"canonical-read-cookie", "canonical-redirect-cookie"}
+                            else len(seen) - 1 if failure in {"canonical-queued", "canonical-poll-uncertain"}
                             else [i for i, p in enumerate(seen) if p == "POST /login"][1])
                 after = web.headers_seen[latch_at + 1:]
                 assert all(path in {"GET /auth/session", "GET /api/v1/auth/principal", "POST /auth/logout"}

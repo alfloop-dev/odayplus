@@ -387,10 +387,14 @@ class AuthenticationBoundary:
         if account.tenant_id != tenant_uuid:
             return ANONYMOUS, AuthFailureReason.TENANT_MISMATCH, token_type
 
+        try:
+            scope = self._identity_store.get_account_scope(account.account_id)
+        except ValueError:
+            return ANONYMOUS, AuthFailureReason.BOUNDARY_NOT_CONFIGURED, token_type
         principal = Principal(
             subject_id=str(account.account_id),
             roles=self._identity_store.get_account_roles(account.account_id),
-            scope=self._identity_store.get_account_scope(account.account_id),
+            scope=scope,
             attributes={
                 "email": account.email,
                 "username": account.username,
@@ -448,7 +452,10 @@ class AuthenticationBoundary:
                 return ANONYMOUS, AuthFailureReason.ACCOUNT_INACTIVE, token_type
 
             roles = self._identity_store.get_account_roles(account.account_id)
-            scope = self._identity_store.get_account_scope(account.account_id)
+            try:
+                scope = self._identity_store.get_account_scope(account.account_id)
+            except ValueError:
+                return ANONYMOUS, AuthFailureReason.BOUNDARY_NOT_CONFIGURED, token_type
             principal = Principal(
                 subject_id=str(account.account_id),
                 roles=roles,
