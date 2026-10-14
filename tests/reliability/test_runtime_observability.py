@@ -5987,7 +5987,16 @@ def test_b41b_every_metric_definition_in_the_repo_declares_an_owner() -> None:
                         ranges.append((node.lineno, node.end_lineno or node.lineno))
         return ranges
 
-    for path in root.rglob("*.py"):
+    def included_python_paths():
+        # Prune only directories the original scan already excluded. Do not
+        # traverse dependency trees before deciding to ignore their contents.
+        for parent, directories, files in os.walk(root, topdown=True, followlinks=False):
+            directories[:] = [name for name in directories if name not in skip_parts]
+            for name in files:
+                if name.endswith(".py"):
+                    yield Path(parent) / name
+
+    for path in included_python_paths():
         if skip_parts.intersection(path.parts):
             continue
         try:
@@ -6009,6 +6018,34 @@ def test_b41b_every_metric_definition_in_the_repo_declares_an_owner() -> None:
             offenders.append(f"{path.relative_to(root)}:{node.lineno}")
 
     assert not offenders, f"MetricDefinition sites without an explicit owner: {offenders}"
+
+
+def test_b41c_owner_scan_prunes_only_excluded_directories(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "module" / "metrics.py"
+    source.parent.mkdir()
+    source.write_text("MetricDefinition('valid', owner='operations')")
+    for excluded in (".git", ".venv", "venv", "node_modules", "__pycache__"):
+        path = tmp_path / "nested" / excluded / "ownerless.py"
+        path.parent.mkdir(parents=True)
+        path.write_text("MetricDefinition('excluded')")
+    visited = []
+    walk = os.walk
+
+    def observed(*args, **kwargs):
+        for entry in walk(*args, **kwargs):
+            visited.append(Path(entry[0]))
+            yield entry
+
+    monkeypatch.setattr(os, "walk", observed)
+    monkeypatch.setitem(globals(), "__file__", str(tmp_path / "tests" / "reliability" / "scanner.py"))
+    test_b41b_every_metric_definition_in_the_repo_declares_an_owner()
+    assert all(p.name not in {".git", ".venv", "venv", "node_modules", "__pycache__"} for p in visited)
+    source.write_text("MetricDefinition('ownerless')")
+    with pytest.raises(AssertionError, match="MetricDefinition sites without an explicit owner"):
+        test_b41b_every_metric_definition_in_the_repo_declares_an_owner()
+    # Expected-failure probes remain excluded by AST context, not file location.
+    source.write_text("with pytest.raises(ValueError):\\n    MetricDefinition('probe')\\n")
+    test_b41b_every_metric_definition_in_the_repo_declares_an_owner()
 
 
 def test_b42_alerts_runbook_anchors_and_headings_are_valid() -> None:

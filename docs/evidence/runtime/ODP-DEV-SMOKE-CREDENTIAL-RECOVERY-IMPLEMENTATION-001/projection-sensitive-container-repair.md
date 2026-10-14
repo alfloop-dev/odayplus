@@ -63,6 +63,20 @@ retained and corrected using SQL provenance, never loosened assertions. Final ex
 PG role/scope/admin-wait/job/receipt controls pass. Requires ALL fresh successor
 measurements/reviews; a53's partial and50be's green evidence never transfers.
 
+## Fixture-only owner-scan traversal
+
+Normal successor of9aa426e96056011988df9a73745dd70223c6ef8d (source SQL repair committed,
+not yet comprehensively measured). Prune ONLY already-excluded .git/.venv/venv/
+node_modules/__pycache__ directories before traversal, not after rglob. Source AST
+owner checks, ownerless negative controls and expected-failure exemptions unchanged.
+New fixture checks excluded directories are not visited, included ownerless sites
+still fail and negative probes still pass. Observer equality on current worktree:
+1267 included Python paths in BOTH scans, zero omissions/additions, old12.179s and
+pruned2.785s. This is local diagnostic cost, NOT historical timeout cause, future
+suite duration guarantee or replacement comprehensive proof. No test selection or
+assertion removed and no source-directory exemption added. ALL fresh final-head
+measurements and independent scoped reviews remain required.
+
 1200s serial/5000ms Vitest/300kB Web/Argon64MiB-time3/native480/540s and all request/
 byte/lifetime/cleanup caps, production randomness, assertions and infrastructure guards
 remain. No source amendment, receipt transfer, canonical publication or operational
