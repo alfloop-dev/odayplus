@@ -77,6 +77,17 @@ suite duration guarantee or replacement comprehensive proof. No test selection o
 assertion removed and no source-directory exemption added. ALL fresh final-head
 measurements and independent scoped reviews remain required.
 
+## Static-SQL correction after74b fresh measurements
+
+74b4d8fa9211376a782c1779d8c4ec0d16ca9aae/tree31be772c10225f24c62aca71f5c94b48dca90f0f
+completed ALL17 terminal author selections:15pass/TWO failures. Fullserial1195.754s
+PASS under unchanged1200s. SAST failed B608 on constant-only constructed SELECT;
+no suppression/rule relaxation: replace with six explicit static SQL literals with
+identical jsonb_typeof aliases. Job-read composition420.065s124 is preserved as failed;
+partial406.144s passes, no timeout-cause claim or progress substitution. Planned static
+review coordinator stopped while waiting, before packet builds/CLI (zero new reviews).
+All17 final successor selections and fresh reviews required; no head/receipt transfer.
+
 1200s serial/5000ms Vitest/300kB Web/Argon64MiB-time3/native480/540s and all request/
 byte/lifetime/cleanup caps, production randomness, assertions and infrastructure guards
 remain. No source amendment, receipt transfer, canonical publication or operational
