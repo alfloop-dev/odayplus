@@ -134,6 +134,72 @@ describe("cold authorized resource read while shell persona is unavailable", () 
 });
 
 describe("cold read metadata passed to the existing detail renderer", () => {
+  it("renders the actual PB19 partial match shape without inferring classification, signals, or commands", async () => {
+    // Actual PB19 readback had only these three match fields; values here are
+    // explicit unit vectors, not runtime owner or visual acceptance evidence.
+    const value = { ...record(), stage: "READY", matchResult: {
+      targetListingId: "OWN-TARGET", confidence: 0.82, summary: "Recorded match summary",
+    } };
+    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => String(input) === "/auth/session"
+      ? json({ subject: "A", expiresAt: Math.floor(Date.now() / 1000) + 3600 }) : json(value));
+    vi.stubGlobal("fetch", fetch);
+    render(<ColdIntakeDetail intakeId="OWN-INTAKE" onClose={vi.fn()} />);
+    expect(await screen.findByTestId("intake-detail-id")).toHaveTextContent("OWN-INTAKE");
+    for (const id of ["intake-submission-summary", "intake-processing-stages", "intake-source-policy-evidence",
+      "intake-parsed-lineage", "intake-match-evidence-section", "intake-receipts-section", "intake-timeline-audit-section"])
+      expect(screen.getByTestId(id)).toBeInTheDocument();
+    expect(screen.getByTestId("evidence-target-id")).toHaveTextContent("OWN-TARGET");
+    expect(screen.getByTestId("evidence-code-val")).toHaveTextContent("UNAVAILABLE");
+    expect(screen.getByTestId("match-evidence-sr-summary")).toHaveTextContent("Recorded match summary");
+    expect(screen.getByTestId("match-evidence-sr-summary")).toHaveTextContent("0.82");
+    expect(screen.getByTestId("agreeing-signals-unavailable")).toBeInTheDocument();
+    expect(screen.getByTestId("contradicting-signals-unavailable")).toBeInTheDocument();
+    expect(screen.getByTestId("compare-agree-count")).toHaveTextContent("UNAVAILABLE");
+    expect(screen.getByTestId("compare-con-count")).toHaveTextContent("UNAVAILABLE");
+    expect(screen.getByTestId("intake-change-summary")).not.toHaveTextContent("無重大矛盾");
+    expect(screen.getByTestId("intake-audit-references")).toHaveTextContent("OWN-AUDIT");
+    expect(screen.queryByTestId("intake-detail-actions")).toBeNull();
+    expect(screen.queryByTestId("asg-btn-claim")).toBeNull();
+    expect(fetch.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+  it("retains legitimate nullable native policy labels and partial match fields as unavailable", async () => {
+    const value = { ...record(), policyLabel: null, policyReason: null, matchResult: {
+      outcome: null, outcomeLabel: null, confidence: null, targetListingId: null,
+      agreeingSignals: null, contradictingSignals: null, summary: null,
+    } };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input) === "/auth/session"
+      ? json({ subject: "A", expiresAt: Math.floor(Date.now() / 1000) + 3600 }) : json(value)));
+    render(<ColdIntakeDetail intakeId="OWN-INTAKE" onClose={vi.fn()} />);
+    expect(await screen.findByTestId("intake-detail-id")).toHaveTextContent("OWN-INTAKE");
+    expect(screen.getByTestId("evidence-policy-reason")).toHaveTextContent("UNAVAILABLE");
+    expect(screen.getByTestId("compare-confidence-val")).toHaveTextContent("UNAVAILABLE");
+    expect(screen.getByTestId("compare-confidence-val")).not.toHaveTextContent("0%");
+    expect(screen.getByTestId("match-evidence-sr-summary")).not.toHaveTextContent("NaN");
+    expect(screen.queryByTestId("intake-detail-actions")).toBeNull();
+  });
+  it.each([
+    ["outcome", "UNKNOWN_CLASSIFICATION"], ["outcome", true], ["outcome", {}],
+    ["outcomeLabel", {}], ["summary", {}], ["targetListingId", {}],
+    ["confidence", "0.7"], ["confidence", true], ["confidence", {}], ["confidence", -0.1], ["confidence", 1.1],
+    ["agreeingSignals", {}], ["agreeingSignals", [null]],
+    ["agreeingSignals", [{ key: "own", label: {}, detail: "Owned" }]],
+    ["contradictingSignals", {}], ["contradictingSignals", [{ key: "own", label: "Owned", detail: {} }]],
+  ])("refuses malformed provided partial match %s before mounting the detail", async (key, invalid) => {
+    const match: Record<string, unknown> = { targetListingId: "OWN-TARGET", confidence: 0.82, summary: "Owned summary" };
+    match[String(key)] = invalid;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input) === "/auth/session"
+      ? json({ subject: "A", expiresAt: Math.floor(Date.now() / 1000) + 3600 }) : json({ ...record(), matchResult: match })));
+    render(<ColdIntakeDetail intakeId="OWN-INTAKE" onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "重新讀取收件" });
+    expect(screen.queryByTestId("intake-detail-dialog")).toBeNull();
+  });
+  it.each(["policyLabel", "policyReason"])("refuses an object-valued native %s rather than treating it as missing", async (field) => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input) === "/auth/session"
+      ? json({ subject: "A", expiresAt: Math.floor(Date.now() / 1000) + 3600 }) : json({ ...record(), [field]: {} })));
+    render(<ColdIntakeDetail intakeId="OWN-INTAKE" onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "重新讀取收件" });
+    expect(screen.queryByTestId("intake-detail-dialog")).toBeNull();
+  });
   it("renders an existing manual intake with no canonical URL in the inbox", () => {
     const value = { ...record(), originalUrl: null, canonicalUrl: null, parserVersion: null } as AssistedIntake;
     render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"

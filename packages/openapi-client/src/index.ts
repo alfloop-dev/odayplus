@@ -1912,13 +1912,14 @@ export type MatchSignalDto = {
 };
 
 export type MatchResultDto = {
-  outcome: MatchOutcome;
-  outcomeLabel: string;
-  confidence: number;
-  targetListingId: string | null;
-  agreeingSignals: MatchSignalDto[];
-  contradictingSignals: MatchSignalDto[];
-  summary: string;
+  /** Resource reads may retain only part of the recorded match evidence. */
+  outcome?: MatchOutcome | null;
+  outcomeLabel?: string | null;
+  confidence?: number | null;
+  targetListingId?: string | null;
+  agreeingSignals?: MatchSignalDto[] | null;
+  contradictingSignals?: MatchSignalDto[] | null;
+  summary?: string | null;
 };
 
 /**
@@ -1977,8 +1978,8 @@ export type AssistedIntake = {
   stage: IntakeStage;
   sourceId: string | null;
   policy: SourcePolicyState;
-  policyLabel: string;
-  policyReason: string;
+  policyLabel: string | null;
+  policyReason: string | null;
   rawSnapshot: Record<string, unknown> | null;
   snapshotId: string | null;
   capturedAt: string | null;

@@ -5,7 +5,7 @@ import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import type { IntakeApiError } from "./intakeClient";
-import { decisionTitle, matchLabel, shortUrl, stageLabel, type IntakeDecisionKind } from "./intakeTypes";
+import { decisionOptions, decisionTitle, matchConfidence, matchLabel, shortUrl, stageLabel, type IntakeDecisionKind } from "./intakeTypes";
 
 // "Dialog 收件決策確認" (UX-SCR-EXP-003D commit step).
 //
@@ -45,12 +45,17 @@ export function IntakeDecisionDialog({
   const [escapeBlocked, setEscapeBlocked] = useState(false);
 
   const title = decisionTitle(kind, record);
+  const decisionAvailable = decisionOptions(record).some((option) => option.kind === kind);
   const outcome = record.matchResult?.outcome;
   const target = record.matchResult?.targetListingId ?? "";
   const riskSummary = buildRiskSummary(record, kind, target);
 
   function handleSubmit() {
     if (busy) return;
+    if (!decisionAvailable) {
+      setLocalError("決策所需的比對分類尚未由 API 提供。");
+      return;
+    }
     // decide_intake ALWAYS requires a reason server-side (422 otherwise), so
     // the dialog never treats it as optional regardless of decision kind.
     if (!reason.trim()) {
@@ -172,7 +177,7 @@ export function IntakeDecisionDialog({
         <button
           className={styles.primaryButton}
           data-testid="intake-decide-submit"
-          disabled={busy}
+          disabled={busy || !decisionAvailable}
           onClick={handleSubmit}
           type="button"
         >
@@ -266,6 +271,6 @@ function buildSummaryRows(
 }
 
 function formatConfidence(record: AssistedIntake): string {
-  if (!record.matchResult) return "—";
-  return record.matchResult.confidence.toFixed(2);
+  const value = matchConfidence(record.matchResult?.confidence);
+  return value === null ? "UNAVAILABLE" : value.toFixed(2);
 }

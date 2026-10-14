@@ -13,7 +13,9 @@ import {
   guardSlaResource,
   validResourceVersion,
 } from "../AssistedIntakeSection";
-import { IntakeProcessingDetail, buildPreservedInput } from "../IntakeProcessingDetail";
+import { IntakeProcessingDetail, buildPreservedInput, hasAuthoritativeTargetEvidence } from "../IntakeProcessingDetail";
+import { IntakeDecisionDialog } from "../IntakeDecisionDialog";
+import { decisionOptions, matchConfidence } from "../intakeTypes";
 import { jobStatusBadgeColors } from "../IntakeStageTimeline";
 import { isSnapshotStale } from "../intakeFreshness";
 
@@ -1159,3 +1161,43 @@ function contrastRatio(background: string, foreground: string): number {
   const [lighter, darker] = [luminance(background), luminance(foreground)].sort((a, b) => b - a);
   return (lighter! + 0.05) / (darker! + 0.05);
 }
+
+describe("partial recorded match facts do not establish decision authority", () => {
+  it("keeps a target-only partial match readable without enabling warm decision actions", () => {
+    const record = intake({ stage: "READY", matchResult: {
+      targetListingId: "OWN-TARGET", confidence: 0.82, summary: "Recorded partial match",
+    } });
+    const onDecide = vi.fn();
+    render(<IntakeProcessingDetail record={record} onClose={vi.fn()} canDecide onDecide={onDecide} />);
+    expect(screen.getByTestId("evidence-target-id")).toHaveTextContent("OWN-TARGET");
+    expect(screen.getByTestId("evidence-code-val")).toHaveTextContent("UNAVAILABLE");
+    expect(screen.queryByTestId("intake-detail-actions")).toBeNull();
+    expect(decisionOptions(record)).toEqual([]);
+    expect(onDecide).not.toHaveBeenCalled();
+  });
+  it("requires recorded target-dependent classification even if target and named signals are available", () => {
+    const record = intake({ matchResult: {
+      targetListingId: "OWN-TARGET", confidence: 0.82, summary: "Recorded partial match",
+      agreeingSignals: [{ key: "address", label: "Address", detail: "Recorded signal", agrees: true }],
+    } });
+    expect(hasAuthoritativeTargetEvidence(record, { id: "OWN-TARGET", address: "Recorded target address" })).toBe(false);
+  });
+  it("does not submit a manually opened target decision for a partial match", () => {
+    const record = intake({ stage: "READY", matchResult: {
+      targetListingId: "OWN-TARGET", confidence: 0.82, summary: "Recorded partial match",
+    } });
+    const onSubmit = vi.fn();
+    render(<IntakeDecisionDialog record={record} kind="revise" busy={false} error={null} onClose={vi.fn()} onSubmit={onSubmit} />);
+    fireEvent.change(screen.getByTestId("intake-decide-reason"), { target: { value: "Own reason" } });
+    fireEvent.click(screen.getByTestId("intake-decide-risk-ack"));
+    expect(screen.getByTestId("intake-decide-submit")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("intake-decide-submit"));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+  it.each([null, undefined, NaN, Infinity, -0.1, 1.1, true, "0.7"])("does not coerce unavailable or invalid confidence %s to zero", (value) => {
+    expect(matchConfidence(value)).toBeNull();
+  });
+  it.each([0, 0.7, 1])("retains recorded confidence boundary %s", (value) => {
+    expect(matchConfidence(value)).toBe(value);
+  });
+});
