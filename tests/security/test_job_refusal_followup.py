@@ -1,5 +1,6 @@
 """Immutable-parent controls for malformed field custody and retry visibility."""
 
+from contextlib import contextmanager
 from copy import deepcopy
 
 import pytest
@@ -75,7 +76,62 @@ def test_existing_malformed_fields_never_escape_read_or_actual_replay(
         assert record.to_dict() == before
 
 
-from contextlib import contextmanager
+@pytest.mark.parametrize("alias", ["/jobs", "/api/v1/jobs"])
+def test_standalone_classified_summary_receipt_replaces_unsupported_values(
+    monkeypatch, alias, job_app
+):
+    key, bundle, app = job_app
+    boundary = boundary_for(key, modules=["listing"], clearance="CONFIDENTIAL")
+    monkeypatch.setattr(deps, "default_boundary", lambda: boundary)
+    headers = {"authorization": "Bearer " + _token(key, "offline-key")}
+    private = {
+        "classification": "HIGHLY_RESTRICTED",
+        "effective": "fixture-inline-private",
+        "raw_value": "fixture-inline-private",
+    }
+    public = {"classification": "PUBLIC", "effective": "visible-public"}
+    record = JobRecord(
+        job_type="batch-listing-intake",
+        payload={
+            "tenant_id": TENANT,
+            "items": [{"item_id": "one"}],
+            "summary": private,
+            "receipt": {"private": private, "public": public},
+        },
+        correlation_id="offline",
+    )
+    bundle.job_queue._jobs[record.job_id] = record
+    token = "inline-replay"
+    bundle.job_queue._idempotency_index[
+        f"batch-listing-intake:v2:{len(TENANT)}:{TENANT}:{len(token)}:{token}"
+    ] = record.job_id
+    before = deepcopy(record.to_dict())
+    seen = []
+    enqueue = bundle.job_queue.enqueue
+
+    def observed(*args, **kwargs):
+        result = enqueue(*args, **kwargs)
+        seen.append(result)
+        return result
+
+    monkeypatch.setattr(bundle.job_queue, "enqueue", observed)
+    with _client(app) as client:
+        responses = [
+            client.get(f"{alias}/{record.job_id}", headers=headers),
+            client.post(
+                alias,
+                headers={**headers, "Idempotency-Key": token},
+                json={
+                    "job_type": "batch-listing-intake",
+                    "payload": {"items": [{"item_id": "one"}]},
+                },
+            ),
+        ]
+    assert [r.status_code for r in responses] == [200, 202]
+    assert seen == [(record, False)] and responses[1].json()["created"] is False
+    for response in responses:
+        assert "fixture-inline-private" not in response.text and "visible-public" in response.text
+    assert record.to_dict() == before
 
 
 @contextmanager
@@ -151,7 +207,10 @@ def test_unsupported_retry_requires_visibility_before_type_response(
                 audiences=frozenset({"oday-api"}),
                 jwks_uri="https://offline.invalid/jwks",
                 principal_mappings={
-                    "operator-real-1": {"roles": ["data_owner", "operations_manager"], "scope": {"tenant_id": TENANT}}
+                    "operator-real-1": {
+                        "roles": ["data_owner", "operations_manager"],
+                        "scope": {"tenant_id": TENANT},
+                    }
                 },
             ),
             key_resolver=JwksResolver(

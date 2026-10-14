@@ -30,6 +30,51 @@ from tests.security._offline_job_app import offline_job_app as offline_job_app
 from tests.security.test_auth_composition_extension import isolation as isolation
 
 
+def test_unrelated_admin_edit_never_converts_invalid_scope_to_unrestricted(stack):
+    from tests.identity.test_identity_user_role_management import _invited_account
+
+    s = stack
+    admin = _bootstrap_admin(s)
+    _rotate_password(s, admin)
+    target = _invited_account(s, "projection-target", "data_owner")
+    _q(
+        s,
+        "INSERT INTO identity.account_scopes(account_id,modules) VALUES (%s,%s::jsonb) RETURNING account_id",
+        (target, json.dumps({"forecastops": True})),
+    )
+    target_headers = _sign_in(s, target)
+    assert not s.boundary.authenticate(Credentials.from_headers(target_headers)).authenticated
+    before = _q(
+        s,
+        "SELECT display_name,modules FROM identity.accounts a JOIN identity.account_scopes sc USING(account_id) WHERE account_id=%s",
+        (target,),
+    )
+    response = s.client.post(
+        "/api/v1/operator/users",
+        headers=_sign_in(s, admin),
+        json={"subjectId": target, "roles": ["data_owner"], "name": "unrelated-edit"},
+    )
+    assert response.status_code == 422
+    assert (
+        _q(
+            s,
+            "SELECT display_name,modules FROM identity.accounts a JOIN identity.account_scopes sc USING(account_id) WHERE account_id=%s",
+            (target,),
+        )
+        == before
+    )
+    assert not s.boundary.authenticate(Credentials.from_headers(target_headers)).authenticated
+    # Explicit valid replacement is allowed, not a silently inferred empty grant.
+    response = s.client.post(
+        "/api/v1/operator/users",
+        headers=_sign_in(s, admin),
+        json={"subjectId": target, "roles": ["data_owner"], "scope": {"modules": ["forecastops"]}},
+    )
+    assert response.status_code == 200
+    outcome = s.boundary.authenticate(Credentials.from_headers(target_headers))
+    assert outcome.authenticated and not outcome.principal.scope.permits_module("integration")
+
+
 @pytest.mark.parametrize("provider", ["local", "oidc"])
 def test_sql_malformed_scope_is_authentication_refusal_not_unrestricted(
     stack, provider, monkeypatch, job_app

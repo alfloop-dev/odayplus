@@ -72,13 +72,21 @@ def _uuid_or_none(value: str | None) -> str | None:
         return None
 
 
-def _json_list(value: Any) -> list[str]:
+def _json_list(value: Any) -> Any:
+    # Projection is not validation: preserve malformed present restrictions so
+    # an omitted-axis edit cannot silently rewrite them into unrestricted [].
     if isinstance(value, str):
         try:
-            value = json.loads(value)
+            return json.loads(value)
         except ValueError:
-            return []
-    return [str(v) for v in value] if isinstance(value, list) else []
+            return value
+    return value
+
+
+def _validated_scope_axis(value: Any) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+        raise UserRolePolicyError("Invalid persisted/requested scope; explicit valid replacement required")
+    return sorted(set(value))
 
 
 class IdentityUserRoleManagementService:
@@ -112,7 +120,7 @@ class IdentityUserRoleManagementService:
         sql = (
             "SELECT a.account_id::text AS account_id, a.tenant_id::text AS tenant_id, "
             "a.username, a.email, a.display_name, a.status, a.updated_at, a.created_by, "
-            "a.disabled_reason, s.brand_ids, s.region_ids, s.store_ids, s.assigned_area_ids, "
+            "a.disabled_reason, s.account_id AS scope_account_id, s.brand_ids, s.region_ids, s.store_ids, s.assigned_area_ids, "
             "s.heat_zone_ids, s.modules, s.clearance "
             "FROM identity.accounts a "
             "LEFT JOIN identity.account_scopes s ON s.account_id = a.account_id "
@@ -140,9 +148,10 @@ class IdentityUserRoleManagementService:
     def _to_record(row: dict[str, Any], roles: list[str]) -> dict[str, Any]:
         updated = row.get("updated_at")
         scope: dict[str, Any] = {"tenant_id": row["tenant_id"]}
+        missing_scope = row.get("scope_account_id") is None
         for axis in _SCOPE_AXES:
-            scope[axis] = _json_list(row.get(axis))
-        scope["clearance"] = row.get("clearance") or DataClassification.CONFIDENTIAL.name
+            scope[axis] = [] if missing_scope else _json_list(row.get(axis))
+        scope["clearance"] = DataClassification.CONFIDENTIAL.name if missing_scope else row.get("clearance")
         return {
             "subject_id": row["account_id"],
             "username": row["username"],
@@ -454,16 +463,19 @@ class IdentityUserRoleManagementService:
             if requested is not None and "clearance" in requested and requested.get("clearance") is not None:
                 clearance = str(requested.get("clearance")).upper()
             else:
-                clearance = str(before.get("scope", {}).get("clearance") or DataClassification.CONFIDENTIAL.name).upper()
+                raw_clearance = before.get("scope", {}).get("clearance")
+                if not isinstance(raw_clearance, str) or raw_clearance.upper() not in DataClassification.__members__:
+                    raise UserRolePolicyError("Invalid persisted clearance; explicit valid replacement required")
+                clearance = raw_clearance.upper()
 
             # Merge omitted axes from authoritative before-state transactionally
             before_scope = before.get("scope") or {}
             axes: dict[str, list[str]] = {}
             for axis in _SCOPE_AXES:
                 if requested is not None and axis in requested and requested[axis] is not None:
-                    axes[axis] = sorted({str(v) for v in requested[axis]})
+                    axes[axis] = _validated_scope_axis(requested[axis])
                 else:
-                    axes[axis] = sorted({str(v) for v in (before_scope.get(axis) or [])})
+                    axes[axis] = _validated_scope_axis(before_scope.get(axis))
 
             self._engine.execute("DELETE FROM identity.account_roles WHERE account_id = ?", (account_id,))
             for role in new_roles:

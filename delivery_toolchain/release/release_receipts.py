@@ -173,16 +173,17 @@ def _redact_string(value: str, secret_values: Sequence[str]) -> str:
     return result
 
 
-def _collect_keyed_secret_values(value: Any, output: list[str], *, key: str = "") -> None:
-    if isinstance(value, Mapping):
+def _collect_keyed_secret_values(value: Any, output: list[str], *, key: str = "", sensitive: bool = False) -> None:
+    sensitive = sensitive or _is_sensitive_key(key)
+    if isinstance(value, str):
+        if sensitive:
+            output.append(value)
+    elif isinstance(value, Mapping):
         for child_key, child_value in value.items():
-            child_name = str(child_key)
-            if _is_sensitive_key(child_name) and isinstance(child_value, str):
-                output.append(child_value)
-            _collect_keyed_secret_values(child_value, output, key=child_name)
+            _collect_keyed_secret_values(child_value, output, key=str(child_key), sensitive=sensitive)
     elif isinstance(value, (list, tuple)):
         for child in value:
-            _collect_keyed_secret_values(child, output, key=key)
+            _collect_keyed_secret_values(child, output, sensitive=sensitive)
 
 
 def _redact_value(value: Any, secret_values: Sequence[str], redacted_paths: list[str], path: str) -> Any:

@@ -1142,3 +1142,8 @@ retry requires visibility before revealing type. Native polling/sleep honors the
 work deadline and immediate uncertainty stop without consuming540s cleanup reserve.
 Receipt redaction discovers tuple-held secrets as well as their neutral-key echoes.
 These repairs do not authorize canonical publication, recovery, deployment or F11.
+Standalone classified dictionary masking replaces the copied contents, not a merge
+that retains excluded attributes. Administrative scope projection distinguishes
+missing rows from malformed present grants; omitted-axis edits cannot implicitly
+repair restrictions into unrestricted defaults. Sensitive receipt-container context
+propagates through nested maps/lists/tuples before neutral echoes are redacted.
