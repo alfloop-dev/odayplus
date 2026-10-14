@@ -39,6 +39,30 @@ new/old target composition passes; earlier expanded admin-wait/invitation/worker
 controls also retain all their assertions. Mutable diagnostics are NOT fresh immutable
 proof; successor needs ALL17 measurements and three new independent scoped advisories.
 
+## SQL normalization provenance follow-up (normal successor of a53b83cb4)
+
+Additional actual-PG unchanged-a53 production baseline proves native JSON string
+`"[]"` still becomes unrestricted[] on unrelated edit. Strict direct authentication
+already refused it. The engine serializes native arrays but leaves native JSON strings
+as runtime strings; string shape alone CANNOT distinguish them. Abort a53 measurements
+on this supported defect: original launcher interruption/receiptless orphan preserved;
+exact owned group terminated, named controlled retry later intentionally SIGTERM143
+464.113s with real receipt/partial log. Ruff/diff pass, remaining14 selections NOT run.
+No passing comprehensive claim or transferred receipt. Three50be scoped rejections
+remain findings evidence; no new a53 static review was run.
+
+Repair: SELECT PostgreSQL jsonb_typeof for all six axes, decode engine-serialized
+arrays ONLY with authoritative SQL array provenance. Present JSON strings/objects/
+nulls remain invalid values; omitted-axis validation refuses before writes. Preserve
+true absent-row defaults and explicit valid replacement. Expanded one actual-PG test
+covers each axis with object/string-empty-array/string-nonempty-array, exact scope/
+name snapshots, continued auth refusal and explicit restricted replacement success.
+All18 mounted requests retain fresh authority decisions, not cached grants. A first
+attempt removing all decoding failed eight legitimate normalization/role/gate controls;
+retained and corrected using SQL provenance, never loosened assertions. Final expanded
+PG role/scope/admin-wait/job/receipt controls pass. Requires ALL fresh successor
+measurements/reviews; a53's partial and50be's green evidence never transfers.
+
 1200s serial/5000ms Vitest/300kB Web/Argon64MiB-time3/native480/540s and all request/
 byte/lifetime/cleanup caps, production randomness, assertions and infrastructure guards
 remain. No source amendment, receipt transfer, canonical publication or operational

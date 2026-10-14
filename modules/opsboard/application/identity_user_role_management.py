@@ -72,17 +72,6 @@ def _uuid_or_none(value: str | None) -> str | None:
         return None
 
 
-def _json_list(value: Any) -> Any:
-    # Projection is not validation: preserve malformed present restrictions so
-    # an omitted-axis edit cannot silently rewrite them into unrestricted [].
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except ValueError:
-            return value
-    return value
-
-
 def _validated_scope_axis(value: Any) -> list[str]:
     if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
         raise UserRolePolicyError("Invalid persisted/requested scope; explicit valid replacement required")
@@ -121,7 +110,9 @@ class IdentityUserRoleManagementService:
             "SELECT a.account_id::text AS account_id, a.tenant_id::text AS tenant_id, "
             "a.username, a.email, a.display_name, a.status, a.updated_at, a.created_by, "
             "a.disabled_reason, s.account_id AS scope_account_id, s.brand_ids, s.region_ids, s.store_ids, s.assigned_area_ids, "
-            "s.heat_zone_ids, s.modules, s.clearance "
+            "s.heat_zone_ids, s.modules, s.clearance, "
+            + ", ".join(f"jsonb_typeof(s.{axis}) AS {axis}_json_type" for axis in _SCOPE_AXES)
+            + " "
             "FROM identity.accounts a "
             "LEFT JOIN identity.account_scopes s ON s.account_id = a.account_id "
             "WHERE a.tenant_id = ?"
@@ -150,7 +141,15 @@ class IdentityUserRoleManagementService:
         scope: dict[str, Any] = {"tenant_id": row["tenant_id"]}
         missing_scope = row.get("scope_account_id") is None
         for axis in _SCOPE_AXES:
-            scope[axis] = [] if missing_scope else _json_list(row.get(axis))
+            # Engine normalization serializes native arrays; native JSON strings
+            # pass through unchanged. SQL type provenance must govern decoding.
+            raw = row.get(axis)
+            if missing_scope:
+                scope[axis] = []
+            elif row.get(f"{axis}_json_type") == "array" and isinstance(raw, str):
+                scope[axis] = json.loads(raw)
+            else:
+                scope[axis] = raw
         scope["clearance"] = DataClassification.CONFIDENTIAL.name if missing_scope else row.get("clearance")
         return {
             "subject_id": row["account_id"],

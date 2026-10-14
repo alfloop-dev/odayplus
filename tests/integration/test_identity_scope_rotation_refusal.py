@@ -39,31 +39,55 @@ def test_unrelated_admin_edit_never_converts_invalid_scope_to_unrestricted(stack
     target = _invited_account(s, "projection-target", "data_owner")
     _q(
         s,
-        "INSERT INTO identity.account_scopes(account_id,modules) VALUES (%s,%s::jsonb) RETURNING account_id",
-        (target, json.dumps({"forecastops": True})),
-    )
-    target_headers = _sign_in(s, target)
-    assert not s.boundary.authenticate(Credentials.from_headers(target_headers)).authenticated
-    before = _q(
-        s,
-        "SELECT display_name,modules FROM identity.accounts a JOIN identity.account_scopes sc USING(account_id) WHERE account_id=%s",
+        "INSERT INTO identity.account_scopes(account_id) VALUES (%s) RETURNING account_id",
         (target,),
     )
-    response = s.client.post(
-        "/api/v1/operator/users",
-        headers=_sign_in(s, admin),
-        json={"subjectId": target, "roles": ["data_owner"], "name": "unrelated-edit"},
-    )
-    assert response.status_code == 422
-    assert (
+    target_headers = _sign_in(s, target)
+    admin_headers = _sign_in(s, admin)
+    axes = ("modules", "brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids")
+    for axis in axes:
+        for malformed in ({"forecastops": True}, "[]", '["integration"]'):
+            _q(
+                s,
+                f"UPDATE identity.account_scopes SET {axis}=%s::jsonb WHERE account_id=%s RETURNING account_id",
+                (json.dumps(malformed), target),
+            )
+            assert not s.boundary.authenticate(
+                Credentials.from_headers(target_headers)
+            ).authenticated
+            before = _q(
+                s,
+                "SELECT display_name,sc.* FROM identity.accounts a JOIN identity.account_scopes sc USING(account_id) WHERE account_id=%s",
+                (target,),
+            )
+            response = s.client.post(
+                "/api/v1/operator/users",
+                headers=admin_headers,
+                json={"subjectId": target, "roles": ["data_owner"], "name": "unrelated-edit"},
+            )
+            assert response.status_code == 422
+            assert (
+                _q(
+                    s,
+                    "SELECT display_name,sc.* FROM identity.accounts a JOIN identity.account_scopes sc USING(account_id) WHERE account_id=%s",
+                    (target,),
+                )
+                == before
+            )
+            assert not s.boundary.authenticate(
+                Credentials.from_headers(target_headers)
+            ).authenticated
+        # Each following axis has its own valid before-state, not cached authority.
         _q(
             s,
-            "SELECT display_name,modules FROM identity.accounts a JOIN identity.account_scopes sc USING(account_id) WHERE account_id=%s",
+            f"UPDATE identity.account_scopes SET {axis}='[]'::jsonb WHERE account_id=%s RETURNING account_id",
             (target,),
         )
-        == before
+    _q(
+        s,
+        "UPDATE identity.account_scopes SET modules=%s::jsonb WHERE account_id=%s RETURNING account_id",
+        (json.dumps("[]"), target),
     )
-    assert not s.boundary.authenticate(Credentials.from_headers(target_headers)).authenticated
     # Explicit valid replacement is allowed, not a silently inferred empty grant.
     response = s.client.post(
         "/api/v1/operator/users",
