@@ -63,7 +63,7 @@ function mount(config: Config = {}) {
     }
     if (url === "/api/v1/operator/approvals/SYNTHETIC-APR/decision" && config.decision) return json({ protocolPremiseOnly: true });
     if (url === "/api/v1/operator/shell/tasks" && config.tasks) return config.tasks(actor);
-    if (config.legacy && ["/heatzones", "/listings/candidates", "/sitescore/reports"].includes(new URL(url, window.location.origin).pathname)) return config.legacy(new URL(url, window.location.origin).pathname, actor);
+    if (config.legacy && ["/api/v1/heatzones", "/api/v1/listings/candidates", "/api/v1/sitescore/reports"].includes(new URL(url, window.location.origin).pathname)) return config.legacy(new URL(url, window.location.origin).pathname, actor);
     return json({ detail: "unrelated read unavailable" }, 403);
   });
   vi.stubGlobal("fetch", fetch);
@@ -178,12 +178,12 @@ describe("authenticated bootstrap persona ownership", () => {
     const pending = deferred<Response>(); const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
     const { setAccount, fetch } = mount({ workspace: "network", legacy: (path, actor) => {
-      if (path === "/heatzones" && actor === A) return boundary === "HTTP" ? pending.promise : late;
-      return json(path === "/listings/candidates" ? { candidates: [] } : { items: [] });
+      if (path === "/api/v1/heatzones" && actor === A) return boundary === "HTTP" ? pending.promise : late;
+      return json(path === "/api/v1/listings/candidates" ? { candidates: [] } : { items: [] });
     } });
     await screen.findByRole("button", { name: /展店經理/ });
     if (boundary === "JSON") await reading.promise;
-    else await waitFor(() => expect(fetch.mock.calls.some(([url]) => new URL(String(url), window.location.origin).pathname === "/heatzones")).toBe(true));
+    else await waitFor(() => expect(fetch.mock.calls.some(([url]) => new URL(String(url), window.location.origin).pathname === "/api/v1/heatzones")).toBe(true));
     setAccount(B);
     await act(async () => { if (boundary === "HTTP") pending.resolve(json({ items: [{ h3_index: "OLD-A", label: "Old A binding" }] }));
       else body.resolve({ items: [{ h3_index: "OLD-A", label: "Old A binding" }] }); });
@@ -201,7 +201,7 @@ describe("authenticated bootstrap persona ownership", () => {
     const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
     const { setSession } = mount({ workspace: surface === "Network" ? "network" : "today", tasks: () => late,
-      legacy: (path) => path === "/heatzones" ? late : json({ candidates: [] }) });
+      legacy: (path) => path === "/api/v1/heatzones" ? late : json({ candidates: [] }) });
     if (surface === "Task") { await screen.findByText("Account A current row"); fireEvent.click(screen.getByTestId("operator-task-center-button")); }
     await reading.promise;
     setSession({ detail: "session expired" }, 401);
@@ -217,7 +217,7 @@ describe("authenticated bootstrap persona ownership", () => {
     const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
     const { setSession } = mount({ workspace: surface === "Network" ? "network" : "today", tasks: () => late,
-      legacy: (path) => path === "/heatzones" ? late : json({ candidates: [] }) });
+      legacy: (path) => path === "/api/v1/heatzones" ? late : json({ candidates: [] }) });
     if (surface === "Task") { await screen.findByText("Account A current row"); fireEvent.click(screen.getByTestId("operator-task-center-button")); }
     await reading.promise; setSession({ subject: A, expiresAt: 1 });
     await act(async () => { body.resolve(surface === "Task" ? { items: [{ id: "OLD", title: "Old invalid task", status: "todo" }] }
@@ -405,12 +405,12 @@ describe("owned reads from explicit no-session POC", () => {
         workspace: surface === "Network" ? "network" : "today", decision: surface === "refresh",
         refresh: surface === "refresh" ? boundary === "HTTP" ? pending.promise : late : undefined,
         tasks: (actor) => actor === B ? json({ items: [] }) : boundary === "HTTP" ? pending.promise : late,
-        legacy: (path, actor) => path === "/heatzones" && actor !== B ? boundary === "HTTP" ? pending.promise : late : json(path === "/listings/candidates" ? { candidates: [] } : { items: [] }) });
+        legacy: (path, actor) => path === "/api/v1/heatzones" && actor !== B ? boundary === "HTTP" ? pending.promise : late : json(path === "/api/v1/listings/candidates" ? { candidates: [] } : { items: [] }) });
       if (surface === "Task") { await screen.findByText("Explicit fixture current row"); fireEvent.click(screen.getByTestId("operator-task-center-button")); }
       if (surface === "refresh") { await screen.findByText("Explicit fixture current row"); fireEvent.click(screen.getByRole("button", { name: "核准" })); }
       if (boundary === "JSON") await reading.promise;
       else await waitFor(() => expect(state.fetch.mock.calls.some(([url]) => surface === "Task" ? String(url) === "/api/v1/operator/shell/tasks"
-        : surface === "Network" ? new URL(String(url), window.location.origin).pathname === "/heatzones" : bootstrapCalls(state.fetch).length === 2)).toBe(true));
+        : surface === "Network" ? new URL(String(url), window.location.origin).pathname === "/api/v1/heatzones" : bootstrapCalls(state.fetch).length === 2)).toBe(true));
       state.setAccount(B, "expansion-manager"); state.setSession({ subject: B, expiresAt: Math.floor(Date.now()/1000)+3600 });
       const payload = surface === "Task" ? { items: [{ id: "OLD-NULL", title: "Old no-session task", status: "todo" }] }
         : surface === "Network" ? { items: [{ h3_index: "OLD-NULL", label: "Old no-session binding" }] } : envelope("ops-lead", "Old no-session refresh");

@@ -1147,7 +1147,9 @@ export function NetworkFindAreasWorkspace({
       ? operatorLoadFailureFromError(new Error("Network review read contract is incomplete or conflicting"), "network-reviews")
       : null);
     setReviewsLoadState(
-      inspection === "ready" ? "ready" : fixturesAllowed ? "fixture" : inspection,
+      inspection === "ready" ? "ready"
+        : inspection === "empty" && (snapshot.source === "api" || snapshot.source === "canonical") ? "empty"
+        : fixturesAllowed ? "fixture" : inspection,
     );
     return inspection === "ready" || inspection === "empty";
   }, [fixturesAllowed]);
@@ -2004,7 +2006,10 @@ export function NetworkFindAreasWorkspace({
         || context.target.expectedLatestReportId !== reports[0].reportId || context.target.expectedLatestReportVersion !== reports[0].reportVersion
         || context.canSubmit && context.target.decisionId !== offer.decisionId
         || context.canSubmit && (context.target.expectedReportId !== frozen?.reportId || context.target.expectedReportVersion !== frozen?.reportVersion)
-        || context.canSubmit && offer.decisionId !== null && context.target.expectedDecisionVersion !== decision?.version) {
+        || context.canSubmit && offer.decisionId !== null && context.target.expectedDecisionVersion !== decision?.version
+        || context.canSubmit && offer.previousDecisionId !== context.previousReview?.decisionId
+        || context.canSubmit && offer.newRound === true
+          && !["approved", "opened"].includes(context.target.expectedCandidateState)) {
         throw new Error("送審上下文與目前候選點、登入者或報告版本不一致；尚未受理送審。");
       }
       if (!submissionIsCurrent(session)) return;

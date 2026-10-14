@@ -259,7 +259,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
   );
 }
 
-function Meta({ label, value, testId }: { label: string; value: string; testId?: string }) {
+function Meta({ label, value, testId }: { label: string; value: string | null; testId?: string }) {
   return <div><div className={styles.metaCaption}>{label}</div><div className={styles.metaValue} data-testid={testId}>{value || "UNAVAILABLE"}</div></div>;
 }
 

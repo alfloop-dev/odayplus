@@ -79,6 +79,7 @@ class DecisionTransition:
     submission_actor_verified: bool = False
     submission_summary: str | None = None
     reviewer_group_id: str | None = None
+    previous_decision_id: str | None = None
     version: int | None = None
     correlation_id: str | None = None
 
@@ -97,6 +98,8 @@ class DecisionTransition:
                             "submitted_by", "submission_actor_verified", "submission_summary", "reviewer_group_id")
             },
             "required_data": (list(self.required_data) if getattr(self, "required_data", None) is not None else None),
+            **({"previous_decision_id": self.previous_decision_id}
+               if getattr(self, "previous_decision_id", None) is not None else {}),
         }
 
 
@@ -127,6 +130,9 @@ class SiteScoreDecision:
     submission_actor_verified: bool = False
     submission_summary: str | None = None
     reviewer_group_id: str | None = None
+    # A later report is reviewed separately after an existing approval. The
+    # predecessor and its opening realization remain the original record.
+    previous_decision_id: str | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -148,6 +154,8 @@ class SiteScoreDecision:
             "history": [transition.to_dict() for transition in self.history],
             "tenant_id": self.tenant_id,
             "version": getattr(self, "version", 0),
+            **({"previous_decision_id": self.previous_decision_id}
+               if getattr(self, "previous_decision_id", None) is not None else {}),
             **{key: getattr(self, key, None) for key in
                ("network_action", "conditions", "override_ack", "actor_role_id", "approval_id",
                 "submitted_by", "submission_actor_verified", "submission_summary", "reviewer_group_id")},
@@ -364,6 +372,112 @@ class SiteScoreDecisionWorkflow:
     def register_hook(self, hook: RealizationHook) -> None:
         self.hooks.append(hook)
 
+    def _validate_previous_round(self, report: SiteScoreReport, previous_decision_id: str,
+                                 tenant_id: str) -> None:
+        """Require a retained, ordered chain rooted in an original approval.
+
+        A later round may be rejected without revoking the original opening.
+        An initial rejection has no approved predecessor and cannot use this
+        policy to reopen. This method reads records and performs no transition.
+        """
+        seen: set[str] = set()
+        next_report = report
+        while previous_decision_id is not None:
+            if (not isinstance(previous_decision_id, str) or not previous_decision_id.strip()
+                    or previous_decision_id in seen):
+                raise SiteScoreDecisionError("invalid previous review round chain")
+            seen.add(previous_decision_id)
+            previous = self._require(previous_decision_id)
+            previous_link = getattr(previous, "previous_decision_id", None)
+            if any(getattr(item, "previous_decision_id", None) != previous_link for item in previous.history):
+                raise SiteScoreDecisionError("previous review round changed after its recorded transitions")
+            retained = self._store.get_report(previous.decision_id)
+            approval = (self._approval_store.get(previous.approval_id)
+                        if self._approval_store is not None and previous.approval_id else None)
+            if (previous.decision_id != previous_decision_id
+                    or previous.status not in {DecisionStatus.APPROVED, DecisionStatus.REJECTED}
+                    or previous.candidate_site_id != report.candidate_site_id
+                    or previous.tenant_id != tenant_id
+                    or type(previous.version) is not int or previous.version < 1
+                    or type(previous.report_version) is not int or previous.report_version < 1
+                    or type(next_report.report_version) is not int
+                    or next_report.report_version <= previous.report_version
+                    or next_report.report_id == previous.report_id
+                    or not isinstance(previous.report_id, str) or not previous.report_id.strip()
+                    or not isinstance(previous.model_version, str) or not previous.model_version.strip()
+                    or not isinstance(retained, SiteScoreReport)
+                    or type(retained.report_version) is not int
+                    or (retained.candidate_site_id, retained.report_id, retained.report_version, retained.model_version)
+                    != (report.candidate_site_id, previous.report_id, previous.report_version, previous.model_version)):
+                raise SiteScoreDecisionError("new review round requires a retained older decision for this candidate and tenant")
+            if (not isinstance(approval, Approval) or approval.approval_id != previous.approval_id
+                    or approval.decision_id != previous.decision_id
+                    or approval.approval_status != ("approved" if previous.status is DecisionStatus.APPROVED else "rejected")
+                    or not previous.history or not isinstance(approval.approver_id, str) or not approval.approver_id.strip()
+                    or approval.approver_id != previous.history[-1].actor
+                    or not isinstance(approval.approved_at, datetime)
+                    or not isinstance(previous.history[-1].at, datetime)
+                    or approval.approved_at != previous.history[-1].at
+                    or approval.comment != previous.history[-1].reason):
+                raise SiteScoreDecisionError("previous review round requires its actual retained terminal approval")
+            terminal = previous.history[-1]
+            allowed_network_actions = ((None, "GO", "WAIT") if previous.status is DecisionStatus.APPROVED
+                                       else (None, "REJECT"))
+            if (previous.network_action not in allowed_network_actions
+                    or previous.network_action == "WAIT" and (
+                        not isinstance(previous.conditions, str) or not previous.conditions.strip())
+                    or terminal.from_status is not DecisionStatus.PENDING_REVIEW
+                    or type(terminal.version) is not int or type(terminal.report_version) is not int
+                    or terminal.action != ("APPROVE" if previous.status is DecisionStatus.APPROVED else "REJECT")
+                    or (terminal.to_status, terminal.report_id, terminal.report_version, terminal.model_version,
+                        terminal.tenant_id, terminal.version, terminal.approval_id, terminal.network_action,
+                        terminal.conditions, terminal.required_data, terminal.override_ack, terminal.actor_role_id)
+                    != (previous.status, previous.report_id, previous.report_version, previous.model_version,
+                        previous.tenant_id, previous.version, previous.approval_id, previous.network_action,
+                        previous.conditions, previous.required_data, previous.override_ack, previous.actor_role_id)):
+                raise SiteScoreDecisionError("previous terminal transition must match its actual decision and retained report")
+            previous_decision_id = getattr(previous, "previous_decision_id", None)
+            if previous_decision_id is None and previous.status is not DecisionStatus.APPROVED:
+                raise SiteScoreDecisionError("new review round must retain an original approved decision")
+            next_report = retained
+
+    def _validate_existing_round(self, decision: SiteScoreDecision) -> None:
+        previous_id = getattr(decision, "previous_decision_id", None)
+        if any(getattr(item, "previous_decision_id", None) != previous_id for item in decision.history):
+            raise SiteScoreDecisionError("previous review round changed after submission")
+        if previous_id is None:
+            return
+        retained = self._store.get_report(decision.decision_id)
+        if (type(decision.version) is not int or decision.version < 1
+                or type(decision.report_version) is not int or decision.report_version < 1
+                or not isinstance(retained, SiteScoreReport) or type(retained.report_version) is not int
+                or (retained.candidate_site_id, retained.report_id, retained.report_version, retained.model_version)
+                != (decision.candidate_site_id, decision.report_id, decision.report_version, decision.model_version)):
+            raise SiteScoreDecisionError("new review round requires its immutable current retained report")
+        if decision.status is DecisionStatus.PENDING_REVIEW:
+            tail = decision.history[-1] if decision.history else None
+            approval = (self._approval_store.get(decision.approval_id)
+                        if self._approval_store is not None and decision.approval_id else None)
+            if (tail is None or tail.from_status not in {DecisionStatus.SYSTEM_RECOMMENDED, DecisionStatus.DRAFT}
+                    or tail.to_status is not decision.status or tail.action != "submit"
+                    or type(tail.version) is not int or type(tail.report_version) is not int
+                    or (tail.version, tail.report_id, tail.report_version, tail.model_version, tail.tenant_id,
+                        tail.approval_id, tail.previous_decision_id)
+                    != (decision.version, decision.report_id, decision.report_version, decision.model_version,
+                        decision.tenant_id, decision.approval_id, previous_id)
+                    or not isinstance(tail.at, datetime)
+                    or not isinstance(decision.submitted_by, str) or not decision.submitted_by.strip()
+                    or tail.actor != decision.submitted_by or tail.submitted_by != decision.submitted_by
+                    or not isinstance(decision.submission_actor_verified, bool)
+                    or tail.submission_actor_verified is not decision.submission_actor_verified
+                    or tail.reason != (decision.submission_summary if decision.submission_summary is not None else "送審")
+                    or tail.submission_summary != decision.submission_summary
+                    or tail.reviewer_group_id != decision.reviewer_group_id
+                    or not isinstance(approval, Approval) or approval.approval_id != decision.approval_id
+                    or approval.decision_id != decision.decision_id or approval.approval_status != "pending"):
+                raise SiteScoreDecisionError("new pending review requires its actual current submit transition and approval")
+        self._validate_previous_round(retained, previous_id, decision.tenant_id)
+
     def open_decision(
         self,
         report: SiteScoreReport,
@@ -372,6 +486,7 @@ class SiteScoreDecisionWorkflow:
         correlation_id: str = "",
         tenant_id: str = "",
         verified_creator: bool = False,
+        previous_decision_id: str | None = None,
     ) -> SiteScoreDecision:
         """Seed a decision from a SiteScore report (system recommendation)."""
         now = datetime.now(UTC)
@@ -379,6 +494,8 @@ class SiteScoreDecisionWorkflow:
         if store_tenant and tenant_id and store_tenant != tenant_id:
             raise SiteScoreDecisionError("decision tenant differs from the scoped repository")
         tenant_id = tenant_id or store_tenant
+        if previous_decision_id is not None:
+            self._validate_previous_round(report, previous_decision_id, tenant_id)
         decision = SiteScoreDecision(
             decision_id=f"sitescore-decision-{uuid4()}",
             candidate_site_id=report.candidate_site_id,
@@ -393,6 +510,7 @@ class SiteScoreDecisionWorkflow:
             created_at=now,
             tenant_id=tenant_id,
             version=1,
+            previous_decision_id=previous_decision_id,
         )
         retain = getattr(self._store, "retain_report_once", self._store.save_report)
         retain(decision.decision_id, report)
@@ -422,6 +540,7 @@ class SiteScoreDecisionWorkflow:
             raise SiteScoreDecisionError(
                 f"cannot submit decision in status {decision.status.value} for review"
             )
+        self._validate_existing_round(decision)
         updated = self._transition(
             decision,
             to_status=DecisionStatus.PENDING_REVIEW,
@@ -490,6 +609,7 @@ class SiteScoreDecisionWorkflow:
                 isinstance(item, str) and item.strip() for item in recorded_required_data
             )):
                 raise SiteScoreDecisionError("RETURN requires its recorded missing-data list")
+        self._validate_existing_round(decision)
         updated = self._transition(
             decision,
             to_status=target,
@@ -506,7 +626,8 @@ class SiteScoreDecisionWorkflow:
         )
 
         realization_events: tuple[SiteScoreRealizationEvent, ...] = ()
-        if target is DecisionStatus.APPROVED and explicit_network_action != "WAIT":
+        if (target is DecisionStatus.APPROVED and explicit_network_action != "WAIT"
+                and getattr(updated, "previous_decision_id", None) is None):
             realization_events = self._realize(updated, actor=actor)
 
         self._decide_approval(updated, actor=actor, reason=reason)
@@ -610,6 +731,7 @@ class SiteScoreDecisionWorkflow:
             approval_id=approval_id or getattr(decision, "approval_id", None),
             version=getattr(decision, "version", 0) + 1,
             correlation_id=correlation_id,
+            previous_decision_id=getattr(decision, "previous_decision_id", None),
         )
         updated = SiteScoreDecision(
             **{
@@ -664,6 +786,8 @@ class SiteScoreDecisionWorkflow:
                     "tenant_id": decision.tenant_id,
                     "model_version": decision.model_version,
                     "version": getattr(decision, "version", 0),
+                    **({"previous_decision_id": decision.previous_decision_id}
+                       if getattr(decision, "previous_decision_id", None) is not None else {}),
                     **{key: getattr(decision, key, None) for key in
                        ("network_action", "conditions", "override_ack", "actor_role_id", "approval_id",
                         "submitted_by", "submission_actor_verified", "submission_summary", "reviewer_group_id")},

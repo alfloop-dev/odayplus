@@ -1944,8 +1944,8 @@ export type IntakeFailure = {
 
 export type AssistedIntake = {
   id: string;
-  originalUrl: string;
-  canonicalUrl: string;
+  originalUrl: string | null;
+  canonicalUrl: string | null;
   submitter: string | null;
   owner: string | null;
   submittedBy?: string | null;
@@ -1966,7 +1966,7 @@ export type AssistedIntake = {
   rawSnapshot: Record<string, unknown> | null;
   snapshotId: string | null;
   capturedAt: string | null;
-  parserVersion: string;
+  parserVersion: string | null;
   correlationId: string | null;
   parsedFields: Record<string, IntakeFieldCell>;
   matchResult: MatchResultDto | null;

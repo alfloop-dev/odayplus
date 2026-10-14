@@ -4,6 +4,8 @@ import { inspectReviewsReadProjection } from "./networkReviewProjection";
 import type { CandidateNativeWorkflowReads, NetworkScoringSnapshot } from "./networkScoringTypes";
 import type { ReviewSubmissionOffer } from "./networkReviewSubmissionTypes";
 import type { NetworkReviewsSnapshot } from "./networkReviewTypes";
+import { hasApprovedReviewHistory } from "./networkReviewRounds";
+import { hasCurrentPendingSubmissionHistory } from "./networkPendingReviewHistory";
 import type { ReviewSubmissionTarget, ReviewSubmissionContext, ReviewSubmissionBody, ReviewSubmissionReceipt } from "./networkReviewSubmissionTypes";
 
 const version = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -14,6 +16,14 @@ export function hasReviewSubmissionContext(value: unknown): value is ReviewSubmi
     || typeof value.canSubmit !== "boolean" || value.blockCode !== (value.canSubmit ? null : "ALREADY_PENDING")
     || !readObject(value.target) || !Array.isArray(value.reviewerGroups) || !value.reviewerGroups.length) return false;
   const target = value.target;
+  const previous = value.previousReview;
+  if (previous !== undefined && (!readObject(previous)
+    || !keys(previous, ["decisionId", "approvalId", "reportId", "modelVersion", "tenantId"])
+    || !version(previous.decisionVersion) || !version(previous.reportVersion)
+    || previous.approvalId === previous.decisionId || previous.tenantId !== value.tenantId
+    || previous.approvalStatus !== "approved" && previous.approvalStatus !== "rejected"
+    || previous.reportId === target.expectedReportId || !version(target.expectedReportVersion)
+    || previous.reportVersion >= target.expectedReportVersion)) return false;
   const pending = value.pendingReview;
   if (value.canSubmit ? pending !== null : !readObject(pending)
     || !keys(pending, ["decisionId", "approvalId", "reportId", "latestReportId", "originalCreatorSubjectId"])
@@ -28,7 +38,12 @@ export function hasReviewSubmissionContext(value: unknown): value is ReviewSubmi
     && (target.decisionId === null && target.expectedDecisionVersion === null
       || readId(target.decisionId) && version(target.expectedDecisionVersion))
     && (target.expectedCandidateReviewId === null || readId(target.expectedCandidateReviewId))
-    && (target.expectedCandidateReviewId === null || target.expectedCandidateReviewId === target.decisionId)
+    && (target.expectedCandidateReviewId === null || target.expectedCandidateReviewId === target.decisionId
+      || target.decisionId === null && target.expectedDecisionVersion === null && value.canSubmit === true
+      && ["approved", "opened"].includes(String(target.expectedCandidateState))
+      && readObject(previous) && previous.decisionId === target.expectedCandidateReviewId
+      && target.expectedReportId === target.expectedLatestReportId
+      && target.expectedReportVersion === target.expectedLatestReportVersion)
     && typeof target.expectedCandidateDigest === "string" && /^[0-9a-f]{64}$/.test(target.expectedCandidateDigest)
     && value.reviewerGroups.every((group) => readObject(group) && keys(group, ["id", "label"])
       && group.source === "shared.auth.rbac.ROLE_PERMISSIONS")
@@ -66,10 +81,10 @@ export function reviewSubmissionReceiptMatches(value: unknown, context: ReviewSu
     && decision.created_by === command.originalCreatorSubjectId && decision.submitted_by === command.verifiedSubmitterSubjectId
     && decision.submission_actor_verified === true && decision.submission_summary === body.submissionSummary
     && decision.reviewer_group_id === body.reviewerGroupId && Array.isArray(decision.history)
-    && decision.history.some((entry) => readObject(entry) && entry.action === "submit"
-      && entry.actor === command.verifiedSubmitterSubjectId && entry.reason === body.submissionSummary
-      && entry.to_status === "PENDING_REVIEW" && entry.version === record.decisionVersion
-      && entry.approval_id === record.approvalId);
+    && (context.previousReview ? decision.previous_decision_id === context.previousReview.decisionId
+      && command.previousDecisionId === context.previousReview.decisionId && command.candidateState === body.expectedCandidateState
+      : decision.previous_decision_id === undefined || decision.previous_decision_id === null)
+    && hasCurrentPendingSubmissionHistory(decision);
 }
 
 /** Requires a fresh authorized, complete canonical graph and the producer's
@@ -92,6 +107,15 @@ export function reviewSubmissionReadbackMatches(network: unknown, reviews: unkno
     || candidate.reviewId != null && candidate.reviewId !== records.decisionId
     || !hasCandidateReviewSubmission(candidate.reviewSubmission)) return false;
   const pointer = candidate.reviewSubmission, row = rows[0], decision = decisions[0], approval = approvals[0];
+  const previous = receipt.review.previous_decision_id;
+  if (previous !== undefined && previous !== null && (!readId(previous)
+    || decision.previous_decision_id !== previous || pointer.previousDecisionId !== previous
+    || command.previousDecisionId !== previous || command.candidateState !== (candidate.canonicalSiteStatus ?? candidate.status)
+    || decision.history?.at(-1)?.previous_decision_id !== previous
+    || !["approved", "opened"].includes(String(candidate.canonicalSiteStatus ?? candidate.status))
+    || !hasApprovedReviewHistory(graph, records.candidateId, command.tenantId, previous, records.reportVersion))) return false;
+  if ((previous === undefined || previous === null)
+    && (decision.previous_decision_id != null || pointer.previousDecisionId != null || command.previousDecisionId != null)) return false;
   return pointer.decisionId === records.decisionId && pointer.approvalId === records.approvalId
     && pointer.decisionVersion === records.decisionVersion && pointer.reportId === records.reportId
     && pointer.reportVersion === records.reportVersion && pointer.tenantId === command.tenantId
@@ -103,6 +127,7 @@ export function reviewSubmissionReadbackMatches(network: unknown, reviews: unkno
     && decision.approval_id === records.approvalId && readObject(decision)
     && decision.submitted_by === command.verifiedSubmitterSubjectId && decision.submission_actor_verified === true
     && decision.submission_summary === command.submissionSummary && decision.reviewer_group_id === command.reviewerGroupId
+    && hasCurrentPendingSubmissionHistory(decision)
     && decision.created_by === command.originalCreatorSubjectId && decision.created_by_verified === command.originalCreatorVerified
     && pointer.originalCreatorSubjectId === command.originalCreatorSubjectId && pointer.originalCreatorVerified === command.originalCreatorVerified
     && approval.id === records.approvalId
@@ -122,22 +147,33 @@ export function reviewSubmissionOffers(network: unknown, scoring: NetworkScoring
     const raw = network.candidates.filter((row) => readObject(row) && row.id === candidate.id);
     const reports = scoring.scorecards.filter((row) => row.id === candidate.id);
     if (!read || read.availability === "conflict" || raw.length !== 1 || !readObject(raw[0])
-      || ["approved", "opened", "rejected"].includes(String(raw[0].canonicalSiteStatus ?? raw[0].status))
-      || ["approved", "rejected", "onhold", "pendingreview"].includes(String(read.stage))
+      || String(raw[0].canonicalSiteStatus ?? raw[0].status) === "rejected"
+      || read.stage === "pendingreview"
       || reports.length !== 1 || !readId(reports[0].reportId) || !version(reports[0].reportVersion)
       || !readId(reports[0].modelVersion) || !readId(reports[0].sitescoreRunId)) continue;
     const own = reviews.reviews.filter((row) => row.candidateId === candidate.id);
+    const operational = ["approved", "opened"].includes(String(raw[0].canonicalSiteStatus ?? raw[0].status));
+    const pointer = read.review?.reviewId ?? raw[0].reviewId;
+    if (operational && readId(pointer) && !own.some((row) => row.canonicalDecisionStatus === "PENDING_REVIEW")) {
+      const previous = reviews.decisions?.find((row) => row.decision_id === pointer);
+      if (previous && readId(previous.tenant_id)
+        && hasApprovedReviewHistory(reviews, candidate.id, previous.tenant_id, pointer, reports[0].reportVersion!)) {
+        offers[candidate.id] = { candidateId: candidate.id, decisionId: null, newRound: true, previousDecisionId: pointer };
+        continue;
+      }
+    }
+    if (!operational && ["approved", "rejected", "onhold"].includes(String(read.stage))) continue;
     if (!own.length && read.stage === "evaluated" && read.availability === "recorded") {
       offers[candidate.id] = { candidateId: candidate.id, decisionId: null }; continue;
     }
-    const pointer = read.review?.reviewId ?? raw[0].reviewId;
     const eligible = own.filter((row) => ["DRAFT", "SYSTEM_RECOMMENDED"].includes(row.canonicalDecisionStatus ?? "")
       && row.reportAvailability === "available" && (pointer ? row.id === pointer
         : own.length === 1));
     if (eligible.length !== 1 || !pointer && own.some((row) => ["APPROVED", "REJECTED", "PENDING_REVIEW"].includes(row.canonicalDecisionStatus ?? ""))) continue;
     const decision = reviews.decisions?.find((row) => row.decision_id === eligible[0].id);
     if (!decision || !version(decision.version)) continue;
-    offers[candidate.id] = { candidateId: candidate.id, decisionId: eligible[0].id };
+    offers[candidate.id] = { candidateId: candidate.id, decisionId: eligible[0].id,
+      ...(readId(decision.previous_decision_id) ? { previousDecisionId: decision.previous_decision_id } : {}) };
   }
   return offers;
 }

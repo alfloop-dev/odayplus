@@ -21,6 +21,9 @@ export type ReviewSubmissionContext = {
   canSubmit: boolean;
   blockCode: "ALREADY_PENDING" | null;
   target: ReviewSubmissionTarget;
+  previousReview?: { decisionId: string; decisionVersion: number; approvalId: string;
+    approvalStatus: "approved" | "rejected"; reportId: string; reportVersion: number;
+    modelVersion: string; tenantId: string };
   pendingReview: { decisionId: string; decisionVersion: number; approvalId: string; reportId: string; reportVersion: number;
     latestReportId: string; latestReportVersion: number; originalCreatorSubjectId: string; originalCreatorVerified: boolean;
     verifiedSubmitterSubjectId: string | null; submissionSummary: string | null; reviewerGroupId: string | null } | null;
@@ -37,7 +40,8 @@ export type ReviewSubmissionReceipt = {
     reviewId: string; decisionId: string; decisionVersion: number; approvalId: string; auditId: string };
   commandReceipt: { operation: "submit"; actorSubjectId: string; tenantId: string; idempotencyKey: string;
     correlationId: string; decisionId: string; submissionSummary: string; reviewerGroupId: string;
-    originalCreatorSubjectId: string; originalCreatorVerified: boolean; verifiedSubmitterSubjectId: string };
+    originalCreatorSubjectId: string; originalCreatorVerified: boolean; verifiedSubmitterSubjectId: string;
+    previousDecisionId?: string; candidateState?: string };
   idempotentReplay: boolean;
   correlationId: string;
 };
@@ -45,5 +49,7 @@ export type CandidateReviewSubmissionReference = {
   decisionId: string; approvalId: string; reportId: string; reportVersion: number; decisionVersion: number;
   tenantId: string; submittedBy: string; submissionSummary: string; reviewerGroupId: string;
   originalCreatorSubjectId: string; originalCreatorVerified: boolean; latestReportId: string; latestReportVersion: number;
+  previousDecisionId?: string;
 };
-export type ReviewSubmissionOffer = { candidateId: string; decisionId: string | null };
+export type ReviewSubmissionOffer = { candidateId: string; decisionId: string | null;
+  newRound?: boolean; previousDecisionId?: string };

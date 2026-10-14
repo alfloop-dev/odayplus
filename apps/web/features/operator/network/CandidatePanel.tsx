@@ -216,7 +216,8 @@ export function CandidatePanel({
                     {submissionOffers?.[row.id] ? <button data-testid={`candidate-submit-review-${row.id}`}
                       disabled={isBusy || !onRequestSubmission} type="button" onClick={(event) => {
                         event.stopPropagation(); onRequestSubmission?.(submissionOffers[row.id]);
-                      }}>{submissionOffers[row.id].decisionId ? "再次送審" : "送審（SiteScore Review）"}</button> : null}
+                      }}>{submissionOffers[row.id].newRound ? "新版報告另開審查"
+                        : submissionOffers[row.id].decisionId ? "再次送審" : "送審（SiteScore Review）"}</button> : null}
                     {nativeWorkflow?.[row.id]?.review ? <button
                       data-testid={`candidate-row-view-review-${row.id}`} disabled={!onViewReview || isBusy}
                       onClick={(event) => { event.stopPropagation(); const target = nativeWorkflow[row.id].review; if (target) onViewReview?.(target); }} type="button">
@@ -330,7 +331,8 @@ function GateDetail({
   const scoreAction = !canonical && !activeStage && !candidate.scored && candidate.gate.passed;
   const viewReviewAction = activeStage === "pendingreview" && reviewTarget && onViewReview;
   const submissionAction = canonical && submissionOffer && onRequestSubmission;
-  const primaryLabel = submissionAction ? (submissionOffer.decisionId ? "再次送審（凍結報告）" : "送審（SiteScore Review）") : activeStage === "onhold" ? "恢復處理"
+  const primaryLabel = submissionAction ? (submissionOffer.newRound ? "新版報告另開審查"
+    : submissionOffer.decisionId ? "再次送審（凍結報告）" : "送審（SiteScore Review）") : activeStage === "onhold" ? "恢復處理"
     : activeStage === "approved" ? "已核准 — 待納入展店計畫"
       : activeStage === "rejected" ? "未通過 — 已結案"
         : activeStage === "pendingreview" ? `查看審核 ${reviewTarget?.reviewId ?? candidate.pipelineEvidence?.pendingreview?.recordId ?? ""}`

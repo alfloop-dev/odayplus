@@ -30,6 +30,7 @@ import {
 import { GrowthWorkspace } from "./GrowthWorkspace";
 import { readGovernanceViewState, serializeGovernanceViewState, type GovernanceViewState } from "./governance/governanceUrlState";
 import type { NetworkFindAreasWorkspaceProps } from "./NetworkFindAreasWorkspace";
+import type { ColdIntakeDetailProps } from "./network/intake/ColdIntakeDetail";
 import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
 import { ISSUE_FIXTURES } from "./fixtures";
 import {
@@ -93,6 +94,11 @@ const NetworkFindAreasWorkspace = dynamic<NetworkFindAreasWorkspaceProps>(
     ssr: false,
     loading: () => <div aria-live="polite" role="status">展店與店網工作區載入中…</div>,
   },
+);
+
+const ColdIntakeDetail = dynamic<ColdIntakeDetailProps>(
+  () => import("./network/intake/ColdIntakeDetail").then((mod) => mod.ColdIntakeDetail),
+  { ssr: false, loading: () => <div role="status">收件詳情載入中…</div> },
 );
 
 const roleStorageKey = "oday.operator.role";
@@ -539,6 +545,7 @@ export function OperatorConsole({
   const canRenderWorkspace = shellDataStatus === "ready" || fixturesAllowed && bootstrapAuthMode === "fixture";
   const canRenderDirectIntake =
     intakeDetailOpen && activeWorkspaceId === "network";
+  const canReadColdIntake = intakeDetailOpen && bootstrapAuthMode === "authenticated" && !canRenderWorkspace;
   const isTodayContent = canRenderWorkspace && activeWorkspaceId === "today";
   const isGovernContent = canRenderWorkspace && activeWorkspaceId === "govern";
   const dataModeBanner = dataModeBannerCopy(shellDataStatus, fixturesAllowed);
@@ -950,7 +957,7 @@ export function OperatorConsole({
       && persona === bootstrapPersona.current;
     const superseded = () => new Error("Network binding account changed or session is invalid");
     const client = createOdpApiClient({
-      baseUrl: window.location.origin,
+      baseUrl: `${window.location.origin}/api/v1`,
       defaultHeaders: getSecurityHeaders(activeRoleId),
       fetchImpl: async (input, init) => {
         if (!await pinAuthenticatedRead(subject, current)) throw superseded();
@@ -1780,7 +1787,10 @@ export function OperatorConsole({
           isGovernContent ? styles.shell_govern : "",
         ].filter(Boolean).join(" ")}
       >
-        {!canRenderWorkspace && !canRenderDirectIntake ? (
+        {canReadColdIntake ? (
+          <ColdIntakeDetail intakeId={typeof searchParams.selected === "string" ? searchParams.selected : ""}
+            onClose={() => window.location.assign("/operator?ws=network&tab=radar")} />
+        ) : !canRenderWorkspace && !canRenderDirectIntake ? (
           <OperatorDataUnavailableGate
             failure={shellLoadFailure}
             loadingDetail={shellWarmingUp ? operatorBootstrapWarmingUpDetail : undefined}

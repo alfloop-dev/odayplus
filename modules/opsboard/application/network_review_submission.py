@@ -88,11 +88,15 @@ class NetworkReviewSubmissionOwner:
         if pointer and decision_id and pointer != decision_id:
             raise NetworkReviewConflict('CANDIDATE_REVIEW_POINTER_CONFLICT')
         own_id = pointer or decision_id
-        if sum(d.status == DecisionStatus.PENDING_REVIEW for d in decisions) > 1:
+        pending = [d for d in decisions if d.status == DecisionStatus.PENDING_REVIEW]
+        if len(pending) > 1:
             raise NetworkReviewConflict('AMBIGUOUS_PENDING_DECISION')
+        if pending and pending[0].decision_id != own_id:
+            raise NetworkReviewConflict('CANDIDATE_REVIEW_POINTER_CONFLICT')
         if own_id:
             decision = s._decision_repository.get_decision(own_id)
-            if decision is None or decision.candidate_site_id != candidate_id or decision.tenant_id != s._decision_repository.tenant_id:
+            if (decision is None or decision.decision_id != own_id
+                    or decision.candidate_site_id != candidate_id or decision.tenant_id != s._decision_repository.tenant_id):
                 raise NetworkReviewConflict('OWN_DECISION_REQUIRED')
         else:
             if any(d.status in {DecisionStatus.APPROVED, DecisionStatus.REJECTED} for d in decisions):
@@ -104,10 +108,14 @@ class NetworkReviewSubmissionOwner:
             if len(eligible) > 1:
                 raise NetworkReviewConflict('AMBIGUOUS_OWN_DECISION')
             decision = eligible[0] if eligible else None
-        if candidate.candidate_site.site_status in {'approved', 'opened', 'rejected'}:
+        operational = candidate.candidate_site.site_status in {'approved', 'opened'}
+        if candidate.candidate_site.site_status == 'rejected':
             raise NetworkReviewConflict('TERMINAL_CANDIDATE_POLICY_UNRESOLVED')
+        if operational and decision is None:
+            raise NetworkReviewConflict('OWN_DECISION_REQUIRED')
         if decision is not None:
-            if decision.status not in {DecisionStatus.SYSTEM_RECOMMENDED, DecisionStatus.DRAFT, DecisionStatus.PENDING_REVIEW}:
+            if decision.status not in {DecisionStatus.SYSTEM_RECOMMENDED, DecisionStatus.DRAFT,
+                                       DecisionStatus.PENDING_REVIEW, DecisionStatus.APPROVED, DecisionStatus.REJECTED}:
                 raise NetworkReviewConflict('TERMINAL_REVIEW_POLICY_UNRESOLVED')
             if isinstance(decision.version, bool) or not isinstance(decision.version, int) or decision.version < 1:
                 raise NetworkReviewConflict('ACTUAL_DECISION_VERSION_REQUIRED')
@@ -118,6 +126,29 @@ class NetworkReviewSubmissionOwner:
             original = s._sitescore_repository.get_report(report.report_id)
             if original != report:
                 raise NetworkReviewConflict('IMMUTABLE_REPORT_BINDING_CONFLICT')
+            if decision.status in {DecisionStatus.APPROVED, DecisionStatus.REJECTED}:
+                if not operational:
+                    raise NetworkReviewConflict('TERMINAL_REVIEW_POLICY_UNRESOLVED')
+                if (type(latest.report_version) is not int or latest.report_version <= report.report_version
+                        or latest.report_id == report.report_id):
+                    raise NetworkReviewConflict('NEWER_SAVED_REPORT_REQUIRED')
+                if any(d.report_id == latest.report_id for d in decisions):
+                    raise NetworkReviewConflict('REPORT_ALREADY_HAS_DECISION')
+                try:
+                    s._decision_workflow._validate_previous_round(latest, decision.decision_id, decision.tenant_id)
+                except SiteScoreDecisionError as exc:
+                    raise NetworkReviewConflict(str(exc)) from exc
+                # The CAS target keeps the old pointer/state/digest. Opening
+                # the new round happens only after these are checked again.
+                decision, report = None, latest
+            elif operational:
+                previous_id = getattr(decision, 'previous_decision_id', None)
+                if previous_id is None:
+                    raise NetworkReviewConflict('APPROVED_PREVIOUS_ROUND_REQUIRED')
+                try:
+                    s._decision_workflow._validate_previous_round(report, previous_id, decision.tenant_id)
+                except SiteScoreDecisionError as exc:
+                    raise NetworkReviewConflict(str(exc)) from exc
         else:
             report = latest
         if (not isinstance(report.report_id, str) or not report.report_id.strip() or isinstance(report.report_version, bool)
@@ -130,6 +161,16 @@ class NetworkReviewSubmissionOwner:
                 module: Literal['operator_console', 'sitescore'] = 'operator_console') -> dict[str, Any]:
         candidate = self._candidate(candidate_id, principal, module=module)
         decision, report, latest = self._target(candidate, decision_id)
+        previous_id = (getattr(decision, 'previous_decision_id', None) if decision is not None else
+                       candidate.review_id if candidate.candidate_site.site_status in {'approved', 'opened'} else None)
+        previous_ref = None
+        if previous_id is not None:
+            previous = self.service._decision_repository.get_decision(previous_id)
+            approval = self.service._decision_workflow._approval_store.get(previous.approval_id)
+            previous_ref = {'decisionId': previous.decision_id, 'decisionVersion': previous.version,
+                'approvalId': previous.approval_id, 'approvalStatus': approval.approval_status,
+                'reportId': previous.report_id, 'reportVersion': previous.report_version,
+                'modelVersion': previous.model_version, 'tenantId': previous.tenant_id}
         pending = decision is not None and decision.status == DecisionStatus.PENDING_REVIEW
         pending_ref = None
         if pending:
@@ -148,6 +189,7 @@ class NetworkReviewSubmissionOwner:
                 'addressId': candidate.address.address_id, 'tenantId': principal.tenant_id,
                 'actorSubjectId': principal.subject_id, 'canSubmit': not pending,
                 'blockCode': 'ALREADY_PENDING' if pending else None, 'reviewerGroups': reviewer_groups(),
+                **({'previousReview': previous_ref} if previous_ref is not None else {}),
                 'pendingReview': pending_ref,
                 'target': {'expectedReportId': report.report_id, 'expectedReportVersion': report.report_version,
                     'expectedLatestReportId': latest.report_id, 'expectedLatestReportVersion': latest.report_version,
@@ -198,13 +240,20 @@ class NetworkReviewSubmissionOwner:
                 try:
                     if decision is None:
                         decision = s._decision_workflow.open_decision(report, created_by=principal.subject_id,
-                            correlation_id=correlation_id or '', tenant_id=principal.tenant_id, verified_creator=True)
+                            correlation_id=correlation_id or '', tenant_id=principal.tenant_id, verified_creator=True,
+                            previous_decision_id=(candidate.review_id
+                                if candidate.candidate_site.site_status in {'approved', 'opened'} else None))
                     decision = s._decision_workflow.submit_for_review(decision.decision_id,
                         submitted_by=principal.subject_id, correlation_id=correlation_id or '',
                         submission_summary=submission_summary, reviewer_group_id=reviewer_group_id, verified_submitter=True)
                 except (SiteScoreDecisionError, ValueError) as exc:
                     raise NetworkReviewConflict(str(exc)) from exc
-                repository.save_review_candidate(replace(candidate, review_id=decision.decision_id),
+                if candidate.candidate_site.site_status in {'approved', 'opened'}:
+                    next_candidate = copy.deepcopy(candidate)
+                    next_candidate.review_id = decision.decision_id
+                else:
+                    next_candidate = replace(candidate, review_id=decision.decision_id)
+                repository.save_review_candidate(next_candidate,
                     expected_review_id=candidate.review_id, expected_state=candidate.candidate_site.site_status)
                 # Pending has a real persisted pointer and a distinct pending
                 # relation; it is not counterfeit terminal reviewWorkflow data.
@@ -217,6 +266,8 @@ class NetworkReviewSubmissionOwner:
                     'tenantId': decision.tenant_id, 'submittedBy': principal.subject_id,
                     'submissionSummary': submission_summary, 'reviewerGroupId': reviewer_group_id,
                     'originalCreatorSubjectId': decision.created_by, 'originalCreatorVerified': getattr(decision, 'created_by_verified', False)}
+                if getattr(decision, 'previous_decision_id', None) is not None:
+                    metadata['reviewSubmission']['previousDecisionId'] = decision.previous_decision_id
                 c._intakes.save_review_metadata(candidate_id, metadata, expected_owned=expected_owned)
                 s._reviews = [r for r in s._reviews if r['id'] != decision.decision_id] + [
                     {'id': decision.decision_id, 'candidateId': candidate_id, 'status': 'pending',
@@ -240,5 +291,8 @@ class NetworkReviewSubmissionOwner:
                 'reviewerGroupId': reviewer_group_id, 'originalCreatorSubjectId': decision.created_by,
                 'verifiedSubmitterSubjectId': getattr(decision, 'submitted_by', None),
                 'originalCreatorVerified': getattr(decision, 'created_by_verified', False)}, 'idempotentReplay': False, 'correlationId': correlation_id}
+            if getattr(decision, 'previous_decision_id', None) is not None:
+                result['commandReceipt']['previousDecisionId'] = decision.previous_decision_id
+                result['commandReceipt']['candidateState'] = candidate.candidate_site.site_status
             s._idempotency_cache[key] = {'requestFingerprint': fingerprint, 'response': copy.deepcopy(result)}
             return result

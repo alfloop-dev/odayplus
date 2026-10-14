@@ -1,5 +1,7 @@
 import { hasCandidateReviewSubmission, hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, readId, readObject } from "./networkReadValidation";
 import { inspectReviewsReadProjection } from "./networkReviewProjection";
+import { hasApprovedReviewHistory } from "./networkReviewRounds";
+import { hasCurrentPendingSubmissionHistory } from "./networkPendingReviewHistory";
 import type { NetworkReviewsSnapshot, ReviewItem } from "./networkReviewTypes";
 import type { CandidateNativeWorkflowRead, CandidateNativeWorkflowReads, CandidateReviewReadTarget, NetworkScoringSnapshot } from "./networkScoringTypes";
 import type { WorkflowRead } from "./networkWorkflowProjection";
@@ -79,8 +81,11 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
       const row = hasCandidateReviewSubmission(submission) ? ownReviews.find((review) => review.id === submission.decisionId) : undefined;
       const decision = row && reviews.decisions?.find((record) => record.decision_id === row.id);
       const approval = row && reviews.approvals?.find((record) => record.reviewId === row.id);
+      const newRound = decision && readId(decision.previous_decision_id) && readId(decision.tenant_id)
+        && hasApprovedReviewHistory(reviews, candidate.id, decision.tenant_id, decision.previous_decision_id, decision.report_version);
       if (!hasCandidateReviewSubmission(submission) || !row || !decision || !readObject(decision) || !persisted(row)
         || row.canonicalDecisionStatus !== "PENDING_REVIEW" || row.status !== "pending"
+        || !hasCurrentPendingSubmissionHistory(decision)
         || submission.decisionVersion !== decision.version || submission.tenantId !== decision.tenant_id
         || submission.approvalId !== decision.approval_id || submission.approvalId !== approval?.id
         || approval.approvalStatus !== "pending" || approval.status !== "pending"
@@ -90,11 +95,15 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
         || submission.submissionSummary !== decision.submission_summary || submission.reviewerGroupId !== decision.reviewer_group_id
         || submission.originalCreatorSubjectId !== decision.created_by || submission.originalCreatorVerified !== decision.created_by_verified
         || raw.reviewId != null && raw.reviewId !== row.id || raw.reviewWorkflow != null
-        || ["approved", "opened", "rejected"].includes(String(result.lifecycle))) {
+        || submission.previousDecisionId !== decision.previous_decision_id
+          && (submission.previousDecisionId != null || decision.previous_decision_id != null)
+        || ["approved", "opened", "rejected"].includes(String(result.lifecycle))
+          && !(newRound && ["approved", "opened"].includes(String(result.lifecycle)))) {
         Object.assign(result, { availability: "conflict", reason: messages.conflict }); continue;
       }
       Object.assign(result, { availability: "recorded", stage: "pendingreview", review: target(row),
-        reason: `已核對實際待審 Decision、獨立 Approval 與凍結報告 v${row.reportVersion}；最新報告 v${latest.reportVersion} 另行保存。` });
+        reason: (newRound ? `原${result.lifecycle === "opened" ? "已開店" : "已核准"}狀態保留；新版報告本輪待審。` : "")
+          + `已核對實際待審 Decision、獨立 Approval 與凍結報告 v${row.reportVersion}；最新報告 v${latest.reportVersion} 另行保存。` });
       continue;
     }
     const metadata = raw.reviewWorkflow;
@@ -103,21 +112,27 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
         ? ownReviews.find((review) => review.id === metadata.decisionId) : undefined;
       const decision = row && reviews.decisions?.find((record) => record.decision_id === row.id);
       const action = readObject(metadata) ? metadata.networkAction : null;
+      const newRound = decision && readId(decision.previous_decision_id) && readId(decision.tenant_id)
+        && hasApprovedReviewHistory(reviews, candidate.id, decision.tenant_id, decision.previous_decision_id, decision.report_version);
       const stage = action === "GO" ? "approved" : action === "WAIT" ? "onhold" : action === "RETURN" ? "needdata"
         : action === "REJECT" ? "rejected" : null;
       // The producer checks physical cand.review_id before emitting this nested
       // pointer. The legacy siteReviews namespace may mask the top-level copy.
       // A present top-level pointer must still agree; metadata alone is insufficient.
-      const lifecycleMatches = action === "GO" ? ["approved", "opened"].includes(String(raw.canonicalSiteStatus))
+      const operational = ["approved", "opened"].includes(String(raw.canonicalSiteStatus));
+      const lifecycleMatches = newRound && operational || (action === "GO" ? operational
         : action === "REJECT" ? raw.canonicalSiteStatus === "rejected"
-          : !["approved", "opened", "rejected"].includes(String(raw.canonicalSiteStatus));
+          : !["approved", "opened", "rejected"].includes(String(raw.canonicalSiteStatus)));
       if (!readObject(metadata) || !row || !decision || !stage || !persisted(row)
         || !readId(raw.canonicalSiteStatus) || !lifecycleMatches
         || raw.reviewId != null && raw.reviewId !== row.id
         || !version(metadata.decisionVersion) || metadata.decisionVersion !== decision.version
         || metadata.tenantId !== decision.tenant_id || metadata.approvalId !== decision.approval_id
         || metadata.reportId !== row.reportId || metadata.reportVersion !== row.reportVersion
-        || metadata.networkAction !== decision.network_action || metadata.status !== row.status || raw.status !== row.status
+        || metadata.previousDecisionId !== decision.previous_decision_id
+          && (metadata.previousDecisionId != null || decision.previous_decision_id != null)
+        || metadata.networkAction !== decision.network_action || metadata.status !== row.status
+        || raw.status !== (operational ? raw.canonicalSiteStatus : row.status)
         || metadata.conditions !== decision.conditions || !same(metadata.requiredData, decision.required_data)) {
         Object.assign(result, { availability: "conflict", reason: messages.conflict }); continue;
       }

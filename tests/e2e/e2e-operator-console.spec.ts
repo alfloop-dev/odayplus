@@ -19,9 +19,22 @@ test.afterEach(() => {
   releaseOperatorBackendLock();
 });
 
+// These three cases explicitly exercise the anonymous design/legacy fixture
+// path. Prove no authenticated account is present before replacing only its
+// session-discovery premise; no business API payload or authority is supplied.
+async function anonymousFixtureSession(page: import("@playwright/test").Page) {
+  const session = await page.context().request.get("/auth/session");
+  expect(session.status()).toBe(401);
+  await page.route("**/auth/session", (route) => route.fulfill({
+    status: 404, contentType: "application/json",
+    body: JSON.stringify({ detail: "Anonymous design fixture; no authenticated session" }),
+  }));
+}
+
 test("ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and Store Ops dialog", async ({
   page,
 }) => {
+  await anonymousFixtureSession(page);
   test.info().annotations.push({
     type: "scope",
     description:
@@ -154,6 +167,7 @@ test("ODP-FIN-FE-003 command palette and task center are API-bound", async ({
 test("ODP-OC-FE-05 Governance Workspace details and evidence package export", async ({
   page,
 }) => {
+  await anonymousFixtureSession(page);
   test.setTimeout(90_000);
   const browserErrors: string[] = [];
   page.on("console", (message) => {
@@ -282,6 +296,7 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
   page,
   request,
 }) => {
+  await anonymousFixtureSession(page);
   test.info().annotations.push({
     type: "scope",
     description:

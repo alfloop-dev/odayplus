@@ -31,8 +31,11 @@ export function ReviewSubmissionDialog({ candidateId, context, busy, error, corr
         {context ? <p data-testid="review-submission-report-target">
           本次凍結報告 {context.target.expectedReportId} v{context.target.expectedReportVersion}。<br />
           最新報告 {context.target.expectedLatestReportId} v{context.target.expectedLatestReportVersion}。
-          {context.target.decisionId ? ` 保留同一 Decision ${context.target.decisionId}；送審不會將舊版決策套用到新版報告。` : " 建立這筆已保存報告的審核紀錄。"}
+          {context.target.decisionId ? ` 保留同一 Decision ${context.target.decisionId}；送審不會將舊版決策套用到新版報告。`
+            : context.previousReview ? " 新版報告另開一輪審查；原核准及開店紀錄保留。" : " 建立這筆已保存報告的審核紀錄。"}
         </p> : <p role="status">正在確認送審資格與報告版本…</p>}
+        {context?.previousReview ? <p>前輪 {context.previousReview.decisionId} · 報告 v{context.previousReview.reportVersion}。
+          原候選點{context.target.expectedCandidateState === "opened" ? "已開店" : "已核准"}狀態保留，這次審查結果獨立記錄。</p> : null}
         <div className={styles.reviewDialogField}><label className={styles.reviewDialogFieldLabel} htmlFor={`${id}-summary`}>送審摘要（必填）</label>
           <textarea id={`${id}-summary`} data-autofocus data-testid="review-submission-summary" className={styles.reviewDialogInput}
             rows={3} readOnly={busy} value={summary} onChange={(event) => setSummary(event.target.value)} /></div>

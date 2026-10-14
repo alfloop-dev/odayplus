@@ -1,5 +1,6 @@
 import { DECISION_FINAL_LABEL, type NetworkReviewsSnapshot, type ReviewItem } from "./networkReviewTypes";
 import { readObject } from "./networkReadValidation";
+import { hasCurrentPendingSubmissionHistory } from "./networkPendingReviewHistory";
 
 const decisionStates = new Set(["DRAFT", "SYSTEM_RECOMMENDED", "PENDING_REVIEW", "APPROVED", "REJECTED"]);
 const availableReports = new Set(["available", "unavailable", "conflict"]);
@@ -90,6 +91,10 @@ export function inspectReviewsReadProjection(snapshot: NetworkReviewsSnapshot): 
       : action === "GO" ? "approved" : row.canonicalDecisionStatus === "REJECTED" ? "rejected"
       : ["DRAFT", "APPROVED"].includes(row.canonicalDecisionStatus ?? "") ? "unknown" : "pending";
     if (decision.version !== undefined && (!Number.isInteger(decision.version) || decision.version < 0)) return "error";
+    if (row.canonicalDecisionStatus === "PENDING_REVIEW" && decision.version !== undefined
+      && decision.submission_actor_verified === true && (!hasCurrentPendingSubmissionHistory(decision)
+        || approval.recordSource !== "persisted" || approval.id !== decision.approval_id
+        || approval.approvalStatus !== "pending" || approval.status !== "pending")) return "error";
     if ((decision.conditions != null && typeof decision.conditions !== "string") ||
         (decision.required_data != null && (!Array.isArray(decision.required_data) || !decision.required_data.every(nonempty))) ||
         (decision.override_ack != null && typeof decision.override_ack !== "boolean") ||

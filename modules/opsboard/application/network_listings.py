@@ -788,9 +788,13 @@ class NetworkListingService:
         state = {"GO": "approved", "WAIT": "onhold", "RETURN": "needdata", "REJECT": "rejected"}[action]
         # onhold/needdata are Operator workflow states; CandidateSite retains
         # its existing domain enum and physical lifecycle status.
-        if action in {"GO", "REJECT"}:
+        if action in {"GO", "REJECT"} and candidate.candidate_site.site_status not in {"approved", "opened"}:
             candidate = replace(candidate, candidate_site=replace(candidate.candidate_site, site_status=state))
-        candidate = replace(candidate, review_id=decision.decision_id)
+        if candidate.candidate_site.site_status in {"approved", "opened"}:
+            candidate = _copy(candidate)
+            candidate.review_id = decision.decision_id
+        else:
+            candidate = replace(candidate, review_id=decision.decision_id)
         owner_save = getattr(self._listing_repository, "save_review_candidate", None)
         if owner_save is None:
             raise NetworkListingPolicyError("CANONICAL_REVIEW_CANDIDATE_OWNER_REQUIRED")
@@ -806,6 +810,8 @@ class NetworkListingService:
             "networkAction": action, "status": state,
             "conditions": decision.conditions, "requiredData": list(decision.required_data or ()),
         }
+        if getattr(decision, "previous_decision_id", None) is not None:
+            metadata["reviewWorkflow"]["previousDecisionId"] = decision.previous_decision_id
         self._intakes.save_review_metadata(decision.candidate_site_id, metadata, expected_owned=expected_owned)
         return _copy(metadata["reviewWorkflow"])
 
@@ -862,6 +868,7 @@ class NetworkListingService:
                     and decision.submission_actor_verified is True
                     and decision.submission_summary == submitted.get("submissionSummary")
                     and decision.reviewer_group_id == submitted.get("reviewerGroupId")
+                    and getattr(decision, "previous_decision_id", None) == submitted.get("previousDecisionId")
                     and approval is not None and approval.decision_id == decision.decision_id
                     and approval.approval_status == "pending"):
                 retained = self._review_decision_repository.get_report(decision.decision_id)
@@ -886,12 +893,14 @@ class NetworkListingService:
                     and decision.report_version == workflow.get("reportVersion")
                     and getattr(decision, "version", None) == workflow.get("decisionVersion")
                     and getattr(decision, "approval_id", None) == workflow.get("approvalId")
+                    and getattr(decision, "previous_decision_id", None) == workflow.get("previousDecisionId")
                     and getattr(decision, "conditions", None) == workflow.get("conditions")
                     and list(getattr(decision, "required_data", ()) or ()) == workflow.get("requiredData")
                     and {"GO": "approved", "WAIT": "onhold", "RETURN": "needdata", "REJECT": "rejected"}.get(
                         getattr(decision, "network_action", None)) == workflow.get("status")):
                 res["canonicalSiteStatus"] = res["status"]
-                res["status"] = workflow["status"]
+                if cand.candidate_site.site_status not in {"approved", "opened"}:
+                    res["status"] = workflow["status"]
                 res["reviewId"] = decision.decision_id
                 res["reviewWorkflow"] = _copy(workflow)
                 if decision.network_action == "RETURN":
