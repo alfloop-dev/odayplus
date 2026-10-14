@@ -80,13 +80,18 @@ def test_existing_malformed_fields_never_escape_read_or_actual_replay(
 @pytest.mark.parametrize("canonical_value", [True, False, "legacy", "unclassified-alias",
     "legacy-weaker-last", "legacy-stricter-last", "bad-dict", "bad-list", "bad-field-list",
     "bad-legacy-member", "nested-legacy", "nested-canonical", "bad-classification", "bad-path",
-    "snapshot-public", "snapshot-internal", "snapshot-confidential", "mixed-container-drop"])
+    "snapshot-public", "snapshot-internal", "snapshot-confidential", "mixed-container-drop",
+    "raw-row-items", "raw-row-rows", "raw-list-items", "raw-list-rows", "raw-value-items", "raw-value-rows",
+    "raw-unknown-items", "raw-unknown-rows", "coarse-payload-alias", "diagnostic-alias", "diagnostic-extra",
+    "diagnostic-message", "diagnostic-items-shape", "diagnostic-error-shape",
+    "deep-classification", "deep-classification-high"])
 def test_standalone_classified_summary_receipt_replaces_unsupported_values(
     monkeypatch, alias, job_app, canonical_value
 ):
     key, bundle, app = job_app
     clearance = ("PUBLIC" if canonical_value == "snapshot-public" else
-        "INTERNAL" if canonical_value == "snapshot-internal" else "CONFIDENTIAL")
+        "INTERNAL" if canonical_value == "snapshot-internal" else
+        "HIGHLY_RESTRICTED" if canonical_value == "deep-classification-high" else "CONFIDENTIAL")
     boundary = boundary_for(key, modules=["listing"], clearance=clearance)
     monkeypatch.setattr(deps, "default_boundary", lambda: boundary)
     headers = {"authorization": "Bearer " + _token(key, "offline-key")}
@@ -142,7 +147,29 @@ def test_standalone_classified_summary_receipt_replaces_unsupported_values(
     if canonical_value == "mixed-container-drop":
         alias_value = {"classification":"HIGHLY_RESTRICTED",secret:[secret]}
         private = {"parsedFields":alias_value}
-    expect_hidden = canonical_value != "snapshot-confidential"
+    deep = canonical_value in ("deep-classification", "deep-classification-high")
+    if deep:
+        alias_value = {"nested":secret}
+        import sys
+        for _ in range(max(10000, sys.getrecursionlimit() * 4 + 100)):
+            alias_value = {"nested":alias_value}
+        # CPython's container-repr C limit can differ from the Python limit.
+        # Prove the fixture exercises the unsafe conversion, not a shallow pass.
+        with pytest.raises(RecursionError):
+            str(alias_value)
+        private = {"classification":alias_value,"field_path":"deep","effective":secret}
+    raw_case = isinstance(canonical_value,str) and canonical_value.startswith("raw-")
+    if raw_case:
+        raw_value = {"nested":secret}
+        raw_row = {"item_id":"one","contactPhone":secret}
+        if "unknown" in canonical_value or "value" in canonical_value:
+            raw_row["unknown_column"] = raw_value
+        raw_rows = [raw_row]
+        alias_value = raw_rows if "list" in canonical_value else raw_value if "value" in canonical_value else raw_row
+    if canonical_value in ("coarse-payload-alias", "diagnostic-alias", "diagnostic-extra",
+            "diagnostic-message", "diagnostic-items-shape"):
+        alias_value = {"nested":secret}
+    expect_hidden = canonical_value not in ("snapshot-confidential", "deep-classification-high")
     public = {"classification": "PUBLIC", "effective": "visible-public"}
     record = JobRecord(
         job_type="batch-listing-intake",
@@ -154,12 +181,31 @@ def test_standalone_classified_summary_receipt_replaces_unsupported_values(
         },
         correlation_id="offline",
     )
+    if raw_case:
+        record.payload["items" if canonical_value.endswith("items") else "rows"] = raw_rows
+    if canonical_value == "coarse-payload-alias":
+        record.payload["unclassified_data"] = alias_value
+    receipt_data = record.payload["receipt"]
+    if canonical_value.startswith("diagnostic-") if isinstance(canonical_value, str) else False:
+        error = {"code":"FETCH_FAILED","message":"failure","details":None}
+        if canonical_value == "diagnostic-alias":
+            error["details"] = alias_value
+        if canonical_value == "diagnostic-extra":
+            error["stack"] = alias_value
+        if canonical_value == "diagnostic-message":
+            error["message"] = alias_value
+        receipt_data["items"] = [{"error":error}]
+        if canonical_value == "diagnostic-items-shape":
+            receipt_data["items"] = alias_value
+        if canonical_value == "diagnostic-error-shape":
+            receipt_data["items"][0]["error"] = secret
     bundle.job_queue._jobs[record.job_id] = record
     token = "inline-replay"
     bundle.job_queue._idempotency_index[
         f"batch-listing-intake:v2:{len(TENANT)}:{TENANT}:{len(token)}:{token}"
     ] = record.job_id
-    before = deepcopy(record.to_dict())
+    before = _graph_signature(record.payload) if deep else deepcopy(record.to_dict())
+    metadata_before = {key:value for key,value in record.to_dict().items() if key != "payload"} if deep else None
     seen = []
     enqueue = bundle.job_queue.enqueue
 
@@ -169,7 +215,7 @@ def test_standalone_classified_summary_receipt_replaces_unsupported_values(
         return result
 
     monkeypatch.setattr(bundle.job_queue, "enqueue", observed)
-    with _client(app) as client:
+    with _client(app, raise_server_exceptions=not deep) as client:
         responses = [
             client.get(f"{alias}/{record.job_id}", headers=headers),
             client.post(
@@ -185,12 +231,37 @@ def test_standalone_classified_summary_receipt_replaces_unsupported_values(
     assert seen == [(record, False)] and responses[1].json()["created"] is False
     for response in responses:
         assert ("fixture-inline-private" not in response.text) == expect_hidden and "visible-public" in response.text
-    assert record.to_dict() == before
+    if deep:
+        assert _graph_signature(record.payload) == before
+        assert {key:value for key,value in record.to_dict().items() if key != "payload"} == metadata_before
+        assert all('"nested"' not in response.text for response in responses)
+    else:
+        assert record.to_dict() == before
+
+
+def _graph_signature(root):
+    """Fixture-only iterative identity/content snapshot, never recursive repr."""
+    pending, seen, output = [root], set(), []
+    while pending:
+        node = pending.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        entries = node.items() if isinstance(node, dict) else enumerate(node)
+        row = []
+        for key,value in entries:
+            if isinstance(value,(dict,list)):
+                row.append((key,type(value).__name__,id(value)))
+                pending.append(value)
+            else:
+                row.append((key,"scalar",value))
+        output.append((id(node),row))
+    return output
 
 
 @contextmanager
-def _client(app):
-    client = TestClient(app)  # NO lifespan/worker startup.
+def _client(app, **kwargs):
+    client = TestClient(app, **kwargs)  # NO lifespan/worker startup.
     try:
         yield client
     finally:

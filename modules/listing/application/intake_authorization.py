@@ -522,15 +522,22 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
 
             field_info_copy = field_info.copy()
             raw_classification = field_info_copy.get("classification", "RESTRICTED")
-            try:
-                if isinstance(raw_classification, DataClassification):
-                    field_class = raw_classification
-                else:
-                    field_class = DataClassification[str(raw_classification).upper()]
-            except (KeyError, AttributeError):
-                # Unknown classifications fail closed so a schema drift cannot
-                # disclose values before policy support is deployed.
+            if isinstance(raw_classification, DataClassification):
+                field_class = raw_classification
+            elif isinstance(raw_classification, str):
+                field_class = DataClassification.__members__.get(
+                    raw_classification.upper(), DataClassification.HIGHLY_RESTRICTED
+                )
+            else:
+                # Never recursively stringify untrusted containers or coerce
+                # runtime types into a classification declaration.
                 field_class = DataClassification.HIGHLY_RESTRICTED
+            if "classification" in field_info_copy and not isinstance(
+                raw_classification, (str, DataClassification)
+            ):
+                # Container metadata must be safe even at maximum clearance;
+                # keep legitimate/unknown string labels at that clearance.
+                field_info_copy["classification"] = field_class.name
 
             if clearance < field_class:
                 # Classification/path metadata must not smuggle containers or
@@ -682,6 +689,68 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
                 root_view[key] = value
         require_projection(node, root_view)
 
+    # Compile the remaining coarse owning policies BEFORE applying anything.
+    # Replacing rows/diagnostics afterwards would leave retained aliases intact.
+    if clearance < DataClassification.RESTRICTED:
+        require_projection(masked, {**masked, "error_message": None})
+        aliases = {
+            "address_raw": "address", "addressRaw": "address", "address": "address",
+            "rent_per_month": "rent", "rentPerMonth": "rent", "rent": "rent",
+            "area_ping": "areaPing", "areaPing": "areaPing", "floor": "floor",
+            "coordinates": "coordinates", "rawSnapshot": "rawSnapshot",
+            "brokerCompany": "brokerCompany", "contactEmail": "contactEmail",
+            "contactPhone": "contactPhone", "brokerEmail": "brokerEmail", "privateNotes": "privateNotes",
+        }
+        payload = masked.get("payload")
+        if isinstance(payload, dict):
+            payload_view = payload.copy()
+            for field, value in payload.items():
+                if field in ("items", "rows") and isinstance(value, list):
+                    for index, row in enumerate(value):
+                        if not isinstance(row, dict):
+                            replaced_edges.append((value, index))
+                            if isinstance(row, (dict, list)):
+                                rejected_pending.append(row)
+                            continue
+                        clean = {}
+                        for key, raw in row.items():
+                            if key == "item_id" or (key == "fields" and isinstance(raw, list)):
+                                clean[key] = raw
+                            elif key in aliases:
+                                canonical = aliases[key]
+                                view = mask_intake(principal, {"parsedFields": {canonical: {"sourceValue": raw}}})
+                                clean[key] = view["parsedFields"][canonical].get("sourceValue")
+                            else:
+                                clean[key] = None
+                        require_projection(row, clean)
+                elif field not in ("tenant_id", "submitter", "actor_role_id", "receipt", "summary", "fields", "masked_fields"):
+                    payload_view[field] = None
+            require_projection(payload, payload_view)
+            receipt = payload.get("receipt")
+            if isinstance(receipt, dict) and "items" in receipt:
+                items = receipt["items"]
+                if not isinstance(items, list):
+                    require_projection(receipt, {**receipt, "items": None})
+                else:
+                    for index, item in enumerate(items):
+                        if not isinstance(item, dict):
+                            replaced_edges.append((items, index))
+                            if isinstance(item, (dict, list)):
+                                rejected_pending.append(item)
+                            continue
+                        if "error" not in item or item["error"] is None:
+                            continue
+                        error = item["error"]
+                        if not isinstance(error, dict):
+                            require_projection(item, {**item, "error": None})
+                            continue
+                        safe_error = {"message": "Item processing failed; details are restricted", "details": None}
+                        if isinstance(error.get("code"), str):
+                            safe_error["code"] = error["code"]
+                        if isinstance(error.get("retryable"), bool):
+                            safe_error["retryable"] = error["retryable"]
+                        require_projection(error, safe_error)
+
     # A rejected container taints all its descendant containers as well: a
     # separately retained deep alias cannot bypass removal of its ancestor.
     while rejected_pending:
@@ -707,48 +776,4 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
                 node[key] = None
     if id(masked) in rejected:
         raise HTTPException(status_code=422, detail="JOB_FIELDS_INVALID")
-    if clearance >= DataClassification.RESTRICTED:
-        return masked
-    masked["error_message"] = None
-    aliases = {
-        "address_raw": "address", "addressRaw": "address", "address": "address",
-        "rent_per_month": "rent", "rentPerMonth": "rent", "rent": "rent",
-        "area_ping": "areaPing", "areaPing": "areaPing", "floor": "floor",
-        "coordinates": "coordinates", "rawSnapshot": "rawSnapshot",
-        "brokerCompany": "brokerCompany", "contactEmail": "contactEmail",
-        "contactPhone": "contactPhone", "brokerEmail": "brokerEmail",
-        "privateNotes": "privateNotes",
-    }
-    payload = masked.get("payload")
-    if not isinstance(payload, dict):
-        return masked
-    for field, value in list(payload.items()):
-        if field in ("items", "rows") and isinstance(value, list):
-            rows = []
-            for row in value:
-                if not isinstance(row, dict):
-                    rows.append(None)
-                    continue
-                clean = {}
-                for key, raw in row.items():
-                    if key == "item_id" or (key == "fields" and isinstance(raw, list)):
-                        clean[key] = raw
-                    elif key in aliases:
-                        canonical = aliases[key]
-                        view = mask_intake(
-                            principal, {"parsedFields": {canonical: {"sourceValue": raw}}}
-                        )
-                        clean[key] = view["parsedFields"][canonical].get("sourceValue")
-                    else:
-                        clean[key] = None
-                rows.append(clean)
-            payload[field] = rows
-        elif field not in ("tenant_id", "submitter", "actor_role_id", "receipt", "summary", "fields", "masked_fields"):
-            payload[field] = None
-    receipt = payload.get("receipt")
-    if isinstance(receipt, dict):
-        for item in receipt.get("items", []):
-            if isinstance(item, dict) and isinstance(item.get("error"), dict):
-                item["error"]["message"] = "Item processing failed; details are restricted"
-                item["error"]["details"] = None
     return masked

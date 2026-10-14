@@ -1170,3 +1170,16 @@ version coverage remains separate. Fixture mutants are diagnostic, not productio
 vulnerabilities or comprehensive success. All earlier HOLDs and caps remain.
 A rejected member-edge rewrite must not recreate a dictionary attribute already
 removed by a stronger projection; removals dominate all subsequent null rewrites.
+Raw-row, coarse payload and receipt-diagnostic restrictions join that SAME graph
+constraint compilation, not a later replacement pass that leaves aliases intact.
+Classification parsing accepts enums/strings only, never recursive container repr;
+malformed container metadata is canonicalized even at maximum clearance. Existing
+string labels at that clearance and independent PUBLIC positives remain intact.
+V1 notification authority delivery/provider-receipt IDs must not contain the ':'
+signature delimiter, including dictionary, direct-record and journal entry paths.
+Ambiguous old records refuse; no automatic rewriting, re-signing or migration.
+The pinned key, issuer, v1 signing bytes and freshness/once-only guards are unchanged.
+Journal filename fixtures use a separate authentic fixture trust context and exact
+filename refusal/state-preservation assertions; a second file for one ID necessarily
+violates its unique canonical filename. This is not independent duplicate-check
+coverage, notification operation, human assent or release/deployment authority.
