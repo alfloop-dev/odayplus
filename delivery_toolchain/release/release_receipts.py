@@ -180,6 +180,8 @@ def _collect_keyed_secret_values(value: Any, output: list[str], *, key: str = ""
             output.append(value)
     elif isinstance(value, Mapping):
         for child_key, child_value in value.items():
+            if sensitive and isinstance(child_key, str):
+                output.append(child_key)
             _collect_keyed_secret_values(child_value, output, key=str(child_key), sensitive=sensitive)
     elif isinstance(value, (list, tuple)):
         for child in value:
@@ -189,13 +191,30 @@ def _collect_keyed_secret_values(value: Any, output: list[str], *, key: str = ""
 def _redact_value(value: Any, secret_values: Sequence[str], redacted_paths: list[str], path: str) -> Any:
     if isinstance(value, Mapping):
         result: dict[str, Any] = {}
-        for raw_key, child in value.items():
-            key = str(raw_key)
+        # Reserve unchanged names first. Redacted/normalized names must never
+        # overwrite a public literal name or one another after collisions.
+        reserved = {str(key) for key in value if _redact_string(str(key), secret_values) == str(key)}
+        for index, (raw_key, child) in enumerate(value.items()):
+            original_key = str(raw_key)
+            key = _redact_string(original_key, secret_values)
+            changed = key != original_key
+            if key in result or (changed and key in reserved):
+                suffix = index
+                while True:
+                    candidate = f"{REDACTED}[key-{suffix}]"
+                    if candidate not in result and candidate not in reserved:
+                        key = candidate
+                        break
+                    suffix += 1
+                changed = True
             child_path = f"{path}.{key}" if path else key
-            if _is_sensitive_key(key):
+            # Classify the ORIGINAL key, but record only its safe output path.
+            if _is_sensitive_key(original_key):
                 result[key] = REDACTED
                 redacted_paths.append(child_path)
             else:
+                if changed:
+                    redacted_paths.append(child_path)
                 result[key] = _redact_value(child, secret_values, redacted_paths, child_path)
         return result
     if isinstance(value, list):

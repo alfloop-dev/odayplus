@@ -533,8 +533,11 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
                 field_class = DataClassification.HIGHLY_RESTRICTED
 
             if clearance < field_class:
-                field_info_copy = {key: value for key, value in field_info_copy.items()
-                                   if key in {"field_path", "classification"}}
+                # Classification/path metadata must not smuggle containers or
+                # unknown classification text around the value projection.
+                field_info_copy = {"field_path": field_info_copy["field_path"]} if isinstance(field_info_copy.get("field_path"), str) else {}
+                if "classification" in field_info:
+                    field_info_copy["classification"] = field_class.name
                 for value_key in ("parsed", "normalized", "corrected", "effective"):
                     field_info_copy[value_key] = None
                 field_info_copy["masked"] = True
@@ -626,50 +629,81 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
                 target.append(copied)
     # Canonical fields can occur in rows, envelopes, receipts or summaries.
     # Apply classifications even at RESTRICTED, before the legacy coarse mask.
-    pending_nodes: list[Any] = [masked]
-    visited: set[int] = set()
-    while pending_nodes:
-        node = pending_nodes.pop()
-        if not isinstance(node, (dict, list)) or id(node) in visited:
+    # Compile constraints against the UNMODIFIED clone, then apply their union.
+    # Never apply an independently copied weaker view after a stricter one.
+    changes: dict[int, tuple[dict[str, Any], set[str], dict[str, Any]]] = {}
+    rejected_pending: list[Any] = []
+    rejected: set[int] = set()
+    replaced_edges: list[tuple[Any, Any]] = []
+    nodes = list(memo.values())
+
+    def require_projection(original: dict[str, Any], projected: dict[str, Any]) -> None:
+        _, drops, puts = changes.setdefault(id(original), (original, set(), {}))
+        for key in original.keys() - projected.keys():
+            drops.add(key)
+            if isinstance(original[key], (dict, list)):
+                rejected_pending.append(original[key])
+        for key, value in projected.items():
+            if key not in original or value is not original[key]:
+                if key in original and isinstance(original[key], (dict, list)):
+                    rejected_pending.append(original[key])
+                # Null/drop requirements dominate any metadata addition.
+                if key not in puts or value is None or puts[key] is not None:
+                    puts[key] = value
+
+    for node in nodes:
+        if not isinstance(node, dict):
             continue
-        visited.add(id(node))
-        if isinstance(node, dict):
-            if "classification" in node:
-                view = mask_intake(principal, {"fields": [node]})["fields"][0]
-                node.clear()
-                node.update(view)
-            if "parsedFields" in node:
-                original = node["parsedFields"]
-                projected = mask_intake(principal, {"parsedFields": original})["parsedFields"]
-                if isinstance(original, dict) and isinstance(projected, dict):
-                    for key, value in projected.items():
-                        if isinstance(original[key], dict) and isinstance(value, dict):
-                            original[key].clear()
-                            original[key].update(value)
-                        else:
-                            original[key] = value
-                else:
-                    node["parsedFields"] = projected
-            if "fields" in node:
-                original = node["fields"]
-                view = mask_intake(principal, {"fields": original})
-                projected = view["fields"]
-                if isinstance(original, list) and isinstance(projected, list):
-                    # Preserve cloned field identities: a separately retained
-                    # alias must not keep the unmasked pre-projection object.
-                    for index, value in enumerate(projected):
-                        if isinstance(original[index], dict) and isinstance(value, dict):
-                            original[index].clear()
-                            original[index].update(value)
-                        else:
-                            original[index] = value
-                else:
-                    node["fields"] = projected
-                if "masked_fields" in view:
-                    node["masked_fields"] = view["masked_fields"]
-            pending_nodes.extend(node.values())
-        else:
-            pending_nodes.extend(node)
+        if "classification" in node:
+            require_projection(node, mask_intake(principal, {"fields": [node]})["fields"][0])
+        inputs = {key: node[key] for key in ("fields", "parsedFields", "rawSnapshot", "originalUrl") if key in node}
+        if not inputs:
+            continue
+        view = mask_intake(principal, inputs)
+        root_view = node.copy()
+        for collection, expected in (("fields", list), ("parsedFields", dict)):
+            if collection not in node:
+                continue
+            original, projected = node[collection], view[collection]
+            if isinstance(original, expected) and isinstance(projected, expected):
+                entries = original.items() if isinstance(original, dict) else enumerate(original)
+                for key, member in entries:
+                    replacement = projected[key]
+                    if isinstance(member, dict) and isinstance(replacement, dict):
+                        require_projection(member, replacement)
+                    elif replacement is not member:
+                        replaced_edges.append((original, key))
+                        if isinstance(member, (dict, list)):
+                            rejected_pending.append(member)
+            else:
+                root_view[collection] = projected
+        for key, value in view.items():
+            if key not in ("fields", "parsedFields"):
+                root_view[key] = value
+        require_projection(node, root_view)
+
+    # A rejected container taints all its descendant containers as well: a
+    # separately retained deep alias cannot bypass removal of its ancestor.
+    while rejected_pending:
+        node = rejected_pending.pop()
+        if id(node) in rejected:
+            continue
+        rejected.add(id(node))
+        values = node.values() if isinstance(node, dict) else node
+        rejected_pending.extend(value for value in values if isinstance(value, (dict, list)))
+    for original, drops, puts in changes.values():
+        for key in drops:
+            original.pop(key, None)
+        original.update({key: value for key, value in puts.items() if key not in drops})
+    for parent, key in replaced_edges:
+        parent[key] = None
+    for node in nodes:
+        entries = list(node.items()) if isinstance(node, dict) else enumerate(node)
+        for key, value in entries:
+            if isinstance(value, (dict, list)) and id(value) in rejected:
+                node[key] = None
+    if id(masked) in rejected:
+        raise HTTPException(status_code=422, detail="JOB_FIELDS_INVALID")
     if clearance >= DataClassification.RESTRICTED:
         return masked
     masked["error_message"] = None

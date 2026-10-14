@@ -4929,35 +4929,31 @@ def test_file_authority_store_b27_schema_validation_mutations(tmp_path):
     def _val(r):
         return True, "DELIVERED", None
 
+    # Each targeted mutation starts with a valid envelope. Missing-version
+    # rejection remains separately covered by B29, not as a fallback here.
+    valid_shape = json.dumps({"version": 1, "records": {delivery_id: rec.to_dict()}, "consumed": []})
+    valid_path = tmp_path / "valid_shape.json"
+    valid_path.write_text(valid_shape, encoding="utf-8")
+    assert FileDeliveryAuthorityStore(valid_path).get_authority_record(delivery_id) == rec
+    assert valid_path.read_text(encoding="utf-8") == valid_shape
     malformed_shapes = [
-        # (1) Reviewer's exact reproducer: records is list, consumed is list
-        '{"records": [], "consumed": []}',
-        # (2) Top-level is non-dict
-        "[1, 2, 3]",
-        '"just a string"',
-        "123.45",
-        # (3) Records is string
-        '{"records": "not a dict", "consumed": []}',
-        # (4) Consumed is string/dict instead of list
-        '{"records": {}, "consumed": "not a list"}',
-        '{"records": {}, "consumed": {"d1": true}}',
-        # (5) Duplicate items in consumed
-        '{"records": {}, "consumed": ["del-1", "del-1"]}',
-        # (6) Non-string items in consumed
-        '{"records": {}, "consumed": [123]}',
-        # (7) Unrecognized top-level key
-        '{"records": {}, "consumed": [], "unrecognized_key": 99}',
-        # (8) Invalid schema version
-        '{"version": 99, "records": {}, "consumed": []}',
-        # (9) Record object is not a dict
-        '{"records": {"del-1": "not a dict"}, "consumed": []}',
-        # (10) Record object missing required fields
-        '{"records": {"del-1": {"delivery_id": "del-1"}}, "consumed": []}',
-        # (11) Record key mismatch
-        json.dumps({"records": {"del-mismatch": rec.to_dict()}, "consumed": []}),
+        ('{"version": 1, "records": [], "consumed": []}', "Store data 'records' must be a dict"),
+        ("[1, 2, 3]", "Store data must be a JSON object"),
+        ('"just a string"', "Store data must be a JSON object"),
+        ("123.45", "Store data must be a JSON object"),
+        ('{"version": 1, "records": "not a dict", "consumed": []}', "Store data 'records' must be a dict"),
+        ('{"version": 1, "records": {}, "consumed": "not a list"}', "Store data 'consumed' must be a list"),
+        ('{"version": 1, "records": {}, "consumed": {"d1": true}}', "Store data 'consumed' must be a list"),
+        ('{"version": 1, "records": {}, "consumed": ["del-1", "del-1"]}', "Duplicate delivery ID in consumed list"),
+        ('{"version": 1, "records": {}, "consumed": [123]}', "Invalid non-canonical entry in consumed list"),
+        ('{"version": 1, "records": {}, "consumed": [], "unrecognized_key": 99}', "unrecognized top-level key"),
+        ('{"version": 99, "records": {}, "consumed": []}', "Unsupported or invalid store schema version"),
+        ('{"version": 1, "records": {"del-1": "not a dict"}, "consumed": []}', "Record for delivery ID 'del-1' must be a dict"),
+        ('{"version": 1, "records": {"del-1": {"delivery_id": "del-1"}}, "consumed": []}', "Invalid record object for delivery ID 'del-1'"),
+        (json.dumps({"version": 1, "records": {"del-mismatch": rec.to_dict()}, "consumed": []}), "Record delivery ID mismatch"),
     ]
 
-    for idx, shape in enumerate(malformed_shapes):
+    for idx, (shape, reason) in enumerate(malformed_shapes):
         file_path = tmp_path / f"corrupt_shape_{idx}.json"
         file_path.write_text(shape, encoding="utf-8")
 
@@ -4972,6 +4968,7 @@ def test_file_authority_store_b27_schema_validation_mutations(tmp_path):
         assert is_del is False
         assert st == "PENDING_VERIFICATION"
         assert "Authority store read failed" in str(err)
+        assert reason in str(err)
 
         # 3. _store_authority_record_for_testing fails closed and does not overwrite
         with pytest.raises(ValueError, match="Authority store data is corrupt or unreadable"):

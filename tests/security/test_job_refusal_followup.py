@@ -77,12 +77,17 @@ def test_existing_malformed_fields_never_escape_read_or_actual_replay(
 
 
 @pytest.mark.parametrize("alias", ["/jobs", "/api/v1/jobs"])
-@pytest.mark.parametrize("canonical_value", [True, False, "legacy", "unclassified-alias"])
+@pytest.mark.parametrize("canonical_value", [True, False, "legacy", "unclassified-alias",
+    "legacy-weaker-last", "legacy-stricter-last", "bad-dict", "bad-list", "bad-field-list",
+    "bad-legacy-member", "nested-legacy", "nested-canonical", "bad-classification", "bad-path",
+    "snapshot-public", "snapshot-internal", "snapshot-confidential"])
 def test_standalone_classified_summary_receipt_replaces_unsupported_values(
     monkeypatch, alias, job_app, canonical_value
 ):
     key, bundle, app = job_app
-    boundary = boundary_for(key, modules=["listing"], clearance="CONFIDENTIAL")
+    clearance = ("PUBLIC" if canonical_value == "snapshot-public" else
+        "INTERNAL" if canonical_value == "snapshot-internal" else "CONFIDENTIAL")
+    boundary = boundary_for(key, modules=["listing"], clearance=clearance)
     monkeypatch.setattr(deps, "default_boundary", lambda: boundary)
     headers = {"authorization": "Bearer " + _token(key, "offline-key")}
     private = {
@@ -100,6 +105,41 @@ def test_standalone_classified_summary_receipt_replaces_unsupported_values(
         private = {"fields": [{"field_path": "unknown", "effective": "fixture-inline-private"}]}
     alias_value = (private["parsedFields"]["contactPhone"] if canonical_value == "legacy" else
         private["fields"][0] if canonical_value == "unclassified-alias" else private)
+    secret = "fixture-inline-private"
+    if canonical_value in ("legacy-weaker-last", "legacy-stricter-last"):
+        alias_value = {"sourceValue": secret, "normalizedValue": secret, "correctedValue": secret}
+        entries = [("contactPhone",alias_value),("address",alias_value)]
+        if canonical_value == "legacy-stricter-last":
+            entries.reverse()
+        private = {"parsedFields":dict(entries)}
+    if canonical_value == "bad-dict":
+        alias_value = {"effective":secret}
+        private = {"fields":alias_value}
+    if canonical_value == "bad-list":
+        alias_value = [secret]
+        private = {"parsedFields":alias_value}
+    if canonical_value == "bad-field-list":
+        alias_value = [secret]
+        private = {"fields":[alias_value]}
+    if canonical_value == "bad-legacy-member":
+        alias_value = [secret]
+        private = {"parsedFields":{"contactPhone":alias_value}}
+    if canonical_value == "nested-legacy":
+        alias_value = {"nested":secret}
+        private = {"parsedFields":{"contactPhone":{"sourceValue":alias_value}}}
+    if canonical_value == "nested-canonical":
+        alias_value = {"nested":secret}
+        private = {"fields":[{"effective":alias_value}]}
+    if canonical_value == "bad-classification":
+        alias_value = {"nested":secret}
+        private = {"classification":alias_value,"effective":secret}
+    if canonical_value == "bad-path":
+        alias_value = {"nested":secret}
+        private = {"classification":"HIGHLY_RESTRICTED","field_path":alias_value,"effective":secret}
+    if canonical_value in ("snapshot-public", "snapshot-internal", "snapshot-confidential"):
+        alias_value = {"nested":secret}
+        private = {"rawSnapshot":alias_value,"originalUrl":f"https://example.invalid/{secret}"}
+    expect_hidden = canonical_value != "snapshot-confidential"
     public = {"classification": "PUBLIC", "effective": "visible-public"}
     record = JobRecord(
         job_type="batch-listing-intake",
@@ -141,7 +181,7 @@ def test_standalone_classified_summary_receipt_replaces_unsupported_values(
     assert [r.status_code for r in responses] == [200, 202]
     assert seen == [(record, False)] and responses[1].json()["created"] is False
     for response in responses:
-        assert "fixture-inline-private" not in response.text and "visible-public" in response.text
+        assert ("fixture-inline-private" not in response.text) == expect_hidden and "visible-public" in response.text
     assert record.to_dict() == before
 
 

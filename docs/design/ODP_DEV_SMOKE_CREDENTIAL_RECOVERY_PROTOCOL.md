@@ -1157,3 +1157,14 @@ Invitation issuance and stored-preset acceptance require nonblank string members
 all six scope axes, consistent with authoritative identity reads. Empty arrays and
 explicit valid restrictions remain legal. These are source repair requirements,
 not canonical, independent executed, Human/Ops, deployment or business acceptance.
+Compile recursive projection constraints against the unmodified cloned graph;
+combine removals/nulls before applying them so a weaker legacy alias cannot restore
+restricted data. Reject container identities and all descendant-container aliases,
+including list references. Apply the owning snapshot/original-URL policy at every
+retained envelope and normalize malformed classification/path metadata safely.
+Receipt keys and summary paths are redacted as well as values; deterministic safe
+collision names preserve entries and literal public names without overwrites.
+Sensitive container keys participate in discovery. Authority-schema mutation tests
+use valid versioned envelopes and assert each intended rejection reason; missing-
+version coverage remains separate. Fixture mutants are diagnostic, not production
+vulnerabilities or comprehensive success. All earlier HOLDs and caps remain.
