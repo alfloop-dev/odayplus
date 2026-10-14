@@ -551,6 +551,9 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
     if "parsedFields" in masked and isinstance(masked["parsedFields"], dict):
         parsed = {}
         for key, field_info in masked["parsedFields"].items():
+            if not isinstance(field_info, dict):
+                parsed[key] = field_info if clearance >= DataClassification.RESTRICTED else None
+                continue
             field_info_copy = field_info.copy()
 
             # Decide if this field is sensitive based on its name
@@ -566,6 +569,8 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
                 field_class = DataClassification.RESTRICTED
 
             if clearance < field_class:
+                # Unsupported legacy attributes are not public metadata.
+                field_info_copy = {}
                 field_info_copy["sourceValue"] = None
                 field_info_copy["normalizedValue"] = None
                 field_info_copy["correctedValue"] = None
@@ -574,6 +579,8 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
 
             parsed[key] = field_info_copy
         masked["parsedFields"] = parsed
+    elif "parsedFields" in masked and clearance < DataClassification.RESTRICTED:
+        masked["parsedFields"] = None
 
     # Mask top-level rawSnapshot/originalUrl if needed
     if clearance < DataClassification.CONFIDENTIAL:
@@ -631,9 +638,33 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
                 view = mask_intake(principal, {"fields": [node]})["fields"][0]
                 node.clear()
                 node.update(view)
+            if "parsedFields" in node:
+                original = node["parsedFields"]
+                projected = mask_intake(principal, {"parsedFields": original})["parsedFields"]
+                if isinstance(original, dict) and isinstance(projected, dict):
+                    for key, value in projected.items():
+                        if isinstance(original[key], dict) and isinstance(value, dict):
+                            original[key].clear()
+                            original[key].update(value)
+                        else:
+                            original[key] = value
+                else:
+                    node["parsedFields"] = projected
             if "fields" in node:
-                view = mask_intake(principal, {"fields": node["fields"]})
-                node["fields"] = view["fields"]
+                original = node["fields"]
+                view = mask_intake(principal, {"fields": original})
+                projected = view["fields"]
+                if isinstance(original, list) and isinstance(projected, list):
+                    # Preserve cloned field identities: a separately retained
+                    # alias must not keep the unmasked pre-projection object.
+                    for index, value in enumerate(projected):
+                        if isinstance(original[index], dict) and isinstance(value, dict):
+                            original[index].clear()
+                            original[index].update(value)
+                        else:
+                            original[index] = value
+                else:
+                    node["fields"] = projected
                 if "masked_fields" in view:
                     node["masked_fields"] = view["masked_fields"]
             pending_nodes.extend(node.values())

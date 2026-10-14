@@ -182,12 +182,19 @@ def test_real_absolute_signal_cancels_slow_request_without_logging_credentials()
 
 
 def test_cleanup_uses_reserved_absolute_deadline_not_refreshed_work_budget() -> None:
+    replies = []
     class Cleanup:
         def request(self, method, path, **kwargs):
-            return c.gate.HttpResponse(200, {"ok": True})
+            assert kwargs["headers"]["cookie"] == "__Host-oday_web_session=fixture-owned"
+            response = c.gate.HttpResponse(200, {"ok": True}, cookies={"__Host-oday_web_session":""}) if path == "/auth/logout" else c.gate.HttpResponse(401)
+            replies.append((method,path,response))
+            return response
     now = time.monotonic()
     web = c._ObservedWeb(Cleanup(), execution_id="offline", deadline=now - 1, cleanup_deadline=now + 0.2)
-    assert web.request("POST", "/auth/logout").status == 200
+    web._retain_login_cookies((("__Host-oday_web_session","fixture-owned"),))
+    assert web.cleanup_owned_sessions() is True
+    assert [path for _,path,_ in replies] == ["/auth/logout","/auth/session","/api/v1/auth/principal"]
+    assert replies[0][2].status == 200
     assert web.request("POST", "/login").status == 0
 
 
@@ -585,6 +592,41 @@ def test_real_evaluator_noncanonical_form_failure_latches_before_positive_form_l
     assert after == [], "no positive form login or session/page read after malformed diagnostic reply"
     assert report["ok"] is False
     assert observed.cleanup_owned_sessions() is False  # UNKNOWN never reported as completed
+
+
+@pytest.mark.parametrize("late_path", ["/auth/session", "/api/v1/auth/principal", "/auth/logout"])
+def test_expired_ordinary_session_work_never_spends_owned_cleanup_reserve(monkeypatch, late_path):
+    from types import SimpleNamespace
+
+    from tests.e2e import test_live_e2e_gate_dev_admin as f
+    clock = f.base.FakeClock()
+    monkeypatch.setattr(c, "time", SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep))
+    monkeypatch.setattr(f.base, "WEB_URL", c.WEB_ORIGIN)
+    class StalledWork(f.AdminWeb):
+        def request(self, method, path, **kwargs):
+            response = super().request(method,path,**kwargs)
+            if path == late_path and not observed._cleaning:
+                clock.value = 540  # An ordinary reply can exhaust the reserve.
+            return response
+    client = StalledWork(f.web_routes(**{"GET /api/v1/operator/users [session]": f.base.response(200, {"users": []})}))
+    observed = c._ObservedWeb(client,execution_id="offline-reserve",deadline=480,cleanup_deadline=540,
+        login_pair=(f.USERNAME,f.PASSWORD))
+    login=observed.request("POST","/login",authenticated=False,
+        body={"username":f.USERNAME,"password":f.PASSWORD,"returnTo":c._FORM_RETURN_TO},
+        headers={"content-type":"application/json","accept":"application/json","origin":c.WEB_ORIGIN})
+    assert login.status == 200 and observed._owned
+    headers={"cookie":f"{f.SESSION_COOKIE}={f.SESSION_VALUE}","accept":"application/json","origin":c.WEB_ORIGIN}
+    assert observed.request("GET","/api/v1/operator/users",authenticated=False,headers=headers).status==200
+    sent=len(client.headers_seen)
+    clock.value=480  # Cross BETWEEN preliminary users read and ordinary work.
+    response=observed.request("POST" if late_path=="/auth/logout" else "GET",late_path,authenticated=False,headers=headers)
+    assert response.failed and len(client.headers_seen)==sent
+    assert clock.value==480 and 540-clock.value==60
+    assert observed.cleanup_owned_sessions() is False  # Sticky UNKNOWN, not success.
+    cleanup=client.headers_seen[sent:]
+    assert [path for path,_ in cleanup]==["POST /auth/logout","GET /auth/session","GET /api/v1/auth/principal"]
+    assert all(h.get("cookie")==headers["cookie"] for _,h in cleanup)
+    assert client.logged_out and clock.value==480
 
 
 @pytest.fixture(scope="module")

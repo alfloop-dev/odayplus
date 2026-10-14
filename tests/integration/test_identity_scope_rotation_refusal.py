@@ -453,6 +453,33 @@ def test_native_json_old_invitation_preset_refuses_recovery(recovery):
     assert s.recovery.reserve(s.principal, s.plan).stage == "reserved"
 
 
+@pytest.mark.parametrize("stage", ["issue", "accept"])
+def test_whitespace_scope_members_refuse_invitation_issue_and_accept(stack, stage):
+    from shared.identity.invitation_service import InvitationRefused, InvitationService
+    s = stack
+    actor = _bootstrap_admin(s)
+    _rotate_password(s, actor)
+    principal=s.boundary.authenticate(Credentials.from_headers(_sign_in(s,actor))).principal
+    service=InvitationService(engine=s.engine,audit_log=s.audit)
+    for index,axis in enumerate(('modules','brand_ids','region_ids','store_ids','assigned_area_ids','heat_zone_ids')):
+        count=_q(s,'SELECT count(*) FROM identity.invitations')
+        if stage == 'issue':
+            with pytest.raises(InvitationRefused,match='INVITATION_SCOPE_INVALID'):
+                service.issue_account(principal,username=f'blank-{index}',email=f'blank-{index}@example.invalid',roles=['data_owner'],scope={axis:['   ']})
+            assert _q(s,'SELECT count(*) FROM identity.invitations')==count
+            service.issue_account(principal,username=f'valid-{index}',email=f'valid-{index}@example.invalid',roles=['data_owner'],scope={axis:[]})
+            continue
+        issued=service.issue_account(principal,username=f'blank-{index}',email=f'blank-{index}@example.invalid',roles=['data_owner'],scope={axis:['listing']})
+        _q(s,"UPDATE identity.invitations SET preset_scope=jsonb_set(preset_scope,%s,%s::jsonb) WHERE invitation_id=%s RETURNING invitation_id", (['scope',axis],json.dumps(['   ']),issued.invitation_id))
+        accounts=_q(s,'SELECT account_id FROM identity.accounts ORDER BY account_id')
+        with pytest.raises(InvitationRefused,match='INVITATION_PRESET_INVALID'):
+            service.accept(invitation_id=issued.invitation_id,token=issued.token,username=f'blank-{index}',password='Disposable-Strong-Only-7482!')
+        assert _q(s,'SELECT account_id FROM identity.accounts ORDER BY account_id')==accounts
+        assert _q(s,'SELECT accepted_at FROM identity.invitations WHERE invitation_id=%s',(issued.invitation_id,))==[(None,)]
+        _q(s,"UPDATE identity.invitations SET preset_scope=jsonb_set(preset_scope,%s,%s::jsonb) WHERE invitation_id=%s RETURNING invitation_id", (['scope',axis],json.dumps(['listing']),issued.invitation_id))
+        service.accept(invitation_id=issued.invitation_id,token=issued.token,username=f'blank-{index}',password='Disposable-Strong-Only-7482!')
+
+
 def test_native_json_invitation_presets_cannot_create_accounts(stack):
     from shared.identity.invitation_service import InvitationRefused, InvitationService, _scope
 

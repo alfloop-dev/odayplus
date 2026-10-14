@@ -77,7 +77,7 @@ def test_existing_malformed_fields_never_escape_read_or_actual_replay(
 
 
 @pytest.mark.parametrize("alias", ["/jobs", "/api/v1/jobs"])
-@pytest.mark.parametrize("canonical_value", [True, False])
+@pytest.mark.parametrize("canonical_value", [True, False, "legacy", "unclassified-alias"])
 def test_standalone_classified_summary_receipt_replaces_unsupported_values(
     monkeypatch, alias, job_app, canonical_value
 ):
@@ -92,6 +92,14 @@ def test_standalone_classified_summary_receipt_replaces_unsupported_values(
     }
     if not canonical_value:
         private.pop("effective")
+    if canonical_value == "legacy":
+        private = {"parsedFields": {"contactPhone": {"sourceValue": "fixture-inline-private",
+            "normalizedValue": "fixture-inline-private", "correctedValue": "fixture-inline-private",
+            "extra": "fixture-inline-private"}}}
+    if canonical_value == "unclassified-alias":
+        private = {"fields": [{"field_path": "unknown", "effective": "fixture-inline-private"}]}
+    alias_value = (private["parsedFields"]["contactPhone"] if canonical_value == "legacy" else
+        private["fields"][0] if canonical_value == "unclassified-alias" else private)
     public = {"classification": "PUBLIC", "effective": "visible-public"}
     record = JobRecord(
         job_type="batch-listing-intake",
@@ -99,7 +107,7 @@ def test_standalone_classified_summary_receipt_replaces_unsupported_values(
             "tenant_id": TENANT,
             "items": [{"item_id": "one"}],
             "summary": private,
-            "receipt": {"private": private, "public": public},
+            "receipt": {"private": private, "public": public, "alias": alias_value},
         },
         correlation_id="offline",
     )

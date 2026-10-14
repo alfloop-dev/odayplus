@@ -607,18 +607,22 @@ class _ObservedWeb:
                 (method == "GET" and path in _REVOCATION_READS)
                 or (method == "POST" and path == "/auth/logout" and not state["logout_attempted"]))):
             return gate.HttpResponse(status=0, error="native consumer uncertainty latched; cleanup only")
-        if method == "POST" and path == "/auth/logout" and state is not None:
-            if state["logout_attempted"]:
-                self._unknown()
-                return gate.HttpResponse(status=0, error="native consumer duplicate logout refused")
-            state["logout_attempted"] = True  # Intent before the single request.
-        cleanup = path in {"/auth/logout", "/auth/session", "/api/v1/auth/principal"} and (self._cleaning or time.monotonic() >= self.deadline)
+        if method == "POST" and path == "/auth/logout" and state is not None and state["logout_attempted"]:
+            self._unknown()
+            return gate.HttpResponse(status=0, error="native consumer duplicate logout refused")
+        # Expired work never promotes itself into cleanup. Only explicit owned
+        # cleanup may spend the reserve, including its revocation reads.
+        cleanup = self._cleaning and state is not None and path in {"/auth/logout", "/auth/session", "/api/v1/auth/principal"}
         limit = self.cleanup_deadline if cleanup else self.deadline
         try:
             with _absolute_deadline(limit):
                 # Never let urllib hide an intermediate cookie-bearing reply or
                 # send another authenticated request before custody inspection.
                 kwargs["follow_redirects"] = False
+                if method == "POST" and path == "/auth/logout" and state is not None:
+                    # Claim only after the local deadline admitted this request,
+                    # but before transport. Never release or retry this intent.
+                    state["logout_attempted"] = True
                 response = self.client.request(method, path, **kwargs)
                 if response.failed or getattr(response, "custody_uncertain", False):
                     self._unknown()  # Ordinary reads can issue authority too.

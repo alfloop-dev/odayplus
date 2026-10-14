@@ -1147,3 +1147,13 @@ that retains excluded attributes. Administrative scope projection distinguishes
 missing rows from malformed present grants; omitted-axis edits cannot implicitly
 repair restrictions into unrestricted defaults. Sensitive receipt-container context
 propagates through nested maps/lists/tuples before neutral echoes are redacted.
+Expired ordinary Web requests never become cleanup automatically. Only explicit
+owned-session cleanup may use the540s deadline; ordinary work remains fenced at480s.
+A local pre-transport deadline refusal does not claim a logout intention; admitted
+transport claims remain once-only, never released or retried, and UNKNOWN is sticky.
+Recursive masking covers retained legacy parsedFields and preserves cloned field
+identities so separately retained aliases cannot expose pre-projection values.
+Invitation issuance and stored-preset acceptance require nonblank string members on
+all six scope axes, consistent with authoritative identity reads. Empty arrays and
+explicit valid restrictions remain legal. These are source repair requirements,
+not canonical, independent executed, Human/Ops, deployment or business acceptance.

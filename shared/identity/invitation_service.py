@@ -182,7 +182,7 @@ class InvitationService:
         for axis in _SCOPE_AXES:
             values = requested.get(axis, [])
             if (not isinstance(values, list) or len(values) > 100
-                    or any(type(v) is not str or not v or len(v) > 128 for v in values)):
+                    or any(type(v) is not str or not v.strip() or len(v) > 128 for v in values)):
                 raise InvitationRefused("INVITATION_SCOPE_INVALID")
             normalized[axis] = sorted(set(values))
         clearance = requested.get("clearance", "CONFIDENTIAL")
