@@ -950,6 +950,7 @@ tests/contract/test_api_error_envelope.py,verification,verification_only,false,p
 tests/contract/test_api_idempotency_and_pagination.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_api_trust_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_api_versioning.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/contract/test_assisted_intake_thread_binding.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_assisted_listing_intake_events.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_assisted_listing_intake_schema.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_assisted_listing_intake_states.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1263,6 +1264,7 @@ tests/security/test_branch_protection_policy.py,verification,verification_only,f
 tests/security/test_dev_smoke_invitation.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_feature_flag_ui_and_enforcement.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_feature_flags.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/security/test_local_npm_sbom.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_login_throttle_wiring.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_nltk_dependency_removal.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_operator_network_read_scope.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
