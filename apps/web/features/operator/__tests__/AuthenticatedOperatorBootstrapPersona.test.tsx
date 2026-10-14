@@ -96,28 +96,28 @@ describe("authenticated bootstrap persona ownership", () => {
     const { fetch } = mount(); await screen.findByText("Account A current row");
     fireEvent.click(screen.getByRole("button", { name: /展店經理/ }));
     fireEvent.click(screen.getByRole("button", { name: /^營運主管/ }));
-    expect(await screen.findByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "forbidden");
+    await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "forbidden"));
     expect(bootstrapCalls(fetch).some(([, init]) => new Headers(init?.headers).get("X-Operator-Role") === "ops-lead")).toBe(true);
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
   });
   it.each([{ subject: "", expiresAt: 9999999999 }, { subject: A, expiresAt: 1 }, {}, { subject: A, expiresAt: "future" }])(
     "invalid or expired session cannot admit API rows", async (session) => {
       const { fetch } = mount({ session });
-      expect(await screen.findByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error");
+      await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
       expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
       expect(bootstrapCalls(fetch)).toHaveLength(0);
     });
   it.each([{ subject: A, expiresAt: 1 }, { subject: "", expiresAt: 9999999999 }, {}])("POC session200 remains fail-closed when canonical session is invalid", async (session) => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false"); vi.stubEnv("NEXT_PUBLIC_ODP_PRODUCT_MODE", "poc");
     const { fetch } = mount({ session });
-    expect(await screen.findByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error");
+    await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
     expect(bootstrapCalls(fetch)).toHaveLength(0);
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
     expect(screen.queryByText("開發／驗收 API 資料")).not.toBeInTheDocument();
   });
   it("unknown server persona cannot normalize into a ready operations profile", async () => {
     mount({ invalidRole: "unknown-server-role" });
-    expect(await screen.findByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error");
+    await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
   });
   it("discards late A JSON after B takes over and restarts without A's persona constraint", async () => {
@@ -207,7 +207,7 @@ describe("authenticated bootstrap persona ownership", () => {
     setSession({ detail: "session expired" }, 401);
     await act(async () => { body.resolve(surface === "Task" ? { items: [{ id: "OLD", title: "Old expired task", status: "todo" }] }
       : { items: [{ h3_index: "OLD", label: "Old expired binding" }] }); });
-    expect(await screen.findByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error");
+    await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
     expect(screen.queryByText("Old expired task")).not.toBeInTheDocument();
     expect(screen.queryByText("Old expired binding")).not.toBeInTheDocument();
@@ -222,7 +222,7 @@ describe("authenticated bootstrap persona ownership", () => {
     await reading.promise; setSession({ subject: A, expiresAt: 1 });
     await act(async () => { body.resolve(surface === "Task" ? { items: [{ id: "OLD", title: "Old invalid task", status: "todo" }] }
       : { items: [{ h3_index: "OLD", label: "Old invalid binding" }] }); });
-    expect(await screen.findByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error");
+    await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
     expect(screen.queryByText("Old invalid task")).not.toBeInTheDocument();
     expect(screen.queryByText("Old invalid binding")).not.toBeInTheDocument();

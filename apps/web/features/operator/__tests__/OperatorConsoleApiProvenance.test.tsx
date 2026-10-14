@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
 
@@ -146,7 +146,7 @@ describe("Operator API banner accurately labels the permitted data lane", () => 
   it("retains production auth-denied admission and cannot label a rejected payload as live", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true"); reads({ detail: "denied" }, 403);
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
-    expect(await screen.findByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error");
+    await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
     expect(screen.queryByText("目前顯示的是經驗證的正式營運資料。")).not.toBeInTheDocument();
     expect(screen.queryByText("Live unresolved")).not.toBeInTheDocument();
   });
