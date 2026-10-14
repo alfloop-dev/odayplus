@@ -2022,9 +2022,9 @@ else:
                 check_uuid(tenant_id)
             except ValueError:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED: UUID tenant and subject are required") from None
-            # Production replicas share one PostgreSQL state store. Bind and
-            # refresh only the verified tenant at the request boundary.
-            active.refresh(tenant_id)
+            # Dependencies and synchronous endpoints may use different pool
+            # threads. Each endpoint binds this verified tenant in its own
+            # execution thread before accessing the thread-local state store.
             return tenant_id
 
         def is_record_owner(principal: Principal, record: dict[str, Any]) -> bool:
@@ -2300,6 +2300,7 @@ else:
             q: str | None = Query(None, max_length=200),
             tenant_id: str = Depends(require_actor),
         ) -> IntakePage:
+            active.refresh(tenant_id)
             sort_value = (sort or IntakeSort.SUBMITTED_AT_DESC).value
             query_parameters = {
                 "assigned_area_id": assigned_area_id,
@@ -2477,6 +2478,7 @@ else:
                 pattern=r"^[A-Za-z0-9._:-]+$",
             ),
         ) -> IntakeSubmissionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -2576,6 +2578,7 @@ else:
                 pattern=r"^[A-Za-z0-9._:-]+$",
             ),
         ) -> BatchIntakeReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -2711,6 +2714,7 @@ else:
             request: Request,
             tenant_id: str = Depends(require_actor),
         ) -> XlsxPreviewResponse:
+            active.refresh(tenant_id)
             from modules.external_data.application.xlsx_import import (
                 XlsxImportError,
                 preview_xlsx_import,
@@ -2757,6 +2761,7 @@ else:
                 pattern=r"^[A-Za-z0-9._:-]+$",
             ),
         ) -> XlsxCommitReceipt:
+            active.refresh(tenant_id)
             from modules.external_data.application.xlsx_import import commit_xlsx_import
             validate_idempotency_key(key)
             principal = get_principal(request)
@@ -2853,6 +2858,7 @@ else:
             export_format: str = Query("csv", alias="format"),
             tenant_id: str = Depends(require_actor),
         ) -> Response:
+            active.refresh(tenant_id)
             from modules.external_data.application.xlsx_import import (
                 export_xlsx_import_errors,
                 get_preview_result,
@@ -2906,6 +2912,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> IntakeDetail:
+            active.refresh(tenant_id)
             value = active.intakes.get(intake_id)
             if value is None:
                 raise HTTPException(404, "intake not found")
@@ -3007,6 +3014,7 @@ else:
                 ..., alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$',
             ),
         ) -> CorrectionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
@@ -3141,6 +3149,7 @@ else:
                 ..., alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$',
             ),
         ) -> AssignmentReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
@@ -3318,6 +3327,7 @@ else:
                 ..., alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$',
             ),
         ) -> JobReceipt:
+            active.refresh(tenant_id)
             initial, _ = lookup_job(request, job_id, tenant_id)
             if initial is None:
                 raise HTTPException(404, "job not found")
@@ -3437,6 +3447,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> JobReceipt:
+            active.refresh(tenant_id)
             initial, _ = lookup_job(request, job_id, tenant_id)
             if initial is None:
                 raise HTTPException(404, "job not found")
@@ -3476,6 +3487,7 @@ else:
             request: Request,
             tenant_id: str = Depends(require_actor),
         ) -> list[SavedView]:
+            active.refresh(tenant_id)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
 
@@ -3517,6 +3529,7 @@ else:
                 pattern=r"^[A-Za-z0-9._:-]+$",
             ),
         ) -> SavedView:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -3588,6 +3601,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> PromotionDecisionReceipt:
+            active.refresh(tenant_id)
             with promotion_unit(tenant_id, intake_id):
                 intake_repository = V1IntakeRepositoryAdapter(active, request.app.state)
                 current = intake_repository.get_listing_intake(intake_id)
@@ -3727,6 +3741,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> PromotionDecisionReceipt:
+            active.refresh(tenant_id)
             intake_repository = V1IntakeRepositoryAdapter(active, request.app.state)
             intake = intake_repository.get_listing_intake(intake_id)
             if intake is None:
@@ -3773,6 +3788,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> PromotionDecisionReceipt:
+            active.refresh(tenant_id)
             val = V1PromotionRepositoryAdapter(active, request.app.state).get_promotion(promotion_decision_id)
             if val is None:
                 raise HTTPException(404, "promotion decision not found")
@@ -3816,6 +3832,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             if decision_id not in active.decisions:
                 raise HTTPException(404, "identity decision not found")
             val = active.decisions[decision_id]
@@ -3870,6 +3887,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -3933,6 +3951,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -3987,6 +4006,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -4041,6 +4061,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -4133,6 +4154,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> TransitionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
@@ -4216,6 +4238,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> TransitionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
@@ -4291,6 +4314,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> TransitionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
@@ -4405,6 +4429,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> AssignmentReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.assignments.get(assignment_id)
             if current is None:
@@ -4483,6 +4508,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> AssignmentTransferTargetPage:
+            active.refresh(tenant_id)
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
@@ -4524,6 +4550,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> AssignmentReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.assignments.get(assignment_id)
             if current is None:
@@ -4615,6 +4642,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> AssignmentReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.assignments.get(assignment_id)
             if current is None:
@@ -4704,6 +4732,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> SlaReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.slas.get(sla_instance_id)
             if current is None:
@@ -4782,6 +4811,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> SlaReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.slas.get(sla_instance_id)
             if current is None:
@@ -4864,6 +4894,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> PromotionDecisionReceipt:
+            active.refresh(tenant_id)
             initial = V1PromotionRepositoryAdapter(active, request.app.state).get_promotion(promotion_decision_id)
             if initial is None:
                 raise HTTPException(404, "promotion decision not found")
@@ -5034,6 +5065,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.decisions.get(decision_id)
             if current is None:
@@ -5183,6 +5215,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.decisions.get(decision_id)
             if current is None:

@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-a56362fc2c5615d26bc352d8b34edf28",
+  "serialNumber": "urn:uuid:sha256-fb7b8d3d806498fc80b290b0c2be4019",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-12T22:54:38.365267+00:00",
+    "timestamp": "2026-10-14T00:36:57.236672+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@170a2691e635fc230ea872db3ae8aa46cad6c088",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@170a2691e635fc230ea872db3ae8aa46cad6c088"
+      "purl": "pkg:generic/alfloop-dev/odayplus@3bb52392d781d8f5827e3ca868ba3f21e50f4f6f",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@3bb52392d781d8f5827e3ca868ba3f21e50f4f6f"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "170a2691e635fc230ea872db3ae8aa46cad6c088"
+        "value": "3bb52392d781d8f5827e3ca868ba3f21e50f4f6f"
       },
       {
         "name": "sbom-hash",
-        "value": "a56362fc2c5615d26bc352d8b34edf280f8f3c893596a07a620d7312d6794e0a"
+        "value": "fb7b8d3d806498fc80b290b0c2be40191c2832288176d430acd6cbb3c6879a15"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:7d1979389a4405533c2c13b135abfb0ca14a9ac046bd55c8054efb78bb9e6e10"
+        "value": "sha256:39760b71ee897c194892472c9749ed29f735f4df2ccc120885cb9b8eb168cc0b"
       },
       {
         "name": "container-base-images",
@@ -1623,7 +1623,10 @@
           "alg": "SHA-512",
           "content": "6J0vZqMZvRAJKtdWJdDGHEh1YJ2ZHG08/GOur8gCArYhO8ZkM//OXqtI2AAEz4jc2G+Wq4MfcePg8qNK5TZ4Kg=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "MapLibre"
+      }
     },
     {
       "name": "@maplibre/mlt",
@@ -1826,22 +1829,16 @@
     },
     {
       "name": "@next/eslint-plugin-next",
-      "version": "15.5.27",
+      "version": "15.5.27-oday.1",
       "type": "library",
-      "purl": "pkg:npm/@next/eslint-plugin-next@15.5.27",
-      "bom-ref": "pkg:npm/@next/eslint-plugin-next@15.5.27",
+      "purl": "pkg:npm/@next/eslint-plugin-next@15.5.27-oday.1",
+      "bom-ref": "pkg:npm/@next/eslint-plugin-next@15.5.27-oday.1",
       "scope": "optional",
       "licenses": [
         {
           "license": {
             "id": "MIT"
           }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "a94xlzvOLaULh4Fzcvj9B2hwIOtPHJW75gghkXiJ8s1Jk0eo00UknrDVhx04Y+8ARu9ds13vy/jHg5u/PdVGqw=="
         }
       ]
     },
@@ -5166,6 +5163,30 @@
     },
     {
       "name": "brace-expansion",
+      "version": "2.1.7",
+      "type": "library",
+      "purl": "pkg:npm/brace-expansion@2.1.7",
+      "bom-ref": "pkg:npm/brace-expansion@2.1.7",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "uZbew1NqdmPDTMJ8ah1y+b+9QEJrfkXFk3RcTQw3X0jW/xRUvFKsg1CfQdSYGdTbXZWExtU3J3ccxtnfw1Fi0g=="
+        }
+      ],
+      "supplier": {
+        "name": "Julian Gruber"
+      }
+    },
+    {
+      "name": "brace-expansion",
       "version": "5.0.12",
       "type": "library",
       "purl": "pkg:npm/brace-expansion@5.0.12",
@@ -5184,30 +5205,6 @@
           "content": "YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ=="
         }
       ]
-    },
-    {
-      "name": "braces",
-      "version": "3.0.3",
-      "type": "library",
-      "purl": "pkg:npm/braces@3.0.3",
-      "bom-ref": "pkg:npm/braces@3.0.3",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA=="
-        }
-      ],
-      "supplier": {
-        "name": "Jon Schlinkert (https://github.com/jonschlinkert)"
-      }
     },
     {
       "name": "buffer-image-size",
@@ -6740,7 +6737,10 @@
           "alg": "SHA-512",
           "content": "vnS4AVwp1KHAF13i1vp1/2D5evWy3k5u/iW/B81QVsUZtV8cv2tU0b2VNFlqvh4kYwrFMDdjPCfAmfyJW9y14Q=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Volodymyr Agafonkin"
+      }
     },
     {
       "name": "emoji-regex",
@@ -7542,30 +7542,6 @@
       }
     },
     {
-      "name": "fast-glob",
-      "version": "3.3.1",
-      "type": "library",
-      "purl": "pkg:npm/fast-glob@3.3.1",
-      "bom-ref": "pkg:npm/fast-glob@3.3.1",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "kNFPyjhh5cKjrUltxs+wFx+ZkbRaxxmZ+X0ZU31SOsxCEtP9VPgtq2teZw1DebupL5GmDaNQ6yKMMVcM41iqDg=="
-        }
-      ],
-      "supplier": {
-        "name": "Denis Malinochkin"
-      }
-    },
-    {
       "name": "fast-json-stable-stringify",
       "version": "2.1.0",
       "type": "library",
@@ -7765,30 +7741,6 @@
           "content": "d396bea984af47333ef05e50eae7eff88c84256de6112aea0ec48a233c064fe3"
         }
       ]
-    },
-    {
-      "name": "fill-range",
-      "version": "7.1.1",
-      "type": "library",
-      "purl": "pkg:npm/fill-range@7.1.1",
-      "bom-ref": "pkg:npm/fill-range@7.1.1",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg=="
-        }
-      ],
-      "supplier": {
-        "name": "Jon Schlinkert (https://github.com/jonschlinkert)"
-      }
     },
     {
       "name": "find-up",
@@ -8077,7 +8029,7 @@
       "type": "library",
       "purl": "pkg:npm/fsevents@2.3.2",
       "bom-ref": "pkg:npm/fsevents@2.3.2",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -10287,30 +10239,6 @@
       }
     },
     {
-      "name": "is-number",
-      "version": "7.0.0",
-      "type": "library",
-      "purl": "pkg:npm/is-number@7.0.0",
-      "bom-ref": "pkg:npm/is-number@7.0.0",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng=="
-        }
-      ],
-      "supplier": {
-        "name": "Jon Schlinkert (https://github.com/jonschlinkert)"
-      }
-    },
-    {
       "name": "is-number-object",
       "version": "1.1.1",
       "type": "library",
@@ -11882,30 +11810,6 @@
       ]
     },
     {
-      "name": "micromatch",
-      "version": "4.0.8",
-      "type": "library",
-      "purl": "pkg:npm/micromatch@4.0.8",
-      "bom-ref": "pkg:npm/micromatch@4.0.8",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA=="
-        }
-      ],
-      "supplier": {
-        "name": "Jon Schlinkert (https://github.com/jonschlinkert)"
-      }
-    },
-    {
       "name": "min-indent",
       "version": "1.0.1",
       "type": "library",
@@ -13418,7 +13322,10 @@
           "alg": "SHA-512",
           "content": "mnvGdvOrIvJOBGUEdGkrVXjN8E/VkIJCkf2eS1DH2yv82ORUlLttmDt0rWY38yYZmVwciZwBUvHM20qxBZf40w=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Konstantin Kaefer"
+      }
     },
     {
       "name": "pendulum",
@@ -17218,30 +17125,6 @@
       ]
     },
     {
-      "name": "to-regex-range",
-      "version": "5.0.1",
-      "type": "library",
-      "purl": "pkg:npm/to-regex-range@5.0.1",
-      "bom-ref": "pkg:npm/to-regex-range@5.0.1",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ=="
-        }
-      ],
-      "supplier": {
-        "name": "Jon Schlinkert (https://github.com/jonschlinkert)"
-      }
-    },
-    {
       "name": "tomli",
       "version": "2.4.1",
       "type": "library",
@@ -18608,7 +18491,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@170a2691e635fc230ea872db3ae8aa46cad6c088",
+      "ref": "pkg:generic/alfloop-dev/odayplus@3bb52392d781d8f5827e3ca868ba3f21e50f4f6f",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -18695,7 +18578,7 @@
     {
       "ref": "pkg:npm/@types/node@20.14.10",
       "dependsOn": [
-        "pkg:npm/undici-types@8.3.0"
+        "pkg:npm/undici-types@5.26.5"
       ]
     },
     {
@@ -18773,7 +18656,7 @@
         "pkg:npm/@math.gl/polygon@4.1.0",
         "pkg:npm/@math.gl/web-mercator@4.1.0",
         "pkg:npm/@types/geojson@7946.0.16",
-        "pkg:npm/earcut@3.2.3"
+        "pkg:npm/earcut@2.2.4"
       ]
     },
     {
@@ -18805,7 +18688,7 @@
     {
       "ref": "pkg:npm/@eslint-community/eslint-utils@4.10.1",
       "dependsOn": [
-        "pkg:npm/eslint-visitor-keys@5.0.1"
+        "pkg:npm/eslint-visitor-keys@3.4.3"
       ]
     },
     {
@@ -18815,10 +18698,10 @@
         "pkg:npm/debug@4.4.3",
         "pkg:npm/espree@9.6.1",
         "pkg:npm/globals@13.24.0",
-        "pkg:npm/ignore@7.0.6",
+        "pkg:npm/ignore@5.3.2",
         "pkg:npm/import-fresh@3.3.1",
         "pkg:npm/js-yaml@4.3.2",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/strip-json-comments@3.1.1"
       ]
     },
@@ -18840,7 +18723,7 @@
       "dependsOn": [
         "pkg:npm/@humanwhocodes/object-schema@2.0.3",
         "pkg:npm/debug@4.4.3",
-        "pkg:npm/minimatch@10.2.5"
+        "pkg:npm/minimatch@3.1.5"
       ]
     },
     {
@@ -18852,7 +18735,7 @@
     {
       "ref": "pkg:npm/@img/sharp-wasm32@0.35.5",
       "dependsOn": [
-        "pkg:npm/@emnapi/runtime@1.11.1"
+        "pkg:npm/@emnapi/runtime@1.11.3"
       ]
     },
     {
@@ -18979,12 +18862,6 @@
       ]
     },
     {
-      "ref": "pkg:npm/@next/eslint-plugin-next@15.5.27",
-      "dependsOn": [
-        "pkg:npm/fast-glob@3.3.1"
-      ]
-    },
-    {
       "ref": "pkg:npm/@nodelib/fs.scandir@2.1.5",
       "dependsOn": [
         "pkg:npm/@nodelib/fs.stat@2.0.5",
@@ -19031,7 +18908,7 @@
         "pkg:npm/@babel/runtime@7.29.7",
         "pkg:npm/@types/aria-query@5.0.4",
         "pkg:npm/aria-query@5.3.0",
-        "pkg:npm/dom-accessibility-api@0.6.3",
+        "pkg:npm/dom-accessibility-api@0.5.16",
         "pkg:npm/lz-string@1.5.0",
         "pkg:npm/picocolors@1.1.1",
         "pkg:npm/pretty-format@27.5.1"
@@ -19076,7 +18953,7 @@
     {
       "ref": "pkg:npm/@types/pg@8.23.1",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10",
+        "pkg:npm/@types/node@26.1.1",
         "pkg:npm/pg-protocol@1.16.0",
         "pkg:npm/pg-types@2.2.0"
       ]
@@ -19097,7 +18974,7 @@
     {
       "ref": "pkg:npm/@types/ws@8.18.1",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10"
+        "pkg:npm/@types/node@26.1.1"
       ]
     },
     {
@@ -19157,7 +19034,7 @@
         "pkg:npm/@typescript-eslint/visitor-keys@8.65.0",
         "pkg:npm/debug@4.4.3",
         "pkg:npm/minimatch@10.2.5",
-        "pkg:npm/semver@6.3.1",
+        "pkg:npm/semver@7.8.5",
         "pkg:npm/tinyglobby@0.2.17",
         "pkg:npm/ts-api-utils@2.5.0"
       ]
@@ -19193,15 +19070,15 @@
     {
       "ref": "pkg:npm/@unrs/resolver-binding-wasm32-wasi@1.12.2",
       "dependsOn": [
-        "pkg:npm/@emnapi/core@1.11.1",
-        "pkg:npm/@emnapi/runtime@1.11.1",
+        "pkg:npm/@emnapi/core@1.10.0",
+        "pkg:npm/@emnapi/runtime@1.10.0",
         "pkg:npm/@napi-rs/wasm-runtime@1.1.6"
       ]
     },
     {
       "ref": "pkg:npm/@emnapi/core@1.10.0",
       "dependsOn": [
-        "pkg:npm/@emnapi/wasi-threads@1.2.2",
+        "pkg:npm/@emnapi/wasi-threads@1.2.1",
         "pkg:npm/tslib@2.8.1"
       ]
     },
@@ -19290,7 +19167,7 @@
     {
       "ref": "pkg:npm/apache-arrow@21.2.0",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10",
+        "pkg:npm/@types/node@25.9.5",
         "pkg:npm/flatbuffers@25.9.23",
         "pkg:npm/json-with-bigint@3.5.10",
         "pkg:npm/tslib@2.8.1"
@@ -19299,7 +19176,7 @@
     {
       "ref": "pkg:npm/@types/node@25.9.5",
       "dependsOn": [
-        "pkg:npm/undici-types@8.3.0"
+        "pkg:npm/undici-types@7.24.6"
       ]
     },
     {
@@ -19415,20 +19292,14 @@
     {
       "ref": "pkg:npm/brace-expansion@1.1.21",
       "dependsOn": [
-        "pkg:npm/balanced-match@4.0.4",
+        "pkg:npm/balanced-match@1.0.2",
         "pkg:npm/concat-map@0.0.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/braces@3.0.3",
-      "dependsOn": [
-        "pkg:npm/fill-range@7.1.1"
       ]
     },
     {
       "ref": "pkg:npm/buffer-image-size@0.6.4",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10"
+        "pkg:npm/@types/node@26.1.1"
       ]
     },
     {
@@ -19681,17 +19552,17 @@
         "pkg:npm/doctrine@3.0.0",
         "pkg:npm/escape-string-regexp@4.0.0",
         "pkg:npm/eslint-scope@7.2.2",
-        "pkg:npm/eslint-visitor-keys@5.0.1",
+        "pkg:npm/eslint-visitor-keys@3.4.3",
         "pkg:npm/espree@9.6.1",
         "pkg:npm/esquery@1.7.0",
         "pkg:npm/esutils@2.0.3",
         "pkg:npm/fast-deep-equal@3.1.3",
         "pkg:npm/file-entry-cache@6.0.1",
         "pkg:npm/find-up@5.0.0",
-        "pkg:npm/glob-parent@5.1.2",
+        "pkg:npm/glob-parent@6.0.2",
         "pkg:npm/globals@13.24.0",
         "pkg:npm/graphemer@1.4.0",
-        "pkg:npm/ignore@7.0.6",
+        "pkg:npm/ignore@5.3.2",
         "pkg:npm/imurmurhash@0.1.4",
         "pkg:npm/is-glob@4.0.3",
         "pkg:npm/is-path-inside@3.0.3",
@@ -19699,7 +19570,7 @@
         "pkg:npm/json-stable-stringify-without-jsonify@1.0.1",
         "pkg:npm/levn@0.4.1",
         "pkg:npm/lodash.merge@4.6.2",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/natural-compare@1.4.0",
         "pkg:npm/optionator@0.9.4",
         "pkg:npm/strip-ansi@6.0.1",
@@ -19709,7 +19580,7 @@
     {
       "ref": "pkg:npm/eslint-config-next@15.5.27",
       "dependsOn": [
-        "pkg:npm/@next/eslint-plugin-next@15.5.27",
+        "pkg:npm/@next/eslint-plugin-next@15.5.27-oday.1",
         "pkg:npm/@rushstack/eslint-patch@1.16.1",
         "pkg:npm/@typescript-eslint/eslint-plugin@8.65.0",
         "pkg:npm/@typescript-eslint/parser@8.65.0",
@@ -19724,7 +19595,7 @@
     {
       "ref": "pkg:npm/eslint-import-resolver-node@0.3.10",
       "dependsOn": [
-        "pkg:npm/debug@4.4.3",
+        "pkg:npm/debug@3.2.7",
         "pkg:npm/is-core-module@2.16.2",
         "pkg:npm/resolve@2.0.0-next.7"
       ]
@@ -19750,7 +19621,7 @@
     {
       "ref": "pkg:npm/eslint-module-utils@2.14.0",
       "dependsOn": [
-        "pkg:npm/debug@4.4.3"
+        "pkg:npm/debug@3.2.7"
       ]
     },
     {
@@ -19761,14 +19632,14 @@
         "pkg:npm/array.prototype.findlastindex@1.2.6",
         "pkg:npm/array.prototype.flat@1.3.3",
         "pkg:npm/array.prototype.flatmap@1.3.3",
-        "pkg:npm/debug@4.4.3",
-        "pkg:npm/doctrine@3.0.0",
+        "pkg:npm/debug@3.2.7",
+        "pkg:npm/doctrine@2.1.0",
         "pkg:npm/eslint-import-resolver-node@0.3.10",
         "pkg:npm/eslint-module-utils@2.14.0",
         "pkg:npm/hasown@2.0.4",
         "pkg:npm/is-core-module@2.16.2",
         "pkg:npm/is-glob@4.0.3",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/object.fromentries@2.0.8",
         "pkg:npm/object.groupby@1.0.3",
         "pkg:npm/object.values@1.2.1",
@@ -19786,7 +19657,7 @@
     {
       "ref": "pkg:npm/eslint-plugin-jsx-a11y@6.10.2",
       "dependsOn": [
-        "pkg:npm/aria-query@5.3.0",
+        "pkg:npm/aria-query@5.3.2",
         "pkg:npm/array-includes@3.1.9",
         "pkg:npm/array.prototype.flatmap@1.3.3",
         "pkg:npm/ast-types-flow@0.0.8",
@@ -19797,7 +19668,7 @@
         "pkg:npm/hasown@2.0.4",
         "pkg:npm/jsx-ast-utils@3.3.5",
         "pkg:npm/language-tags@1.0.9",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/object.fromentries@2.0.8",
         "pkg:npm/safe-regex-test@1.1.0",
         "pkg:npm/string.prototype.includes@2.0.1"
@@ -19810,12 +19681,12 @@
         "pkg:npm/array.prototype.findlast@1.2.5",
         "pkg:npm/array.prototype.flatmap@1.3.3",
         "pkg:npm/array.prototype.tosorted@1.1.4",
-        "pkg:npm/doctrine@3.0.0",
+        "pkg:npm/doctrine@2.1.0",
         "pkg:npm/es-iterator-helpers@1.4.0",
         "pkg:npm/estraverse@5.3.0",
         "pkg:npm/hasown@2.0.4",
         "pkg:npm/jsx-ast-utils@3.3.5",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/object.entries@1.1.9",
         "pkg:npm/object.fromentries@2.0.8",
         "pkg:npm/object.values@1.2.1",
@@ -19838,7 +19709,7 @@
       "dependsOn": [
         "pkg:npm/acorn-jsx@5.3.2",
         "pkg:npm/acorn@8.17.0",
-        "pkg:npm/eslint-visitor-keys@5.0.1"
+        "pkg:npm/eslint-visitor-keys@3.4.3"
       ]
     },
     {
@@ -19860,22 +19731,6 @@
       ]
     },
     {
-      "ref": "pkg:npm/fast-glob@3.3.1",
-      "dependsOn": [
-        "pkg:npm/@nodelib/fs.stat@2.0.5",
-        "pkg:npm/@nodelib/fs.walk@1.2.8",
-        "pkg:npm/glob-parent@5.1.2",
-        "pkg:npm/merge2@1.4.1",
-        "pkg:npm/micromatch@4.0.8"
-      ]
-    },
-    {
-      "ref": "pkg:npm/glob-parent@5.1.2",
-      "dependsOn": [
-        "pkg:npm/is-glob@4.0.3"
-      ]
-    },
-    {
       "ref": "pkg:npm/fastq@1.20.1",
       "dependsOn": [
         "pkg:npm/reusify@1.1.0"
@@ -19885,12 +19740,6 @@
       "ref": "pkg:npm/file-entry-cache@6.0.1",
       "dependsOn": [
         "pkg:npm/flat-cache@3.2.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/fill-range@7.1.1",
-      "dependsOn": [
-        "pkg:npm/to-regex-range@5.0.1"
       ]
     },
     {
@@ -19970,7 +19819,7 @@
         "pkg:npm/fs.realpath@1.0.0",
         "pkg:npm/inflight@1.0.6",
         "pkg:npm/inherits@2.0.4",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/once@1.4.0",
         "pkg:npm/path-is-absolute@1.0.1"
       ]
@@ -19997,7 +19846,7 @@
     {
       "ref": "pkg:npm/happy-dom@20.11.1",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10",
+        "pkg:npm/@types/node@26.1.1",
         "pkg:npm/@types/whatwg-mimetype@3.0.2",
         "pkg:npm/@types/ws@8.18.1",
         "pkg:npm/buffer-image-size@0.6.4",
@@ -20086,7 +19935,7 @@
     {
       "ref": "pkg:npm/is-bun-module@2.0.0",
       "dependsOn": [
-        "pkg:npm/semver@6.3.1"
+        "pkg:npm/semver@7.8.5"
       ]
     },
     {
@@ -20270,16 +20119,9 @@
       ]
     },
     {
-      "ref": "pkg:npm/micromatch@4.0.8",
-      "dependsOn": [
-        "pkg:npm/braces@3.0.3",
-        "pkg:npm/picomatch@2.3.2"
-      ]
-    },
-    {
       "ref": "pkg:npm/minimatch@3.1.5",
       "dependsOn": [
-        "pkg:npm/brace-expansion@5.0.12"
+        "pkg:npm/brace-expansion@1.1.21"
       ]
     },
     {
@@ -20441,8 +20283,8 @@
       "ref": "pkg:npm/pretty-format@27.5.1",
       "dependsOn": [
         "pkg:npm/ansi-regex@5.0.1",
-        "pkg:npm/ansi-styles@4.3.0",
-        "pkg:npm/react-is@16.13.1"
+        "pkg:npm/ansi-styles@5.2.0",
+        "pkg:npm/react-is@17.0.2"
       ]
     },
     {
@@ -20597,7 +20439,7 @@
       "dependsOn": [
         "pkg:npm/@img/colour@1.1.0",
         "pkg:npm/detect-libc@2.1.2",
-        "pkg:npm/semver@6.3.1"
+        "pkg:npm/semver@7.8.5"
       ]
     },
     {
@@ -20740,13 +20582,7 @@
       "ref": "pkg:npm/tinyglobby@0.2.17",
       "dependsOn": [
         "pkg:npm/fdir@6.5.0",
-        "pkg:npm/picomatch@2.3.2"
-      ]
-    },
-    {
-      "ref": "pkg:npm/to-regex-range@5.0.1",
-      "dependsOn": [
-        "pkg:npm/is-number@7.0.0"
+        "pkg:npm/picomatch@4.0.5"
       ]
     },
     {
@@ -20830,7 +20666,7 @@
       "ref": "pkg:npm/vite@8.1.5",
       "dependsOn": [
         "pkg:npm/lightningcss@1.33.0",
-        "pkg:npm/picomatch@2.3.2",
+        "pkg:npm/picomatch@4.0.5",
         "pkg:npm/postcss@8.5.28",
         "pkg:npm/rolldown@1.1.5",
         "pkg:npm/tinyglobby@0.2.17"
@@ -20851,7 +20687,7 @@
         "pkg:npm/magic-string@0.30.21",
         "pkg:npm/obug@2.1.4",
         "pkg:npm/pathe@2.0.3",
-        "pkg:npm/picomatch@2.3.2",
+        "pkg:npm/picomatch@4.0.5",
         "pkg:npm/std-env@4.2.0",
         "pkg:npm/tinybench@2.9.0",
         "pkg:npm/tinyexec@1.2.4",
@@ -20921,6 +20757,29 @@
       "dependsOn": [
         "pkg:npm/siginfo@2.0.0",
         "pkg:npm/stackback@0.0.2"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@next/eslint-plugin-next@15.5.27-oday.1",
+      "dependsOn": [
+        "pkg:npm/@nodelib/fs.stat@2.0.5",
+        "pkg:npm/@nodelib/fs.walk@1.2.8",
+        "pkg:npm/brace-expansion@2.1.7",
+        "pkg:npm/glob-parent@5.1.2",
+        "pkg:npm/merge2@1.4.1",
+        "pkg:npm/picomatch@2.3.2"
+      ]
+    },
+    {
+      "ref": "pkg:npm/brace-expansion@2.1.7",
+      "dependsOn": [
+        "pkg:npm/balanced-match@1.0.2"
+      ]
+    },
+    {
+      "ref": "pkg:npm/glob-parent@5.1.2",
+      "dependsOn": [
+        "pkg:npm/is-glob@4.0.3"
       ]
     },
     {

@@ -28,7 +28,7 @@
   "odayplusPatch": {
     "basePackage": "@next/eslint-plugin-next",
     "baseVersion": "15.5.27",
-    "patch": "Pinned originalfast-glob3.3.1 traversal source and main-tree originalpicomatch scan/regex semantics; originalbraces removed in favor ofbrace-expansion2.1.7. Allplugin15.5.27 rules/configs/exports unchanged.",
+    "patch": "Preserve fast-glob 3.3.1 traversal and picomatch 2.3.2 scan/regex behavior. Replace braces compile/expand walkers with bounded brace-expansion 2.1.7; retain all Next 15.5.27 lint rules, configs and exports.",
     "privateFork": true,
     "upstreamPatchedVersionClaimed": false,
     "preservedCandidateTarballSha256": "aea1410d59f545591415a997e20a86da5534eb71830eacae7d1859e9873c7851"
