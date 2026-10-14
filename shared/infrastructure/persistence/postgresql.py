@@ -384,6 +384,10 @@ def _build_pool(
                 "autocommit": False,
                 "row_factory": dict_row,
             },
+            # An idle socket may have been closed by the server without the
+            # client observing it. Reject it before application work begins;
+            # never reconnect or replay a transaction that has already started.
+            check=ConnectionPool.check_connection,
             open=True,
         )
     except Exception as exc:
