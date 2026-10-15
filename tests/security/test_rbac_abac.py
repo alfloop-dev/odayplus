@@ -277,8 +277,8 @@ def test_separation_of_duties_blocks_self_approval() -> None:
     "role,kind",
     [
         (Role.AUDITOR, "audit"),
-        (Role.PLATFORM_ADMIN, "audit"),
-        (Role.OPERATOR_VIEWER, "forecastops"),
+        (Role.PLATFORM_ADMIN, "user"),
+        (Role.OPERATOR_VIEWER, "operator_console"),
         (Role.OPERATIONS_MANAGER, "forecastops"),
     ],
 )
@@ -416,7 +416,7 @@ def test_explicit_server_abstract_capability_keeps_other_constraints(overrides, 
 @pytest.mark.parametrize("policies", [None, (), (lambda req: Decision.allow(),)])
 def test_operator_viewer_abstract_declaration_never_bypasses_strict_rule(policies) -> None:
     p = principal(Role.OPERATOR_VIEWER, tenant_id="tenant-a")
-    res = ResourceDescriptor(type="forecastops", target=ResourceTarget.ABSTRACT_CAPABILITY)
+    res = ResourceDescriptor(type="operator_console", target=ResourceTarget.ABSTRACT_CAPABILITY)
     result = AuthorizationEngine(policies=policies).authorize(AccessRequest(p, Action.VIEW, res))
     assert not result.allowed
     assert result.policy_id == "operator.tenant_isolation"
