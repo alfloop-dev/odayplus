@@ -44,6 +44,7 @@ function mount(config: Config = {}) {
   let actor = config.actor ?? A;
   let role = config.role ?? "expansion-manager";
   let boots = 0;
+  const bootstrapObservations: { subject: string; roleHint: string | null; serverRole: string }[] = [];
   let sessionOverride = config.session;
   let sessionStatus = config.sessionStatus ?? 200;
   if (config.storedRole) window.sessionStorage.setItem("oday.operator.role", config.storedRole);
@@ -52,6 +53,7 @@ function mount(config: Config = {}) {
     if (url === "/auth/session") return json(sessionOverride ?? { subject: actor, expiresAt: Math.floor(Date.now() / 1000) + 3600 }, sessionStatus);
     if (url === "/api/v1/operator/bootstrap") {
       boots += 1;
+      bootstrapObservations.push({ subject: actor, roleHint: new Headers(init?.headers).get("X-Operator-Role"), serverRole: role });
       if (boots === 1 && config.firstBootstrap) return config.firstBootstrap;
       if (boots === 2 && config.refresh) return config.refresh;
       const hint = new Headers(init?.headers).get("X-Operator-Role");
@@ -70,7 +72,7 @@ function mount(config: Config = {}) {
   });
   vi.stubGlobal("fetch", fetch);
   const view = render(<OperatorConsole searchParams={{ ws: config.workspace ?? "today", ...(config.tab ? { tab: config.tab } : {}) }} />);
-  return { fetch, view, setAccount: (next: string, nextRole = role) => { actor = next; role = nextRole; }, setSession: (value: unknown, status = 200) => { sessionOverride = value; sessionStatus = status; }, boots: () => boots };
+  return { fetch, view, bootstrapObservations, setAccount: (next: string, nextRole = role) => { actor = next; role = nextRole; }, setSession: (value: unknown, status = 200) => { sessionOverride = value; sessionStatus = status; }, boots: () => boots };
 }
 function networkSnapshot(address?: string) {
   return { source: "api", selectedHeatZoneId: null, heatZones: [], listingSources: [{ id: "synthetic-source", name: "Synthetic source", status: "connected" }], candidates: [], siteReviews: [],
@@ -246,7 +248,7 @@ describe("authenticated bootstrap persona ownership", () => {
   it.each(["HTTP", "JSON"])("cookie-only rotation rejects late A post-decision refresh %s without UI reload", async (boundary) => {
     const pending = deferred<Response>(); const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
-    const { setAccount, fetch } = mount({ decision: true, refresh: boundary === "HTTP" ? pending.promise : late });
+    const { setAccount, fetch, bootstrapObservations } = mount({ decision: true, refresh: boundary === "HTTP" ? pending.promise : late });
     await screen.findByText("Account A current row"); fireEvent.click(screen.getByRole("button", { name: "核准" }));
     if (boundary === "JSON") await reading.promise;
     else await waitFor(() => expect(bootstrapCalls(fetch)).toHaveLength(2));
@@ -256,7 +258,14 @@ describe("authenticated bootstrap persona ownership", () => {
     await screen.findByText("Account B current row");
     expect(screen.queryByText("Late refreshed A current row")).not.toBeInTheDocument();
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
-    expect(new Headers(bootstrapCalls(fetch).at(-1)?.[1]?.headers).has("X-Operator-Role")).toBe(false);
+    // Bind the cold request assertion to B's first request. A later reload
+    // may legitimately use B's server-resolved persona after B is admitted.
+    const recoveryRequest = bootstrapObservations.find((request) => request.subject === B);
+    expect(recoveryRequest).toBeDefined();
+    expect(recoveryRequest?.roleHint).toBeNull();
+    for (const request of bootstrapObservations.filter((request) => request.subject === B)) {
+      if (request.roleHint !== null) expect(request.roleHint).toBe(request.serverRole);
+    }
   });
 
   it("a current same-account post-decision refresh still applies validated API data", async () => {
