@@ -130,6 +130,13 @@ class PersistenceBundle:
             getattr(self.assisted_intake_store, "_canonical_audit_sink", None),
         )
 
+    def canonical_match_cases(self) -> Any:
+        from shared.infrastructure.persistence.identity_cases_sql import (
+            CanonicalMatchCaseRepository,
+        )
+
+        return CanonicalMatchCaseRepository(self.canonical_identity_graph())
+
     def network_review_resolver(self, *, hooks: Any = ()) -> Any:
         """Native aliases share the Operator review domain's durable owner."""
         from apps.api.app.routes.operator_modules.live_service import DurableTenantServiceResolver

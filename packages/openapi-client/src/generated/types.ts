@@ -422,6 +422,16 @@ export type CreateActionPayload = {
   targetLift: number;
 };
 
+/** CreateMatchCaseRequest */
+export type CreateMatchCaseRequest = {
+  candidates: MatchEvidenceCandidate[];
+  confidence: number | string;
+  contradictory_signals: Record<string, unknown>[];
+  reason: string;
+  risk_acknowledged: true;
+  supporting_signals: Record<string, unknown>[];
+};
+
 /** DataRoomExportPayload */
 export type DataRoomExportPayload = {
   actor: string;
@@ -1035,6 +1045,40 @@ export type ManualIntakeRow = {
   source_listing_id?: string | null;
 };
 
+/** MatchCandidateSummary */
+export type MatchCandidateSummary = {
+  confidence: string;
+  listing_id: string | null;
+  match_candidate_id: string;
+  observed_listing_version: number | null;
+  observed_property_version: number | null;
+  property_id: string | null;
+  rank: number;
+};
+
+/** MatchCaseReceipt */
+export type MatchCaseReceipt = {
+  audit_event_id: string;
+  candidate_ids: string[];
+  correlation_id: string;
+  intake_id: string;
+  intake_version: number;
+  match_case_id: string;
+  status: "PENDING_REVIEW";
+  version: number;
+};
+
+/** MatchCaseSummary */
+export type MatchCaseSummary = {
+  candidates: MatchCandidateSummary[];
+  intake_id: string;
+  intake_version: number;
+  match_case_id: string;
+  outcome: string;
+  status: string;
+  version: number;
+};
+
 /** MatchDecisionRequest */
 export type MatchDecisionRequest = {
   decision_type: DecisionType;
@@ -1043,6 +1087,16 @@ export type MatchDecisionRequest = {
   risk_acknowledged?: boolean;
   target_listing_id?: string | null;
   target_property_id?: string | null;
+};
+
+/** MatchEvidenceCandidate */
+export type MatchEvidenceCandidate = {
+  confidence: number | string;
+  evidence: Record<string, unknown>;
+  listing_id?: string | null;
+  listing_version?: number | null;
+  property_id: string;
+  property_version: number;
 };
 
 /** MatchOutcome */
@@ -2251,6 +2305,7 @@ export const API_PATHS = {
   "/api/v1/intakes/{intake_id}/actions/reopen": ["POST"],
   "/api/v1/intakes/{intake_id}/assignment": ["PUT"],
   "/api/v1/intakes/{intake_id}/corrections": ["POST"],
+  "/api/v1/intakes/{intake_id}/match-case": ["GET", "POST"],
   "/api/v1/intakes/{intake_id}/promotion-decision": ["GET"],
   "/api/v1/intakes/{intake_id}/promotion-requests": ["POST"],
   "/api/v1/interventions": ["GET", "POST"],

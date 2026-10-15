@@ -5263,6 +5263,9 @@ else:
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return DecisionReceipt(**val)
 
+        from apps.api.app.routes.canonical_match_cases import create_canonical_match_case_router
+
+        router.include_router(create_canonical_match_case_router(active))
         return router
 
 
