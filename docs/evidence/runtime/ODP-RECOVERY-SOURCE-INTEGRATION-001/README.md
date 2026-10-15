@@ -9,7 +9,38 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi batch005 / new measurement freeze — run pi-20261015T093946Z-24adc955
+## Pi batch005 SAST successor / current measurement freeze
+
+Run `pi-20261015T093946Z-24adc955`, same Manager356-path source lease, base and
+Human/Ops/PENDING boundary. This section's introducing commit is the CURRENT
+frozen measurement candidate; the preceding4a6 candidate is now historical.
+
+At `4a6e111af944c27598b368acae434418e00fbcf4` / tree
+`df7eea0aae63f5a1e465a0628142068d5fae997e`, original full2178 serial-n0 really
+finished native0/1191.247s under1200, and full178 owning-audit native0/285.758s
+under420. Other15 supplemental selections passed, but SAST genuinely FAILED:
+B608 found table-name string interpolation in the NEW schema-image inspection
+TEST. Normal hosted CI38715815725 is terminal FAILURE with the same SAST case
+in security/unit; other leaves including E2E succeeded. All logs, native exits,
+owned/adopted waits/ECHILD and post-closure fixture removal are retained. These
+results are not acceptance and cannot transfer to this successor.
+
+The test now reflects that same real image through SQLAlchemy and uses
+`select(func.count()).select_from(table)` for compiler-owned identifier quoting.
+No scanner suppression, skipped table, deleted assertion, migration/model/
+authority change or fixture substitution. The production adapter is byte-equal
+to4546/4a6. Initial SAST failures remain in private scratch and hosted logs.
+Working-diff full adapter+SAST selection exits0/81.307s under420; scoped Ruff0.
+These are diagnostics only. This new README is committed BEFORE all fresh
+14/17/owning/normalCI/configured Codex2 assessment at the NEW immutable head.
+No transfer of4a6 serial/owning/other15 successes;1200/420/full membership/all129
+E2E and every previously declared guard remain unchanged. Do not move this head
+to append later evidence; record actual terminal paths/hashes and review gaps
+externally/canonically. No review submission until owned author work is complete.
+Original blocked6/PR1459@a129/failedPi, HOLD/goalfalse and no approval/merge/done/
+live-effect boundary are unchanged.
+
+## Pi batch005 / previous measurement freeze — run pi-20261015T093946Z-24adc955 (historical)
 
 **Source checkpoint only; NOT review-ready or admitted.** Actual renewed Manager
 run/isolated-worktree lease,356 exact scope entries and12 materialized source

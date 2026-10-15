@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from mlflow.tracking import MlflowClient
+from sqlalchemy import MetaData, create_engine, func, select
 
 from models.shared_ml.registry import ModelAlias, ModelStage, ModelVersion
 from modules.learninghub.infrastructure import mlflow_adapter as adapter_module
@@ -249,10 +250,18 @@ def test_ephemeral_schema_image_contains_no_application_records(empty_schema_cac
         assert database.execute(
             "SELECT name, description, default_artifact_root FROM workspaces"
         ).fetchall() == [("default", "Default workspace for legacy resources", None)]
-        for (name,) in tables:
-            if name not in {"alembic_version", "workspaces"} and not name.startswith("sqlite_"):
-                quoted = name.replace('"', '""')
-                assert database.execute(f'SELECT COUNT(*) FROM "{quoted}"').fetchone() == (0,), name
+    # Use the SQL compiler's identifier quoting, never interpolate table names.
+    engine = create_engine("sqlite://")
+    try:
+        with engine.connect() as connection:
+            connection.connection.driver_connection.deserialize(image)
+            metadata = MetaData()
+            metadata.reflect(bind=connection)
+            for name, table in metadata.tables.items():
+                if name not in {"alembic_version", "workspaces"}:
+                    assert connection.scalar(select(func.count()).select_from(table)) == 0, name
+    finally:
+        engine.dispose()
 
 
 def test_concurrent_default_stores_reuse_only_empty_schema_bytes(
