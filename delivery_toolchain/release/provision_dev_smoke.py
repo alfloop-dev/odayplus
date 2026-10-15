@@ -82,6 +82,16 @@ from shared.identity.dev_smoke_journal import (
 from shared.identity.dev_smoke_journal import (
     validate_foreground_plan as validate_foreground_plan,
 )
+from shared.identity.dev_smoke_recovery import (
+    AUTHORIZATION_ID as RECOVERY_AUTHORIZATION_ID,
+)
+from shared.identity.dev_smoke_recovery import (
+    OLD_EXECUTION_ID,
+    TARGET_ACCOUNT_ID,
+    RecoveryBundleLineage,
+    recovery_bundle_acknowledged,
+    recovery_bundle_lineage,
+)
 from shared.identity.invitation_provenance import invitation_provenance
 
 
@@ -1089,6 +1099,8 @@ class DevCredentialBundle:
     account_id: str
     tenant_id: str
     execution_id: str
+    schema_version: int = 1
+    recovery_lineage: RecoveryBundleLineage | None = None
 
 
 def read_dev_credential_bundle(
@@ -1119,10 +1131,16 @@ def read_dev_credential_bundle(
         bundle = json.loads(raw, object_pairs_hook=unique)
         keys = {"schema_version", "authorization_id", "execution_id", "repository",
                 "environment", "tenant_id", "account_id", "username", "password"}
+        lineage = None
+        if isinstance(bundle, dict) and type(bundle.get("schema_version")) is int and bundle["schema_version"] == 2:
+            keys |= {"recovery_lineage"}
+            lineage = recovery_bundle_lineage(bundle.get("recovery_lineage"))
         if (not isinstance(bundle, dict) or set(bundle) != keys
-                or type(bundle["schema_version"]) is not int or bundle["schema_version"] != 1
-                or not all(type(bundle[k]) is str for k in keys - {"schema_version"})
-                or bundle["authorization_id"] != AUTHORIZATION_ID
+                or type(bundle["schema_version"]) is not int or bundle["schema_version"] not in (1, 2)
+                or not all(type(bundle[k]) is str for k in keys - {"schema_version", "recovery_lineage"})
+                or bundle["authorization_id"] != (RECOVERY_AUTHORIZATION_ID if lineage else AUTHORIZATION_ID)
+                or (lineage is not None and (bundle["account_id"] != TARGET_ACCOUNT_ID
+                                             or bundle["username"] != "odp-dev-smoke"))
                 or bundle["repository"] != REPOSITORY or bundle["environment"] != "dev"
                 or bundle["tenant_id"] != TENANT_ID
                 or not _USERNAME.fullmatch(bundle["username"])
@@ -1133,16 +1151,19 @@ def read_dev_credential_bundle(
             value = UUID(bundle[key])
             if value.int == 0 or str(value) != bundle[key]:
                 raise ValueError
-        if bundle["account_id"] == PRESERVED_ACCOUNT_ID:
+        if (bundle["account_id"] == PRESERVED_ACCOUNT_ID
+                or (lineage is not None and bundle["execution_id"] == OLD_EXECUTION_ID)):
             raise ValueError
         return DevCredentialBundle(bundle["username"], bundle["password"], bundle["account_id"],
-                                   bundle["tenant_id"], bundle["execution_id"])
+                                   bundle["tenant_id"], bundle["execution_id"], bundle["schema_version"], lineage)
     except Exception:
         # JSON decoding/UUID errors may embed secret input: static code only.
         raise ProvisioningRefused("PROVISIONING_CREDENTIAL_BUNDLE_INVALID") from None
 
 
-def credential_bundle_acknowledged(bundle: DevCredentialBundle, events: list[Any]) -> bool:
+def credential_bundle_acknowledged(
+    bundle: DevCredentialBundle, events: list[Any], *, target_account: Any = None,
+) -> bool:
     """Authenticated tenant-audit projection only; never a local upload receipt.
 
     Requires reserved root + intent + durable ACK, matching execution/account and
@@ -1150,6 +1171,15 @@ def credential_bundle_acknowledged(bundle: DevCredentialBundle, events: list[Any
     may be used for later admitted candidates without relabelling its creation.
     """
     try:
+        if type(bundle.schema_version) is not int:
+            return False
+        if bundle.schema_version == 2:
+            return (bundle.account_id == TARGET_ACCOUNT_ID and bundle.tenant_id == TENANT_ID
+                    and bundle.username == "odp-dev-smoke"
+                    and recovery_bundle_acknowledged(execution_id=bundle.execution_id,
+                        lineage=bundle.recovery_lineage, events=events, target_account=target_account))
+        if bundle.schema_version != 1 or bundle.recovery_lineage is not None:
+            return False
         grouped = []
         for cls, stages in ((ProvisioningJournal, ["reserved"]),
                             (DevCredentialBundleExecutor, ["binding-intent", "binding-acknowledged"])):

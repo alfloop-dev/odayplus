@@ -48,6 +48,8 @@ export interface SessionStore {
     idleTimeoutMs: number;
     absoluteLifetimeMs: number;
     rotatedFrom?: string;
+    /** Server-side local-password proof, never a browser/caller-supplied claim. */
+    verifiedCredentialRevision?: string;
   }): Promise<SessionRecord>;
 
   /** Validate a session is still active. Returns null if revoked/expired/not found. */
@@ -121,9 +123,14 @@ export class PostgresSessionStore implements SessionStore {
     idleTimeoutMs: number;
     absoluteLifetimeMs: number;
     rotatedFrom?: string;
+    verifiedCredentialRevision?: string;
   }): Promise<SessionRecord> {
     if (!params.accessToken)
       throw new Error("Session access token is required");
+    if (params.provider === "local_password" &&
+        (!params.verifiedCredentialRevision || !/^[1-9][0-9]{0,18}$/.test(params.verifiedCredentialRevision))) {
+      throw new Error("SESSION_CREDENTIAL_REVISION_REQUIRED");
+    }
     const pool = await this.pool();
     const now = new Date();
     const idleExpiresAt = new Date(
@@ -135,8 +142,11 @@ export class PostgresSessionStore implements SessionStore {
     await pool.query(
       `INSERT INTO identity.sessions
          (session_id, account_id, provider, access_token, session_subject, tenant_id,
-          created_at, last_seen_at, idle_expires_at, absolute_expires_at, rotated_from)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10)`,
+          created_at, last_seen_at, idle_expires_at, absolute_expires_at, rotated_from,
+          verified_credential_revision)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11)`,
+      // The INSERT trigger holds the credential SHARE lock until this statement
+      // commits and compares against the verified revision under that lock.
       [
         params.sessionId,
         params.accountId,
@@ -148,6 +158,7 @@ export class PostgresSessionStore implements SessionStore {
         idleExpiresAt,
         absoluteExpiresAt,
         params.rotatedFrom || null,
+        params.verifiedCredentialRevision || null,
       ],
     );
     return {
@@ -312,6 +323,7 @@ export class MockSessionStore implements SessionStore {
     idleTimeoutMs: number;
     absoluteLifetimeMs: number;
     rotatedFrom?: string;
+    verifiedCredentialRevision?: string;
   }): Promise<SessionRecord> {
     if (!params.accessToken)
       throw new Error("Session access token is required");

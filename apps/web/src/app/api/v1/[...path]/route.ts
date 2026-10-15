@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { proxyApiRequest } from "../../../../lib/auth/proxy";
+import { verifyCsrfOrigin } from "../../../../lib/auth/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,41 @@ async function handler(
   context: RouteContext,
 ): Promise<Response> {
   const { path } = await context.params;
+  if (path.join("/") === "operator/users/dev-smoke-recovery") {
+    const refuse = (status: number, code: string) => Response.json(
+      { error: { code } }, { status, headers: { "cache-control": "no-store" } },
+    );
+    if (request.nextUrl.search) return refuse(422, "RECOVERY_INPUT_INVALID");
+    if (!["GET", "POST"].includes(request.method)) return refuse(405, "RECOVERY_METHOD_REFUSED");
+    if (request.method === "POST") {
+      // Cookie-authenticated recovery never relies on SameSite alone. No body,
+      // identity token provider or upstream request runs on a CSRF refusal.
+      if (!verifyCsrfOrigin(request)) return refuse(403, "RECOVERY_CSRF_REFUSED");
+      if (request.headers.get("content-type")?.split(";", 1)[0].trim() !== "application/json") {
+        return refuse(415, "RECOVERY_JSON_REQUIRED");
+      }
+      let size = 0;
+      // Bound a tee before the existing proxy consumes the original request.
+      // Preserve NextRequest's durable cookie reference and headers unchanged.
+      const reader = request.clone().body?.getReader();
+      if (!reader) return refuse(422, "RECOVERY_INPUT_INVALID");
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > 8192) {
+            void reader.cancel().catch(() => undefined);
+            return refuse(413, "RECOVERY_BODY_TOO_LARGE");
+          }
+        }
+      } catch {
+        return refuse(422, "RECOVERY_INPUT_INVALID");
+      } finally {
+        reader.releaseLock();
+      }
+    }
+  }
   const response = await proxyApiRequest(
     request,
     `/api/v1/${path.map(encodeURIComponent).join("/")}`,

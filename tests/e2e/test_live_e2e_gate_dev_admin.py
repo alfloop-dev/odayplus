@@ -1838,3 +1838,63 @@ def test_gate_matches_bundle_account_and_requires_real_invitation(mismatch: str)
     elif mismatch != "none":
         assert blockers(report)["admin:credential_bundle_durable_acknowledgement"] == "audit"
     assert PASSWORD not in json.dumps(report)
+
+
+@pytest.mark.parametrize("failure", ["none", "missing_ack", "quarantined", "204", "wrong_rotation", "schema1"])
+def test_full_gate_recovery_bundle_keeps_invitation_and_all_auth_checks(monkeypatch: Any, failure: str) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle
+    from tests.security.test_dev_smoke_recovery import recovery_consumer_inputs
+    raw, events, user = recovery_consumer_inputs()
+    bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+    # Offline actual evaluator, no network/effects or fabricated live consumer proof.
+    monkeypatch.setattr(sys.modules[__name__], "USERNAME", bundle.username)
+    monkeypatch.setattr(sys.modules[__name__], "PASSWORD", bundle.password)
+    monkeypatch.setattr(sys.modules[__name__], "ADMIN_ACCOUNT_ID", bundle.account_id)
+    monkeypatch.setattr(sys.modules[__name__], "ADMIN_TENANT_ID", bundle.tenant_id)
+    cfg = dev_admin_config(dev_admin_bundle_account_id=bundle.account_id,
+                           dev_admin_bundle_tenant_id=bundle.tenant_id,
+                           dev_admin_bundle_execution_id=bundle.execution_id,
+                           dev_admin_bundle_schema_version=1 if failure == "schema1" else 2,
+                           dev_admin_bundle_recovery_lineage=None if failure == "schema1" else bundle.recovery_lineage)
+    if failure == "missing_ack":
+        events.pop()
+    elif failure == "quarantined":
+        events.append({**deepcopy(events[4]), "event_id": "8101c9e1-249f-4bb5-9d28-7a1a8d0d1277",
+                       "metadata": {**events[4]["metadata"], "stage": "recovery-required"}})
+    elif failure == "204":
+        events[-1]["metadata"]["put_status"] = 204
+    elif failure == "wrong_rotation":
+        events[-1]["metadata"]["rotation_event_id"] = events[5]["event_id"]
+    checks, report, web = run_dev_admin(cfg=cfg, web=AdminWeb(web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, {"users": [user], "count": 1}),
+        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, {"events": events}),
+        "GET /api/v1/auth/principal [session]": base.response(200, {
+            "account_id": bundle.account_id, "tenant_id": bundle.tenant_id, "roles": ["platform_admin"]}),
+    })))
+    assert report["ok"] is (failure == "none"), report["blockers"]
+    if failure == "none":
+        names = {c.name for c in checks if c.ok}
+        assert {"admin:credential_bundle_durable_acknowledgement", "admin:invitation_audited",
+                "admin:invitation_principal_bound", "admin:business_shell_denied", "session:wrong_role_denied",
+                "session:cross_tenant_denied", "session:logout", "session:revoked_session_refused"} <= names
+        assert report["release_profile"]["full_product_acceptance_claimed"] is False
+    else:
+        assert blockers(report)["admin:credential_bundle_durable_acknowledgement"] == "audit"
+    assert bundle.password not in json.dumps(report)
+    assert not any("/dev-smoke-recovery" in path for path, _ in web.headers_seen)
+
+
+@pytest.mark.parametrize("change", [
+    {"dev_admin_bundle_account_id": ""}, {"dev_admin_bundle_tenant_id": ""},
+    {"dev_admin_bundle_execution_id": ""}, {"dev_admin_bundle_schema_version": True},
+    {"dev_admin_bundle_schema_version": 3}, {"dev_admin_bundle_recovery_lineage": None},
+])
+def test_recovery_gate_config_cannot_drop_ids_to_skip_ack(change: Any) -> None:
+    from shared.identity.dev_smoke_recovery import recovery_bundle_lineage
+    from tests.security.test_dev_smoke_recovery import recovery_consumer_inputs
+    raw, _, _ = recovery_consumer_inputs()
+    config = {"dev_admin_bundle_account_id": raw["account_id"], "dev_admin_bundle_tenant_id": raw["tenant_id"],
+              "dev_admin_bundle_execution_id": raw["execution_id"], "dev_admin_bundle_schema_version": 2,
+              "dev_admin_bundle_recovery_lineage": recovery_bundle_lineage(raw["recovery_lineage"])}
+    checks = gate.validate_config(dev_admin_config(**{**config, **change}))
+    assert any(c.name == "config:credential_bundle_lineage" and not c.ok for c in checks)

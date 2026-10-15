@@ -123,6 +123,8 @@ export type LocalAuthResult =
         tenantId: string;
       };
       mustChangePassword?: boolean;
+      /** Server-only revision of the credential actually verified. */
+      verifiedCredentialRevision?: string;
     }
   | {
       ok: false;
@@ -264,13 +266,18 @@ export async function authenticateLocalCredentials(
         };
       }
 
-      // Rehash-on-verify (Contract §6.1). A failed write must not turn a
-      // verified login into a false credential failure.
+      // Carry the revision read with this PHC through to session insertion.
+      // Never read a newer revision and attach it to an older verification.
+      let verifiedCredentialRevision = credential.credentialRevision;
       if (newHash) {
         try {
-          await store.updatePasswordHash(account.accountId, newHash);
+          const committedRevision = await store.updatePasswordHash(
+            account.accountId, newHash, verifiedCredentialRevision,
+          );
+          if (typeof committedRevision === "string") verifiedCredentialRevision = committedRevision;
         } catch {
-          // Non-fatal: login succeeds even if rehash write fails.
+          // Rehash availability remains non-fatal, but retain the OLD revision:
+          // a concurrent rotation then fails the DB session-insert fence.
         }
       }
 
@@ -283,6 +290,7 @@ export async function authenticateLocalCredentials(
           tenantId: account.tenantId,
         },
         mustChangePassword: credential.mustChange,
+        verifiedCredentialRevision,
       };
     } catch {
       // Database outages and malformed credentials fail closed with the same

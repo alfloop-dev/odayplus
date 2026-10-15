@@ -129,6 +129,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const identityStore = getDefaultIdentityStore();
   let account: IdentityAccount | null = null;
+  let committedCredentialRevision: string | undefined;
   if (identityStore) {
     try {
       account = await accountForSession(session, identityStore);
@@ -174,7 +175,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Hash exactly the normalized value that policy checked. IdentityStore
       // implementations use Argon2id and persist only its PHC representation.
       const newHash = await identityStore.hashPassword(normalizedNewPassword);
-      await identityStore.changePassword(account.accountId, newHash);
+      committedCredentialRevision = await identityStore.changePassword(
+        account.accountId, newHash, credential.credentialRevision,
+      );
     } catch {
       return errorResponse(
         503,
@@ -224,20 +227,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const subject = account?.username || session.subject || accountId;
   const tenantId = account?.tenantId || session.tenantId;
   const now = Math.floor(Date.now() / 1000);
-  const rotatedSession = await rotateWebSession(session, {
-    nowSeconds: now,
-    ttlSeconds: Math.max(1, session.expiresAt - now),
-  });
-  // Mint after rotation so the token and identity.sessions row agree exactly.
-  const accessToken = await mintLocalJwt({
-    subject: accountId,
-    sid: rotatedSession.sid as string,
-    tenantId,
-    nowSeconds: now,
-  });
-  const finalSession = { ...rotatedSession, accessToken };
-
+  let replacementSessionId: string | undefined;
+  let replacementInsertAttempted = false;
   try {
+    const rotatedSession = await rotateWebSession(session, {
+      nowSeconds: now,
+      ttlSeconds: Math.max(1, session.expiresAt - now),
+    });
+    replacementSessionId = rotatedSession.sid as string;
+    // Mint after rotation so the token and identity.sessions row agree exactly.
+    const accessToken = await mintLocalJwt({
+      subject: accountId,
+      sid: replacementSessionId,
+      tenantId,
+      nowSeconds: now,
+    });
+    const finalSession = { ...rotatedSession, accessToken };
+    replacementInsertAttempted = true;
     await sessionStore.createSession({
       sessionId: finalSession.sid as string,
       accountId,
@@ -248,6 +254,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       idleTimeoutMs: DEFAULT_SESSION_IDLE_TIMEOUT_MS,
       absoluteLifetimeMs: Math.max(1, (session.expiresAt - now) * 1000),
       rotatedFrom: session.sid,
+      verifiedCredentialRevision: committedCredentialRevision,
     });
     // Password rotation invalidates this session and every other session for
     // the account. Excluding the new row keeps the response usable.
@@ -256,26 +263,31 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       "password_change",
       finalSession.sid as string,
     );
+    const response = NextResponse.json(
+      { ok: true, summary: "Password changed successfully." },
+      { status: 200, headers: { "cache-control": "no-store" } },
+    );
+    response.cookies.set(
+      webSessionCookieName,
+      await sealWebSessionReference(finalSession),
+      {
+        ...webSessionCookieOptions,
+        maxAge: Math.max(1, finalSession.expiresAt - now),
+      },
+    );
+    return response;
   } catch {
-    // Do not issue a new cookie when rotation/revocation was not durable.
+    // Production CAS already atomically revoked ONLY this account's old rows.
+    // Once-only cleanup of the new, server-owned ID also covers a lost INSERT
+    // reply. Never compensate by another account-wide revocation or retry.
+    if (replacementInsertAttempted && replacementSessionId) {
+      try { await sessionStore.revokeSession(replacementSessionId, "password_change_failed"); }
+      catch { /* Cleanup uncertainty is not a success; no cookie or retry. */ }
+    }
     return errorResponse(
       503,
       "WEB_AUTH_UNAVAILABLE",
       "Web authentication is temporarily unavailable.",
     );
   }
-
-  const response = NextResponse.json(
-    { ok: true, summary: "Password changed successfully." },
-    { status: 200, headers: { "cache-control": "no-store" } },
-  );
-  response.cookies.set(
-    webSessionCookieName,
-    await sealWebSessionReference(finalSession),
-    {
-      ...webSessionCookieOptions,
-      maxAge: Math.max(1, finalSession.expiresAt - now),
-    },
-  );
-  return response;
 }
