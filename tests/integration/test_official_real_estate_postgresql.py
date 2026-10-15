@@ -508,8 +508,9 @@ def test_postgresql_adjust_concurrency_creates_single_replacement_and_rejects_co
     app1 = create_app(intervention_repository=repo1)
     app2 = create_app(intervention_repository=repo2)
 
-    client1 = TestClient(app1, headers=INTERVENTION_HEADERS)
-    client2 = TestClient(app2, headers=INTERVENTION_HEADERS)
+    tenant_headers = {**INTERVENTION_HEADERS, "x-tenant-id": tenant_id}
+    client1 = TestClient(app1, headers=tenant_headers)
+    client2 = TestClient(app2, headers=tenant_headers)
 
     now = datetime.now(UTC)
     create_res = client1.post(
@@ -536,6 +537,32 @@ def test_postgresql_adjust_concurrency_creates_single_replacement_and_rejects_co
     approve_res = client1.post(f"/interventions/{case_id}/approve", json={"action": "APPROVE", "actor": "sup-admin", "reason": "approved"})
     assert approve_res.status_code == 200
     initial_version = approve_res.json()["version"]
+    assert approve_res.json()["tenant_id"] == tenant_id
+
+    # Independent clients: no inherited owner headers on the negative requests.
+    # Denial must leave the approved document and SQL lineage unchanged before
+    # either concurrent worker takes its snapshot.
+    foreign = TestClient(app2, headers={**INTERVENTION_HEADERS, "x-tenant-id": str(uuid4())})
+    anonymous = TestClient(app2)
+    for denied, expected_code in ((foreign, 404), (anonymous, 403)):
+        assert denied.get(f"/interventions/{case_id}").status_code == expected_code
+        response = denied.post(
+            f"/interventions/{case_id}/adjust",
+            json={"actor": "untrusted", "reason": "forbidden adjust", "expected_version": initial_version},
+        )
+        assert response.status_code == expected_code
+    unchanged = repo2.get(case_id)
+    assert unchanged.tenant_id == tenant_id
+    assert unchanged.version == initial_version
+    assert unchanged.replacement_id is None
+    with intake_blank_db.connect() as conn:
+        rows = conn.execute(
+            "SELECT status, predecessor_id, replacement_id FROM operations.interventions WHERE store_id = %s",
+            (store_id,),
+        ).fetchall()
+        assert rows == [("approved", None, None)]
+    assert not [event for event in app2.state.audit_log.list_events()
+                if event.event_type == "intervention.lifecycle.v1"]
 
     barrier = threading.Barrier(2, timeout=10)
     initial_reads = []
@@ -567,11 +594,14 @@ def test_postgresql_adjust_concurrency_creates_single_replacement_and_rejects_co
     def run_adjust(worker_id: int, client: TestClient):
         c = TestClient(
             client.app,
-            headers=auth_headers(
-                Role.OPERATIONS_MANAGER,
-                Role.REGIONAL_SUPERVISOR,
-                subject=f"worker-{worker_id}",
-            ),
+            headers={
+                **auth_headers(
+                    Role.OPERATIONS_MANAGER,
+                    Role.REGIONAL_SUPERVISOR,
+                    subject=f"worker-{worker_id}",
+                ),
+                "x-tenant-id": tenant_id,
+            },
         )
         res = c.post(
             f"/interventions/{case_id}/adjust",
@@ -620,17 +650,21 @@ def test_postgresql_adjust_concurrency_creates_single_replacement_and_rejects_co
     assert doc_orig is not None
     assert doc_orig.status.value == "STOPPED"
     assert doc_orig.replacement_id == replacement_id
+    assert doc_orig.tenant_id == tenant_id
 
     doc_repl = store1.get("intervention.interventions", replacement_id)
     assert doc_repl is not None
     assert doc_repl.status.value == "CANDIDATE"
     assert doc_repl.predecessor_id == case_id
+    assert doc_repl.tenant_id == tenant_id
+    assert repo2.get(case_id).tenant_id == repo2.get(replacement_id).tenant_id == tenant_id
 
     winner = next(result[0] for result in results if result[1] == 200)
     for worker_id, app in enumerate((app1, app2), start=1):
         events = [event for event in app.state.audit_log.list_events()[audit_before[worker_id - 1]:]
                   if event.event_type == "intervention.lifecycle.v1"]
         assert [event.action for event in events] == (["adjust", "create"] if worker_id == winner else [])
+        assert all(event.metadata["tenant_id"] == tenant_id for event in events)
 
     engine1.close()
     engine2.close()
@@ -672,8 +706,9 @@ def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
     app1 = create_app(intervention_repository=repo1)
     app2 = create_app(intervention_repository=repo2)
 
-    client1 = TestClient(app1, headers=INTERVENTION_HEADERS)
-    client2 = TestClient(app2, headers=INTERVENTION_HEADERS)
+    tenant_headers = {**INTERVENTION_HEADERS, "x-tenant-id": tenant_id}
+    client1 = TestClient(app1, headers=tenant_headers)
+    client2 = TestClient(app2, headers=tenant_headers)
 
     now = datetime.now(UTC)
     create_res = client1.post(
@@ -704,7 +739,12 @@ def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
     from dataclasses import replace
 
     order = []
-    get_original = repo1.get
+    workflow1 = app1.state.intervention_workflow
+    # The HTTP tenant-ownership preflight now reads the repository before the
+    # workflow. Interleave after the workflow's actual initial snapshot, not
+    # during authorization (which would only test early version rejection).
+    # _require still performs the real repository read / FOR UPDATE below.
+    get_original = workflow1._require
     audit_before = [event for event in app1.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"]
 
     def controlled_initial_read(intervention_id, *, for_update=False):
@@ -723,7 +763,7 @@ def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
             assert snapshot.version == v_approved + 1
         return snapshot
 
-    monkeypatch.setattr(repo1, "get", controlled_initial_read)
+    monkeypatch.setattr(workflow1, "_require", controlled_initial_read)
     adjust_res = client1.post(
         f"/interventions/{case_id}/adjust",
         json={
@@ -753,6 +793,8 @@ def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
     assert doc is not None
     assert doc.status.value == ("STOPPED" if competitor == "stop" else "APPROVED")
     assert doc.replacement_id is None
+    assert doc.tenant_id == tenant_id
+    assert repo2.get(case_id).tenant_id == tenant_id
 
     assert [event for event in app1.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"] == audit_before
     assert doc.version == v_approved + 1
@@ -798,8 +840,9 @@ def test_postgresql_adjust_interleaved_with_stale_assign_or_stop_rejected(
     app1 = create_app(intervention_repository=repo1)
     app2 = create_app(intervention_repository=repo2)
 
-    client1 = TestClient(app1, headers=INTERVENTION_HEADERS)
-    client2 = TestClient(app2, headers=INTERVENTION_HEADERS)
+    tenant_headers = {**INTERVENTION_HEADERS, "x-tenant-id": tenant_id}
+    client1 = TestClient(app1, headers=tenant_headers)
+    client2 = TestClient(app2, headers=tenant_headers)
 
     now = datetime.now(UTC)
     create_res = client1.post(
@@ -891,6 +934,8 @@ def test_postgresql_adjust_interleaved_with_stale_assign_or_stop_rejected(
     assert doc_orig is not None
     assert doc_orig.status.value == "STOPPED"
     assert doc_orig.replacement_id == replacement_id
+    assert doc_orig.tenant_id == tenant_id
+    assert repo2.get(replacement_id).tenant_id == tenant_id
 
     engine1.close()
     engine2.close()
