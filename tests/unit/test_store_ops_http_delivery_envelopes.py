@@ -1,12 +1,14 @@
-"""HTTP response-shape regression with owned file/document and delivery ports.
+"""HTTP response-shape regression with owned SQLite persistence and delivery ports.
 
-Exercises the real router, service, scoped merge, durable repository and audit
-record/hash logic. No SQL, PostgreSQL, native browser, real login or remote WORM
-is exercised by these unit ports; the native PostgreSQL suite remains required.
+Exercises the real router, service, scoped merge, durable repository, SQLite CAS
+and audit record/hash logic. The advisory/transaction observer reports the
+PostgreSQL dialect only for the existing route contract; it records that one
+advisory statement and delegates transactions to the same real SQLite engine.
+This is SQLite engineering coverage, not PostgreSQL, native-browser, real-login
+or remote-WORM evidence; the native PostgreSQL suite remains required.
 """
 from __future__ import annotations
 
-import json
 from contextlib import contextmanager
 from copy import deepcopy
 from types import SimpleNamespace
@@ -21,6 +23,8 @@ from modules.opsboard.application.store_ops import DurableStoreOpsRepository, St
 from modules.opsboard.application.store_ops_scope import binding_hash
 from shared.audit import InMemoryAuditLog
 from shared.auth import Role
+from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+from shared.infrastructure.persistence.engine import SqliteEngine
 
 TENANT = "unit-envelope-tenant"
 SUBJECT = "unit-envelope-subject"
@@ -31,12 +35,13 @@ DELIVERED = {"status": "delivered", "pending": 0, "deliveredNow": 1}
 PENDING = {"status": "pending", "pending": None, "retryable": True}
 
 
-class NoSQLTransactionPort:
-    """Dialect admission port only; the one advisory statement is never executed."""
+class SqliteTransactionObservationPort:
+    """Record advisory admission while transactions use the owned SQLite engine."""
 
     dialect = "postgresql"
 
-    def __init__(self):
+    def __init__(self, sqlite_engine):
+        self.sqlite_engine = sqlite_engine
         self.advisory_calls = 0
         self.active = False
 
@@ -45,7 +50,8 @@ class NoSQLTransactionPort:
         assert not self.active
         self.active = True
         try:
-            yield
+            with self.sqlite_engine.transaction():
+                yield
         finally:
             self.active = False
 
@@ -57,21 +63,28 @@ class NoSQLTransactionPort:
 
 
 class OwnedFileDocumentPort:
-    """Explicit unit persistence port backing the actual DurableStoreOpsRepository."""
+    """Delegate persistence and atomic row versions to the same owned SQLite store."""
 
     tenant_id = TENANT
 
     def __init__(self, path, engine):
+        assert engine.sqlite_engine.path == path
         self.path, self.engine = path, engine
+        self._documents = SqliteDocumentStore(engine.sqlite_engine)
 
     def get(self, collection, key):
-        contents = json.loads(self.path.read_text()) if self.path.exists() else {}
-        return deepcopy(contents.get(collection, {}).get(key))
+        return self._documents.get(collection, key)
 
-    def put(self, collection, key, value, **_kwargs):
-        contents = json.loads(self.path.read_text()) if self.path.exists() else {}
-        contents.setdefault(collection, {})[key] = deepcopy(value)
-        self.path.write_text(json.dumps(contents))
+    def put(self, collection, key, value, **kwargs):
+        return self._documents.put(collection, key, value, **kwargs)
+
+    def get_versioned(self, collection, key):
+        return self._documents.get_versioned(collection, key)
+
+    def compare_and_put(self, collection, key, value, *, expected_version):
+        return self._documents.compare_and_put(
+            collection, key, value, expected_version=expected_version,
+        )
 
 
 class UnitAuditLog(InMemoryAuditLog):
@@ -110,58 +123,70 @@ def _state():
 
 @pytest.fixture
 def http_case(tmp_path, monkeypatch):
-    engine = NoSQLTransactionPort()
-    path = tmp_path / "owned-unit-documents.json"
-    repo = DurableStoreOpsRepository(OwnedFileDocumentPort(path, engine))
-    repo.save_state(_state())
-    audit = UnitAuditLog(engine)
-    delivery_state = SimpleNamespace(fail=False, drains=0, queued=[])
+    path = tmp_path / "owned-unit-documents.sqlite3"
+    engine = SqliteTransactionObservationPort(SqliteEngine(path))
+    try:
+        repo = DurableStoreOpsRepository(OwnedFileDocumentPort(path, engine))
+        repo.save_state(_state())
+        before_state, before_version = repo.read_versioned_state()
+        assert isinstance(before_version, int) and before_version > 0
+        stale_state = deepcopy(before_state)
+        stale_state["issues"][0]["severity"] = "critical"
+        assert repo.compare_and_save_state(
+            stale_state, expected_version=before_version - 1,
+        ) is False
+        assert repo.read_versioned_state() == (before_state, before_version)
+        audit = UnitAuditLog(engine)
+        delivery_state = SimpleNamespace(fail=False, drains=0, queued=[])
 
-    class DeliveryPort:
-        sink_id = "inert-unit://transactional-delivery"
+        class DeliveryPort:
+            sink_id = "inert-unit://transactional-delivery"
 
-        def __init__(self, *_args):
-            pass
+            def __init__(self, *_args):
+                pass
 
-        def write_audit_event(self, event):
-            delivery_state.queued.append(event)
+            def write_audit_event(self, event):
+                delivery_state.queued.append(event)
 
-        def deliver_pending(self):
-            assert not engine.active, "Delivery must remain after the business transaction"
-            delivery_state.drains += 1
-            if delivery_state.fail:
-                raise RuntimeError("Explicit unit delivery observation failure")
-            return deepcopy(DELIVERED)
+            def deliver_pending(self):
+                assert not engine.active, "Delivery must remain after the business transaction"
+                delivery_state.drains += 1
+                if delivery_state.fail:
+                    raise RuntimeError("Explicit unit delivery observation failure")
+                return deepcopy(DELIVERED)
 
-    async def unit_guard(_request: Request):
-        # This is an explicit principal admission port, not real authentication.
-        return None
+        async def unit_guard(_request: Request):
+            # This is an explicit principal admission port, not real authentication.
+            return None
 
-    monkeypatch.setattr(dependencies, "require_operator_permission", lambda *_a, **_kw: unit_guard)
-    monkeypatch.setattr(route_module, "StoreOpsAuditDelivery", DeliveryPort)
-    scope = SimpleNamespace(
-        tenant_id=TENANT, brand_ids=frozenset(), region_ids=frozenset(), store_ids=frozenset({STORE}),
-        clearance=SimpleNamespace(value="general"), assigned_area_ids=frozenset(),
-        heat_zone_ids=frozenset(), modules=frozenset(),
-    )
-    principal = SimpleNamespace(authenticated=True, subject_id=SUBJECT, scope=scope,
-                                roles=frozenset({Role.OPERATIONS_MANAGER}))
-    app = FastAPI()
+        monkeypatch.setattr(dependencies, "require_operator_permission", lambda *_a, **_kw: unit_guard)
+        monkeypatch.setattr(route_module, "StoreOpsAuditDelivery", DeliveryPort)
+        scope = SimpleNamespace(
+            tenant_id=TENANT, brand_ids=frozenset(), region_ids=frozenset(), store_ids=frozenset({STORE}),
+            clearance=SimpleNamespace(value="general"), assigned_area_ids=frozenset(),
+            heat_zone_ids=frozenset(), modules=frozenset(),
+        )
+        principal = SimpleNamespace(authenticated=True, subject_id=SUBJECT, scope=scope,
+                                    roles=frozenset({Role.OPERATIONS_MANAGER}))
+        app = FastAPI()
 
-    @app.middleware("http")
-    async def unit_principal(request: Request, call_next):
-        request.state.operator_principal = principal
-        request.state.operator_role_id = "ops-lead"
-        request.state.correlation_id = "unit-http-correlation"
-        return await call_next(request)
+        @app.middleware("http")
+        async def unit_principal(request: Request, call_next):
+            request.state.operator_principal = principal
+            request.state.operator_role_id = "ops-lead"
+            request.state.correlation_id = "unit-http-correlation"
+            return await call_next(request)
 
-    stores = SimpleNamespace(list_stores=lambda **_kwargs: [SimpleNamespace(store_id=STORE)])
-    app.include_router(route_module.create_operator_store_ops_router(
-        repository=repo, store_repository=stores, audit_log=audit, require_live_data=True,
-    ), prefix="/api/v1")
-    with TestClient(app) as client:
-        yield SimpleNamespace(client=client, repo=repo, path=path, engine=engine,
-                              audit=audit, delivery=delivery_state)
+        stores = SimpleNamespace(list_stores=lambda **_kwargs: [SimpleNamespace(store_id=STORE)])
+        app.include_router(route_module.create_operator_store_ops_router(
+            repository=repo, store_repository=stores, audit_log=audit, require_live_data=True,
+        ), prefix="/api/v1")
+        with TestClient(app) as client:
+            yield SimpleNamespace(client=client, repo=repo, path=path, engine=engine,
+                                  audit=audit, delivery=delivery_state)
+
+    finally:
+        engine.sqlite_engine.close()
 
 
 @pytest.mark.parametrize("post_failure,get_failure", [(False, False), (False, True), (True, True)])
