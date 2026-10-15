@@ -14,6 +14,7 @@ from apps.api.oday_api.main import create_app
 from shared.api.errors import ErrorCode
 
 ENVELOPE_FIELDS = {"code", "message", "next_action", "occurred_at", "details", "correlation_id"}
+JOB_HEADERS = {"x-subject-id": "envelope-reader", "x-roles": "operations_manager", "x-tenant-id": "tenant-a"}
 
 OPERATOR_HEADERS = {
     "x-subject-id": "operator-expansion-manager",
@@ -25,7 +26,7 @@ OPERATOR_HEADERS = {
 
 def test_envelope_carries_every_required_field() -> None:
     client = TestClient(create_app())
-    response = client.get("/api/v1/jobs/no-such-job", headers={"x-correlation-id": "corr-env-1"})
+    response = client.get("/api/v1/jobs/no-such-job", headers={**JOB_HEADERS, "x-correlation-id": "corr-env-1"})
 
     assert response.status_code == 404
     envelope = response.json()["error"]
@@ -43,7 +44,7 @@ def test_envelope_correlation_id_matches_the_response_header() -> None:
     operator to the wrong audit event -- worse than carrying none.
     """
     client = TestClient(create_app())
-    response = client.get("/api/v1/jobs/missing", headers={"x-correlation-id": "corr-env-2"})
+    response = client.get("/api/v1/jobs/missing", headers={**JOB_HEADERS, "x-correlation-id": "corr-env-2"})
 
     assert response.json()["error"]["correlation_id"] == "corr-env-2"
     assert response.headers["x-correlation-id"] == "corr-env-2"
@@ -56,7 +57,8 @@ def test_legacy_string_detail_is_preserved_verbatim() -> None:
     copy in the UI.
     """
     client = TestClient(create_app())
-    response = client.get("/api/v1/jobs/missing")
+    response = client.get("/api/v1/jobs/missing", headers=JOB_HEADERS)
+    assert client.get("/api/v1/jobs/missing").status_code == 401
 
     body = response.json()
     assert body["detail"] == "job not found"

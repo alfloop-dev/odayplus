@@ -276,6 +276,7 @@ def test_transition_replay_returns_the_first_result_and_does_not_double_apply() 
     body = {"actor_id": "approver", "reason": "pilot approved", "decision": "APPROVE"}
     headers = {
         **WRITE_HEADERS,
+        "x-tenant-id": "tenant-a",
         "Idempotency-Key": "idem-approve-1",
         "x-correlation-id": "corr-approve-1",
     }
@@ -291,7 +292,7 @@ def test_transition_replay_returns_the_first_result_and_does_not_double_apply() 
         "a replay must not append a second audit event claiming the approval happened again"
     )
 
-    events = client.get("/api/v1/audit/events", params={"correlation_id": "corr-approve-1"}).json()[
+    events = client.get("/api/v1/audit/events", headers={**auth_headers(Role.AUDITOR, subject="replay-auditor"), "x-tenant-id": "tenant-a"}, params={"correlation_id": "corr-approve-1"}).json()[
         "events"
     ]
     approvals = [e for e in events if e["event_type"] == "priceops.approved.v1"]

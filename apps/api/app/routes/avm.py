@@ -215,6 +215,14 @@ else:
             request: Request,
             metadata: dict[str, Any] | None = None,
         ) -> str:
+            # Attribution is server-authenticated operation context, never body
+            # metadata or correlation. Tenantless offline callers stay UNKNOWN.
+            principal = getattr(request.state, "operator_principal", None)
+            verified_tenant = getattr(getattr(principal, "scope", None), "tenant_id", None)
+            audit_metadata = dict(metadata or {})
+            audit_metadata.pop("tenant_id", None)
+            if verified_tenant:
+                audit_metadata["tenant_id"] = str(verified_tenant)
             return active_audit_log.record(
                 AuditEvent(
                     event_type=event_type,
@@ -223,7 +231,7 @@ else:
                     resource=resource,
                     outcome=outcome,
                     correlation_id=request.state.correlation_id,
-                    metadata=metadata or {},
+                    metadata=audit_metadata,
                 )
             ).event_id
 

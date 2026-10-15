@@ -16,7 +16,11 @@ from modules.adlift import (
     run_adlift_incrementality_batch,
     run_incrementality,
 )
-from tests.integration._authz import ADLIFT_HEADERS
+from shared.auth import Role
+from tests.integration._authz import ADLIFT_HEADERS as BASE_ADLIFT_HEADERS
+from tests.integration._authz import auth_headers
+
+ADLIFT_HEADERS = {**BASE_ADLIFT_HEADERS, "x-tenant-id": "tenant-adlift"}
 
 GENERATED_AT = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
 
@@ -408,7 +412,8 @@ def test_adlift_api_runs_incrementality_and_is_idempotent() -> None:
     fetched = client.get("/adlift/reports/camp-api-001")
     assert fetched.json()["report_version"] == 1
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-adlift-1"})
+    audit = client.get("/audit/events", headers={**auth_headers(Role.AUDITOR, subject="adlift-auditor"), "x-tenant-id": "tenant-adlift"}, params={"correlation_id": "corr-adlift-1"})
+    assert audit.status_code == 200, audit.text
     assert any(
         event["event_type"] == "adlift.incrementality_evaluated.v1"
         for event in audit.json()["events"]

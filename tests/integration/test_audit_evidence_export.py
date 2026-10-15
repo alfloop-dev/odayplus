@@ -13,7 +13,9 @@ from modules.opsboard.audit import (
     EvidenceExportRequest,
 )
 from shared.audit import AuditEvent, InMemoryAuditLog
-from tests.integration._authz import AUDIT_HEADERS
+from tests.integration._authz import AUDIT_HEADERS as BASE_AUDIT_HEADERS
+
+AUDIT_HEADERS = {**BASE_AUDIT_HEADERS, "x-tenant-id": "t1"}
 
 
 def _now() -> datetime:
@@ -140,7 +142,7 @@ def test_audit_evidence_export_api_uses_platform_audit_log() -> None:
             outcome="approved",
             correlation_id="corr-api-export-1",
             occurred_at=now,
-            metadata={"release_type": "FULL", "approval_id": "approval-full-002"},
+            metadata={"tenant_id": "t1", "release_type": "FULL", "approval_id": "approval-full-002"},
         )
     )
     app = create_app(audit_log=audit_log)

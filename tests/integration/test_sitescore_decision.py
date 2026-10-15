@@ -15,6 +15,7 @@ from modules.sitescore import (
     score_sites,
 )
 from shared.audit import InMemoryAuditLog
+from shared.auth import Role
 from shared.workflow.sitescore import (
     CandidateSiteRealizationHook,
     DecisionAction,
@@ -22,7 +23,7 @@ from shared.workflow.sitescore import (
     SiteScoreDecisionError,
     SiteScoreDecisionWorkflow,
 )
-from tests.integration._authz import SITESCORE_HEADERS
+from tests.integration._authz import SITESCORE_HEADERS, auth_headers
 
 SNAPSHOT_TIME = datetime(2026, 6, 27, 8, 0, tzinfo=UTC)
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
@@ -296,7 +297,8 @@ def test_sitescore_api_scores_reports_and_runs_decision_loop() -> None:
     assert realized.json()["items"][0]["candidate_site_id"] == "CS-API-001"
     assert realized.json()["items"][0]["site_status"] == "approved"
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-ss-1"})
+    audit = client.get("/audit/events", headers={**auth_headers(Role.AUDITOR, subject="sitescore-auditor"), "x-tenant-id": "tenant-a"}, params={"correlation_id": "corr-ss-1"})
+    assert audit.status_code == 200, audit.text
     assert any(event["action"] == "run_model" for event in audit.json()["events"])
 
 
