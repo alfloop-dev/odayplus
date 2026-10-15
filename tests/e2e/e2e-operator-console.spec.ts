@@ -340,18 +340,22 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
   await page.addInitScript(() => {
     window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
   });
+  await page.goto("/operator");
+  // This fixture API journey starts after its shell envelope is applied.
+  await expect(page.getByTestId("operator-envelope-source")).toHaveText(
+    "operator-shell-api-envelope", { timeout: 15_000 },
+  );
+  // Arm the response observer immediately before the single Network click.
   const listingSnapshotResponse = page.waitForResponse(
     (response) => response.url().includes("/api/v1/operator/network-listings?") &&
       response.request().method() === "GET" &&
       response.request().headers()["x-operator-role"] === "expansion-manager",
     { timeout: 15_000 },
   );
-  await page.goto("/operator");
-
   // Enter the Network (展店與店網) workspace.
   await page.getByRole("button", { name: /展店與店網/ }).click();
   const workspace = page.getByTestId("network-find-areas-workspace");
-  await expect(workspace).toBeVisible();
+  await expect(workspace).toBeVisible({ timeout: 15_000 });
 
   // Default tab is Find Areas.
   await expect(page.getByTestId("network-panel-find-areas")).toBeVisible();
@@ -368,6 +372,11 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
   );
   await expect(page.getByTestId("network-listing-table")).toContainText(
     "L-2030",
+  );
+  // A reload must follow the committed tab URL, not its optimistic panel.
+  await expect(page).toHaveURL(
+    (url) => url.searchParams.get("ws") === "network" && url.searchParams.get("tab") === "radar",
+    { timeout: 15_000 },
   );
   // Explicit fixture-only setup retains the legacy API compatibility check.
   // The following Radar click must only navigate to this existing candidate.
@@ -459,7 +468,14 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
   await page
     .getByTestId("review-decision-reason")
     .fill("Review approved based on excellent SiteScore and fit metrics.");
+  const decisionResponse = page.waitForResponse(
+    (response) => response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/operator/network-reviews/RV-702/decide"),
+    { timeout: 15_000 },
+  );
   await page.getByTestId("review-decision-submit").click();
+  const decision = await decisionResponse;
+  expect(decision.status()).toBe(200);
   await expect(page.getByTestId("review-decision-dialog")).toHaveCount(0);
   await expect(page.getByTestId("review-decided-RV-702")).toContainText(
     "Approved",
