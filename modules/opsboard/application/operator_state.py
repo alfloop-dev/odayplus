@@ -414,6 +414,7 @@ class OperatorStateService:
         brand_ids: tuple[str, ...] = (),
         region_ids: tuple[str, ...] = (),
         store_ids: tuple[str, ...] = (),
+        read_projection: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Return a role-aware shell envelope for bootstrap/today."""
         role = self.resolve_role(
@@ -421,16 +422,18 @@ class OperatorStateService:
             subject_id=subject_id,
             system_roles=system_roles,
         )
+        state = self._load_state(
+            tenant_id=tenant_id, brand_ids=brand_ids, region_ids=region_ids, store_ids=store_ids,
+        )
+        # The HTTP composition owns this per-call verified projection. Never
+        # retain its principal or callback on the router-lifetime service.
+        if read_projection is not None and self._require_live_data:
+            state = read_projection(state)
         return self._build_envelope(
             role=role,
             system_roles=system_roles,
             correlation_id=correlation_id,
-            state=self._load_state(
-                tenant_id=tenant_id,
-                brand_ids=brand_ids,
-                region_ids=region_ids,
-                store_ids=store_ids,
-            ),
+            state=state,
         )
 
     def get_work_queue(
@@ -499,6 +502,7 @@ class OperatorStateService:
         brand_ids: tuple[str, ...] = (),
         region_ids: tuple[str, ...] = (),
         store_ids: tuple[str, ...] = (),
+        read_projection: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Search the role-aware shell index."""
         envelope = self.get_today(
@@ -510,6 +514,7 @@ class OperatorStateService:
             brand_ids=brand_ids,
             region_ids=region_ids,
             store_ids=store_ids,
+            read_projection=read_projection,
         )
         normalized = query.strip().casefold()
         items = envelope["search"]["items"]

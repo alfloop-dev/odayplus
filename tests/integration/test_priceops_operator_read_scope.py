@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from apps.api.app.routes.operator import create_operator_router
 from apps.api.app.routes.priceops import create_priceops_router
 from apps.api.oday_api.security import dependencies
+from modules.opsboard.application.operator_live_repository import OperatorLiveRepository
 from shared.api.errors import install_error_handlers
 from shared.domain import Brand, Store
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
@@ -65,6 +66,7 @@ def context(tmp_path, monkeypatch):
                                              require_durable_commands=True, runtime_mode="poc"), prefix=BASE)
     app.include_router(create_operator_router(audit_log=bundle.audit_log, document_store=store,
                                               job_queue=bundle.job_queue,
+                                              live_repository=OperatorLiveRepository(bundle),
                                               priceops_repository_for_tenant=provider,
                                               priceops_store_repository=bundle.store_repository,
                                               priceops_brand_repository=bundle.brand_repository,
@@ -351,7 +353,18 @@ def test_other_governance_module_projection_and_original_authority_are_retained(
     for headers in (HEADERS, {**HEADERS, "x-store-ids": "store-tenant-a"}):
         response = client.get(BASE + "/operator/governance/snapshot", headers=headers)
         assert response.status_code == 200, response.text
-        assert next(row for row in response.json()["approvals"] if row["id"] == approval["id"]) == approval
+        # This legacy local row has no canonical Store Ops -> Govern issue
+        # producer or object parent. Tenant-wide history remains readable;
+        # a restricted store grant cannot authorize its unknown parent.
+        if "x-store-ids" not in headers:
+            assert next(row for row in response.json()["approvals"] if row["id"] == approval["id"]) == approval
+            assert response.json()["counts"]["pendingApprovals"] == 1
+        else:
+            assert all(row["id"] != approval["id"] for row in response.json()["approvals"])
+            assert response.json()["counts"]["pendingApprovals"] == 0
+        assert response.json()["counts"]["pendingApprovals"] == sum(
+            row["status"] == "pending" for row in response.json()["approvals"]
+        )
         assert response.json()["actionAuthority"]["verified"] is True
         assert response.json()["actionAuthority"]["decide"] is True
     assert owner.load("tenant-a") == before

@@ -622,6 +622,9 @@ export function GovernanceWorkspace({
   const selectedApproval = selectedApprovalId
     ? localApprovals.find((approval) => approval.id === selectedApprovalId)
     : localApprovals[0];
+  const nativeReviewRequired = selectedApproval?.actionAuthority?.decide === false
+    || selectedApproval?.nativeTarget !== undefined;
+  const nativeTarget = selectedApproval?.nativeTarget ?? null;
   const selectedEvidence = selectedEvidenceId
     ? selectedApproval?.evidence?.find((evidence) => evidence.id === selectedEvidenceId)
     : undefined;
@@ -806,7 +809,7 @@ export function GovernanceWorkspace({
   }
 
   async function submitDecision(action: GovernanceDecisionAction) {
-    if (!selectedApproval || decisionBusyRef.current) {
+    if (!selectedApproval || nativeReviewRequired || !canDecide || decisionBusyRef.current) {
       return;
     }
 
@@ -1149,6 +1152,28 @@ export function GovernanceWorkspace({
 
                 <section className={selectedApproval.status === "pending" ? styles.decisionBox : undefined} aria-label="Decision reason">
                   {selectedApproval.status === "pending" ? (
+                    nativeReviewRequired ? (
+                      <>
+                        <div className={styles.readOnlyNotice} data-testid="governance-native-owner-review">
+                          此項目需在完整審查流程中核決，請開啟對應審查。
+                        </div>
+                        {nativeTarget && callbacks?.onOpenNativeTarget ? (
+                          <div className={styles.actions}>
+                            <button
+                              disabled={decisionRunning}
+                              onClick={() => callbacks?.onOpenNativeTarget?.(nativeTarget, selectedApproval)}
+                              type="button"
+                            >
+                              {nativeTarget.workspace === "today" ? "開啟完整干預審查" : "開啟完整審查"}
+                            </button>
+                          </div>
+                        ) : (
+                          <p className={styles.readOnlyNotice} data-testid="governance-native-target-unavailable">
+                            完整審查連結尚未核對，請重新整理資料。此處無法核決。
+                          </p>
+                        )}
+                      </>
+                    ) : (
                     <>
                       <label htmlFor="governance-reason">
                         決策理由（核准選填；退回／駁回必填，寫入 Decision Log）
@@ -1198,6 +1223,7 @@ export function GovernanceWorkspace({
                         </div>
                       )}
                     </>
+                    )
                   ) : (
                     <div className={styles.decidedNotice}>
                       <strong>{selectedApproval.status === "not_submitted" ? "尚未送審" : `已完成決策 (${selectedApproval.status})`}</strong>

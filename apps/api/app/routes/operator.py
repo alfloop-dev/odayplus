@@ -403,6 +403,7 @@ def create_operator_router(
             return _live_read(
                 "operator.envelope",
                 svc.get_today,
+                read_projection=lambda state: pending_state_for_request(request, state),
                 **_context(
                     request,
                     x_operator_role=x_operator_role,
@@ -425,6 +426,7 @@ def create_operator_router(
                 "operator.search",
                 svc.search,
                 q,
+                read_projection=lambda state: pending_state_for_request(request, state),
                 **_context(
                     request,
                     x_operator_role=x_operator_role,
@@ -497,8 +499,23 @@ def create_operator_router(
                     "operator_shell_tenant_scope",
                     message="verified tenant scope is required for the production shell",
                 )
+            class RequestProjectedState:
+                # This adapter and its principal live for one HTTP request.
+                # Never bind a request closure to the router-lifetime service.
+                def __getattr__(self, name: str) -> Any:
+                    return getattr(svc, name)
+
+                def get_today(self, **kwargs: Any) -> dict[str, Any]:
+                    return svc.get_today(**kwargs, read_projection=lambda state: pending_state_for_request(request, state))
+
+                def get_work_queue(self, **kwargs: Any) -> list[dict[str, Any]]:
+                    return self.get_today(**kwargs)["workQueue"]
+
+                def search(self, query: str, **kwargs: Any) -> dict[str, Any]:
+                    return svc.search(query, **kwargs, read_projection=lambda state: pending_state_for_request(request, state))
+
             scoped_state = TenantBoundOperatorStateService(
-                svc,
+                cast(OperatorStateService, RequestProjectedState()),
                 tenant_id=tenant_id,
                 brand_ids=cast(tuple[str, ...], context["brand_ids"]),
                 region_ids=cast(tuple[str, ...], context["region_ids"]),
@@ -1000,6 +1017,79 @@ def create_operator_router(
             return governance_factory(governance_state_repository.load(tenant_id), tenant_id,
                                       read_owner=priceops_read_owner(request))
 
+        def pending_network_scope_snapshot(request: Request) -> dict[str, Any]:
+            # Use the existing canonical Review parent reader. Reading a
+            # committed candidate's scope does not submit or operate Intake,
+            # and must not instantiate its unrelated command workflow owner.
+            tenant_id = request.state.operator_principal.tenant_id
+            return NetworkListingService(
+                listing_repository=require_tenant_repository(
+                    listing_repository_for_tenant, "listing_repository", tenant_id,
+                ),
+                intake_repository=DurableAssistedIntakeRepository(TenantScopedDocumentStore(document_store, tenant_id)),
+                seed_fixtures=False, tenant_id=tenant_id,
+                review_decision_repository=require_tenant_repository(
+                    sitescore_decision_repository_for_tenant, "sitescore_decision_repository", tenant_id,
+                ),
+            ).snapshot(tenant_id=tenant_id)
+
+        def pending_snapshot_for_request(
+            request: Request, native_state: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            from modules.opsboard.application.operator_pending_projection import (
+                project_pending_snapshot,
+            )
+
+            # This cache belongs to the verified request, never a shared service
+            # or a mutable actor closure retained across requests.
+            cached = getattr(request.state, "operator_pending_snapshot", None)
+            if cached is not None:
+                return cached
+            try:
+                principal = request.state.operator_principal
+                context = _live_operator_request_context(request)
+                if native_state is None:
+                    if svc.live_repository is None:
+                        raise OperatorLiveRepositoryError("native pending read owner is unavailable")
+                    native_state = svc.live_repository.load_state(
+                        tenant_id=principal.tenant_id,
+                        brand_ids=context["brand_ids"], region_ids=context["region_ids"],
+                        store_ids=context["store_ids"],
+                    )
+                snapshot = governance_read_service(request).snapshot(
+                    role_id=context["role_id"], correlation_id=context["correlation_id"],
+                )
+                projected = project_pending_snapshot(
+                    snapshot, native_state, principal=principal,
+                    listing_snapshot_reader=lambda: pending_network_scope_snapshot(request),
+                    sitescore_owner=require_tenant_repository(sitescore_decision_repository_for_tenant, "sitescore_decision_repository", principal.tenant_id),
+                    avm_owner=require_tenant_repository(avm_repository_for_tenant, "avm_repository", principal.tenant_id),
+                    netplan_owner=require_tenant_repository(netplan_repository_for_tenant, "netplan_repository", principal.tenant_id),
+                    store_repository=priceops_store_repository,
+                    brand_repository=priceops_brand_repository,
+                )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail={
+                    "code": "OPERATOR_PENDING_OWNER_UNAVAILABLE",
+                    "state": "unavailable",
+                    "message": "Canonical pending review ownership is unavailable",
+                }) from exc
+            request.state.operator_pending_snapshot = projected
+            return projected
+
+        def pending_state_for_request(request: Request, state: dict[str, Any]) -> dict[str, Any]:
+            from modules.opsboard.application.operator_pending_projection import (
+                project_pending_state,
+            )
+
+            return project_pending_state(state, pending_snapshot_for_request(request, state))
+
+        def pending_governance_snapshot(request: Request) -> dict[str, Any]:
+            return {key: value for key, value in pending_snapshot_for_request(request).items()
+                    if not key.startswith("_")}
+
         def network_read_scope_snapshot(request: Request) -> dict[str, Any]:
             principal = request.state.operator_principal
             return listing_resolver(request).snapshot(tenant_id=principal.tenant_id)
@@ -1105,6 +1195,7 @@ def create_operator_router(
                 ),
                 service_resolver=governance_resolver,
                 read_service_resolver=governance_read_service,
+                snapshot_reader=pending_governance_snapshot,
             )
         )
         from apps.api.app.routes.operator_modules.users_roles import (

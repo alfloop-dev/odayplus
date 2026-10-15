@@ -1827,6 +1827,7 @@ export function OperatorConsole({
             auditRows={liveGovernanceAuditRows.length ? liveGovernanceAuditRows : undefined}
             callbacks={{
               onSelectApproval: (approval) => showToast(`${approval.id} selected`),
+              onOpenNativeTarget: (target, approval) => handleTargetSelect(target, approval.title),
             }}
             decisions={liveGovernanceDecisions.length ? liveGovernanceDecisions : undefined}
             canComment={activeRoleId !== "pm-audit"}

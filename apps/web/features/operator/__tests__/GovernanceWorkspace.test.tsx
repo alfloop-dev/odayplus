@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GovernanceWorkspace, inspectGovernanceSnapshot } from "../GovernanceWorkspace";
 import { OperatorConsole } from "../OperatorConsole";
-import { normalizeGovernanceStatusBoard } from "../governance/governanceEnvelope";
+import { normalizeGovernanceApprovals, normalizeGovernanceStatusBoard } from "../governance/governanceEnvelope";
 import { readGovernanceViewState, type GovernanceViewState } from "../governance/governanceUrlState";
 
 // Preserve the existing protected-read premise while the shell now rechecks
@@ -613,5 +613,128 @@ describe("Governance decision authority in the production Operator Console mount
     expect(authority).toHaveTextContent("決策權限未確認");
     expect(screen.queryByRole("button", { name: "核准" })).toBeNull();
     expect(screen.getByTestId("governance-decision-readonly")).toHaveTextContent("尚未取得伺服器驗證的決策權限");
+  });
+});
+
+
+describe("Governance native owner review handoff", () => {
+  const intervention = {
+    id: "INT-NATIVE-1", module: "Store Ops", title: "Native intervention review", status: "pending",
+    entityRef: "INT-NATIVE-1",
+    nativeTarget: { workspace: "today", tab: "interventions", entityId: "INT-NATIVE-1" },
+    actionAuthority: { decide: false, reason: "NATIVE_OWNER_REVIEW_REQUIRED" },
+  };
+  const signedSiteScore = {
+    id: "SIGNATURE-NATIVE-1", module: "SiteScore", title: "Signed site review", status: "pending",
+    entityRef: "CANDIDATE-NATIVE-1", decisionId: "DECISION-NATIVE-1",
+    nativeTarget: { workspace: "network", tab: "review", entityId: "CANDIDATE-NATIVE-1",
+      candidateId: "CANDIDATE-NATIVE-1", reviewId: "DECISION-NATIVE-1" },
+    actionAuthority: { decide: false, reason: "NATIVE_OWNER_REVIEW_REQUIRED" },
+  };
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+  function reads(approvals: unknown[]) {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => new Response(
+      JSON.stringify(String(input).endsWith("/snapshot") ? { ...decidingSnapshot, source: "canonical", approvals } : { items: [] }),
+      { status: 200 },
+    ));
+    stubAuthenticatedFetch(fetchMock);
+    return fetchMock;
+  }
+  function noGenericControls() {
+    const detail = within(screen.getByRole("article", { name: "Approval detail" }));
+    for (const name of ["核准", "退回修改", "駁回"]) expect(detail.queryByRole("button", { name: new RegExp(`^${name}$`) })).toBeNull();
+    expect(detail.queryByLabelText(/決策理由/)).toBeNull();
+  }
+
+  it("counts the native Intervention row and opens its full owner review without a generic decision", async () => {
+    const fetchMock = reads([intervention]);
+    const onOpenNativeTarget = vi.fn(), onApprove = vi.fn(), onReturn = vi.fn(), onReject = vi.fn();
+    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onOpenNativeTarget, onApprove, onReturn, onReject }} />);
+    await screen.findByRole("heading", { name: intervention.title });
+    expect(screen.getByLabelText("Governance state")).toHaveTextContent("1 件待核准");
+    expect(within(screen.getByLabelText("核准佇列")).getByText(intervention.title)).toBeInTheDocument();
+    noGenericControls();
+    fireEvent.click(screen.getByRole("button", { name: "開啟完整干預審查" }));
+    expect(onOpenNativeTarget).toHaveBeenCalledWith(intervention.nativeTarget, expect.objectContaining({ id: intervention.id }));
+    expect(onApprove).not.toHaveBeenCalled(); expect(onReturn).not.toHaveBeenCalled(); expect(onReject).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.every(([, init]) => init?.method !== "POST")).toBe(true);
+  });
+
+  it("opens the exact signed SiteScore candidate and decision tuple without a generic decision", async () => {
+    const fetchMock = reads([signedSiteScore]), onOpenNativeTarget = vi.fn(), onApprove = vi.fn();
+    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onOpenNativeTarget, onApprove }} />);
+    await screen.findByRole("heading", { name: signedSiteScore.title });
+    noGenericControls();
+    fireEvent.click(screen.getByRole("button", { name: /^開啟完整審查$/ }));
+    expect(onOpenNativeTarget).toHaveBeenCalledWith(signedSiteScore.nativeTarget, expect.objectContaining({ id: signedSiteScore.id, decisionId: signedSiteScore.decisionId }));
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.every(([, init]) => init?.method !== "POST")).toBe(true);
+  });
+
+  it("retains native refusal for malformed, foreign or mismatched targets without a fallback", async () => {
+    const malformedTargets = [
+      { ...intervention.nativeTarget, href: "https://untrusted.invalid/review" },
+      { ...intervention.nativeTarget, entityId: "INT-OTHER" },
+      { workspace: "govern", tab: "approvals", entityId: intervention.id },
+      { ...signedSiteScore.nativeTarget, reviewId: "DECISION-OTHER" },
+      { ...signedSiteScore.nativeTarget, candidateId: "CANDIDATE-OTHER" },
+    ];
+    for (const [index, nativeTarget] of malformedTargets.entries()) {
+      const raw = { ...(index < 3 ? intervention : signedSiteScore), nativeTarget };
+      const normalized = normalizeGovernanceApprovals([raw])[0];
+      expect(normalized.nativeTarget).toBeNull();
+      expect(normalized.actionAuthority).toEqual({ decide: false, reason: "NATIVE_OWNER_REVIEW_REQUIRED" });
+    }
+    const fetchMock = reads([{ ...intervention, nativeTarget: malformedTargets[0] }]), onOpenNativeTarget = vi.fn();
+    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onOpenNativeTarget }} />);
+    await screen.findByRole("heading", { name: intervention.title });
+    noGenericControls();
+    expect(screen.getByTestId("governance-native-target-unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /開啟完整/ })).toBeNull();
+    expect(onOpenNativeTarget).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.every(([, init]) => init?.method !== "POST")).toBe(true);
+  });
+
+  it("preserves a native row refusal even when no target was supplied", async () => {
+    const { nativeTarget: _nativeTarget, ...withoutTarget } = intervention;
+    const fetchMock = reads([withoutTarget]), onOpenNativeTarget = vi.fn();
+    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onOpenNativeTarget }} />);
+    await screen.findByRole("heading", { name: intervention.title });
+    expect(screen.getByTestId("governance-native-target-unavailable")).toBeInTheDocument();
+    noGenericControls();
+    expect(onOpenNativeTarget).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.every(([, init]) => init?.method !== "POST")).toBe(true);
+  });
+
+  it("keeps ordinary canonical rows and their original three decision controls alongside native rows", async () => {
+    const fetchMock = reads([intervention, snapshot.approvals[0]]);
+    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onOpenNativeTarget: vi.fn() }} />);
+    await screen.findByRole("heading", { name: intervention.title });
+    expect(screen.getByLabelText("Governance state")).toHaveTextContent("2 件待核准");
+    noGenericControls();
+    fireEvent.click(within(screen.getByLabelText("核准佇列")).getByRole("button", { name: new RegExp(snapshot.approvals[0].id) }));
+    await screen.findByRole("heading", { name: snapshot.approvals[0].title });
+    for (const name of ["核准", "退回修改", "駁回"]) expect(screen.getByRole("button", { name: new RegExp(`^${name}$`) })).toBeEnabled();
+    expect(screen.getByLabelText(/決策理由/)).toBeInTheDocument();
+    expect(screen.queryByTestId("governance-native-owner-review")).toBeNull();
+    expect(fetchMock.mock.calls.every(([, init]) => init?.method !== "POST")).toBe(true);
+  });
+
+  it("retains the Console workspace denial for a signed review instead of granting a Network persona", async () => {
+    window.sessionStorage.clear(); window.sessionStorage.setItem("oday.operator.role", "ops-lead");
+    nav.search = "ws=govern"; vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const { fetchMock, writes } = stubConsoleGovernance({ ...decidingSnapshot, source: "canonical", approvals: [signedSiteScore] });
+    render(<OperatorConsole searchParams={{ ws: "govern" }} />);
+    await screen.findByRole("heading", { name: signedSiteScore.title });
+    const before = window.location.href;
+    fireEvent.click(screen.getByRole("button", { name: /^開啟完整審查$/ }));
+    expect(await screen.findByText(/營運主管 暫無.*權限/)).toBeInTheDocument();
+    expect(window.location.href).toBe(before);
+    expect(screen.getByTestId("governance-workspace")).toBeInTheDocument();
+    noGenericControls();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/network-reviews"))).toBe(false);
+    expect(writes).toEqual([]);
   });
 });
