@@ -62,24 +62,17 @@ else:
         evidence_store: EvidenceBundleStore | None = None,
         service: AuditEvidenceExportService | None = None,
     ) -> APIRouter:
+        from apps.api.app.routes._common import resolve_tenant_id
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
         router = APIRouter(prefix="/audit", tags=["audit"])
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
-        export_guard = Depends(
-            require_permission("audit", Action.EXPORT, engine=authz_engine)
-        )
-        view_guard = Depends(
-            require_permission("audit", Action.VIEW, engine=authz_engine)
-        )
-        update_guard = Depends(
-            require_permission("audit", Action.UPDATE, engine=authz_engine)
-        )
-        delete_guard = Depends(
-            require_permission("audit", Action.DELETE, engine=authz_engine)
-        )
+        export_guard = Depends(require_permission("audit", Action.EXPORT, engine=authz_engine))
+        view_guard = Depends(require_permission("audit", Action.VIEW, engine=authz_engine))
+        update_guard = Depends(require_permission("audit", Action.UPDATE, engine=authz_engine))
+        delete_guard = Depends(require_permission("audit", Action.DELETE, engine=authz_engine))
         export_service = service or AuditEvidenceExportService(
             audit_log=active_audit_log, evidence_store=evidence_store
         )
@@ -90,10 +83,10 @@ else:
             request: Request,
             principal=export_guard,
         ) -> dict[str, Any]:
+            verified_tenant_id = resolve_tenant_id(request)
             try:
                 identity_boundary = (
-                    body.identity_boundary
-                    or f"http-principal:{principal.subject_id}"
+                    body.identity_boundary or f"http-principal:{principal.subject_id}"
                 )
                 export_request = EvidenceExportRequest(
                     program_id=body.program_id,
@@ -108,9 +101,7 @@ else:
                     data_classification=body.data_classification,
                     sensitive=body.sensitive,
                     purpose_scope=body.purpose_scope,
-                    expires_at=(
-                        _parse_time(body.expires_at) if body.expires_at else None
-                    ),
+                    expires_at=(_parse_time(body.expires_at) if body.expires_at else None),
                     authorized_by=body.authorized_by,
                     authorization_id=body.authorization_id,
                     masking_profile=body.masking_profile,
@@ -121,6 +112,7 @@ else:
                     decision_cards=tuple(
                         decision_card_from_mapping(card) for card in body.decision_cards
                     ),
+                    verified_tenant_id=verified_tenant_id,
                 )
             except (AuditEvidenceExportError, ValueError) as exc:
                 raise HTTPException(
@@ -183,8 +175,7 @@ else:
                         actor=principal.subject_id,
                         role=body.role,
                         reason=body.reason,
-                        correlation_id=body.correlation_id
-                        or request.state.correlation_id,
+                        correlation_id=body.correlation_id or request.state.correlation_id,
                     ),
                 )
             except KeyError as exc:
@@ -215,8 +206,7 @@ else:
                         actor=principal.subject_id,
                         role=body.role,
                         reason=body.reason,
-                        correlation_id=body.correlation_id
-                        or request.state.correlation_id,
+                        correlation_id=body.correlation_id or request.state.correlation_id,
                     ),
                 )
             except EvidenceGovernanceError as exc:
@@ -242,9 +232,7 @@ else:
         allowed = frozenset(
             governance_role
             for role in roles
-            for governance_role in _GOVERNANCE_ROLES_BY_PLATFORM_ROLE.get(
-                role, frozenset()
-            )
+            for governance_role in _GOVERNANCE_ROLES_BY_PLATFORM_ROLE.get(role, frozenset())
         )
         if requested_role not in allowed:
             raise HTTPException(

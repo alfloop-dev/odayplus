@@ -153,8 +153,7 @@ class SiteScoreRealizationEvent:
 
 
 class RealizationHook(Protocol):
-    def __call__(self, event: SiteScoreRealizationEvent) -> None:
-        ...
+    def __call__(self, event: SiteScoreRealizationEvent) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -183,14 +182,11 @@ class RealizedSiteStore(Protocol):
     behaviour for unit tests and fast local boot.
     """
 
-    def put(self, site: RealizedSite) -> None:
-        ...
+    def put(self, site: RealizedSite) -> None: ...
 
-    def get(self, candidate_site_id: str) -> RealizedSite | None:
-        ...
+    def get(self, candidate_site_id: str) -> RealizedSite | None: ...
 
-    def list_realized(self) -> list[RealizedSite]:
-        ...
+    def list_realized(self) -> list[RealizedSite]: ...
 
 
 class InMemoryRealizedSiteStore:
@@ -261,20 +257,15 @@ class DecisionStore(Protocol):
     realized against the exact inputs a human reviewed, even after a restart.
     """
 
-    def save_decision(self, decision: SiteScoreDecision) -> None:
-        ...
+    def save_decision(self, decision: SiteScoreDecision) -> None: ...
 
-    def save_report(self, decision_id: str, report: SiteScoreReport) -> None:
-        ...
+    def save_report(self, decision_id: str, report: SiteScoreReport) -> None: ...
 
-    def get_decision(self, decision_id: str) -> SiteScoreDecision | None:
-        ...
+    def get_decision(self, decision_id: str) -> SiteScoreDecision | None: ...
 
-    def get_report(self, decision_id: str) -> SiteScoreReport | None:
-        ...
+    def get_report(self, decision_id: str) -> SiteScoreReport | None: ...
 
-    def list_decisions(self) -> list[SiteScoreDecision]:
-        ...
+    def list_decisions(self) -> list[SiteScoreDecision]: ...
 
 
 class InMemoryDecisionStore:
@@ -514,6 +505,7 @@ class SiteScoreDecisionWorkflow:
                 outcome=outcome,
                 correlation_id=correlation_id,
                 metadata={
+                    "tenant_id": decision.tenant_id,
                     "candidate_site_id": decision.candidate_site_id,
                     "report_id": decision.report_id,
                     "report_version": decision.report_version,
