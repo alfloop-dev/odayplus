@@ -329,19 +329,20 @@ stateDiagram-v2
 ### 4.9 `ODP-FR-AVM-001`：AVM 估值組成
 
 #### 成員：`DEPRECIATION`（資產折舊）
-- **處置狀態**：`BLOCKED_BY_EVIDENCE`（`status: satisfied`；程式已交付，缺 Finance activation 證據）
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（`status: satisfied`；程式已交付，Finance 已附條件核准，待 runtime 綁定與正式執行讀回）
 - **實作證據 (Evidence)**: `modules/avm/domain/valuation.py::calculate_depreciation`，於 `modules/avm/application/production.py::AVMProductionExecutor` 套用（PR #1295，merge `898c192d59b0e39d51844b8596d952104771b6d8`，`ODP-AVM-DEPRECIATION-INTEGRATION-001`）。`modules/avm/tests/test_avm_depreciation_contract.py` 的八條 `xfail(strict=True)` 標記已因實作通過而移除。
 - **契約文件 (Contract Ref)**: [`docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md`](../design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md)
 - **處置證據 (Evidence Ref)**: [`docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md`](../evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md)（2026-09-04 契約處置，歷史）；2026-10-03 更正見 [`docs/evidence/completion/ODP-REMEDIATION-TRUTH-RECONCILIATION-001/README.md`](../evidence/completion/ODP-REMEDIATION-TRUTH-RECONCILIATION-001/README.md)。
+- **已取得的人類核准**：[負責人本人發布的 #1446](https://github.com/alfloop-dev/odayplus/issues/1446) 保存 `HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001/adjust-and-avm-finance-20261009`。2026-10-09 由蔡尚志（GitHub `ajoe734`，id `169176954`）以 Finance Owner、Product Owner、ML Risk Owner 身分附條件核准 AVM production 估值 cutover；複審日為 2027-10-09。R-4 門檻已記錄：asset lens 相對 v0 變動超過 15% 且無資料面解釋者占 cohort 超過 5%；任一張 `depreciation_applied=true` 卡的 evidence 鍵位不全；P10–P90 coverage 較 v0 下降超過 5 個百分點。回滾採 R-1 v0 pin，並記錄 decider、時間、理由與預計期限。該核准明文保留技術閘，且不改本條需求狀態、registry 或任何 gate。
 - **證據負責人 (Evidence Owner)**: `Finance Analytics Lead / AVM Domain Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-17`
-- **欠缺證據 (Evidence Needed)**: Finance 擁有的 `DepreciationCutoverEvidence`（具名核准人與時間、`thresholds_reference`、R-4 三個回滾門檻），以及 production AVM 以 `depreciation_applied=true` 執行後的讀回。
+- **欠缺證據 (Evidence Needed)**: 將既有 Finance 核准正確綁定為 active depreciation policy 的 `DepreciationCutoverEvidence`（包含核准人／時間、`thresholds_reference`、既定 R-4 門檻與 policy version），模型 registry／promotion／rollback target 讀回及 production 准入，並取得 production AVM 以 `depreciation_applied=true` 執行後的讀回。核准人姓名及財務門檻已有來源；本紀錄未證實 runtime 綁定或正式執行已完成。
 - **為何不是其他狀態**:
-  - 不是 `VERIFIED`：production v1 啟用路徑在缺 Finance cutover 證據時拒絕執行；門檻無人簽署前，v1 折舊在 production 不生效。
+  - 不是 `VERIFIED`：production v1 啟用路徑仍要求 policy-bound Finance cutover evidence；既有人類附條件核准不取代 runtime 綁定、模型准入或正式執行讀回。
   - 不是 `absent`／`IMPLEMENTATION_READY`：實作已合併，契約規格已通過，欠的不再是工。
-  - 不是 `DECIDED`：沒有任何人類裁決；本處置不攜帶任何法定裁決欄位。
+  - 保留 `BLOCKED_BY_EVIDENCE`：本條追蹤尚未證實的 production 啟用證據；人類核准由 #1446 獨立保存，不自動轉成本條的 runtime 驗收結果。
 - **仍屬人類治理、本次不代簽**:
-  1. 契約 R-4 的三個回滾門檻（數值／結構／校準）由財務 owner 填入，**門檻未填不得 cutover**；
+  1. 契約 R-4 的三個回滾門檻已有財務 owner 的附條件核准；部署／執行仍須將既定內容綁定至 active policy，**綁定未完成不得 cutover**。門檻或折舊參數變更需重新核准；
   2. `ODP-FR-AVM-001` 的來源 bytes 已定位於 `oday_plus_batch_02_sa_documents.zip` 內 `ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md` 第 104 行（version `0.1.0`，sha256 `43dad7bf171a5e80511a01fd289bf2132c060e08c27799dcd8f91f86fb2073ec`），但該文件為 `draft-for-review`，authority 批准仍為 `BLOCKED_BY_EVIDENCE`，見 [`ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md`](../evidence/ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md)。
 - **歷史 (History)**: 2026-09-04 登錄為 `absent`／`IMPLEMENTATION_READY`（`AVM Domain Lead / Finance Analytics Lead`，`Batch 1 (ODP Remediation Plan) — AVM 估值`；驗收標準為上述八條 strict xfail 規格）。當時判定 AVM 折舊與 `site_economics` 稅盾折舊不是同一概念，採 AVM-specific model，此判定不變。
 - **回歸測試**: `tests/governance/test_avm001_disposition.py`、`tests/governance/test_remediation_truth_reconciliation.py`（含負向測試：改回 `absent`、冒充 `VERIFIED`、AI 簽署的 `DECIDED`、移除 `disposition` 區塊均須被拒絕）。
