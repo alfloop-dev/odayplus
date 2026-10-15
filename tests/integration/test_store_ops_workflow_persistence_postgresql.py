@@ -11,14 +11,14 @@ from copy import deepcopy
 from uuid import uuid4
 
 import pytest
-from modules.opsboard.application.store_ops_audit_delivery import COLLECTION
-from modules.opsboard.application.store_ops_scope import binding_hash
-from tests.integration.test_intake_registry_calendar_postgresql import _bundle
 
 from modules.opsboard.application.store_ops import DurableStoreOpsRepository
+from modules.opsboard.application.store_ops_audit_delivery import COLLECTION
+from modules.opsboard.application.store_ops_scope import binding_hash
 from shared.infrastructure.persistence import PostgresDocumentStore
 from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
 from tests.integration import test_store_ops_scoped_postgresql as scoped_tests
+from tests.integration.test_intake_registry_calendar_postgresql import _bundle
 
 case = scoped_tests.case
 BASE = scoped_tests.BASE
@@ -165,7 +165,10 @@ def test_native_all_workflow_submissions_reopen_audit_receipt_and_replay_once(ca
     assert "outcomeMetrics" not in saved and "relatedGrowthId" not in saved
     assert not aggregate.get("attachments")
     if action == "camera-purpose":
-        assert event.metadata["auditNote"] == PAYLOADS[action]["auditNote"]
+        assert record["submission"]["auditNote"] == PAYLOADS[action]["auditNote"]
+        assert "auditNote" not in event.metadata
+        assert "auditNote" not in audit["metadata"]
+        assert "auditNote" not in response.json()["auditEvent"]["metadata"]
         assert response.json()["evidenceItem"]["retentionHours"] == 12
     if action == "triage":
         assert saved["status"] == "triaged"  # demoFastForward is not a clock or maturity bypass.

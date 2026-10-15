@@ -1012,7 +1012,6 @@ class StoreOpsService:
                 "cameraLocation": camera_evidence["cameraLocation"],
                 "timeWindow": camera_evidence["timeWindow"],
                 "retentionHours": camera_evidence["retentionHours"],
-                "auditNote": submission.auditNote,
                 "idempotencyKey": idempotency_key,
             },
         )

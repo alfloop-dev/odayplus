@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import nativeCameraPurpose from "../fixtures/operator-store-camera-purpose-native.json";
+import currentMemoryWorkflow from "../fixtures/operator-store-typed-workflow-memory.json";
+import { createHash } from "node:crypto";
 
 type StoreLightStatus = "green" | "yellow" | "red";
 type StoreOpsIssue = {
@@ -17,7 +19,55 @@ type StoreOpsIssue = {
   updatedAt: string;
   evidenceIds: string[];
   summary: string;
+  workflowRecords?: Record<string, unknown>[];
+  outcomeReviews?: Record<string, unknown>[];
 };
+
+type MemoryWorkflowSample = {
+  requestPayload: Record<string, unknown>;
+  issueUpdatedAt: string;
+  record: Record<string, unknown>;
+  auditEvent: { id: string; occurredAt: string; metadata: Record<string, unknown> };
+  evidenceItem?: Record<string, unknown>;
+};
+const memoryWorkflowSamples = currentMemoryWorkflow.actions as unknown as Record<string, MemoryWorkflowSample>;
+
+function canonicalFixtureJSON(value: unknown): string {
+  if (Array.isArray(value)) return "[" + value.map(canonicalFixtureJSON).join(",") + "]";
+  if (value !== null && typeof value === "object") {
+    const row = value as Record<string, unknown>;
+    return "{" + Object.keys(row).sort().map((key) => JSON.stringify(key) + ":" + canonicalFixtureJSON(row[key])).join(",") + "}";
+  }
+  return JSON.stringify(value);
+}
+
+// These are explicitly mocked transport bindings around current, actually
+// captured MemoryStoreOpsService records. They are not authenticated SQL,
+// delivered media, device execution or measured outcome evidence.
+function bindMemoryWorkflowReceipt(
+  sample: MemoryWorkflowSample,
+  action: string,
+  issue: StoreOpsIssue,
+  sourceIssueUpdatedAt: string,
+  payload: Record<string, unknown>,
+  headers: Record<string, string>,
+) {
+  const expectedPayload = structuredClone(sample.requestPayload);
+  if (action === "field-report") expectedPayload.observedAt = sourceIssueUpdatedAt;
+  expect(payload).toMatchObject(expectedPayload);
+  const record = structuredClone(sample.record);
+  const auditEvent = structuredClone(sample.auditEvent);
+  record.correlationId = headers["x-correlation-id"];
+  record.sourceIssueUpdatedAt = sourceIssueUpdatedAt;
+  record.recordedAt = issue.updatedAt;
+  if (action === "field-report") (record.submission as Record<string, unknown>).observedAt = payload.observedAt;
+  auditEvent.occurredAt = action === "camera-purpose" ? sample.auditEvent.occurredAt : issue.updatedAt;
+  auditEvent.metadata.idempotencyKey = headers["idempotency-key"];
+  auditEvent.metadata.reviewRecordHash = createHash("sha256").update(canonicalFixtureJSON(record)).digest("hex");
+  const history = action === "outcome" ? "outcomeReviews" : "workflowRecords";
+  issue[history] = [...(issue[history] ?? []), record];
+  return { auditEvent };
+}
 
 const stores = [
   {
@@ -263,6 +313,11 @@ test("camera evidence remains locked until permitted purpose is submitted", asyn
   await dialog
     .getByRole("textbox", { name: /調閱目的/ })
     .fill("payment incident quality audit");
+  await dialog.getByText("調閱範圍與保留設定", { exact: true }).click();
+  await dialog.getByRole("textbox", { name: "攝影機位置", exact: true })
+    .fill(nativeCameraPurpose.requestPayload.cameraLocation);
+  await dialog.getByRole("textbox", { name: "調閱時段", exact: true })
+    .fill(nativeCameraPurpose.requestPayload.timeWindow);
   await dialog
     .getByRole("checkbox", { name: /確認隱私與稽核告知/ })
     .check();
@@ -324,6 +379,9 @@ async function mockStoreOpsApi(page: Page) {
         url.pathname.includes(`/issues/${item.id}/`),
       );
       let cameraPurposeReceipt;
+      const action = url.pathname.split("/").at(-1)!;
+      const sample = memoryWorkflowSamples[action];
+      const sourceIssueUpdatedAt = issue?.updatedAt;
       if (issue) {
         if (url.pathname.endsWith("/triage")) issue.status = "triaged";
         else if (url.pathname.endsWith("/assign")) issue.status = "assigned";
@@ -339,14 +397,18 @@ async function mockStoreOpsApi(page: Page) {
             expect(issue.id).toBe(nativeCameraPurpose.evidenceItem.issueId);
             expect(request.postDataJSON()).toMatchObject(nativeCameraPurpose.requestPayload);
             delete (camera as { lockedReason?: string }).lockedReason;
-            Object.assign(camera, structuredClone(nativeCameraPurpose.evidenceItem));
-            const auditEvent = structuredClone(nativeCameraPurpose.auditEvent);
-            auditEvent.metadata.idempotencyKey = request.headers()["idempotency-key"];
-            auditEvents.push(auditEvent);
-            cameraPurposeReceipt = { evidenceItem: camera, auditEvent };
+            Object.assign(camera, structuredClone(sample.evidenceItem));
+            // Current producer updates issue time with the saved purpose record.
+            issue.updatedAt = sample.issueUpdatedAt;
+            cameraPurposeReceipt = { evidenceItem: camera };
           }
         }
         if (!url.pathname.endsWith("/camera-purpose")) issue.updatedAt = new Date().toISOString();
+        if (sample && sourceIssueUpdatedAt) {
+          const receipt = bindMemoryWorkflowReceipt(sample, action, issue, sourceIssueUpdatedAt, request.postDataJSON(), request.headers());
+          auditEvents.push(receipt.auditEvent);
+          cameraPurposeReceipt = { ...cameraPurposeReceipt, ...receipt };
+        }
       }
       await route.fulfill({
         contentType: "application/json",

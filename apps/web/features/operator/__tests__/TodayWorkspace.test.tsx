@@ -202,4 +202,59 @@ describe("Package 10 R7 Today workspace", () => {
     expect(screen.getByTestId("operator-risk-empty")).toBeInTheDocument();
     expect(screen.getByTestId("operator-audit-empty")).toBeInTheDocument();
   });
+
+  it("formats actual ISO queue values without choosing a business timezone or inventing an owner name", () => {
+    const envelope = buildEnvelope();
+    const owner = "00000000-0000-0000-0000-000000000301";
+    const instant = "2026-10-16T04:10:38.424206+00:00";
+    Object.assign(envelope.today.queue[0], { owner, time: instant, status: "new" });
+    envelope.today.queue.push({ ...envelope.today.queue[0], id: "native-intervention", title: "CLEANING intervention",
+      status: "PENDING_APPROVAL", time: "2026-10-16T13:10:38.424206+09:00" });
+    render(<TodayWorkspace envelope={envelope} onTargetSelect={vi.fn()} />);
+    const queue = within(screen.getByTestId("operator-today-queue"));
+    expect(queue.getByText("新進")).toBeInTheDocument();
+    expect(queue.getByText("待核准")).toBeInTheDocument();
+    expect(queue.getByText("清潔干預")).toHaveAttribute("title", "CLEANING intervention");
+    expect(queue.getByText("10/16 04:10 UTC")).toHaveAttribute("dateTime", instant);
+    expect(queue.getByText("10/16 04:10 UTC")).toHaveAttribute("title", instant);
+    expect(queue.getByText("10/16 13:10 UTC+09:00")).toBeInTheDocument();
+    expect(queue.getAllByText("帳號 0000…0301")).toHaveLength(2);
+    for (const label of queue.getAllByText("帳號 0000…0301")) expect(label).toHaveAttribute("title", owner);
+    expect(envelope.today.queue[0].time).toBe(instant);
+    expect(envelope.today.queue[0].owner).toBe(owner);
+  });
+
+  it("describes security authorization as permission while preserving its source values", () => {
+    const envelope = buildEnvelope();
+    const actor = "00000000-0000-0000-0000-000000000301";
+    envelope.today.auditFeed = [
+      { actor, category: "security.authorization", detail: "approve intervention: allow", time: "08:12" },
+      { actor: "系統", category: "security.authentication", detail: "authenticate auth/local: success", time: "08:13" },
+      { actor: "原始帳號", category: "custom.audit", detail: "unmapped event: deny", time: "08:14" },
+    ];
+    Object.assign(envelope.today.decisions[0], { title: "Intervention approval", meta: "CLEANING", status: "PENDING_APPROVAL" });
+    render(<TodayWorkspace envelope={envelope} onTargetSelect={vi.fn()} />);
+    const audit = within(screen.getByTestId("operator-audit-feed"));
+    expect(audit.getByText("干預核准權限：允許")).toHaveAttribute("title", "approve intervention: allow");
+    expect(audit.getByText("權限檢查")).toHaveAttribute("title", "security.authorization");
+    expect(audit.getByText("帳號 0000…0301")).toHaveAttribute("title", actor);
+    expect(audit.queryByText("已核准")).not.toBeInTheDocument();
+    expect(audit.getByText("本機登入驗證成功")).toBeInTheDocument();
+    expect(audit.getByText("unmapped event: deny")).toHaveAttribute("title", "unmapped event: deny");
+    const decisions = within(screen.getByTestId("operator-decision-rail"));
+    expect(decisions.getByText("待核准")).toBeInTheDocument();
+    expect(decisions.getByText("清潔")).toHaveAttribute("title", "CLEANING");
+    expect(decisions.getByText("干預核准")).toHaveAttribute("title", "Intervention approval");
+  });
+
+  it("preserves unknown statuses, human display names, and non-ISO time labels", () => {
+    const envelope = buildEnvelope();
+    Object.assign(envelope.today.queue[0], { status: "constructor", owner: "陳建宏", time: "1h 24m" });
+    render(<TodayWorkspace envelope={envelope} onTargetSelect={vi.fn()} />);
+    const queue = within(screen.getByTestId("operator-today-queue"));
+    expect(queue.getByText("constructor")).toBeInTheDocument();
+    expect(queue.getByText("陳建宏")).toHaveAttribute("title", "陳建宏");
+    expect(queue.getByText("1h 24m")).not.toHaveAttribute("dateTime");
+  });
+
 });

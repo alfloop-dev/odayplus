@@ -89,7 +89,9 @@ def test_all_submitted_workflow_fields_survive_reopen_and_exactly_once_replay(ca
     assert event.event_id == record["auditEventId"]
     assert event.metadata["reviewRecordHash"] == binding_hash(record)
     if action == "camera-purpose":
-        assert event.metadata["auditNote"] == PAYLOADS[action]["auditNote"]
+        assert record["submission"]["auditNote"] == PAYLOADS[action]["auditNote"]
+        assert "auditNote" not in event.metadata
+        assert "auditNote" not in saved["auditEvent"]["metadata"]
         assert saved["evidenceItem"]["retentionHours"] == 12
     if action == "triage":
         assert saved["issue"]["status"] == "triaged"
