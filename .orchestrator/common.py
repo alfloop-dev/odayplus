@@ -631,6 +631,27 @@ def claude_oauth_token_expired(oauth: dict[str, Any], *, skew_seconds: int = 300
     return expires_at_ms <= int(time.time() * 1000) + (skew_seconds * 1000)
 
 
+def claude_oauth_refreshable(oauth: dict[str, Any], *, skew_seconds: int = 300) -> bool:
+    """Whether the stored refresh token can still mint a new access token.
+
+    Access tokens live for hours; the refresh token outlives many of them. A
+    readiness probe that must not touch the network or rewrite credentials
+    uses this to tell "access token lapsed, next run refreshes it" apart from
+    "logged out". Credentials without `refreshTokenExpiresAt` predate that
+    field and are treated as not expired, matching `expiresAt` handling.
+    """
+    if not str(oauth.get("refreshToken") or "").strip():
+        return False
+    expires_at = oauth.get("refreshTokenExpiresAt")
+    if expires_at in (None, ""):
+        return True
+    try:
+        expires_at_ms = int(expires_at)
+    except (TypeError, ValueError):
+        return False
+    return expires_at_ms > int(time.time() * 1000) + (skew_seconds * 1000)
+
+
 def claude_oauth_token_from_env(env: dict[str, str] | None = None) -> str | None:
     source = env or os.environ
     token = str(source.get("CLAUDE_CODE_OAUTH_TOKEN") or "").strip()
@@ -763,12 +784,14 @@ def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, 
         return False
     loaded = load_claude_oauth_tokens(env)
     if not loaded:
-        return True
+        # `loggedIn` alone is not proof of credentials; the probe stays offline
+        # and reports not-ready, while delivery keeps letting the CLI decide.
+        return refresh_if_needed
     _, oauth, _ = loaded
     if not claude_oauth_token_expired(oauth):
         return True
     if not refresh_if_needed:
-        return False
+        return claude_oauth_refreshable(oauth)
     refreshed = refresh_claude_oauth_tokens(env)
     return bool(refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0))
 

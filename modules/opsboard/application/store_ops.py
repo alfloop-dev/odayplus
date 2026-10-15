@@ -10,9 +10,11 @@ restart when durable persistence is enabled.
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterable, Mapping, MutableMapping
+import hashlib
+import threading
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from datetime import UTC, datetime
-from typing import Any, NoReturn, Protocol
+from typing import Any, NoReturn, Protocol, TypeVar
 
 from shared.audit.events import AuditEvent, InMemoryAuditLog
 
@@ -23,6 +25,10 @@ LightStatus = str
 _STORE_OPS_STATE_DOC_ID = "default"
 _STORE_OPS_STATE_COLLECTION = "opsboard.store_ops.state"
 _STORE_OPS_IDEMPOTENCY_COLLECTION = "opsboard.store_ops.idempotency"
+#: Optimistic-write attempts before a contended Store Ops write gives up.
+_STORE_OPS_WRITE_ATTEMPTS = 8
+
+_T = TypeVar("_T")
 _STORE_OPS_FIXTURE_IDS = frozenset(
     {
         "ST-008",
@@ -92,6 +98,10 @@ class StoreOpsNotFound(StoreOpsError):
 
 class StoreOpsConflict(StoreOpsError):
     """Lifecycle transition is invalid for the current issue state."""
+
+
+class StoreOpsConcurrentWriteConflict(StoreOpsConflict):
+    """The Store Ops state kept changing under a write; nothing was saved."""
 
 
 class StoreOpsPolicyError(StoreOpsError):
@@ -447,20 +457,37 @@ def _seed_state() -> dict[str, Any]:
     }
 
 
+def _tenant_partition(tenant_id: str) -> str:
+    return hashlib.sha256(tenant_id.encode("utf-8")).hexdigest()
+
+
 class InMemoryStoreOpsRepository:
+    """Single-tenant demo repository; never live, so never tenant-partitioned."""
+
     def __init__(self, initial_state: Mapping[str, Any] | None = None) -> None:
         self._state = _clone(initial_state or _seed_state())
         self._idempotency_results: dict[str, dict[str, Any]] = {}
+        self._lock = threading.RLock()
 
     @property
     def is_live(self) -> bool:
         return False
+
+    def for_tenant(self, tenant_id: str) -> InMemoryStoreOpsRepository:
+        return self
 
     def get_state(self) -> dict[str, Any]:
         return _clone(self._state)
 
     def save_state(self, state: Mapping[str, Any]) -> None:
         self._state = _clone(state)
+
+    def update_state(self, mutate: Callable[[dict[str, Any]], _T]) -> _T:
+        with self._lock:
+            state = self.get_state()
+            result = mutate(state)
+            self.save_state(state)
+            return result
 
     def get_idempotency_result(self, key: str) -> dict[str, Any] | None:
         result = self._idempotency_results.get(key)
@@ -473,20 +500,29 @@ class InMemoryStoreOpsRepository:
 class UnavailableStoreOpsRepository:
     """Fail-closed repository used when production wiring is incomplete."""
 
+    def __init__(
+        self,
+        message: str = "Store Ops production routes require a PostgreSQL repository",
+    ) -> None:
+        self._message = message
+
     @property
     def is_live(self) -> bool:
         return False
 
-    @staticmethod
-    def _raise() -> NoReturn:
-        raise StoreOpsLiveDataUnavailable(
-            "Store Ops production routes require a PostgreSQL repository"
-        )
+    def for_tenant(self, tenant_id: str) -> UnavailableStoreOpsRepository:
+        return self
+
+    def _raise(self) -> NoReturn:
+        raise StoreOpsLiveDataUnavailable(self._message)
 
     def get_state(self) -> dict[str, Any]:
         self._raise()
 
     def save_state(self, state: Mapping[str, Any]) -> None:
+        self._raise()
+
+    def update_state(self, mutate: Callable[[dict[str, Any]], _T]) -> _T:
         self._raise()
 
     def get_idempotency_result(self, key: str) -> dict[str, Any] | None:
@@ -497,56 +533,186 @@ class UnavailableStoreOpsRepository:
 
 
 class DurableStoreOpsRepository:
-    def __init__(self, store: Any) -> None:
+    """Store Ops state in the shared document store, partitioned per tenant.
+
+    A live (PostgreSQL) repository only serves a tenant-scoped instance from
+    :meth:`for_tenant`: each tenant's state, idempotency results and audit trail
+    live under their own opaque collection, so one tenant can neither read nor
+    overwrite another's. The unscoped instance is only a factory on PostgreSQL
+    and fails closed if used directly.
+
+    Every write is a versioned compare-and-swap on the state document, so a
+    write computed from a stale read is retried against the fresh state instead
+    of silently replacing it (operator lifecycle writes and the recurring
+    materializer can interleave freely).
+    """
+
+    def __init__(self, store: Any, *, tenant_id: str | None = None) -> None:
+        from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+
+        # The Operator adapter and the materializer use the same opaque
+        # collection partition. Retain that scope exactly once.
+        if isinstance(store, TenantScopedDocumentStore):
+            if tenant_id is not None and str(tenant_id).strip() != store.tenant_id:
+                raise StoreOpsLiveDataUnavailable("Store Ops repository belongs to another tenant")
+            tenant_id, store = store.tenant_id, store._store
         self._store = store
+        tenant = None if tenant_id is None else str(tenant_id).strip()
+        if tenant_id is not None and not tenant:
+            raise StoreOpsLiveDataUnavailable("Store Ops tenant scope must not be blank")
+        self._tenant_id = tenant
 
     @property
     def is_live(self) -> bool:
         engine = getattr(self._store, "engine", None)
         return str(getattr(engine, "dialect", "")).strip().lower() == "postgresql"
 
-    def get_state(self) -> dict[str, Any]:
-        try:
-            state = self._store.get(
-                _STORE_OPS_STATE_COLLECTION,
-                _STORE_OPS_STATE_DOC_ID,
+    @property
+    def tenant_id(self) -> str | None:
+        return self._tenant_id
+
+    def for_tenant(self, tenant_id: str) -> DurableStoreOpsRepository:
+        return DurableStoreOpsRepository(self._store, tenant_id=tenant_id)
+
+    def _collection(self, collection: str) -> str:
+        if self._tenant_id is None:
+            return collection
+        return f"{collection}.tenant.{_tenant_partition(self._tenant_id)}"
+
+    def _require_scope(self) -> None:
+        if self.is_live and self._tenant_id is None:
+            raise StoreOpsLiveDataUnavailable(
+                "Store Ops production state requires an authenticated tenant scope"
             )
+
+    def read_versioned_state(self) -> tuple[dict[str, Any] | None, int | None]:
+        """``(state, version)`` as persisted; ``(None, None)`` if never written.
+
+        Neither seeds nor rejects fixture data -- the materializer, the one
+        writer allowed to create the production document, decides. A read
+        failure still raises :class:`StoreOpsLiveDataUnavailable`.
+        """
+        self._require_scope()
+        collection = self._collection(_STORE_OPS_STATE_COLLECTION)
+        try:
+            get_versioned = getattr(self._store, "get_versioned", None)
+            if get_versioned is not None:
+                row = get_versioned(collection, _STORE_OPS_STATE_DOC_ID)
+            else:
+                state = self._store.get(collection, _STORE_OPS_STATE_DOC_ID)
+                row = None if state is None else (state, 0)
         except Exception as exc:
             raise StoreOpsLiveDataUnavailable(
                 f"Store Ops repository read failed: {type(exc).__name__}: {exc}"
             ) from exc
-        if state is None:
-            if self.is_live:
-                raise StoreOpsLiveDataUnavailable(
-                    "Store Ops production state has not been materialized"
-                )
-            state = _seed_state()
-            self.save_state(state)
-        if self.is_live and _contains_fixture_signature(state):
-            raise StoreOpsLiveDataUnavailable(
-                "Store Ops production state contains canonical fixture identifiers"
-            )
-        return _clone(state)
+        if row is None:
+            return None, None
+        state, version = row
+        return _clone(state), int(version)
 
-    def save_state(self, state: Mapping[str, Any]) -> None:
+    def compare_and_save_state(
+        self,
+        state: Mapping[str, Any],
+        *,
+        expected_version: int | None,
+    ) -> bool:
+        """Persist ``state`` only if the document is still at ``expected_version``.
+
+        ``expected_version=None`` creates the document only if it is absent.
+        Returns ``False`` when another writer changed it first.
+        """
+        self._require_scope()
         if self.is_live and _contains_fixture_signature(state):
             raise StoreOpsLiveDataUnavailable(
                 "Store Ops production writes cannot persist canonical fixture data"
             )
+        collection = self._collection(_STORE_OPS_STATE_COLLECTION)
+        compare_and_put = getattr(self._store, "compare_and_put", None)
+        if compare_and_put is None:
+            if self.is_live:
+                raise StoreOpsLiveDataUnavailable(
+                    "Store Ops production writes require a compare-and-swap document store"
+                )
+            self._put(collection, _STORE_OPS_STATE_DOC_ID, state)
+            return True
         try:
-            self._store.put(
-                _STORE_OPS_STATE_COLLECTION,
+            version = compare_and_put(
+                collection,
                 _STORE_OPS_STATE_DOC_ID,
                 _clone(state),
+                expected_version=expected_version,
             )
         except Exception as exc:
             raise StoreOpsLiveDataUnavailable(
                 f"Store Ops repository write failed: {type(exc).__name__}: {exc}"
             ) from exc
+        return version is not None
+
+    def _validated(self, state: dict[str, Any] | None) -> dict[str, Any] | None:
+        if state is None and self.is_live:
+            raise StoreOpsLiveDataUnavailable(
+                "Store Ops production state has not been materialized"
+            )
+        if state is not None and self.is_live and _contains_fixture_signature(state):
+            raise StoreOpsLiveDataUnavailable(
+                "Store Ops production state contains canonical fixture identifiers"
+            )
+        return state
+
+    def get_state(self) -> dict[str, Any]:
+        state, _version = self.read_versioned_state()
+        if self._validated(state) is None:
+            state = _seed_state()
+            self.compare_and_save_state(state, expected_version=None)
+        return state
+
+    def update_state(self, mutate: Callable[[dict[str, Any]], _T]) -> _T:
+        """Apply ``mutate`` to the current state and save it atomically.
+
+        On a lost race the state is re-read and ``mutate`` re-applied, so it
+        must only touch the state it is given (side effects belong after the
+        call). Gives up with :class:`StoreOpsConcurrentWriteConflict` after
+        ``_STORE_OPS_WRITE_ATTEMPTS`` lost races, having saved nothing.
+        """
+        for _attempt in range(_STORE_OPS_WRITE_ATTEMPTS):
+            state, version = self.read_versioned_state()
+            if self._validated(state) is None:
+                self.compare_and_save_state(_seed_state(), expected_version=None)
+                continue
+            assert state is not None
+            result = mutate(state)
+            if self.compare_and_save_state(state, expected_version=version):
+                return result
+        raise StoreOpsConcurrentWriteConflict(
+            "Store Ops state changed concurrently; the write was not applied, retry"
+        )
+
+    def save_state(self, state: Mapping[str, Any]) -> None:
+        """Replace the whole state (last writer wins) while still bumping its version."""
+        for _attempt in range(_STORE_OPS_WRITE_ATTEMPTS):
+            _current, version = self.read_versioned_state()
+            if self.compare_and_save_state(state, expected_version=version):
+                return
+        raise StoreOpsConcurrentWriteConflict(
+            "Store Ops state changed concurrently; the write was not applied, retry"
+        )
+
+    def _put(self, collection: str, doc_id: str, value: Mapping[str, Any]) -> None:
+        try:
+            self._store.put(collection, doc_id, _clone(value))
+        except Exception as exc:
+            raise StoreOpsLiveDataUnavailable(
+                f"Store Ops repository write failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
+    @staticmethod
+    def contains_fixture_signature(state: Mapping[str, Any]) -> bool:
+        return _contains_fixture_signature(state)
 
     def get_idempotency_result(self, key: str) -> dict[str, Any] | None:
+        self._require_scope()
         try:
-            result = self._store.get(_STORE_OPS_IDEMPOTENCY_COLLECTION, key)
+            result = self._store.get(self._collection(_STORE_OPS_IDEMPOTENCY_COLLECTION), key)
         except Exception as exc:
             raise StoreOpsLiveDataUnavailable(
                 f"Store Ops idempotency read failed: {type(exc).__name__}: {exc}"
@@ -554,9 +720,10 @@ class DurableStoreOpsRepository:
         return None if result is None else _clone(result)
 
     def save_idempotency_result(self, key: str, result: Mapping[str, Any]) -> None:
+        self._require_scope()
         try:
             self._store.put(
-                _STORE_OPS_IDEMPOTENCY_COLLECTION,
+                self._collection(_STORE_OPS_IDEMPOTENCY_COLLECTION),
                 key,
                 _clone(result),
             )
@@ -581,6 +748,16 @@ class StoreOpsService:
         else:
             self._repository = repository or InMemoryStoreOpsRepository()
         self._audit_log = audit_log or InMemoryAuditLog()
+
+    def _update_state(self, mutate: Callable[[dict[str, Any]], _T]) -> _T:
+        """Read-modify-write the state through the repository's atomic update."""
+        update_state = getattr(self._repository, "update_state", None)
+        if update_state is not None:
+            return update_state(mutate)
+        state = self._repository.get_state()
+        result = mutate(state)
+        self._repository.save_state(state)
+        return result
 
     def snapshot(
         self,
@@ -681,12 +858,36 @@ class StoreOpsService:
         tenant_id: str = "tenant-a",
         correlation_id: str = "",
     ) -> dict[str, Any]:
-        state = self._repository.get_state()
-        _find_issue(state, issue_id)
         filename = str(payload.get("filename", "")).strip()
         if not filename:
             raise StoreOpsPolicyError("attachment filename is required")
+        return mask_attachment(
+            self._update_state(
+                lambda state: self._add_attachment(
+                    state,
+                    issue_id=issue_id,
+                    filename=filename,
+                    payload=payload,
+                    actor_role_id=actor_role_id,
+                    actor_name=actor_name,
+                    tenant_id=tenant_id,
+                )
+            ),
+            masking_profile="masked",
+        )
 
+    @staticmethod
+    def _add_attachment(
+        state: dict[str, Any],
+        *,
+        issue_id: str,
+        filename: str,
+        payload: Mapping[str, Any],
+        actor_role_id: str,
+        actor_name: str | None,
+        tenant_id: str,
+    ) -> dict[str, Any]:
+        _find_issue(state, issue_id)
         existing = [a for a in state.get("attachments", []) if a.get("issueId") == issue_id]
         att_id = f"ATT-{issue_id.split('-')[-1]}-{len(existing) + 1:02d}"
         file_type = str(payload.get("fileType", "application/octet-stream"))
@@ -728,8 +929,7 @@ class StoreOpsService:
                 "filename": filename,
             },
         )
-        self._repository.save_state(state)
-        return mask_attachment(attachment_record, masking_profile="masked")
+        return attachment_record
 
     def download_attachment(
         self,
@@ -748,22 +948,25 @@ class StoreOpsService:
             user_roles=user_roles,
             tenant_id=tenant_id,
         )
-        state = self._repository.get_state()
         roles_list = list(user_roles or ["opsLead"])
-        _append_audit_event(
-            state,
-            actor_role_id=actor_role_id or (roles_list[0] if roles_list else "opsLead"),
-            actor_name=actor_name or (roles_list[0] if roles_list else "Operator"),
-            action="attachment.downloaded",
-            category="attachment",
-            message=f"Attachment {attachment_id} downloaded for issue {issue_id} (masked={att.get('masked')}).",
-            metadata={
-                "issueId": issue_id,
-                "attachmentId": attachment_id,
-                "masked": att.get("masked"),
-            },
+        self._update_state(
+            lambda state: _append_audit_event(
+                state,
+                actor_role_id=actor_role_id or (roles_list[0] if roles_list else "opsLead"),
+                actor_name=actor_name or (roles_list[0] if roles_list else "Operator"),
+                action="attachment.downloaded",
+                category="attachment",
+                message=(
+                    f"Attachment {attachment_id} downloaded for issue {issue_id} "
+                    f"(masked={att.get('masked')})."
+                ),
+                metadata={
+                    "issueId": issue_id,
+                    "attachmentId": attachment_id,
+                    "masked": att.get("masked"),
+                },
+            )
         )
-        self._repository.save_state(state)
         return att
 
     def delete_attachment(
@@ -776,7 +979,29 @@ class StoreOpsService:
         tenant_id: str = "tenant-a",
         correlation_id: str = "",
     ) -> dict[str, Any]:
-        state = self._repository.get_state()
+        def mutate(state: dict[str, Any]) -> None:
+            self._delete_attachment(
+                state,
+                issue_id=issue_id,
+                attachment_id=attachment_id,
+                actor_role_id=actor_role_id,
+                actor_name=actor_name,
+                tenant_id=tenant_id,
+            )
+
+        self._update_state(mutate)
+        return {"success": True, "deletedAttachmentId": attachment_id}
+
+    @staticmethod
+    def _delete_attachment(
+        state: dict[str, Any],
+        *,
+        issue_id: str,
+        attachment_id: str,
+        actor_role_id: str,
+        actor_name: str | None,
+        tenant_id: str,
+    ) -> None:
         _find_issue(state, issue_id)
         attachments = state.get("attachments", [])
         found_idx = -1
@@ -802,8 +1027,6 @@ class StoreOpsService:
                 "attachmentId": attachment_id,
             },
         )
-        self._repository.save_state(state)
-        return {"success": True, "deletedAttachmentId": attachment_id}
 
     def transition_issue(
         self,
@@ -822,10 +1045,57 @@ class StoreOpsService:
                 replay["idempotentReplay"] = True
                 return replay
 
-        state = self._repository.get_state()
+        normalized_action = _normalize_action(action_type)
+
+        def mutate(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+            return self._transition(
+                state,
+                issue_id=issue_id,
+                action_type=action_type,
+                normalized_action=normalized_action,
+                payload=payload,
+                idempotency_key=idempotency_key,
+                actor_role_id=actor_role_id,
+                actor_name=actor_name,
+            )
+
+        issue, audit = self._update_state(mutate)
+        self._record_shared_audit(
+            event_type="operator.store_ops.issue_transition",
+            actor=actor_name,
+            action=normalized_action,
+            resource=f"operator/store-ops/issues/{issue_id}",
+            outcome="accepted",
+            correlation_id=correlation_id,
+            metadata=audit["metadata"],
+        )
+
+        result = self.snapshot()
+        result.update(
+            {
+                "issue": issue,
+                "auditEvent": audit,
+                "idempotentReplay": False,
+            }
+        )
+        if idempotency_key:
+            self._repository.save_idempotency_result(idempotency_key, result)
+        return result
+
+    def _transition(
+        self,
+        state: dict[str, Any],
+        *,
+        issue_id: str,
+        action_type: str,
+        normalized_action: str,
+        payload: Mapping[str, Any],
+        idempotency_key: str | None,
+        actor_role_id: str,
+        actor_name: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         issue = _find_issue(state, issue_id)
         previous_status = issue["status"]
-        normalized_action = _normalize_action(action_type)
 
         if normalized_action == "triage":
             self._apply_triage(issue, payload)
@@ -862,28 +1132,7 @@ class StoreOpsService:
                 "idempotencyKey": idempotency_key,
             },
         )
-        self._record_shared_audit(
-            event_type="operator.store_ops.issue_transition",
-            actor=actor_name,
-            action=normalized_action,
-            resource=f"operator/store-ops/issues/{issue_id}",
-            outcome="accepted",
-            correlation_id=correlation_id,
-            metadata=audit["metadata"],
-        )
-        self._repository.save_state(state)
-
-        result = self.snapshot()
-        result.update(
-            {
-                "issue": _clone(issue),
-                "auditEvent": _clone(audit),
-                "idempotentReplay": False,
-            }
-        )
-        if idempotency_key:
-            self._repository.save_idempotency_result(idempotency_key, result)
-        return result
+        return _clone(issue), _clone(audit)
 
     def record_camera_purpose(
         self,
@@ -901,7 +1150,49 @@ class StoreOpsService:
                 replay["idempotentReplay"] = True
                 return replay
 
-        state = self._repository.get_state()
+        issue, camera_evidence, audit = self._update_state(
+            lambda state: self._record_camera_purpose(
+                state,
+                issue_id=issue_id,
+                payload=payload,
+                idempotency_key=idempotency_key,
+                actor_role_id=actor_role_id,
+                actor_name=actor_name,
+            )
+        )
+        self._record_shared_audit(
+            event_type="operator.store_ops.camera_purpose",
+            actor=actor_name,
+            action="record_camera_purpose",
+            resource=f"operator/store-ops/issues/{issue_id}/evidence/{camera_evidence['id']}",
+            outcome="accepted",
+            correlation_id=correlation_id,
+            metadata=audit["metadata"],
+        )
+
+        result = self.snapshot()
+        result.update(
+            {
+                "issue": issue,
+                "evidenceItem": camera_evidence,
+                "auditEvent": audit,
+                "idempotentReplay": False,
+            }
+        )
+        if idempotency_key:
+            self._repository.save_idempotency_result(idempotency_key, result)
+        return result
+
+    @staticmethod
+    def _record_camera_purpose(
+        state: dict[str, Any],
+        *,
+        issue_id: str,
+        payload: Mapping[str, Any],
+        idempotency_key: str | None,
+        actor_role_id: str,
+        actor_name: str,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         issue = _find_issue(state, issue_id)
         camera_evidence = _find_camera_evidence(state, issue)
         _validate_camera_purpose(payload)
@@ -933,29 +1224,7 @@ class StoreOpsService:
                 "idempotencyKey": idempotency_key,
             },
         )
-        self._record_shared_audit(
-            event_type="operator.store_ops.camera_purpose",
-            actor=actor_name,
-            action="record_camera_purpose",
-            resource=f"operator/store-ops/issues/{issue_id}/evidence/{camera_evidence['id']}",
-            outcome="accepted",
-            correlation_id=correlation_id,
-            metadata=audit["metadata"],
-        )
-        self._repository.save_state(state)
-
-        result = self.snapshot()
-        result.update(
-            {
-                "issue": _clone(issue),
-                "evidenceItem": _clone(camera_evidence),
-                "auditEvent": _clone(audit),
-                "idempotentReplay": False,
-            }
-        )
-        if idempotency_key:
-            self._repository.save_idempotency_result(idempotency_key, result)
-        return result
+        return _clone(issue), _clone(camera_evidence), _clone(audit)
 
     def _apply_triage(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
         _require_status(issue, {"new", "waitingevidence"}, "triage")
@@ -1280,6 +1549,7 @@ def _four_light_summary(
 __all__ = [
     "DurableStoreOpsRepository",
     "InMemoryStoreOpsRepository",
+    "StoreOpsConcurrentWriteConflict",
     "StoreOpsConflict",
     "StoreOpsNotFound",
     "StoreOpsPolicyError",

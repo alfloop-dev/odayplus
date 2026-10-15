@@ -39,7 +39,7 @@ def test_native_approved_acceptance_execution_and_replay(canonical_graph):
     with db.connect() as conn:
         assert conn.execute("SELECT status,version FROM identity.match_decisions").fetchone() == ("EXECUTED", 31)
         assert conn.execute("SELECT status,attempt,fence_token FROM workflow.jobs").fetchone() == ("SUCCEEDED", 1, 32)
-        assert conn.execute("SELECT event_type FROM workflow.outbox_events ORDER BY occurred_at").fetchall() == [
+        assert conn.execute("SELECT event_type FROM workflow.outbox_events ORDER BY occurred_at,event_type").fetchall() == [
             ("match.decided",), ("identity.resolution_changed",), ("match.decided",),
         ]
     assert repo.audit_sink.writer.verify_chain(canonical_graph[1]["tenant"]).ok

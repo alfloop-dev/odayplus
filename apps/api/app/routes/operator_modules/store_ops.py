@@ -8,12 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.oday_api.runtime_mode import live_data_required
 from modules.opsboard.application.store_ops import (
-    DurableStoreOpsRepository,
+    InMemoryStoreOpsRepository,
+    StoreOpsConcurrentWriteConflict,
     StoreOpsConflict,
     StoreOpsLiveDataUnavailable,
     StoreOpsNotFound,
     StoreOpsPolicyError,
     StoreOpsService,
+    UnavailableStoreOpsRepository,
 )
 from modules.opsboard.application.store_ops_audit_delivery import StoreOpsAuditDelivery
 from modules.opsboard.application.store_ops_scope import ScopedStoreOpsRepository, binding_hash
@@ -89,12 +91,40 @@ def create_operator_store_ops_router(
         tenant_id=guard_tenant_id,
         engine=authz_engine,
     )
-    service = StoreOpsService(
-        repository=repository,
-        audit_log=active_audit_log,
-        require_live_data=live_required,
-    )
+    if repository is None and not live_required:
+        # One demo repository for the router's lifetime, as before scoping.
+        repository = InMemoryStoreOpsRepository()
     router = APIRouter(prefix="/operator/store-ops", tags=["operator-store-ops"])
+
+    def tenant_of(request: Request) -> str:
+        return str(getattr(request.state, "operator_tenant_id", "") or "").strip()
+
+    def service_for(request: Request) -> StoreOpsService:
+        """A service bound to the authenticated tenant's own Store Ops partition.
+
+        The guard has already resolved the tenant; in production a repository
+        that cannot partition by tenant is refused rather than shared.
+        """
+        tenant_id = tenant_of(request)
+        scoped: Any = repository
+        for_tenant = getattr(repository, "for_tenant", None)
+        if for_tenant is not None and tenant_id:
+            scoped = for_tenant(tenant_id)
+        elif live_required:
+            scoped = UnavailableStoreOpsRepository(
+                "Store Ops production routes require a tenant-partitioned repository"
+            )
+        return StoreOpsService(
+            repository=scoped,
+            audit_log=active_audit_log,
+            require_live_data=live_required,
+        )
+
+    def attachment_tenant(request: Request, header_tenant_id: str | None) -> str:
+        # Production records the authenticated tenant, never a request header.
+        if live_required:
+            return tenant_of(request)
+        return header_tenant_id or "tenant-a"
 
     def call_service(
         request: Request, operation: str, method: Any, *args: Any, **kwargs: Any
@@ -121,12 +151,13 @@ def create_operator_store_ops_router(
                 raise StoreOpsLiveDataUnavailable(
                     "Store Ops scoped PostgreSQL repositories are not configured"
                 )
-            bound_tenant = getattr(document_store, "tenant_id", None)
-            if bound_tenant is not None and bound_tenant != tenant_id:
+            bound_tenant = getattr(repository, "tenant_id", None)
+            document_tenant = getattr(document_store, "tenant_id", None)
+            if any(value is not None and value != tenant_id for value in (bound_tenant, document_tenant)):
                 raise StoreOpsLiveDataUnavailable("Store Ops repository belongs to another tenant")
             scoped_store = (
                 document_store
-                if bound_tenant
+                if document_tenant
                 else TenantScopedDocumentStore(document_store, tenant_id)
             )
             binding = {
@@ -183,7 +214,7 @@ def create_operator_store_ops_router(
                     store_ids=tuple(scope.store_ids),
                 )
                 scoped_repository = ScopedStoreOpsRepository(
-                    DurableStoreOpsRepository(scoped_store),
+                    repository.for_tenant(tenant_id),
                     store_ids=frozenset(str(store.store_id) for store in stores),
                     subject_id=subject_id,
                     scope_hash=binding_hash(binding),
@@ -227,6 +258,11 @@ def create_operator_store_ops_router(
                     if isinstance(result, dict):
                         result["auditDelivery"] = {"status": "pending", "pending": None, "retryable": True}
             return result
+        except StoreOpsConcurrentWriteConflict as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "STORE_OPS_CONCURRENT_WRITE", "operation": operation, "message": str(exc)},
+            ) from exc
         except StoreOpsLiveDataUnavailable as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -243,7 +279,7 @@ def create_operator_store_ops_router(
 
     @router.get("/summary", dependencies=[Depends(read_guard)])
     def get_summary(request: Request) -> dict[str, Any]:
-        snapshot = call_service(request, "store_ops.summary", service.snapshot)
+        snapshot = call_service(request, "store_ops.summary", service_for(request).snapshot)
         return {
             "fourLightSummary": snapshot["fourLightSummary"],
             "stores": snapshot["stores"],
@@ -265,7 +301,7 @@ def create_operator_store_ops_router(
         snapshot = call_service(
             request,
             "store_ops.issues",
-            service.snapshot,
+            service_for(request).snapshot,
             query=query,
             statuses=statuses or (),
             sources=sources or (),
@@ -285,7 +321,7 @@ def create_operator_store_ops_router(
                 "issue": call_service(
                     request,
                     "store_ops.issue",
-                    service.get_issue,
+                    service_for(request).get_issue,
                     issue_id,
                 ),
                 "correlation_id": request.state.correlation_id,
@@ -299,7 +335,7 @@ def create_operator_store_ops_router(
             result = call_service(
                 request,
                 "store_ops.issue_evidence",
-                service.issue_evidence,
+                service_for(request).issue_evidence,
                 issue_id,
             )
         except StoreOpsNotFound as exc:
@@ -320,11 +356,11 @@ def create_operator_store_ops_router(
             attachments = call_service(
                 request,
                 "store_ops.list_attachments",
-                service.list_attachments,
+                service_for(request).list_attachments,
                 issue_id=issue_id,
                 masking_profile=masking_profile,
                 user_roles=user_roles,
-                tenant_id=x_tenant_id,
+                tenant_id=attachment_tenant(request, x_tenant_id),
             )
         except StoreOpsNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -349,12 +385,12 @@ def create_operator_store_ops_router(
             attachment = call_service(
                 request,
                 "store_ops.add_attachment",
-                service.add_attachment,
+                service_for(request).add_attachment,
                 issue_id=issue_id,
                 payload=body.model_dump(exclude_none=True),
                 actor_role_id=body.actorRoleId or "opsLead",
                 actor_name=body.actorName or _actor_name_from_role(body.actorRoleId),
-                tenant_id=x_tenant_id or "tenant-a",
+                tenant_id=attachment_tenant(request, x_tenant_id),
                 correlation_id=request.state.correlation_id,
             )
         except StoreOpsNotFound as exc:
@@ -380,12 +416,12 @@ def create_operator_store_ops_router(
             attachment = call_service(
                 request,
                 "store_ops.get_attachment",
-                service.get_attachment,
+                service_for(request).get_attachment,
                 issue_id=issue_id,
                 attachment_id=attachment_id,
                 masking_profile=masking_profile,
                 user_roles=user_roles,
-                tenant_id=x_tenant_id,
+                tenant_id=attachment_tenant(request, x_tenant_id),
             )
         except StoreOpsNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -409,12 +445,12 @@ def create_operator_store_ops_router(
             attachment = call_service(
                 request,
                 "store_ops.download_attachment",
-                service.download_attachment,
+                service_for(request).download_attachment,
                 issue_id=issue_id,
                 attachment_id=attachment_id,
                 masking_profile=masking_profile,
                 user_roles=user_roles,
-                tenant_id=x_tenant_id,
+                tenant_id=attachment_tenant(request, x_tenant_id),
                 actor_role_id=None,
                 actor_name=None,
             )
@@ -438,12 +474,12 @@ def create_operator_store_ops_router(
             result = call_service(
                 request,
                 "store_ops.delete_attachment",
-                service.delete_attachment,
+                service_for(request).delete_attachment,
                 issue_id=issue_id,
                 attachment_id=attachment_id,
                 actor_role_id=actor_role_id,
                 actor_name=_actor_name_from_role(actor_role_id),
-                tenant_id=x_tenant_id or "tenant-a",
+                tenant_id=attachment_tenant(request, x_tenant_id),
                 correlation_id=request.state.correlation_id,
             )
         except StoreOpsNotFound as exc:
@@ -467,7 +503,7 @@ def create_operator_store_ops_router(
                 return call_service(
                     request,
                     "store_ops.camera_purpose",
-                    service.record_camera_purpose,
+                    service_for(request).record_camera_purpose,
                     issue_id=issue_id,
                     payload=body.model_dump(exclude_none=True),
                     idempotency_key=idempotency_key,
@@ -478,7 +514,7 @@ def create_operator_store_ops_router(
             return call_service(
                 request,
                 "store_ops.transition",
-                service.transition_issue,
+                service_for(request).transition_issue,
                 issue_id=issue_id,
                 action_type=action_type,
                 payload=body.model_dump(exclude_none=True),
@@ -508,7 +544,7 @@ def create_operator_store_ops_router(
             return call_service(
                 request,
                 "store_ops.camera_purpose",
-                service.record_camera_purpose,
+                service_for(request).record_camera_purpose,
                 issue_id=issue_id,
                 payload=body.model_dump(exclude_none=True),
                 idempotency_key=idempotency_key,

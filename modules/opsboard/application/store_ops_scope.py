@@ -10,6 +10,7 @@ from typing import Any
 
 from modules.opsboard.application.store_ops import (
     DurableStoreOpsRepository,
+    StoreOpsConcurrentWriteConflict,
     StoreOpsConflict,
     StoreOpsLiveDataUnavailable,
 )
@@ -47,11 +48,16 @@ class ScopedStoreOpsRepository:
         self._request_hash = request_hash
         self._operation = operation
         self._state: dict[str, Any] | None = None
+        self._version: int | None = None
         self.new_audits: list[dict[str, Any]] = []
 
     def _full_state(self) -> dict[str, Any]:
         if self._state is None:
-            self._state = self._repository.get_state()
+            state, version = self._repository.read_versioned_state()
+            state = self._repository._validated(state)
+            if state is None or type(version) is not int or version < 0:
+                raise StoreOpsLiveDataUnavailable("Store Ops scoped state has not been materialized")
+            self._state, self._version = state, version
         for key in ("stores", "issues", "evidence", "auditEvents"):
             rows = self._state.get(key)
             if not isinstance(rows, list) or not all(
@@ -179,8 +185,12 @@ class ScopedStoreOpsRepository:
         ):
             raise StoreOpsConflict("Attachment identifier collides with another issue")
         full["attachments"] = [*hidden, *deepcopy(incoming_attachments)]
-        self._repository.save_state(full)
+        if not self._repository.compare_and_save_state(full, expected_version=self._version):
+            raise StoreOpsConcurrentWriteConflict(
+                "Store Ops state changed during the scoped command; refresh and retry"
+            )
         self._state = full
+        self._version += 1
         self.new_audits.extend(deepcopy(new_audits))
 
     def _receipt_key(self, key: str) -> str:
