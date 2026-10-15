@@ -68,6 +68,8 @@ export type GovernanceWorkspaceProps = {
   callbacks?: GovernanceWorkspaceCallbacks;
   viewState?: GovernanceViewState;
   onViewStateChange?: (state: GovernanceViewState) => void;
+  /** Called only after an identity-matching successful API decision receipt. */
+  onDecisionConfirmed?: () => void | Promise<void>;
 };
 
 const fallbackApprovals: GovernanceApproval[] = [
@@ -402,6 +404,7 @@ export function GovernanceWorkspace({
   callbacks,
   viewState,
   onViewStateChange,
+  onDecisionConfirmed,
 }: GovernanceWorkspaceProps) {
   const fixturesAllowed = operatorFixturesAllowed();
   const viewStateRef = useRef(viewState);
@@ -846,6 +849,7 @@ export function GovernanceWorkspace({
         if (action === "approve") callbacks?.onApprove?.(decisionPayload);
         else if (action === "return") callbacks?.onReturn?.(decisionPayload);
         else callbacks?.onReject?.(decisionPayload);
+        await onDecisionConfirmed?.();
         triggerToast(
           `已${action === "approve" ? "核准" : action === "return" ? "退回" : "駁回"}決策 ${selectedApproval.id} — 已寫入 Decision Log 與 Audit`,
         );

@@ -117,7 +117,40 @@ test("approval writes refresh header counts from the API envelope without sessio
   const before = Number(await count.textContent());
   expect(before).toBeGreaterThan(0);
 
-  await page.getByTestId("operator-decision-rail").getByRole("button", { name: "核准" }).first().click();
+  const card = page.getByTestId("operator-decision-rail").locator("article").first();
+  const approvalId = await card.getAttribute("data-target-entity");
+  expect(approvalId).toBeTruthy();
+  await expect(card).toHaveAttribute("data-target-workspace", "govern");
+  await expect(card).toHaveAttribute("data-target-tab", "approvals");
+  const ownerRead = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/operator/governance/snapshot" && response.request().method() === "GET");
+  await card.getByRole("button", { name: "核准", exact: true }).click();
+  const ownerResponse = await ownerRead;
+  expect(ownerResponse.status()).toBe(200);
+  const owner = await ownerResponse.json();
+  expect(owner.actionAuthority).toMatchObject({ verified: true, decide: true });
+  const exactRows = owner.approvals.filter((row: { id: string; status: string }) => row.id === approvalId && row.status === "pending");
+  expect(exactRows).toHaveLength(1);
+  const detail = page.getByRole("article", { name: "Approval detail" });
+  await expect(detail).toContainText(approvalId!);
+  await expect(detail.getByRole("heading", { name: exactRows[0].title, exact: true })).toBeVisible();
+  // Opening an owner is read-only. Only its successful decision may change a count.
+  await expect(count).toHaveText(String(before));
+  await detail.getByLabel(/決策理由/).fill("Local E2E review of this recorded approval and its evidence.");
+  const command = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/operator/governance/decisions" && response.request().method() === "POST");
+  const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/operator/bootstrap" && response.request().method() === "GET");
+  await detail.getByRole("button", { name: "核准", exact: true }).click();
+  const confirmed = await command;
+  expect(confirmed.status()).toBe(200);
+  const receipt = await confirmed.json();
+  expect(receipt).toMatchObject({ approvalId, action: "approve", status: "approved", finalDecision: "Approved" });
+  expect(receipt.decision.approvalId).toBe(approvalId);
+  expect(receipt.correlation_id).toBe(confirmed.headers()["x-correlation-id"]);
+  expect(confirmed.request().headers()["idempotency-key"]).toBeTruthy();
+  const freshResponse = await refreshed;
+  expect(freshResponse.status()).toBe(200);
+  const fresh = await freshResponse.json();
+  expect(fresh.header.counts.approvals).toBe(before - 1);
+  expect(fresh.today.decisions.some((row: { id: string }) => row.id === approvalId)).toBe(false);
 
   await expect(count).toHaveText(String(before - 1));
   await expect(page.getByTestId("operator-task-center-count").locator("strong")).not.toHaveText("0");

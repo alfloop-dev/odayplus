@@ -93,6 +93,172 @@ describe("GrowthWorkspace API loading", () => {
     routerPush.mockReset();
   });
 
+  const canonicalSegment = {
+    id: "priceops:current-plan:current-item",
+    name: "current-store / washer-20kg",
+    storeId: "current-store",
+    machineType: "washer-20kg",
+    planId: "current-plan",
+    planStatus: "draft",
+    baselineDemand: 10,
+    elasticity: { elasticity_value: -1.2, confidence: 0.8 },
+    evaluation: null,
+    source: "priceops",
+  };
+
+  function mockCanonicalReads() {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const payload = url.endsWith("/freshness")
+        ? { status: "LIVE", updatedAt: "2026-10-15T05:00:00+00:00", modelVersion: null,
+            policyVersion: [], featureSnapshotTime: "2026-10-15T05:00:00+00:00",
+            sourceSnapshotId: ["current-plan"], solverVersions: [], planCount: 1 }
+        : url.endsWith("/segments")
+          ? { items: [canonicalSegment] }
+          : url.includes("/recommendations")
+            ? { items: [{ id: "priceops-rec:current-plan:current-item", segmentId: canonicalSegment.id,
+                planId: "current-plan", itemId: "current-item", storeId: "current-store",
+                currentPrice: 100, recommendedPrice: 105, constraintStatus: "SAFE",
+                bindingConstraints: [], riskLevel: "low", source: "priceops" }] }
+            : { items: [{ ...GROWTH_ITEMS[0], id: "current-action", segmentId: canonicalSegment.id }] };
+      return new Response(JSON.stringify(payload), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    }));
+  }
+
+  it("keeps unrecorded canonical segment statistics explicit without inventing a trend", async () => {
+    mockCanonicalReads();
+    render(<GrowthWorkspace searchParams={{ gtab: "segments" }} />);
+    const segments = await screen.findByTestId("growth-segment-table");
+    expect(segments).toHaveTextContent(canonicalSegment.name);
+    expect(segments).toHaveTextContent("門市數未提供");
+    expect(segments).toHaveTextContent("營收占比未提供");
+    expect(segments).toHaveTextContent("分群規則未提供");
+    expect(segments).toHaveTextContent("建議打法：未提供");
+    expect(segments).toHaveTextContent("趨勢未提供");
+    expect(within(segments).queryByText("持平")).not.toBeInTheDocument();
+    expect(within(segments).getByRole("link", { name: "建立活動草稿" }).getAttribute("href"))
+      .toContain(encodeURIComponent(canonicalSegment.id));
+  });
+
+  it("does not claim a model version when the canonical freshness response has none", async () => {
+    mockCanonicalReads();
+    render(<GrowthWorkspace searchParams={{ gtab: "segments" }} />);
+    await screen.findByTestId("growth-segment-table");
+    expect(screen.getByText(/模型版本未提供/)).toBeInTheDocument();
+    expect(screen.queryByText(/分群與模型版本來自 live API/)).not.toBeInTheDocument();
+  });
+
+  it("preserves an explicitly recorded zero store count and supplied segment statistics", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    render(<GrowthWorkspace searchParams={{ gtab: "segments" }} apiData={{
+      availability: "ready", freshness: FIXTURE_FRESHNESS, fromApi: true,
+      segments: [{ ...SEGMENTS[0], storeCount: 0 }],
+      recommendations: PRICEOPS_RECOMMENDATIONS, items: GROWTH_ITEMS,
+    }} />);
+    const segments = screen.getByTestId("growth-segment-table");
+    expect(segments).toHaveTextContent("0 店");
+    expect(segments).toHaveTextContent(SEGMENTS[0].revenueShare!);
+    expect(segments).toHaveTextContent(SEGMENTS[0].definition!);
+    expect(segments).toHaveTextContent(SEGMENTS[0].opportunity!);
+    expect(segments).not.toHaveTextContent("未提供");
+  });
+
+  it.each([
+    { lift: null, expected: "未提供百分比" },
+    { lift: 0, expected: "0.0%" },
+  ])("keeps forecast lift $lift separate from an action's target", ({ lift, expected }) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const recommendation = { ...PRICEOPS_RECOMMENDATIONS[0], expectedRevenueLift: lift, expectedMarginLift: lift };
+    const item = { ...GROWTH_ITEMS[0], segmentId: recommendation.segmentId,
+      sourceRecommendationId: recommendation.id, targetLift: 12.5 };
+    render(<GrowthWorkspace apiData={{
+      availability: "ready", freshness: FIXTURE_FRESHNESS, fromApi: true,
+      segments: SEGMENTS, recommendations: [recommendation], items: [item],
+    }} />);
+    const card = screen.getByTestId(`growth-item-${item.id}`);
+    expect(within(card).getByText("預估增額營收").parentElement).toHaveTextContent(expected);
+    expect(within(card).getByText("毛利影響").parentElement).toHaveTextContent(expected);
+    expect(within(card).getByText("預估增額營收").parentElement).not.toHaveTextContent("12.5%");
+    expect(screen.getByTestId("growth-item-detail")).toHaveTextContent("12.5%");
+  });
+
+  const canonicalBuilderData = {
+    availability: "ready" as const, freshness: FIXTURE_FRESHNESS, fromApi: true,
+    segments: [canonicalSegment],
+    recommendations: [{ ...PRICEOPS_RECOMMENDATIONS[0], segmentId: canonicalSegment.id }],
+    items: [{ ...GROWTH_ITEMS[0], segmentId: canonicalSegment.id }],
+  };
+
+  it.each(["true", "false"])("prefills the actual selected API segment and store when production mode is %s", (production) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", production);
+    render(<GrowthWorkspace apiData={canonicalBuilderData}
+      searchParams={{ builder: "offpeak", segment: canonicalSegment.id }} />);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("門市")).toHaveValue(canonicalSegment.storeId);
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一步 →" }));
+    expect(within(dialog).getByLabelText("客群")).toHaveValue(canonicalSegment.id);
+  });
+
+  it("keeps an unselected API draft scope empty instead of borrowing the demo store or segment", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    render(<GrowthWorkspace apiData={canonicalBuilderData} searchParams={{ builder: "offpeak" }} />);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("門市")).toHaveValue("");
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一步 →" }));
+    expect(within(dialog).getByLabelText("客群")).toHaveValue("");
+  });
+
+  it("retains the approved local fixture builder defaults when its data is actually a fixture", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    render(<GrowthWorkspace apiData={{ availability: "fixture", freshness: FIXTURE_FRESHNESS,
+      fromApi: false, segments: SEGMENTS, recommendations: PRICEOPS_RECOMMENDATIONS, items: GROWTH_ITEMS }}
+      searchParams={{ builder: "offpeak" }} />);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("門市")).toHaveValue("Oday 信義松仁店");
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一步 →" }));
+    expect(within(dialog).getByLabelText("客群")).toHaveValue("seg-metro-dinner");
+  });
+
+  it("replaces the initial fixture builder scope when the deferred API loader resolves", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      await ready;
+      const url = String(input);
+      const payload = url.endsWith("/freshness") ? FIXTURE_FRESHNESS
+        : url.endsWith("/segments") ? { items: canonicalBuilderData.segments }
+          : url.includes("/recommendations") ? { items: canonicalBuilderData.recommendations }
+            : { items: canonicalBuilderData.items };
+      return new Response(JSON.stringify(payload), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    }));
+    render(<GrowthWorkspace searchParams={{ builder: "offpeak", segment: canonicalSegment.id }} />);
+    expect(within(screen.getByRole("dialog")).getByLabelText("門市")).toHaveValue("Oday 信義松仁店");
+    release();
+    await waitFor(() => expect(within(screen.getByRole("dialog")).getByLabelText("門市"))
+      .toHaveValue(canonicalSegment.storeId));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "下一步 →" }));
+    expect(within(screen.getByRole("dialog")).getByLabelText("客群")).toHaveValue(canonicalSegment.id);
+  });
+
+  it("preserves an edited draft when the same API record scope refreshes", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const searchParams = { builder: "offpeak", segment: canonicalSegment.id };
+    const { rerender } = render(<GrowthWorkspace apiData={canonicalBuilderData} searchParams={searchParams} />);
+    fireEvent.change(within(screen.getByRole("dialog")).getByLabelText("活動名稱"), {
+      target: { value: "My current draft" },
+    });
+    rerender(<GrowthWorkspace apiData={{ ...canonicalBuilderData,
+      freshness: { ...FIXTURE_FRESHNESS, updatedAt: "2026-10-15T06:15:00+00:00" } }} searchParams={searchParams} />);
+    expect(within(screen.getByRole("dialog")).getByLabelText("活動名稱")).toHaveValue("My current draft");
+    expect(within(screen.getByRole("dialog")).getByLabelText("門市")).toHaveValue(canonicalSegment.storeId);
+  });
+
   it("mounts the existing Growth API loader in production", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     const liveFreshness = {

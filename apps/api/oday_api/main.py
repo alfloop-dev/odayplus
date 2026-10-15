@@ -1908,7 +1908,6 @@ else:
             DurableAVMRepository,
             DurableListingRepository,
             DurableNetPlanRepository,
-            DurablePriceOpsRepository,
             DurableSiteScoreRepository,
             PostgresDocumentStore,
             SqliteDocumentStore,
@@ -2395,8 +2394,16 @@ else:
 
             def priceops_repository_for_tenant(
                 tenant_id: str,
-            ) -> DurablePriceOpsRepository:
-                return DurablePriceOpsRepository(tenant_document_store(tenant_id))
+            ) -> Any | None:
+                if not tenant_id or not tenant_id.strip():
+                    return None
+                # Native PriceOps writes the already-selected repository's base
+                # collections. Growth and Governance filter those plans by
+                # verified tenant; another document partition would hide native
+                # plans and discard canonical_exploration on PostgreSQL.
+                # Previously written tenant partitions require an explicit,
+                # conflict-checked copy before deployment; never move them on GET.
+                return price_repo
         else:
             listing_repository_for_tenant = None
             sitescore_repository_for_tenant = None
@@ -2445,6 +2452,8 @@ else:
                 avm_repository_for_tenant=avm_repository_for_tenant,
                 netplan_repository_for_tenant=netplan_repository_for_tenant,
                 priceops_repository_for_tenant=priceops_repository_for_tenant,
+                priceops_store_repository=bundle.store_repository if require_live_data else None,
+                priceops_brand_repository=bundle.brand_repository if require_live_data else None,
                 model_runtime=model_runtime,
                 # Composition probes may expose production flags without the
                 # factory's canonical SQL authority. Keep their reads available;

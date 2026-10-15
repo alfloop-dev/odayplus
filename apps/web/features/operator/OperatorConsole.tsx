@@ -1817,6 +1817,10 @@ export function OperatorConsole({
         ) : activeWorkspaceId === "govern" ? (
           // GovernanceWorkspace renders its own Package 10 page header.
           <GovernanceWorkspace
+            onDecisionConfirmed={async () => {
+              try { await refreshOperatorEnvelope(); }
+              catch { showToast("核決已保存；Today 資料尚未重新核對，請重新整理。"); }
+            }}
             viewState={governanceView}
             onViewStateChange={handleGovernanceViewChange}
             approvals={liveApprovals.length ? liveApprovals : undefined}

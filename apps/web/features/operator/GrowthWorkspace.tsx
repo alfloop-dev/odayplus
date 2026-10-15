@@ -63,6 +63,14 @@ const DATA_SOURCE_HINT: Record<"api" | "fixture", string | null> = {
   fixture: "fixture",
 };
 
+function storeCountLabel(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? `${value} 店` : "門市數未提供";
+}
+
+function forecastLiftLabel(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? formatLift(value) : "未提供百分比";
+}
+
 const requiredActionLabel: Record<CloseoutGate["requiredAction"], string> = {
   CLOSE: "結案",
   ROLLBACK: "執行 Rollback",
@@ -245,6 +253,7 @@ export function GrowthWorkspace({
     updatedAt: "2026-07-09 14:20",
     modelVersion: "growth-uplift-v1.4.0",
   };
+  const modelVersionAvailable = typeof freshnessData.modelVersion === "string" && freshnessData.modelVersion.trim().length > 0;
   const fixtureHint = DATA_SOURCE_HINT[vm.dataSource];
 
   // Build an href that keeps the Growth workspace active and preserves the
@@ -295,12 +304,12 @@ export function GrowthWorkspace({
           <div className={g.headerStatus}>
             <Badge
               label={freshnessData.status}
-              tone={dataStatusTone[freshnessData.status]}
+              tone={freshnessData.status === "LIVE" || freshnessData.status === "EMPTY" ? "gray" : dataStatusTone[freshnessData.status]}
               marker="◆"
               data-testid="growth-data-status"
             />
             <span>
-              {freshnessData.updatedAt} · model {freshnessData.modelVersion}
+              {freshnessData.updatedAt} · {modelVersionAvailable ? `model ${freshnessData.modelVersion}` : "模型版本未提供"}
               {fixtureHint ? ` · [${fixtureHint}]` : ""}
             </span>
           </div>
@@ -336,6 +345,7 @@ export function GrowthWorkspace({
         {activeTab === "segments" ? (
           <SegmentSection
             fixturesAllowed={fixturesAllowed}
+            modelVersionAvailable={modelVersionAvailable}
             href={href}
             segments={vm.segments}
             selected={vm.selectedSegment}
@@ -364,7 +374,21 @@ export function GrowthWorkspace({
 
       {builderKind ? (
         <GrowthBuilderModal
-          initialForm={GROWTH_KIND_PRESETS[builderKind]}
+          key={JSON.stringify([
+            vm.dataSource,
+            builderKind,
+            vm.selectedSegment?.id ?? null,
+            vm.selectedSegment?.storeId ?? null,
+          ])}
+          initialForm={
+            vm.dataSource === "fixture"
+              ? GROWTH_KIND_PRESETS[builderKind]
+              : {
+                  ...GROWTH_KIND_PRESETS[builderKind],
+                  segmentId: vm.selectedSegment?.id ?? "",
+                  store: vm.selectedSegment?.storeId ?? "",
+                }
+          }
           closeHref={href({ builder: undefined, draft: undefined })}
         />
       ) : vm.draftRecommendation ? (
@@ -431,11 +455,13 @@ function formFromRecommendation(rec: PriceOpsRecommendation): GrowthBuilderForm 
 /** 會員分群 tab — segment cards with a scan-friendly filter chip bar. */
 function SegmentSection({
   fixturesAllowed,
+  modelVersionAvailable,
   segments,
   selected,
   href,
 }: {
   fixturesAllowed: boolean;
+  modelVersionAvailable: boolean;
   segments: GrowthSegment[];
   selected: GrowthSegment | null;
   href: (o: Record<string, string | undefined>) => string;
@@ -451,13 +477,17 @@ function SegmentSection({
           >
             <div className={g.segTop}>
               <span className={g.segName}>{segment.name}</span>
-              <span className={g[`trend_${segment.trend}`]}>{trendLabel[segment.trend]}</span>
+              <span className={g[`trend_${segment.trend}`]}>
+                {typeof segment.trend === "string" && Object.hasOwn(trendLabel, segment.trend) ? trendLabel[segment.trend] : "趨勢未提供"}
+              </span>
             </div>
-            <div className={g.segCount}>{segment.storeCount} 店</div>
+            <div className={g.segCount}>
+              {storeCountLabel(segment.storeCount)}
+            </div>
             <div className={g.segValue}>
-              營收占比 {segment.revenueShare} · {segment.definition}
+              {segment.revenueShare ? `營收占比 ${segment.revenueShare}` : "營收占比未提供"} · {segment.definition || "分群規則未提供"}
             </div>
-            <div className={g.segPlay}>建議打法：{segment.opportunity}</div>
+            <div className={g.segPlay}>建議打法：{segment.opportunity || "未提供"}</div>
             <Link
               className={g.segDraftBtn}
               href={href({ segment: segment.id, builder: "offpeak", item: undefined })}
@@ -470,7 +500,9 @@ function SegmentSection({
       <p className={g.tabNote}>
         {fixturesAllowed
           ? "分群由本機測試資料建立；由分群建立的草稿仍走核准流程。"
-          : "分群與模型版本來自 live API；由分群建立的草稿仍走核准流程。"}
+          : modelVersionAvailable
+            ? "分群與模型版本來自 live API；由分群建立的草稿仍走核准流程。"
+            : "分群資料來自 live API；尚未提供模型版本。由分群建立的草稿仍走核准流程。"}
       </p>
     </section>
   );
@@ -707,18 +739,18 @@ function CampaignWorkbench({
                 <div className={g.metricRow}>
                   <div>
                     <div className={g.metricK}>預估觸達</div>
-                    <div className={g.metricV}>{segment ? `${segment.storeCount} 店` : "—"}</div>
+                    <div className={g.metricV}>{segment ? storeCountLabel(segment.storeCount) : "—"}</div>
                   </div>
                   <div>
                     <div className={g.metricK}>預估增額營收</div>
                     <div className={[g.metricV, g.metricVpos].join(" ")}>
-                      {formatLift(recommendation?.expectedRevenueLift ?? item.targetLift)}
+                      {forecastLiftLabel(recommendation?.expectedRevenueLift)}
                     </div>
                   </div>
                   <div>
                     <div className={g.metricK}>毛利影響</div>
                     <div className={g.metricV}>
-                      {recommendation ? formatLift(recommendation.expectedMarginLift) : "待試算"}
+                      {forecastLiftLabel(recommendation?.expectedMarginLift)}
                     </div>
                   </div>
                   <div>

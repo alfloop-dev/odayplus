@@ -66,15 +66,16 @@ export type GrowthStatus =
 export type GrowthSegment = {
   id: string;
   name: string;
+  storeId?: string;
   /** human-readable membership rule for the segment. */
-  definition: string;
-  storeCount: number;
+  definition?: string | null;
+  storeCount?: number | null;
   /** share of total revenue this segment represents. */
-  revenueShare: string;
-  trend: "up" | "flat" | "down";
+  revenueShare?: string | null;
+  trend?: "up" | "flat" | "down" | null;
   /** one-line growth opportunity for scan-reading the table. */
-  opportunity: string;
-  dataStatus: DataStatus;
+  opportunity?: string | null;
+  dataStatus?: DataStatus;
 };
 
 /** PriceOps 建議 — a pricing recommendation that can seed a growth draft. */
@@ -171,12 +172,12 @@ export type GrowthItem = {
 
 /** Freshness / model-version metadata returned by /growth/freshness. */
 export type GrowthFreshness = {
-  status: DataStatus;
-  updatedAt: string;
-  modelVersion: string;
-  policyVersion: string;
-  featureSnapshotTime: string;
-  sourceSnapshotId: string;
+  status: DataStatus | "LIVE" | "EMPTY";
+  updatedAt: string | null;
+  modelVersion: string | null;
+  policyVersion: string | string[];
+  featureSnapshotTime: string | null;
+  sourceSnapshotId: string | string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -1048,13 +1049,13 @@ export const constraintTone: Record<
   HARD_CONSTRAINT_FAILED: "red",
 };
 
-export const trendLabel: Record<GrowthSegment["trend"], string> = {
+export const trendLabel: Record<NonNullable<GrowthSegment["trend"]>, string> = {
   up: "↑ 成長",
   flat: "→ 持平",
   down: "↓ 下滑",
 };
 
-export const trendTone: Record<GrowthSegment["trend"], StatusTone> = {
+export const trendTone: Record<NonNullable<GrowthSegment["trend"]>, StatusTone> = {
   up: "green",
   flat: "gray",
   down: "red",

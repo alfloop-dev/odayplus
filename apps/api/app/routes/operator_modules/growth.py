@@ -161,9 +161,17 @@ def create_growth_sub_router(
     require_approval_permission_fn: Any = None,
     require_transition_permission_fn: Any = None,
     service_resolver: Any = None,
+    read_service_resolver: Any = None,
 ) -> APIRouter:
     """Return the Growth sub-router wired to a shared GrowthService instance."""
     router = APIRouter(prefix="/growth", tags=["operator-growth"])
+
+    def read_service(request: Request) -> GrowthService:
+        return resolve_service(request, service, read_service_resolver or service_resolver)
+
+    def require_action_scope(request: Request, action_id: str) -> None:
+        if read_service_resolver is not None:
+            read_service(request).get_action(action_id)
 
     def verified_actor(request: Request) -> tuple[Any, str]:
         principal = getattr(request.state, "operator_principal", None)
@@ -194,7 +202,7 @@ def create_growth_sub_router(
 
     @router.get("/freshness", dependencies=read_deps)
     def get_freshness(request: Request) -> dict[str, Any]:
-        data = resolve_service(request, service, service_resolver).get_freshness()
+        data = read_service(request).get_freshness()
         data["correlation_id"] = request.state.correlation_id
         return data
 
@@ -203,9 +211,7 @@ def create_growth_sub_router(
         request: Request,
         segment_id: str | None = Query(default=None, alias="segment_id"),
     ) -> dict[str, Any]:
-        items = resolve_service(
-            request, service, service_resolver
-        ).list_segments(segment_id=segment_id)
+        items = read_service(request).list_segments(segment_id=segment_id)
         return {
             "items": items,
             "count": len(items),
@@ -217,9 +223,7 @@ def create_growth_sub_router(
         request: Request,
         segment_id: str | None = Query(default=None, alias="segment_id"),
     ) -> dict[str, Any]:
-        items = resolve_service(
-            request, service, service_resolver
-        ).list_recommendations(segment_id=segment_id)
+        items = read_service(request).list_recommendations(segment_id=segment_id)
         return {
             "items": items,
             "count": len(items),
@@ -232,9 +236,7 @@ def create_growth_sub_router(
         segment_id: str | None = Query(default=None, alias="segment_id"),
         action_status: str | None = Query(default=None, alias="status"),
     ) -> dict[str, Any]:
-        items = resolve_service(
-            request, service, service_resolver
-        ).list_actions(segment_id=segment_id, status=action_status)
+        items = read_service(request).list_actions(segment_id=segment_id, status=action_status)
         return {
             "items": items,
             "count": len(items),
@@ -244,9 +246,7 @@ def create_growth_sub_router(
     @router.get("/actions/{action_id}", dependencies=read_deps)
     def get_action(action_id: str, request: Request) -> dict[str, Any]:
         try:
-            data = resolve_service(
-                request, service, service_resolver
-            ).get_action(action_id)
+            data = read_service(request).get_action(action_id)
             data["correlation_id"] = request.state.correlation_id
             return data
         except GrowthNotFound as exc:
@@ -254,7 +254,7 @@ def create_growth_sub_router(
 
     @router.get("/summary", dependencies=read_deps)
     def get_summary(request: Request) -> dict[str, Any]:
-        summary = resolve_service(request, service, service_resolver).get_summary()
+        summary = read_service(request).get_summary()
         summary["correlation_id"] = request.state.correlation_id
         return summary
 
@@ -270,6 +270,12 @@ def create_growth_sub_router(
     ) -> dict[str, Any]:
         try:
             principal, actor_role = verified_actor(request)
+            if read_service_resolver is not None and not read_service(request).list_segments(segment_id=body.segmentId):
+                raise GrowthNotFound("segment unavailable")
+            if read_service_resolver is not None and body.sourceRecommendationId and not any(
+                row["id"] == body.sourceRecommendationId for row in read_service(request).list_recommendations()
+            ):
+                raise GrowthNotFound("recommendation unavailable")
             return resolve_service(request, service, service_resolver).create_action(
                 name=body.name,
                 segment_id=body.segmentId,
@@ -307,6 +313,7 @@ def create_growth_sub_router(
     ) -> dict[str, Any]:
         try:
             principal, actor_role = verified_actor(request)
+            require_action_scope(request, action_id)
             return resolve_service(
                 request, service, service_resolver
             ).transition_action(
@@ -342,6 +349,7 @@ def create_growth_sub_router(
             actor_role = getattr(request.state, "operator_role_id", None)
             if not actor_role:
                 raise HTTPException(status_code=401, detail="VERIFIED_ROLE_REQUIRED")
+            require_action_scope(request, action_id)
             return resolve_service(request, service, service_resolver).write_outcome(
                 action_id=action_id,
                 outcome=body.outcome,
@@ -370,9 +378,7 @@ def create_growth_sub_router(
 
     @router.post("/conflicts/check", dependencies=read_deps)
     def check_conflicts(body: ConflictCheckPayload, request: Request) -> dict[str, Any]:
-        result = resolve_service(
-            request, service, service_resolver
-        ).check_conflicts(
+        result = read_service(request).check_conflicts(
             kind=body.kind,
             store=body.store,
             observation_window=body.observationWindow,
@@ -392,6 +398,7 @@ def create_growth_sub_router(
     ) -> dict[str, Any]:
         try:
             principal, actor_role = verified_actor(request)
+            require_action_scope(request, action_id)
             return resolve_service(
                 request, service, service_resolver
             ).submit_for_approval(
@@ -411,9 +418,7 @@ def create_growth_sub_router(
 
     @router.get("/approvals", dependencies=read_deps)
     def list_approvals(request: Request) -> dict[str, Any]:
-        items = resolve_service(
-            request, service, service_resolver
-        ).list_approvals()
+        items = read_service(request).list_approvals()
         return {
             "items": items,
             "count": len(items),
@@ -429,6 +434,10 @@ def create_growth_sub_router(
     ) -> dict[str, Any]:
         try:
             principal, actor_role = verified_actor(request)
+            if read_service_resolver is not None and not any(
+                row["id"] == approval_id for row in read_service(request).list_approvals()
+            ):
+                raise GrowthNotFound("approval unavailable")
             return resolve_service(
                 request, service, service_resolver
             ).resolve_approval(
@@ -451,9 +460,7 @@ def create_growth_sub_router(
 
     @router.get("/decisions", dependencies=read_deps)
     def list_decisions(request: Request) -> dict[str, Any]:
-        items = resolve_service(
-            request, service, service_resolver
-        ).list_decisions()
+        items = read_service(request).list_decisions()
         return {
             "items": items,
             "count": len(items),

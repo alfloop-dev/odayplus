@@ -21,6 +21,7 @@ Composes with: operator_modules/* sub-routers via create_operator_router().
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -39,6 +40,8 @@ from modules.opsboard.domain.r4_dtos import (
     IssueTransitionResponse,
 )
 from modules.opsboard.infrastructure.seed_data import load_r4_seed
+from shared.auth import Action, Role
+from shared.auth.rbac import permissions_for
 
 if TYPE_CHECKING:
     from modules.opsboard.application.operator_live_repository import (
@@ -244,12 +247,14 @@ class OperatorStateService:
         provider_mode: str = "fixture",
         live_repository: OperatorLiveRepositoryProtocol | None = None,
         fixture_issue_repository: Any | None = None,
+        fixture_approval_reader: Callable[[str], list[dict[str, Any]]] | None = None,
     ) -> None:
         self._require_live_data = require_live_data or live_repository is not None
         self._persistence_mode = persistence_mode
         self._provider_mode = provider_mode
         self._live_repository = live_repository
         self._fixture_issue_repository = None if self._require_live_data else fixture_issue_repository
+        self._fixture_approval_reader = None if self._require_live_data else fixture_approval_reader
         self._live_ready = False
         self._live_error: str | None = None
         self._state: dict[str, Any] = {} if self._require_live_data else load_r4_seed()
@@ -418,6 +423,7 @@ class OperatorStateService:
         )
         return self._build_envelope(
             role=role,
+            system_roles=system_roles,
             correlation_id=correlation_id,
             state=self._load_state(
                 tenant_id=tenant_id,
@@ -720,10 +726,11 @@ class OperatorStateService:
         role: dict[str, Any],
         correlation_id: str | None,
         state: dict[str, Any],
+        system_roles: str | None = None,
     ) -> dict[str, Any]:
         role_id = role["id"]
         queue = self._filtered_queue(role_id=role_id, state=state)
-        approvals = self._filtered_approvals(role_id=role_id, state=state)
+        approvals = self._today_owner_approvals(role=role, system_roles=system_roles, state=state)
         risk_rows = self._filtered_risk_rows(role_id=role_id, state=state)
         notifications = self._filtered_notifications(role_id=role_id, state=state)
         audit_feed = self._filtered_audit_feed(role_id=role_id, state=state)
@@ -845,6 +852,35 @@ class OperatorStateService:
             "auditFeed": audit_feed,
         }
         return deepcopy(envelope)
+
+    def _today_owner_approvals(
+        self, *, role: dict[str, Any], system_roles: str | None, state: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        role_id = role["id"]
+        if self._fixture_approval_reader is None:
+            return self._filtered_approvals(role_id=role_id, state=state)
+        # The POC owner is the same Govern service mounted by the router. Its
+        # pending rows, rather than unrelated R4 card IDs, determine the link
+        # and count. This remains a fixture read, never live approval authority.
+        if "govern" not in role["allowedWorkspaces"]:
+            return []
+        verified_role_names = {value.strip() for value in (system_roles or "").split(",")}
+        verified_roles = frozenset(value for value in Role if value.value in verified_role_names)
+        if not any(permission.matches("intervention", Action.APPROVE) for permission in permissions_for(verified_roles)):
+            return []
+        return [
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "meta": item["module"],
+                "status": item["status"],
+                "cta": "Open Govern",
+                "tone": "warning",
+                "target": {"workspace": "govern", "entityId": item["id"], "tab": "approvals"},
+            }
+            for item in self._fixture_approval_reader(role_id)
+            if item["status"] == "pending"
+        ]
 
     def _enrich_queue_item(self, item: dict[str, Any]) -> dict[str, Any]:
         enriched = deepcopy(item)

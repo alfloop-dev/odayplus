@@ -131,7 +131,8 @@ test.describe("Operator shared header layout", () => {
       await expect(audit.locator("time")).toHaveText("23:53");
       await expect(audit.locator("time")).toHaveAttribute("datetime", auditTime);
       await expect(audit.locator("time")).toHaveAttribute("title", auditTime);
-      await expect(audit.locator("p")).toContainText(auditActor);
+      await expect(audit.locator("p strong")).toHaveText("帳號 17e9…f5d2");
+      await expect(audit.locator("p strong")).toHaveAttribute("title", auditActor);
       const auditGeometry = await audit.evaluate((row) => ({
         rowWidth: row.getBoundingClientRect().width,
         textWidth: row.querySelector("p")!.getBoundingClientRect().width,

@@ -241,13 +241,16 @@ describe("GovernanceWorkspace high-risk failures", () => {
     });
     stubAuthenticatedFetch( fetchMock);
     const onApprove = vi.fn();
-    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onApprove }} />);
+    const onDecisionConfirmed = vi.fn();
+    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onApprove }} onDecisionConfirmed={onDecisionConfirmed} />);
     await screen.findByRole("heading", { name: snapshot.approvals[0].title });
     fireEvent.click(screen.getByRole("button", { name: "核准" }));
     await screen.findByText("尚未確認決策結果，請重試相同內容以核對。");
     expect(onApprove).not.toHaveBeenCalled();
+    expect(onDecisionConfirmed).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "核准" }));
     await waitFor(() => expect(onApprove).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onDecisionConfirmed).toHaveBeenCalledTimes(1));
     const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
     expect(new Headers(writes[0][1]!.headers).get("Idempotency-Key")).toBe(new Headers(writes[1][1]!.headers).get("Idempotency-Key"));
   });
@@ -258,11 +261,25 @@ describe("GovernanceWorkspace high-risk failures", () => {
       ? { approvalId: "wrong-approval", action: "approve", status: "approved", finalDecision: "Approved" }
       : decidingSnapshot))));
     const onApprove = vi.fn();
-    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onApprove }} />);
+    const onDecisionConfirmed = vi.fn();
+    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onApprove }} onDecisionConfirmed={onDecisionConfirmed} />);
     await screen.findByRole("heading", { name: snapshot.approvals[0].title });
     fireEvent.click(screen.getByRole("button", { name: "核准" }));
     await screen.findByText("尚未確認決策結果，請重試相同內容以核對。");
     expect(onApprove).not.toHaveBeenCalled();
+    expect(onDecisionConfirmed).not.toHaveBeenCalled();
+  });
+
+  it("does not report an offline fixture decision as a confirmed API write", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    stubAuthenticatedFetch(vi.fn().mockRejectedValue(new Error("Explicit offline test transport")));
+    const onApprove = vi.fn();
+    const onDecisionConfirmed = vi.fn();
+    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onApprove }} onDecisionConfirmed={onDecisionConfirmed} />);
+    await screen.findByRole("heading", { name: "Close escalated service issue" });
+    fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await waitFor(() => expect(onApprove).toHaveBeenCalledTimes(1));
+    expect(onDecisionConfirmed).not.toHaveBeenCalled();
   });
 
   it("retains export scope/key after failure and creates no local package", async () => {

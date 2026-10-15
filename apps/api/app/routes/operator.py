@@ -128,6 +128,8 @@ def create_operator_router(
     avm_repository_for_tenant: Any | None = None,
     netplan_repository_for_tenant: Any | None = None,
     priceops_repository_for_tenant: Any | None = None,
+    priceops_store_repository: Any | None = None,
+    priceops_brand_repository: Any | None = None,
     model_runtime: Any | None = None,
     score_execution_service: Any | None = None,
     avm_production_executor: Any | None = None,
@@ -197,6 +199,8 @@ def create_operator_router(
     # router accepts only a state service backed by the injected live
     # repository; fixture services can never cross this composition boundary.
     effective_require_live_data = require_live_data or (live_repository is not None)
+    local_growth_service = None
+    local_governance_service = None
     if effective_require_live_data:
         svc = (
             state_service
@@ -209,10 +213,15 @@ def create_operator_router(
             )
         )
     else:
+        from modules.opsboard.application.governance import GovernanceService
+
+        local_growth_service = growth_service or GrowthService()
+        local_governance_service = GovernanceService(growth_service=local_growth_service)
         svc = state_service or OperatorStateService(
             persistence_mode=persistence_mode,
             provider_mode=provider_mode,
             fixture_issue_repository=fixture_issue_repository,
+            fixture_approval_reader=lambda role_id: local_governance_service.snapshot(role_id=role_id)["approvals"],
         )
 
     router = APIRouter(prefix="/operator", tags=["operator"])
@@ -882,20 +891,64 @@ def create_operator_router(
             },
         )
 
+        def priceops_read_owner(request: Request) -> Any:
+            from apps.api.app.routes.priceops import priceops_plan_in_scope
+            from modules.opsboard.application.priceops_read_scope import (
+                ScopedPriceOpsReadRepository,
+            )
+
+            principal = request.state.operator_principal
+            owner = require_tenant_repository(priceops_repository_for_tenant, "priceops_repository", principal.tenant_id)
+            scope = principal.scope
+            if (scope.brand_ids or scope.region_ids or scope.store_ids) and (
+                priceops_store_repository is None or priceops_brand_repository is None
+            ):
+                from fastapi import HTTPException
+
+                raise HTTPException(status_code=503, detail={
+                    "code": "PRICEOPS_STORE_BINDING_UNAVAILABLE",
+                    "message": "Canonical pricing ownership is unavailable",
+                })
+            plans = [plan for plan in owner.list_plans() if priceops_plan_in_scope(
+                plan, principal, store_repository=priceops_store_repository,
+                brand_repository=priceops_brand_repository, require_tenant=True,
+                scope_module="operator_console",
+            )]
+            return ScopedPriceOpsReadRepository(owner, plans)
+
+        def growth_read_service(request: Request) -> GrowthService:
+            from modules.opsboard.application.priceops_read_scope import project_growth_read_state
+
+            tenant_id = request.state.operator_principal.tenant_id
+            owner = priceops_read_owner(request)
+            state = project_growth_read_state(growth_state_repository.load(tenant_id), owner.list_plans())
+            return GrowthService(initial_state=state, audit_log=active_audit_log, seed_fixtures=False,
+                                 priceops_repository=owner, tenant_id=tenant_id, require_canonical=True)
+
         def governance_factory(
             state: dict[str, Any] | None,
             tenant_id: str,
+            *,
+            read_owner: Any | None = None,
         ) -> GovernanceService:
+            from modules.opsboard.application.priceops_read_scope import (
+                project_governance_read_state,
+                project_growth_read_state,
+            )
+
+            growth_state = growth_state_repository.load(tenant_id)
+            if read_owner is not None:
+                growth_state = project_growth_read_state(growth_state, read_owner.list_plans())
+                state = project_governance_read_state(state, read_owner.list_plans(), growth_state)
+            priceops_owner = read_owner if read_owner is not None else require_tenant_repository(
+                priceops_repository_for_tenant, "priceops_repository", tenant_id,
+            )
             return GovernanceService(
                 growth_service=GrowthService(
-                    initial_state=growth_state_repository.load(tenant_id),
+                    initial_state=growth_state,
                     audit_log=active_audit_log,
                     seed_fixtures=False,
-                    priceops_repository=require_tenant_repository(
-                        priceops_repository_for_tenant,
-                        "priceops_repository",
-                        tenant_id,
-                    ),
+                    priceops_repository=priceops_owner,
                     tenant_id=tenant_id,
                     require_canonical=True,
                 ),
@@ -917,11 +970,7 @@ def create_operator_router(
                     "netplan_repository",
                     tenant_id,
                 ),
-                priceops_repository=require_tenant_repository(
-                    priceops_repository_for_tenant,
-                    "priceops_repository",
-                    tenant_id,
-                ),
+                priceops_repository=priceops_owner,
                 tenant_id=tenant_id,
                 require_canonical=True,
             )
@@ -945,6 +994,11 @@ def create_operator_router(
             },
             after_save=save_governance_growth,
         )
+
+        def governance_read_service(request: Request) -> GovernanceService:
+            tenant_id = request.state.operator_principal.tenant_id
+            return governance_factory(governance_state_repository.load(tenant_id), tenant_id,
+                                      read_owner=priceops_read_owner(request))
 
         def network_read_scope_snapshot(request: Request) -> dict[str, Any]:
             principal = request.state.operator_principal
@@ -1036,6 +1090,7 @@ def create_operator_router(
                     "intervention", Action.EXECUTE, engine=authz_engine
                 ),
                 service_resolver=growth_resolver,
+                read_service_resolver=growth_read_service,
             )
         )
         router.include_router(
@@ -1049,6 +1104,7 @@ def create_operator_router(
                     "intervention", Action.CREATE, engine=authz_engine
                 ),
                 service_resolver=governance_resolver,
+                read_service_resolver=governance_read_service,
             )
         )
         from apps.api.app.routes.operator_modules.users_roles import (
@@ -1252,7 +1308,7 @@ def create_operator_router(
     )
 
     # Growth — reads require Operator Console view, writes require intervention CREATE.
-    growth_svc = growth_service or GrowthService()
+    growth_svc = local_growth_service
     router.include_router(
         create_growth_sub_router(
             growth_svc,
@@ -1275,11 +1331,9 @@ def create_operator_router(
     from apps.api.app.routes.operator_modules.governance import (
         create_governance_sub_router,
     )
-    from modules.opsboard.application.governance import GovernanceService
-
     router.include_router(
         create_governance_sub_router(
-            GovernanceService(growth_service=growth_svc),
+            local_governance_service,
             require_view_permission_fn=operator_view_guard,
             require_decision_permission_fn=require_operator_permission(
                 "intervention", Action.APPROVE, engine=authz_engine

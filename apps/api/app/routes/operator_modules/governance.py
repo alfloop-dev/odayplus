@@ -126,6 +126,7 @@ def create_governance_sub_router(
     require_decision_permission_fn: Any = None,
     require_export_permission_fn: Any = None,
     service_resolver: Any = None,
+    read_service_resolver: Any = None,
 ) -> APIRouter:
     """Return the Govern sub-router wired to a shared GovernanceService."""
     router = APIRouter(prefix="/governance", tags=["operator-governance"])
@@ -161,7 +162,7 @@ def create_governance_sub_router(
         request: Request,
         x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
     ) -> dict[str, Any]:
-        snapshot = resolve_service(request, service, service_resolver).snapshot(
+        snapshot = resolve_service(request, service, read_service_resolver or service_resolver).snapshot(
             role_id=getattr(request.state, "operator_role_id", None) or x_operator_role,
             correlation_id=request.state.correlation_id,
         )
@@ -170,7 +171,7 @@ def create_governance_sub_router(
     @router.get("/evidence-packages", dependencies=read_deps)
     def list_evidence_packages(request: Request) -> dict[str, Any]:
         snap = resolve_service(
-            request, service, service_resolver
+            request, service, read_service_resolver or service_resolver
         ).snapshot(correlation_id=request.state.correlation_id)
         items = snap["evidencePackages"]
         return {
@@ -191,6 +192,10 @@ def create_governance_sub_router(
     ) -> dict[str, Any]:
         try:
             principal, role = verified_actor(request)
+            if read_service_resolver is not None:
+                visible = resolve_service(request, service, read_service_resolver).snapshot()
+                if not any(row["id"] == body.approvalId for row in visible["approvals"]):
+                    raise GovernanceNotFound("approval unavailable")
             return resolve_service(request, service, service_resolver).decide(
                 approval_id=body.approvalId,
                 action=body.action,

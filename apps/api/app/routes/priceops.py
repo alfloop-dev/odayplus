@@ -68,6 +68,75 @@ else:
     logger = logging.getLogger("oday-api.priceops")
 
 
+    def canonical_priceops_store(item: Any, expected_tenant: str | None, *,
+                                 store_repository: Any, brand_repository: Any,
+                                 production_required: bool = False) -> Any:
+        if store_repository is None and brand_repository is None and not production_required:
+            return None
+        try:
+            store = store_repository.get_store(item.store_id)
+            if store is None or not store.is_current or store.tenant_id != expected_tenant:
+                return None
+            brand = brand_repository.get_brand(store.brand_id)
+            if brand is None or brand.tenant_id != expected_tenant:
+                return None
+            return store
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail={
+                "code": "PRICEOPS_STORE_BINDING_UNAVAILABLE",
+                "message": "Canonical pricing ownership is unavailable",
+            }) from exc
+
+
+    def priceops_items_in_scope(items: Any, principal: Any, expected_tenant: str | None, *,
+                                store_repository: Any = None, brand_repository: Any = None,
+                                production_required: bool = False,
+                                scope_module: str = "priceops") -> bool:
+        """Share object axes while retaining the caller's existing module guard.
+
+        Native routes use priceops. Operator projections use operator_console,
+        the module their existing read guard verifies; this is not another
+        business-role or native PriceOps operation grant.
+        """
+        from shared.auth import DataClassification
+
+        scope = principal.scope
+        if not (
+            scope.permits_module(scope_module)
+            and scope.permits_classification(DataClassification.CONFIDENTIAL)
+            and scope.permits_assigned_area(None)
+            and scope.permits_heat_zone(None)
+        ):
+            return False
+        for item in items:
+            store = canonical_priceops_store(item, expected_tenant, store_repository=store_repository,
+                                             brand_repository=brand_repository,
+                                             production_required=production_required)
+            canonical_required = store_repository is not None or brand_repository is not None or production_required
+            if canonical_required and (store is None or item.brand_id != store.brand_id):
+                return False
+            brand_id = store.brand_id if store is not None else item.brand_id
+            region_id = (store.region_code or None) if store is not None else None
+            if not (scope.permits_store(item.store_id)
+                    and scope.permits_brand(brand_id)
+                    and scope.permits_region(region_id)):
+                return False
+        return True
+
+
+    def priceops_plan_in_scope(plan: Any, principal: Any, *, store_repository: Any = None,
+                               brand_repository: Any = None, production_required: bool = False,
+                               require_tenant: bool = False, scope_module: str = "priceops") -> bool:
+        scope = principal.scope
+        if scope.tenant_id and plan.tenant_id != scope.tenant_id:
+            return False
+        if require_tenant and not scope.tenant_id:
+            return False
+        return priceops_items_in_scope(plan.items, principal, plan.tenant_id,
+                                       store_repository=store_repository, brand_repository=brand_repository,
+                                       production_required=production_required, scope_module=scope_module)
+
+
     class PriceOpsPlanItemPayload(BaseModel):
         item_id: str | None = None
         store_id: str = Field(min_length=1)
@@ -369,53 +438,19 @@ else:
             return "__local__"
 
         def canonical_store(item: Any, expected_tenant: str | None) -> Any:
-            if store_repository is None and brand_repository is None and not production_required:
-                return None
-            try:
-                store = store_repository.get_store(item.store_id)
-                if store is None or not store.is_current or store.tenant_id != expected_tenant:
-                    return None
-                brand = brand_repository.get_brand(store.brand_id)
-                if brand is None or brand.tenant_id != expected_tenant:
-                    return None
-                return store
-            except Exception as exc:
-                raise HTTPException(status_code=503, detail={
-                    "code": "PRICEOPS_STORE_BINDING_UNAVAILABLE",
-                    "message": "Canonical pricing ownership is unavailable",
-                }) from exc
+            return canonical_priceops_store(item, expected_tenant, store_repository=store_repository,
+                                             brand_repository=brand_repository,
+                                             production_required=production_required)
 
         def items_in_scope(items: Any, principal: Any, expected_tenant: str | None) -> bool:
-            scope = principal.scope
-            if not (
-                scope.permits_module("priceops")
-                and scope.permits_classification(DataClassification.CONFIDENTIAL)
-                and scope.permits_assigned_area(None)
-                and scope.permits_heat_zone(None)
-            ):
-                return False
-            for item in items:
-                store = canonical_store(item, expected_tenant)
-                canonical_required = store_repository is not None or brand_repository is not None or production_required
-                if canonical_required and (
-                    store is None or item.brand_id != store.brand_id
-                ):
-                    return False
-                brand_id = store.brand_id if store is not None else item.brand_id
-                region_id = (store.region_code or None) if store is not None else None
-                if not (scope.permits_store(item.store_id)
-                        and scope.permits_brand(brand_id)
-                        and scope.permits_region(region_id)):
-                    return False
-            return True
+            return priceops_items_in_scope(items, principal, expected_tenant,
+                                           store_repository=store_repository, brand_repository=brand_repository,
+                                           production_required=production_required)
 
         def plan_in_scope(plan: Any, principal: Any) -> bool:
-            scope = principal.scope
-            if scope.tenant_id and plan.tenant_id != scope.tenant_id:
-                return False
-            if (durable_commands_required or production_required) and not scope.tenant_id:
-                return False
-            return items_in_scope(plan.items, principal, plan.tenant_id)
+            return priceops_plan_in_scope(plan, principal, store_repository=store_repository,
+                                          brand_repository=brand_repository, production_required=production_required,
+                                          require_tenant=durable_commands_required or production_required)
 
         def require_proposal_scope(body: PriceOpsPlanPayload, request: Request) -> None:
             principal = request.state.operator_principal
