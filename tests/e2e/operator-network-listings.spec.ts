@@ -54,6 +54,10 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
       page.getByTestId("network-find-areas-workspace"),
     ).toBeVisible();
     await expect(page.getByTestId("network-expansion-stepper")).toBeVisible();
+    // The fixture workflow needs both current API snapshots before its steps settle.
+    await expect(page.getByTestId("network-workflow-context-notice")).toHaveCount(
+      0, { timeout: 15_000 },
+    );
     await expect(page.getByTestId("network-step-find")).toContainText(
       "completed",
     );
@@ -402,6 +406,8 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
   test("an in-flight merge cannot be dismissed and retries reuse one idempotency key", async ({
     page,
   }) => {
+    // Both attempts revalidate the actor and current records before dispatch.
+    test.setTimeout(60_000);
     await openRadarAsExpansionManager(page);
 
     // Hold the merge response open so the in-flight state is observable, and
@@ -436,6 +442,10 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await page.getByTestId("listing-merge-risk-ack").click();
     await page.getByTestId("listing-merge-submit").click();
 
+    // Busy starts before the actor/current-state checks finish. Wait for the
+    // actual held POST before asserting behavior while its response is pending.
+    await expect.poll(() => sentKeys.length, { timeout: 15_000 }).toBe(1);
+
     // In flight: the write cannot be dismissed by button, Escape, or backdrop.
     await expect(page.getByTestId("listing-merge-submit")).toBeDisabled();
     await expect(page.getByTestId("listing-merge-cancel")).toBeDisabled();
@@ -456,7 +466,9 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     expect(sentKeys).toHaveLength(1);
 
     release?.();
-    await expect(page.getByTestId("listing-merge-error")).toBeVisible();
+    await expect(page.getByTestId("listing-merge-error")).toBeVisible({
+      timeout: 15_000,
+    });
     // The dialog stayed open and kept the operator's reason.
     await expect(page.getByTestId("listing-merge-reason")).toHaveValue(
       OPERATOR_REASON,
@@ -464,9 +476,12 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
 
     // Retry the same logical merge; it must carry the SAME idempotency key.
     await page.getByTestId("listing-merge-submit").click();
-    await expect(page.getByTestId("listing-merge-dialog")).toBeHidden();
+    await expect(page.getByTestId("listing-merge-dialog")).toBeHidden({
+      timeout: 15_000,
+    });
     await expect(page.getByTestId("listing-row-L-2029")).toContainText(
       "merged into L-2025",
+      { timeout: 15_000 },
     );
 
     expect(sentKeys).toHaveLength(2);
