@@ -124,6 +124,29 @@ class LocalAppendOnlyWormSink:
             payload=record.to_dict(),
         )
 
+    def lookup_retained_evidence(self, record: Any) -> AuditWormReceipt | None:
+        """Recover only the exact retained immutable object after a lost response."""
+        checksum = sha256_hex(record.to_dict())
+        path = self._root / _object_name(record_type="retained-evidence", record_id=record.export_id,
+                                         sequence=record.sequence, checksum=checksum)
+        if not path.exists():
+            return None
+        try:
+            envelope = json.loads(path.read_text(encoding="utf-8"))
+            written_at = datetime.fromisoformat(envelope["written_at"])
+            if (envelope.get("record_type") != "retained-evidence"
+                    or envelope.get("record_id") != record.export_id
+                    or type(envelope.get("sequence")) is not type(record.sequence)
+                    or envelope.get("sequence") != record.sequence
+                    or envelope.get("checksum") != checksum
+                    or envelope.get("payload") != record.to_dict()
+                    or written_at.utcoffset() is None):
+                raise ValueError("Retained immutable bytes differ")
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            raise AuditWormSinkError("Existing WORM object does not match retained evidence") from exc
+        return AuditWormReceipt(self.sink_id, path.resolve().as_uri(), "retained-evidence",
+                                record.export_id, checksum, written_at)
+
     def _write(
         self,
         *,
@@ -222,6 +245,21 @@ class GcsWormEvidenceSink:
             payload=record.to_dict(),
         )
 
+    def lookup_retained_evidence(self, record: Any) -> AuditWormReceipt | None:
+        """Read only with the existing explicit recovery credential, never writer."""
+        if not (self._recovery_token or os.environ.get("ODP_AUDIT_WORM_GCS_RECOVERY_TOKEN", "").strip()):
+            return None
+        checksum = sha256_hex(record.to_dict())
+        name = _object_name(record_type="retained-evidence", record_id=record.export_id,
+                            sequence=record.sequence, checksum=checksum)
+        if self._prefix:
+            name = self._prefix + "/" + name
+        return self._recover_existing(object_name=name, record_type="retained-evidence",
+                                      record_id=record.export_id, sequence=record.sequence,
+                                      checksum=checksum,
+                                      max_response_bytes=len(canonical_json(record.to_dict()).encode()) + 4096,
+                                      missing_ok=True)
+
     def _write(
         self,
         *,
@@ -307,7 +345,8 @@ class GcsWormEvidenceSink:
         sequence: int | None,
         checksum: str,
         max_response_bytes: int,
-    ) -> AuditWormReceipt:
+        missing_ok: bool = False,
+    ) -> AuditWormReceipt | None:
         token = (
             self._recovery_token
             if self._recovery_token is not None
@@ -335,6 +374,8 @@ class GcsWormEvidenceSink:
                 envelope = json.loads(data)
         except urllib.error.HTTPError as exc:
             exc.close()
+            if missing_ok and exc.code == 404:
+                return None
             raise AuditWormSinkError(
                 f"GCS WORM recovery read failed with HTTP {exc.code}"
             ) from exc

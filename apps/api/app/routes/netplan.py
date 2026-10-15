@@ -9,6 +9,10 @@ from models.shared_ml import (
     production_execution_required,
 )
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.infrastructure.persistence.feature_flags import (
+    FeatureFlagOperationDisabled,
+    FeatureFlagStoreUnavailable,
+)
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -90,6 +94,8 @@ else:
         approval_verifier: ManagementApprovalReceiptVerifier | None = None,
         policy_repository: Any = None,
         runtime_mode: str | None = None,
+        feature_flags: Any | None = None,
+        job_queue: Any | None = None,
     ) -> APIRouter:
         from apps.api.app.routes._common import runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
@@ -109,6 +115,7 @@ else:
                 approval_verifier=approval_verifier,
                 policy_repository=policy_repository,
                 runtime_mode=runtime_mode,
+                feature_flags=feature_flags, job_queue=job_queue,
             )
         except ProductionExecutionConfigurationError as exc:
             composition_error = exc
@@ -353,6 +360,10 @@ else:
     ) -> dict[str, Any]:
         try:
             result = action()
+        except FeatureFlagOperationDisabled as exc:
+            raise HTTPException(status_code=403, detail="FEATURE_FLAG_DISABLED") from exc
+        except FeatureFlagStoreUnavailable as exc:
+            raise HTTPException(status_code=503, detail="FEATURE_FLAG_STORE_UNAVAILABLE") from exc
         except NetPlanNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except (NetPlanApprovalError, ValueError) as exc:

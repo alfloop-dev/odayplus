@@ -14,6 +14,12 @@ from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+from modules.adlift.domain.campaign import (
+    CampaignConflict,
+    CampaignForbidden,
+    CampaignInvalid,
+    CampaignUnavailable,
+)
 from modules.intervention.application.approval_contract import (
     InterventionOwnerIntegrityError,
     approval_read_context,
@@ -336,6 +342,22 @@ else:
                 if getattr(audit, "_worm_sink", None) is not None:
                     delivery = DurableAuditDelivery(engine, verified_tenant, queue, audit._worm_sink)
                     stack.enter_context(audit.transactional_worm_sink(delivery))
+                budget_owner = active_workflow.campaign_budget_authority
+                if budget_owner is not None and budget_owner.touches_native_command(scope, payload):
+                    if budget_owner.boundary is None:
+                        raise HTTPException(401, detail="CAMPAIGN_AUTH_BOUNDARY_REQUIRED")
+                    command = scope.rsplit(":", 1)[-1]
+                    from modules.intervention.application.lifecycle_command_contract import (
+                        COMMAND_ACTIONS,
+                    )
+                    budget_action = Action.APPROVE if command == "decision" else Action[COMMAND_ACTIONS.get(command, "CREATE")]
+                    trusted = require_permission("intervention", budget_action,
+                        engine=authz_engine, boundary=budget_owner.boundary)(request)
+                    if trusted != principal:
+                        raise HTTPException(409, detail="CAMPAIGN_NATIVE_AUTH_CONTEXT_CHANGED")
+                    stack.enter_context(budget_owner.native_command_context(principal=trusted,
+                        scope=scope, payload=payload, correlation_id=request.state.correlation_id,
+                        native_repository=repo, actual_queue=queue))
                 # Resolve and authorize the locked canonical store before any
                 # command reservation or replay; its tenant must match this
                 # Principal, including when a WORM outbox is bound above.
@@ -448,6 +470,14 @@ else:
                 ) from exc
             except HTTPException:
                 raise
+            except CampaignForbidden as exc:
+                raise HTTPException(403, detail="CAMPAIGN_NATIVE_PERMISSION_DENIED") from exc
+            except CampaignConflict as exc:
+                raise HTTPException(409, detail="CAMPAIGN_NATIVE_CONTEXT_CONFLICT") from exc
+            except CampaignInvalid as exc:
+                raise HTTPException(422, detail="CAMPAIGN_NATIVE_INPUT_INVALID") from exc
+            except CampaignUnavailable as exc:
+                raise HTTPException(503, detail="CAMPAIGN_NATIVE_OWNER_UNAVAILABLE") from exc
             except Exception as exc:
                 if strict_scope:
                     raise HTTPException(503, detail="INTERVENTION_COMMAND_TRANSACTION_FAILED") from exc
@@ -579,6 +609,14 @@ else:
                 raise HTTPException(503, detail="DURABLE_COMMAND_STORE_UNAVAILABLE") from exc
             except HTTPException:
                 raise
+            except CampaignForbidden as exc:
+                raise HTTPException(403, detail="CAMPAIGN_NATIVE_PERMISSION_DENIED") from exc
+            except CampaignConflict as exc:
+                raise HTTPException(409, detail="CAMPAIGN_NATIVE_CONTEXT_CONFLICT") from exc
+            except CampaignInvalid as exc:
+                raise HTTPException(422, detail="CAMPAIGN_NATIVE_INPUT_INVALID") from exc
+            except CampaignUnavailable as exc:
+                raise HTTPException(503, detail="CAMPAIGN_NATIVE_OWNER_UNAVAILABLE") from exc
             except Exception as exc:
                 raise HTTPException(503, detail="INTERVENTION_COMMAND_TRANSACTION_FAILED") from exc
             return apply_replay_marker(outcome.value, replayed=outcome.replayed)

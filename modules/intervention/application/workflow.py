@@ -133,11 +133,13 @@ class InterventionWorkflow:
         audit_log: InMemoryAuditLog | None = None,
         label_hooks: Iterable[LabelRegistryHook] | None = None,
         policy_version: str = POLICY_VERSION,
+        campaign_budget_authority: Any = None,
     ) -> None:
         self.repository = repository or InMemoryInterventionRepository()
         self.audit_log = audit_log or InMemoryAuditLog()
         self.label_hooks: list[LabelRegistryHook] = list(label_hooks or ())
         self.policy_version = policy_version
+        self.campaign_budget_authority = campaign_budget_authority
         self._lifecycle_transition: ContextVar[_VerifiedLifecycleTransition | None] = ContextVar(
             "intervention_lifecycle_transition", default=None
         )
@@ -209,6 +211,12 @@ class InterventionWorkflow:
         intervention_id: str | None = None,
     ) -> Intervention:
         resolved_kind = InterventionKind(kind)
+        if self.campaign_budget_authority is not None:
+            action_spec = self.campaign_budget_authority.prepare_action(kind=resolved_kind,
+                store_id=store_id, action_spec=action_spec)
+        elif any(key in (action_spec or {}) for key in ("campaign_budget_proposal", "campaign_budget_binding")):
+            from modules.adlift.domain.campaign import CampaignUnavailable
+            raise CampaignUnavailable("CAMPAIGN_CANONICAL_NATIVE_OWNER_REQUIRED")
         intervention = new_intervention(
             store_id=store_id,
             kind=resolved_kind,
@@ -231,6 +239,8 @@ class InterventionWorkflow:
             correlation_id=correlation_id,
             reason=f"intervention candidate {resolved_kind.value}",
         )
+        if self.campaign_budget_authority is not None:
+            self.campaign_budget_authority.register_case(intervention)
         return intervention
 
     # -- assignment -------------------------------------------------------
@@ -374,6 +384,12 @@ class InterventionWorkflow:
         intervention = self._require(intervention_id)
         self._require_status(intervention, {InterventionStatus.ELIGIBLE}, "propose action")
         merged = {**intervention.action_spec, **action_spec}
+        if self.campaign_budget_authority is not None:
+            merged = self.campaign_budget_authority.prepare_action(kind=intervention.kind,
+                store_id=intervention.store_id, action_spec=merged, existing=intervention)
+        elif any(key in merged for key in ("campaign_budget_proposal", "campaign_budget_binding")):
+            from modules.adlift.domain.campaign import CampaignUnavailable
+            raise CampaignUnavailable("CAMPAIGN_CANONICAL_NATIVE_OWNER_REQUIRED")
         updated = intervention.with_transition(
             to_status=InterventionStatus.ACTION_PROPOSED,
             actor=actor,
@@ -391,6 +407,8 @@ class InterventionWorkflow:
             correlation_id=correlation_id,
             reason="action candidate built",
         )
+        if self.campaign_budget_authority is not None:
+            self.campaign_budget_authority.register_case(updated)
         return updated
 
     # -- conflict control -------------------------------------------------
@@ -553,6 +571,11 @@ class InterventionWorkflow:
                 raise InterventionError(
                     "approval and rejection are high-risk and require a reason"
                 )
+            if self.campaign_budget_authority is not None:
+                self.campaign_budget_authority.before_decision(intervention, approved=approved)
+            elif approved and "campaign_budget_binding" in intervention.action_spec:
+                from modules.adlift.domain.campaign import CampaignUnavailable
+                raise CampaignUnavailable("CAMPAIGN_CANONICAL_NATIVE_OWNER_REQUIRED")
             record = ApprovalRecord(
                 approved=approved,
                 actor_id=actor,
@@ -585,6 +608,8 @@ class InterventionWorkflow:
                 correlation_id=correlation_id,
                 reason=reason,
             )
+            if self.campaign_budget_authority is not None:
+                self.campaign_budget_authority.after_decision(updated, approved=approved)
             return updated
 
     # -- execution + observation window -----------------------------------
@@ -601,6 +626,11 @@ class InterventionWorkflow:
         self._require_status(intervention, {InterventionStatus.APPROVED}, "execute")
         if intervention.approval is None or not intervention.approval.approved:
             raise InterventionError("execution requires a recorded approval")
+        if self.campaign_budget_authority is not None:
+            self.campaign_budget_authority.before_execute(intervention)
+        elif "campaign_budget_binding" in intervention.action_spec:
+            from modules.adlift.domain.campaign import CampaignUnavailable
+            raise CampaignUnavailable("CAMPAIGN_CANONICAL_NATIVE_OWNER_REQUIRED")
         opened_at = executed_at or datetime.now(UTC)
         execution = ExecutionRecord(
             execution_id=f"intervention-exec-{uuid4()}",
@@ -643,6 +673,8 @@ class InterventionWorkflow:
                 "label_maturity_time": window.maturity_time.isoformat(),
             },
         )
+        if self.campaign_budget_authority is not None:
+            self.campaign_budget_authority.after_execute(observing)
         return observing
 
     # -- outcome collection ----------------------------------------------

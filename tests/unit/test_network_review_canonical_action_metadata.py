@@ -25,22 +25,30 @@ from shared.infrastructure.persistence.repositories import (
     DurableSiteScoreRepository,
 )
 from shared.workflow.sitescore import DecisionAction, SiteScoreDecisionWorkflow
+from tests.integration._operation_flag_fixtures import (
+    SITE_GO_FLAG,
+    enable_operation_flag,
+    new_operation_flags,
+)
 from tests.unit.test_network_canonical_review_projection import report
 
 TENANT = "offline-review-metadata-tenant"
 ACTOR = "offline-authorized-reviewer"
 
 
-def components(path):
+def components(path, *, go_enabled=False):
     engine = SqliteEngine(path)
     store = TenantScopedDocumentStore(SqliteDocumentStore(engine), TENANT)
     scores = DurableSiteScoreRepository(store)
     decisions = DurableDecisionStore(store)
     audit = DurableAuditLog(engine)
     workflow = SiteScoreDecisionWorkflow(store=decisions, audit_log=audit)
+    owner, queue = new_operation_flags(engine)
+    if go_enabled:
+        enable_operation_flag(owner, key=SITE_GO_FLAG, tenant_id=TENANT, queue=queue, audit_log=audit)
     service = NetworkReviewService(seed_fixtures=False, require_canonical=True,
                                   decision_repository=decisions, sitescore_repository=scores,
-                                  decision_workflow=workflow)
+                                  decision_workflow=workflow, feature_flags=owner, job_queue=queue)
     return engine, scores, decisions, audit, workflow, service
 
 
@@ -56,7 +64,7 @@ def decision_args(decision_id, action):
 @pytest.mark.parametrize("action", ["GO", "WAIT", "RETURN", "REJECT"])
 def test_actual_action_metadata_survives_restart_and_frozen_report_change(tmp_path, action):
     path = tmp_path / "metadata.sqlite"
-    engine, scores, decisions, audit, workflow, service = components(path)
+    engine, scores, decisions, audit, workflow, service = components(path, go_enabled=action == "GO")
     frozen = scores.save_report(report())
     decision = workflow.open_decision(frozen, created_by="offline-author", tenant_id=TENANT)
     result = service.decide_review(**decision_args(decision.decision_id, action))
@@ -159,7 +167,7 @@ def install_real_related_producers(engine, decisions, workflow, service):
     ("RETURN", "needdata", "returned"), ("REJECT", "rejected", "rejected"),
 ])
 def test_actual_review_candidate_and_own_approval_documents(action, operator_status, approval_status, tmp_path):
-    engine, scores, decisions, _, workflow, service = components(tmp_path / "related.sqlite")
+    engine, scores, decisions, _, workflow, service = components(tmp_path / "related.sqlite", go_enabled=action == "GO")
     approvals, intake, candidate_service = install_real_related_producers(engine, decisions, workflow, service)
     frozen = scores.save_report(report())
     decision = workflow.open_decision(frozen, created_by="offline-author", tenant_id=TENANT)

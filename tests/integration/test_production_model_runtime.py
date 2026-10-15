@@ -9,6 +9,8 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
+from tests.integration._model_publish_flag_fixture import enable_model_publish
+
 pytest.importorskip(
     "lightgbm",
     reason="production model runtime verification requires LightGBM",
@@ -197,6 +199,7 @@ def _registered_governed_runtime(
         artifact_store=DurableArtifactStore(repository._store),
         runtime_mode="test",
     )
+    enable_model_publish(service, tenant_id='tenant-a')
     model = repository.get_model_version(SITESCORE_MODEL_NAME, "2026.07.24")
     rows = _training_rows()
     service.register_dataset_snapshot(

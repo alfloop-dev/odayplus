@@ -59,6 +59,11 @@ from solver.netplan import (
     solve_network_plan,
 )
 from tests.integration._authz import auth_headers
+from tests.integration._operation_flag_fixtures import (
+    NETPLAN_MOVE_EXIT_FLAG,
+    enable_operation_flag,
+    new_operation_flags,
+)
 
 MOMENT = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
 APPROVAL_SOURCE = "management-approval-system"
@@ -527,6 +532,13 @@ def test_service_lifecycle_tracks_approval_execution_and_outcome() -> None:
         acknowledged_at=MOMENT,
     )
     service.submit_for_approval(scenario.scenario_id, actor="network-planner", occurred_at=MOMENT)
+    # Only an actual selected MOVE/EXIT needs this explicit go-live premise.
+    # An unselected MOVE option or a KEEP/OPEN/IMPROVE solve stays disabled.
+    if any(action.action in {NetworkAction.MOVE, NetworkAction.EXIT}
+           for action in repository.get_solve(scenario.scenario_id).result.selected_actions):
+        service.feature_flags, service.job_queue = new_operation_flags()
+        enable_operation_flag(service.feature_flags, key=NETPLAN_MOVE_EXIT_FLAG,
+                              tenant_id=NETPLAN_TENANT_ID, queue=service.job_queue)
     approval = service.decide(
         scenario.scenario_id,
         actor_id=APPROVAL_PRINCIPAL,
@@ -701,6 +713,13 @@ def test_execution_api_revalidates_solve_after_authentic_approval(
     repository, service, scenario_id, authority_receipt = (
         _pending_authoritative_service()
     )
+    # Only an actual selected MOVE/EXIT needs this explicit go-live premise.
+    # An unselected MOVE option or a KEEP/OPEN/IMPROVE solve stays disabled.
+    if any(action.action in {NetworkAction.MOVE, NetworkAction.EXIT}
+           for action in repository.get_solve(scenario_id).result.selected_actions):
+        service.feature_flags, service.job_queue = new_operation_flags()
+        enable_operation_flag(service.feature_flags, key=NETPLAN_MOVE_EXIT_FLAG,
+                              tenant_id=NETPLAN_TENANT_ID, queue=service.job_queue)
     approval = service.decide(
         scenario_id,
         actor_id=APPROVAL_PRINCIPAL,

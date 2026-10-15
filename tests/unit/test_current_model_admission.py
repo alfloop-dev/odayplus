@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from models.shared_ml.production_runtime import MlflowProductionModelRuntime
+from tests.integration._model_publish_flag_fixture import enable_model_publish
 
 _postgres = pytest.mark.skipif(
     not os.environ.get("INTAKE_TEST_DATABASE_URL"),
@@ -233,6 +234,7 @@ def released_pg_model(intake_blank_db, tmp_path, monkeypatch):
             engine, worm_sink=LocalAppendOnlyWormSink(tmp_path / "local-worm")
         ),
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     model = release_fixtures.prepare_candidate(
         service,
         "1.0.0",

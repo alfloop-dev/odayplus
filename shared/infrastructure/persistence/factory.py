@@ -98,6 +98,7 @@ class PersistenceBundle:
     forecastops_policy_repository: Any = None
     current_model_admission: Any = None
     feature_flag_registry: Any = None
+    adlift_campaign_repository: Any = None
 
 
     @property
@@ -155,6 +156,7 @@ class PersistenceBundle:
                 decision_workflow=SiteScoreDecisionWorkflow(store=decisions, audit_log=self.audit_log,
                     approval_store=DurableApprovalRepository(scoped), hooks=hooks),
                 candidate_workflow_service=candidate,
+                feature_flags=self.feature_flag_registry, job_queue=self.job_queue,
                 audit_delivery_factory=lambda tid: DurableAuditDelivery(self.engine, tid, self.job_queue, self.audit_log._worm_sink))
         return DurableTenantServiceResolver(DurableOperatorDomainStateRepository(store, "network-reviews"),
             factory=factory, exporter=lambda value: value.export_state(),
@@ -358,6 +360,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
 def _durable_bundle(
     db_path: str | Path, *, worm_sink: AuditWormSink | None = None
 ) -> PersistenceBundle:
+    from modules.adlift.infrastructure.campaign_repository import DurableAdLiftCampaignRepository
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
@@ -442,6 +445,7 @@ def _durable_bundle(
         priceops_repository=DurablePriceOpsRepository(store),
         sitescore_repository=DurableSiteScoreRepository(store),
         adlift_repository=DurableAdLiftRepository(store),
+        adlift_campaign_repository=DurableAdLiftCampaignRepository(store),
         store_ops_repository=DurableStoreOpsRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),
@@ -480,6 +484,7 @@ def _postgres_bundle(
     *,
     worm_sink: AuditWormSink | None = None,
 ) -> PersistenceBundle:
+    from modules.adlift.infrastructure.campaign_repository import DurableAdLiftCampaignRepository
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
@@ -606,6 +611,7 @@ def _postgres_bundle(
         ),
         sitescore_repository=DurableSiteScoreRepository(store),
         adlift_repository=DurableAdLiftRepository(store),
+        adlift_campaign_repository=DurableAdLiftCampaignRepository(store),
         store_ops_repository=DurableStoreOpsRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),

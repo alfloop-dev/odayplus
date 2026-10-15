@@ -42,6 +42,26 @@ def require_durable_flag_owner(owner: Any, engine: Any, *, queue: Any):
     return owner
 
 
+class FeatureFlagOperationDisabled(PermissionError):
+    """A real high-risk operation was refused before its business mutation."""
+
+
+def require_operation_feature_flag(key: str, *, owner: Any, engine: Any = None,
+                                   queue: Any = None, durable_required: bool = False) -> None:
+    """Read the explicitly bound owner; never substitute a process-global policy.
+
+    Durable operations require the same SQL owner and queue used by their
+    business composition. Only an explicitly injected memory registry is a
+    legitimate memory fixture; missing formal bindings remain unavailable.
+    """
+    if durable_required or engine is not None:
+        owner = require_durable_flag_owner(owner, engine, queue=queue)
+    elif not isinstance(owner, FeatureFlagRegistry):
+        raise FeatureFlagStoreUnavailable("Operation feature flag owner is unavailable")
+    if not owner.is_enabled(key, on=date.today()):
+        raise FeatureFlagOperationDisabled("FEATURE_FLAG_DISABLED")
+
+
 class FeatureFlagWriteConflict(RuntimeError):
     pass
 

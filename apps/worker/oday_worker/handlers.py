@@ -854,6 +854,7 @@ def build_default_registry() -> JobRegistry:
     )
     from apps.worker.consumers.canonical_audit import handle_canonical_audit_delivery
     from apps.worker.consumers.durable_audit import handle_durable_audit_delivery
+    from apps.worker.consumers.retained_evidence import handle_retained_evidence_delivery
     from apps.worker.consumers.store_ops_audit import handle_store_ops_audit_delivery
     from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
     from modules.opsboard.application.store_ops_audit_delivery import (
@@ -877,6 +878,7 @@ def build_default_registry() -> JobRegistry:
     registry.register(STORE_OPS_AUDIT_JOB_TYPE, handle_store_ops_audit_delivery)
     registry.register(CANONICAL_AUDIT_JOB_TYPE, handle_canonical_audit_delivery)
     registry.register(DURABLE_AUDIT_JOB_TYPE, handle_durable_audit_delivery)
+    registry.register("retained-evidence-delivery", handle_retained_evidence_delivery)
     registry.register(STORE_OPS_MATERIALIZE_JOB_TYPE, handle_store_ops_materialize)
     return registry
 

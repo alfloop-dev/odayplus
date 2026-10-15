@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from shared.infrastructure.persistence.factory import _durable_bundle
+from tests.integration._operation_flag_fixtures import SITE_GO_FLAG, enable_operation_flag
 
 pytest.importorskip("h3")  # listing geocode needs H3; skip when unavailable
 
@@ -137,6 +138,9 @@ def _heatzone_features() -> list[dict]:
 
 def test_expansion_flow_persists_across_restart(db_path) -> None:
     bundle = _durable_bundle(db_path)
+    enable_operation_flag(bundle.feature_flag_registry, key=SITE_GO_FLAG,
+                          tenant_id=HEADERS["x-tenant-id"], queue=bundle.job_queue,
+                          audit_log=bundle.audit_log)
     try:
         # Bind the real local batch producer to the same durable tenant store
         # used by the canonical review owner; no report is copied or fabricated.

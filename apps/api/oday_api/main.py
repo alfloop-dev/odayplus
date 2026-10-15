@@ -1983,10 +1983,20 @@ else:
             operator_document_store = SqliteDocumentStore(bundle.engine)
         else:
             operator_document_store = None
+        from modules.adlift.application.campaign import AdLiftCampaignService
+        from modules.adlift.application.campaign_authority import AdLiftCampaignBudgetAuthority
+        campaign_budget_authority = AdLiftCampaignBudgetAuthority(
+            campaigns=AdLiftCampaignService(repository=bundle.adlift_campaign_repository,
+                audit_log=audit_log, job_queue=job_queue,
+                store_repository=bundle.store_repository, brand_repository=bundle.brand_repository,
+                intervention_repository=intervention_repo),
+            interventions=intervention_repo, reports=adlift_repo,
+            flags=bundle.feature_flag_registry, boundary=default_boundary()) if bundle.is_durable else None
         interventions_workflow = intervention_workflow or InterventionWorkflow(
             repository=intervention_repo,
             audit_log=audit_log,
             label_hooks=[label_registry],
+            campaign_budget_authority=campaign_budget_authority,
         )
 
         from models.shared_ml import (
@@ -2143,10 +2153,15 @@ else:
                 require_production_model=require_live_data,
             ),
         )
+        from modules.opsboard.audit.application.evidence_general_factory import (
+            GeneralSiteScoreExportFactory,
+        )
         mount_versioned(
             api, create_audit_router(
                 audit_log=audit_log, evidence_store=evidence_store,
                 boundary=default_boundary(),
+                canonical_service_for_tenant=(GeneralSiteScoreExportFactory(bundle, audit_log=audit_log,
+                    evidence_store=evidence_store, queue=job_queue) if require_live_data else None),
             )
         )
         mount_versioned(
@@ -2277,6 +2292,7 @@ else:
             api,
             create_netplan_router(
                 repository=netplan_repo,
+                feature_flags=feature_flags, job_queue=job_queue,
                 audit_log=audit_log,
                 production_executor=netplan_production_executor,
                 approval_verifier=netplan_approval_verifier,
@@ -2288,6 +2304,7 @@ else:
             api,
             create_learninghub_router(
                 repository=learning_repo,
+                feature_flags=feature_flags, job_queue=job_queue,
                 artifact_store=model_artifacts,
                 audit_log=audit_log,
                 registry=learninghub_registry,
@@ -2343,6 +2360,11 @@ else:
                 job_queue=job_queue,
                 require_durable_jobs=require_live_data,
                 runtime_mode=domain_runtime_mode,
+                campaign_budget_authority=campaign_budget_authority,
+                campaign_repository=getattr(bundle, "adlift_campaign_repository", None),
+                store_repository=bundle.store_repository,
+                brand_repository=bundle.brand_repository,
+                boundary=None if campaign_budget_authority is None else campaign_budget_authority.boundary,
             ),
         )
         mount_versioned(
@@ -2461,6 +2483,7 @@ else:
                 audit_log=audit_log,
                 identity_user_role_service=identity_user_role_service,
                 document_store=operator_document_store,
+                feature_flags=feature_flags,
                 job_queue=job_queue,
                 listing_repository=listing_repository,
                 listing_repository_for_tenant=listing_repository_for_tenant,

@@ -119,6 +119,7 @@ def create_operator_router(
     audit_log: InMemoryAuditLog | None = None,
     document_store: Any | None = None,
     job_queue: Any | None = None,
+    feature_flags: Any | None = None,
     state_service: OperatorStateService | None = None,
     growth_service: GrowthService | None = None,
     listing_repository: Any | None = None,
@@ -827,6 +828,7 @@ def create_operator_router(
                 decision_workflow=SiteScoreDecisionWorkflow(audit_log=active_audit_log, store=decision_repository,
                                                           approval_store=DurableApprovalRepository(scoped_store)),
                 candidate_workflow_service=candidate_service, audit_delivery_factory=audit_delivery_factory,
+                feature_flags=feature_flags, job_queue=job_queue,
             )
 
         review_resolver = DurableTenantServiceResolver(
@@ -1144,7 +1146,7 @@ def create_operator_router(
         )
         router.include_router(
             create_network_review_sub_router(
-                NetworkReviewService(seed_fixtures=False),
+                NetworkReviewService(seed_fixtures=False, feature_flags=feature_flags, job_queue=job_queue),
                 audit_log=active_audit_log,
                 require_view_permission_fn=require_operator_permission(
                     "sitescore",
@@ -1338,7 +1340,7 @@ def create_operator_router(
     # allowlist. Candidate/Review/Approval/Decision/Audit sync atomically.
     router.include_router(
         create_network_review_sub_router(
-            NetworkReviewService(),
+            NetworkReviewService(feature_flags=feature_flags, job_queue=job_queue),
             audit_log=active_audit_log,            read_scope_snapshot_fn=local_network_read_scope_snapshot,
             require_view_permission_fn=require_operator_permission(
                 "sitescore",

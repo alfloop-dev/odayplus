@@ -28,6 +28,7 @@ from modules.opsboard.application.network_scoring import NetworkScoringService
 from shared.auth import Action
 from shared.domain.models import MEASUREMENT_MEASURED, MEASUREMENT_UNMEASURED
 from shared.workflow.sitescore import DecisionStatus
+from tests.integration._operation_flag_fixtures import SITE_GO_FLAG, enable_operation_flag
 from tests.unit.test_network_canonical_review_projection import report
 from tests.unit.test_network_review_canonical_action_metadata import (
     ACTOR,
@@ -70,6 +71,9 @@ def business_rows(engine):
 def actual_readback(path: Path, action: str, *, latest: int = 1, opened: bool = False, measured: bool = True,
                     other_first: bool = False, ambiguous_pending: bool = False):
     engine, scores, decisions, audit, workflow, reviews = components(path)
+    if action == "GO" or other_first:
+        enable_operation_flag(reviews._feature_flags, key=SITE_GO_FLAG, tenant_id=TENANT,
+                              queue=reviews._job_queue, audit_log=audit)
     approvals, intake, listings = install_real_related_producers(engine, decisions, workflow, reviews)
     repository = listings._listing_repository
     draft = repository.list_candidates()[0]

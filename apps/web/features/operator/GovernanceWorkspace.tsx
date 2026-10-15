@@ -41,6 +41,7 @@ import {
 } from "./operatorDataMode";
 import { ModelReleaseController } from "./governance/ModelReleaseController";
 import { DecisionCommentsPanel } from "./governance/DecisionCommentsPanel";
+import { CanonicalEvidencePanel } from "./governance/CanonicalEvidencePanel";
 import type { GovernanceTab, GovernanceViewState } from "./governance/governanceUrlState";
 
 /**
@@ -466,6 +467,8 @@ export function GovernanceWorkspace({
   const [auditCategory, setAuditCategory] = useState<GovernanceAuditCategory | "all">(viewState?.auditCategory ?? "all");
   const [lastAction, setLastAction] = useState("");
   const [localToast, setLocalToast] = useState<string | null>(null);
+
+  const [canonicalEvidenceDecisionId, setCanonicalEvidenceDecisionId] = useState<string | undefined>();
 
   // Evidence Package Form States
   const [evFrom, setEvFrom] = useState("2026-06-01");
@@ -1290,6 +1293,12 @@ export function GovernanceWorkspace({
                   <span>模型：<code>{decision.model ?? "n/a"}</code></span>
                   <span>資料快照：<code>{decision.datasetSnapshot ?? "n/a"}</code></span>
                   <span>關聯核准：<code>{decision.approvalId ?? "n/a"}</code></span>
+                  {!fixturesAllowed && decision.module === "SiteScore" && decisionAuthority.canExport ? (
+                    <button type="button" className={styles.downloadButton} onClick={() => {
+                      setCanonicalEvidenceDecisionId(decision.id);
+                      changeView({ tab: "evidencePackage" });
+                    }}>檢視此決策的匯出欄位</button>
+                  ) : null}
                 </footer>
               </article>
             ))}
@@ -1357,7 +1366,11 @@ export function GovernanceWorkspace({
         </section>
       ) : null}
 
-      {activeTab === "evidencePackage" ? (
+      {activeTab === "evidencePackage" && !fixturesAllowed ? (
+        <CanonicalEvidencePanel roleId={roleId} canExport={decisionAuthority.canExport} requestedDecisionId={canonicalEvidenceDecisionId} />
+      ) : null}
+
+      {activeTab === "evidencePackage" && fixturesAllowed ? (
         <section className={styles.evidencePackageGrid} aria-label="Evidence Package export">
           <div className={styles.exportPanel}>
             <div className={styles.exportPanelTitle}>產生 Evidence Package</div>

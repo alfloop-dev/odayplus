@@ -721,10 +721,13 @@
 
 .decisionList {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
 .decisionCard {
+  min-width: 0;
+  overflow-wrap: anywhere;
   border: 1px solid #e3e8f0;
   border-radius: 11px;
   background: #ffffff;
@@ -736,6 +739,19 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.decisionCard header > *,
+.decisionCard footer > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Canonical IDs are evidence, so wrap them rather than ellipsizing them. */
+.decisionCard .approvalId {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .decisionCard header strong {
@@ -758,6 +774,7 @@
 }
 
 .decisionCompare section {
+  min-width: 0;
   border: 1px solid #eef1f6;
   border-radius: 8px;
   background: #f8fafd;

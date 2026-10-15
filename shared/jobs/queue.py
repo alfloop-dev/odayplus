@@ -11,7 +11,7 @@ NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES = (
     ".command-receipt",
 )
 
-AUDIT_DELIVERY_JOB_TYPES = ("canonical-audit-delivery", "store-ops-audit-delivery", "durable-audit-delivery")
+AUDIT_DELIVERY_JOB_TYPES = ("canonical-audit-delivery", "store-ops-audit-delivery", "durable-audit-delivery", "retained-evidence-delivery")
 
 
 def is_non_executable_receipt_job_type(job_type: str) -> bool:

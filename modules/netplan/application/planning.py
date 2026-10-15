@@ -152,6 +152,8 @@ class NetPlanService:
         approval_verifier: ManagementApprovalReceiptVerifier | None = None,
         policy_repository: DecisionPolicyRepository | None = None,
         runtime_mode: str | None = None,
+        feature_flags: Any | None = None,
+        job_queue: Any | None = None,
     ) -> None:
         self.production_required = production_execution_required(runtime_mode)
         self.strict_production_composition = runtime_mode is not None and self.production_required
@@ -166,6 +168,8 @@ class NetPlanService:
                 "NetPlan production requires an injected OSS solver executor"
             )
         self.repository = repository or InMemoryNetPlanRepository()
+        self.feature_flags = feature_flags
+        self.job_queue = job_queue
         self.production_executor = production_executor
         self.approval_verifier = approval_verifier
         # Not defaulted. An approval path that falls back to built-in rules
@@ -593,6 +597,17 @@ class NetPlanService:
         self.pin_prepared_candidate(prepared)
         return self.commit_unmodelled_constraint_acknowledgement(prepared)
 
+    def _require_selected_action_flag(self, subject: Any) -> None:
+        if not any(action.action in {NetworkAction.MOVE, NetworkAction.EXIT}
+                   for action in subject.actions):
+            return
+        from shared.infrastructure.persistence.feature_flags import require_operation_feature_flag
+
+        require_operation_feature_flag("high_risk.netplan.approve",
+            owner=self.feature_flags,
+            engine=getattr(getattr(self.repository, "_store", None), "engine", None),
+            queue=self.job_queue, durable_required=self.production_required)
+
     def decide(
         self,
         scenario_id: str,
@@ -680,6 +695,7 @@ class NetPlanService:
             if acknowledgement is not None:
                 acknowledged_classes = acknowledgement.acknowledged_classes
                 disclosure_acknowledgement_id = acknowledgement.acknowledgement_id
+            self._require_selected_action_flag(subject)
             authority_receipt = verification.receipt
             authority_verification = verification
             verification_violations = verification.violations
@@ -751,6 +767,7 @@ class NetPlanService:
             raise NetPlanApprovalError(
                 "persisted approval does not match authoritative management readback"
             )
+        self._require_selected_action_flag(subject)
         now = executed_at or datetime.now(UTC)
         transitioned = scenario.transition(
             NetPlanScenarioStatus.EXECUTED,

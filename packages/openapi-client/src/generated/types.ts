@@ -331,6 +331,28 @@ export type BoundReviewDecisionPayload = {
   requiredData?: string[];
 };
 
+/** CampaignBudgetProposalPayload */
+export type CampaignBudgetProposalPayload = {
+  budget_amount: string;
+  budget_currency: string;
+  declared_data_version: string;
+  reason: string;
+};
+
+/** CampaignCreatePayload */
+export type CampaignCreatePayload = {
+  budget_amount: string;
+  budget_currency: string;
+  channel: string;
+  creative_reference?: string | null;
+  declared_data_version: string;
+  name: string;
+  period_end: string;
+  period_start: string;
+  reason: string;
+  treatment_store_ids: string[];
+};
+
 /** CandidateDisposition */
 export type CandidateDisposition = "KEEP_HISTORICAL" | "REASSIGN" | "REQUIRE_REVIEW";
 
@@ -339,6 +361,19 @@ export type CandidateReassignment = {
   candidate_site_id: string;
   disposition: CandidateDisposition;
   target_property_id?: string | null;
+};
+
+/** Selectors only; identity/classification/retention come from owners. */
+export type CanonicalEvidenceExportPayload = {
+  decision_id: string;
+  expected_decision_version: number;
+  expected_document_sha256?: string | null;
+  format?: "json";
+  from_time: string;
+  program_label?: string | null;
+  reason: string;
+  sections: ("decision_log" | "audit")[];
+  to_time: string;
 };
 
 /** ClosePayload */
@@ -2267,6 +2302,9 @@ export type apps__api__app__routes__sitescore__DecisionPayload = {
 
 /** Every versioned operation the API serves, and its methods. */
 export const API_PATHS = {
+  "/api/v1/adlift/campaigns": ["POST"],
+  "/api/v1/adlift/campaigns/{campaign_id}": ["GET"],
+  "/api/v1/adlift/campaigns/{campaign_id}/budget-revisions": ["POST"],
   "/api/v1/adlift/incrementality-jobs": ["POST"],
   "/api/v1/adlift/incrementality-jobs/{job_id}": ["GET"],
   "/api/v1/adlift/reports": ["GET"],
@@ -2286,8 +2324,10 @@ export const API_PATHS = {
   "/api/v1/audit/evidence/exports/{export_id}": ["GET"],
   "/api/v1/audit/evidence/exports/{export_id}/download": ["GET"],
   "/api/v1/audit/evidence/exports/{export_id}/legal-hold": ["POST"],
+  "/api/v1/audit/evidence/preview": ["POST"],
   "/api/v1/audit/evidence/retention/expired": ["GET"],
   "/api/v1/audit/evidence/retention/purge": ["POST"],
+  "/api/v1/audit/evidence/sources": ["GET"],
   "/api/v1/auth/invitations/accept": ["POST"],
   "/api/v1/auth/principal": ["GET"],
   "/api/v1/avm/calibration": ["POST"],

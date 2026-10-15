@@ -35,6 +35,14 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
+// This file verifies actual Console/session/scope reads, not the WebGL renderer.
+// Isolate only the heavy map leaf; the real workspace, panel, fetches, guards,
+// and all original business assertions remain active. Native map/browser
+// geometry is validated separately; this placeholder supplies no data or grants.
+vi.mock("../network/HeatZoneMap", () => ({
+  HeatZoneMap: () => <div data-testid="unit-WebGL-renderer-boundary" />,
+}));
+
 const role = {
   id: "platform-admin",
   label: "Platform Admin",

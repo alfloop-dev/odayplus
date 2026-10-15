@@ -202,8 +202,12 @@ class LearningHubService:
         worker_id: str | None = None,
         release_lease_seconds: float = DEFAULT_RELEASE_LEASE_SECONDS,
         prediction_drift_monitor: EvidentlyDriftMonitor | None = None,
+        feature_flags: Any | None = None,
+        job_queue: Any | None = None,
     ) -> None:
         self.worker_id = worker_id or f"learninghub-worker-{uuid4()}"
+        self.feature_flags = feature_flags
+        self.job_queue = job_queue
         self.release_lease_seconds = float(release_lease_seconds)
         self.prediction_drift_monitor = prediction_drift_monitor or EvidentlyDriftMonitor()
         self.production_required = learninghub_production_required(runtime_mode)
@@ -515,6 +519,16 @@ class LearningHubService:
         )
         return self.register_backtest_receipt(receipt)
 
+    def _require_production_release_flag(self, release_type: ReleaseType) -> None:
+        if release_type not in {ReleaseType.FULL, ReleaseType.CANARY}:
+            return
+        from shared.infrastructure.persistence.feature_flags import require_operation_feature_flag
+
+        require_operation_feature_flag("high_risk.model.publish",
+            owner=self.feature_flags,
+            engine=getattr(getattr(self.repository, "_store", None), "engine", None),
+            queue=self.job_queue, durable_required=self.production_required)
+
     def request_release(
         self,
         *,
@@ -589,6 +603,7 @@ class LearningHubService:
             approved_by=approved_by,
         )
 
+        self._require_production_release_flag(release_type)
         try:
             with self.repository.release_guard(
                 model_name,
@@ -821,6 +836,7 @@ class LearningHubService:
         approved_by = str(command["approved_by"])
         model_version = self._require_model_version(model_name, version)
         target_stage = _stage_for_release_type(release_type)
+        self._require_production_release_flag(release_type)
         rollback_version = (
             self._require_model_version(model_name, str(rollback_target))
             if release_type is ReleaseType.ROLLBACK and rollback_target
@@ -1416,6 +1432,61 @@ class LearningHubService:
             )
         )
 
+    def _assert_committed_alias_repair(
+        self, *, model_name: str, alias: ModelAlias, target: ModelVersion | None,
+        remote_before: ModelVersion | None, durable_before: ModelVersion | None,
+    ) -> str | None:
+        """Repair the latest already released target, never approve a new one.
+
+        Alias drift is not a release approval. A completed release receipt and
+        its actual saga establish the target; registered/validated candidates,
+        remote tags or an operator's requester string do not. Compensation uses
+        its separate snapshot-restore primitive and is intentionally unaffected.
+        """
+        target_version = target.version if target is not None else None
+        if alias not in {ModelAlias.PRODUCTION, ModelAlias.CHAMPION, ModelAlias.CANARY}:
+            return target_version
+        if target is None:
+            if remote_before is None and durable_before is None:
+                return None
+            raise LearningHubError("ALIAS_REPAIR_COMMITTED_RELEASE_REQUIRED")
+        kinds = ({ReleaseType.CANARY} if alias is ModelAlias.CANARY
+                 else {ReleaseType.FULL, ReleaseType.ROLLBACK})
+        receipts = [row for row in self.repository.list_release_decisions()
+                    if isinstance(row, ModelReleaseDecision)
+                    and row.model_name == model_name and row.release_type in kinds]
+        if not receipts or any(type(row.release_revision) is not int or row.release_revision < 1
+                               for row in receipts):
+            raise LearningHubError("ALIAS_REPAIR_COMMITTED_RELEASE_REQUIRED")
+        receipt = max(receipts, key=lambda row: row.release_revision)
+        if (sum(row.release_revision == receipt.release_revision for row in receipts) != 1
+                or receipt.to_version != target_version or receipt.scope != "global"):
+            raise LearningHubError("ALIAS_REPAIR_CURRENT_RELEASE_TARGET_REQUIRED")
+        saga = self.repository.get_release_saga(receipt.release_id)
+        if (saga is None or saga.operation != "MODEL_RELEASE" or saga.scope != "global"
+                or saga.state is not ReleaseSagaState.COMPLETED or saga.decision != receipt
+                or saga.model_name != model_name or saga.release_revision != receipt.release_revision
+                or saga.command.get("decision") != receipt
+                or saga.idempotency_key != receipt.idempotency_key
+                or saga.audit_event_id != receipt.audit_event_id
+                or saga.command.get("approval_id") != receipt.approval_id
+                or saga.command.get("release_type") != receipt.release_type.value
+                or saga.command.get("requested_by") != receipt.requested_by
+                or saga.command.get("approved_by") != receipt.approved_by):
+            raise LearningHubError("ALIAS_REPAIR_COMMITTED_RELEASE_REQUIRED")
+        canonical = self._require_model_version(model_name, target_version)
+        card = self._require_model_card(model_name, target_version)
+        if (not card.is_approved or not receipt.model_card_checksum
+                or _model_card_checksum(card) != receipt.model_card_checksum
+                or canonical.dataset_snapshot_id != receipt.dataset_snapshot_id
+                or canonical.artifact_uri != receipt.model_artifact_uri):
+            raise LearningHubError("ALIAS_REPAIR_RELEASE_EVIDENCE_CONFLICT")
+        expected = self._release_governance_metadata(model_name=model_name,
+            version=target_version, saga=saga, command=saga.command)
+        self.registry.assert_release_governance(model_name=model_name,
+            version=target_version, expected=expected)
+        return target_version
+
     def reconcile_alias(
         self,
         *,
@@ -1472,6 +1543,10 @@ class LearningHubService:
 
         remote_before = self.registry.get_by_alias(model_name=model_name, alias=alias)
         durable_before = self.repository.get_alias(model_name, alias)
+        target = remote_before if authority == "remote" else durable_before
+        expected_target_version = self._assert_committed_alias_repair(
+            model_name=model_name, alias=alias, target=target,
+            remote_before=remote_before, durable_before=durable_before)
         command["remote_before_version"] = (
             remote_before.version if remote_before is not None else None
         )
@@ -1491,6 +1566,11 @@ class LearningHubService:
                     raise LearningHubReleaseConflict(
                         f"model {model_name} already has an active release"
                     )
+                # Re-evaluate the canonical target while the original revision
+                # guard owns this new intent; a different commit cannot be
+                # accepted from the preflight snapshot.
+                self._assert_committed_alias_repair(model_name=model_name, alias=alias,
+                    target=target, remote_before=remote_before, durable_before=durable_before)
                 saga = ModelReleaseSaga(
                     release_id=release_id,
                     model_name=model_name,
@@ -1527,6 +1607,7 @@ class LearningHubService:
                 model_name=model_name,
                 alias=alias,
                 authority=authority,
+                expected_target_version=expected_target_version,
             )
             saga = self._save_saga(saga, state=ReleaseSagaState.ALIASES_APPLIED)
             audit_event = self.audit_log.record(

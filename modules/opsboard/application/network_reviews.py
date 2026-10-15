@@ -318,6 +318,8 @@ class NetworkReviewService:
         require_canonical: bool = False,
         audit_delivery_factory: Any | None = None,
         candidate_workflow_service: Any | None = None,
+        feature_flags: Any | None = None,
+        job_queue: Any | None = None,
     ) -> None:
         self._seed_fixtures = seed_fixtures
         self._decision_repository = decision_repository
@@ -326,6 +328,8 @@ class NetworkReviewService:
         self._require_canonical = require_canonical
         self._audit_delivery_factory = audit_delivery_factory
         self._candidate_workflow_service = candidate_workflow_service
+        self._feature_flags = feature_flags
+        self._job_queue = job_queue
         if initial_state is not None:
             self._reviews = _copy(initial_state.get("reviews", []))
             self._candidates = _copy(initial_state.get("candidates", {}))
@@ -372,6 +376,23 @@ class NetworkReviewService:
             }
 
     # -- public API ----------------------------------------------------
+
+    def _require_go_feature_flag(self) -> None:
+        from shared.infrastructure.persistence.feature_flags import (
+            FeatureFlagOperationDisabled,
+            FeatureFlagStoreUnavailable,
+            require_operation_feature_flag,
+        )
+
+        engine = getattr(self._decision_repository, "engine", None)
+        try:
+            require_operation_feature_flag("high_risk.sitescore.approve",
+                owner=self._feature_flags, engine=engine, queue=self._job_queue,
+                durable_required=self._require_canonical)
+        except FeatureFlagOperationDisabled as exc:
+            raise NetworkReviewRoleError("FEATURE_FLAG_DISABLED") from exc
+        except FeatureFlagStoreUnavailable as exc:
+            raise NetworkReviewRuntimeUnavailable("FEATURE_FLAG_STORE_UNAVAILABLE") from exc
 
     def transaction_scope(self, engine: Any, tenant_id: str):
         """Require all canonical mutation writes to share the loaded SQL unit."""
@@ -659,6 +680,9 @@ class NetworkReviewService:
             raise NetworkReviewPolicyError(
                 "本決策覆寫系統建議，需勾選風險確認後才能送出"
             )
+
+        if action == "GO":
+            self._require_go_feature_flag()
 
         # ---- build all five records before touching state --------------
         now = _now()
@@ -1080,6 +1104,8 @@ class NetworkReviewService:
             _, availability = self._retained_decision_report(existing)
             if availability != "available":
                 raise NetworkReviewConflict("IMMUTABLE_RETAINED_REPORT_REQUIRED")
+            if action == DecisionAction.APPROVE.value:
+                self._require_go_feature_flag()
             try:
                 outcome = self._decision_workflow.decide(review_id, action=DecisionAction(action),
                     actor=principal.subject_id, reason=reason, correlation_id=correlation_id or "")
@@ -1175,6 +1201,8 @@ class NetworkReviewService:
                 self._candidate_workflow_service.validate_review_candidate(existing)
             except RuntimeError as exc:
                 raise NetworkReviewConflict(str(exc)) from exc
+        if action == "GO":
+            self._require_go_feature_flag()
         try:
             if existing.status in {
                 DecisionStatus.SYSTEM_RECOMMENDED,

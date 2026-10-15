@@ -197,3 +197,19 @@ describe("exact report-aware workflow context", () => {
     expect(screen.getByTestId("network-step-sitescore")).toHaveTextContent("second");
   });
 });
+
+
+describe("Find Areas keeps candidate-only workflow notices in their action context", () => {
+  it("does not add a candidate-selection notice to Find Areas while keeping unknown step states", async () => {
+    nav.search = "ws=network&tab=areas";
+    const fetchMock = reads();
+    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" />);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("network-listings?"))).toBe(true));
+    expect(screen.getByTestId("network-tab-0")).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByTestId("network-workflow-context-notice")).not.toBeInTheDocument();
+    expect(screen.getByTestId("network-step-sitescore")).not.toHaveAttribute("data-state", "completed");
+    expect(screen.getByTestId("network-step-candidate")).toHaveTextContent("未確認");
+    expect(screen.getByTestId("network-tab-1")).toBeEnabled();
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+});

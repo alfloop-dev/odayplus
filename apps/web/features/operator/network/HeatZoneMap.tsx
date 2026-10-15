@@ -114,6 +114,7 @@ export function HeatZoneMap({
     productionModeProp === true || isOperatorProductionMode();
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const fittedGeometry = useRef("");
   const deckRenderVersionRef = useRef(0);
   const [viewState, setViewState] = useState({
     longitude: 121.48,
@@ -154,6 +155,12 @@ export function HeatZoneMap({
   const geometryHidden = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry";
   const visibleZones = useMemo(() => geometryHidden ? [] : zones, [geometryHidden, zones]);
   const visibleZoneFeatures = useMemo(() => geometryHidden ? [] : zoneFeatures, [geometryHidden, zoneFeatures]);
+  // A source refresh can replace a distant provisional zone set after the
+  // map has loaded. Only a geometry change should move the viewport; lens
+  // changes and selecting a different zone keep the operator's current view.
+  const geometryKey = useMemo(() => JSON.stringify(visibleZones
+    .map((zone) => [zone.id, zone.h3, zone.centroid] as const)
+    .sort((a, b) => a[0].localeCompare(b[0]))), [visibleZones]);
   const visibleListings = useMemo(
     () => boundaryConfig.stateFixture === "partial" ? [] : listings,
     [boundaryConfig.stateFixture, listings],
@@ -163,6 +170,7 @@ export function HeatZoneMap({
     visibleZoneFeatures,
     visibleZones,
     zones,
+    geometryKey,
   });
   const evidenceZone = useMemo(
     () => zones.find((zone) => zone.id === evidenceZoneId) ?? zones.find((zone) => zone.id === selectedZoneId) ?? zones[0],
@@ -185,6 +193,7 @@ export function HeatZoneMap({
     visibleZoneFeatures,
     visibleZones,
     zones,
+    geometryKey,
   };
 
   useEffect(() => {
@@ -281,6 +290,7 @@ export function HeatZoneMap({
         },
       });
       fitToZones(map, mapData.visibleZones.length ? mapData.visibleZones : mapData.zones);
+      fittedGeometry.current = mapData.geometryKey;
       map.resize();
     });
 
@@ -309,6 +319,7 @@ export function HeatZoneMap({
       }
       map.remove();
       mapRef.current = null;
+      fittedGeometry.current = "";
     };
   }, [
     boundaryConfig,
@@ -325,6 +336,10 @@ export function HeatZoneMap({
       type: "FeatureCollection",
       features: visibleZoneFeatures,
     });
+    if (source && fittedGeometry.current !== geometryKey) {
+      fitToZones(map, visibleZones);
+      fittedGeometry.current = geometryKey;
+    }
     if (map.getLayer("odp-local-heatzone-line")) {
       map.setPaintProperty("odp-local-heatzone-line", "line-color", [
         "case",
@@ -339,7 +354,7 @@ export function HeatZoneMap({
         1.5,
       ]);
     }
-  }, [selectedZoneId, visibleZoneFeatures]);
+  }, [geometryKey, selectedZoneId, visibleZoneFeatures, visibleZones]);
 
   useEffect(() => {
     setLayers(layerQuery ? parseLayerState(layerQuery) : readLayerStateFromUrl());

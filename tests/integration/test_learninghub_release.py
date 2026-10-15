@@ -49,6 +49,7 @@ from tests.integration._learninghub_fixtures import (
 from tests.integration._learninghub_fixtures import (
     prepare_candidate as _prepare_candidate,
 )
+from tests.integration._model_publish_flag_fixture import enable_model_publish
 
 
 def _request_release(service: LearningHubService, **kwargs) -> ModelReleaseDecision:
@@ -72,6 +73,7 @@ def test_learninghub_validates_releases_and_rolls_back_model_aliases() -> None:
         registry=MlflowRegistryAdapter(repository),
         audit_log=audit_log,
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
 
@@ -166,6 +168,7 @@ def test_governed_release_invokes_remote_mlflow_alias_updates() -> None:
         registry=registry,
         audit_log=InMemoryAuditLog(),
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     candidate = _prepare_candidate(service, "1.0.0")
     client = registry._require_client()
 
@@ -235,6 +238,7 @@ def test_full_alias_failure_restores_aliases_stages_and_model_metadata(
         registry=registry,
         audit_log=InMemoryAuditLog(),
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
     _release_full(service, version=v1.version, rollback_target=v1.version)
@@ -325,6 +329,7 @@ def test_rollback_alias_failure_restores_aliases_stages_and_model_metadata(
         registry=registry,
         audit_log=InMemoryAuditLog(),
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
     _release_full(service, version=v1.version, rollback_target=v1.version)
@@ -405,6 +410,7 @@ def test_audit_failure_compensates_release_state_and_revision(
         registry=registry,
         audit_log=audit_log,
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
     _release_full(service, version=v1.version, rollback_target=v1.version)
@@ -455,6 +461,7 @@ def test_decision_failure_after_write_removes_receipt_and_compensates_state(
         registry=registry,
         audit_log=audit_log,
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
     _release_full(service, version=v1.version, rollback_target=v1.version)
@@ -497,16 +504,39 @@ def test_decision_failure_after_write_removes_receipt_and_compensates_state(
     assert compensation_events[0].metadata["release_revision"] == revision_before + 1
 
 
-def test_alias_read_is_side_effect_free_and_reconcile_is_explicit() -> None:
+def test_alias_read_is_side_effect_free_and_reconcile_is_explicit(tmp_path, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from models.shared_ml import LocalModelArtifactStore
+    from shared.auth.feature_flags import DEFAULT_FLAGS, FeatureFlagRegistry
+    from tests.integration.test_real_domain_operation_feature_flags import (
+        MODEL_FLAG,
+        _app,
+        _disable,
+        _enable,
+    )
+
+    # This callback alone owns one explicit flag policy and tracking database.
+    # Registering a model is not a canonical production release approval.
+    flags = FeatureFlagRegistry(dict(DEFAULT_FLAGS))
     repository = InMemoryLearningHubRepository()
-    registry = MlflowRegistryAdapter(repository)
+    registry = MlflowRegistryAdapter(repository, tracking_uri="sqlite:///" + str(tmp_path / "own-existing-alias-fixture-mlflow.sqlite3"))
     service = LearningHubService(
         repository=repository,
         registry=registry,
         audit_log=InMemoryAuditLog(),
+        artifact_store=LocalModelArtifactStore(tmp_path / "own-existing-alias-artifacts"),
+        feature_flags=flags, runtime_mode="poc",
     )
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
+    with TestClient(_app(flags, service.audit_log, None, monkeypatch,
+                         tenant="synthetic-existing-alias-tenant")) as admin:
+        _enable(admin, MODEL_FLAG)
+        _release_full(service, version=v1.version, rollback_target=v1.version)
+        _release_full(service, version=v2.version, rollback_target=v1.version)
+        _disable(admin, MODEL_FLAG)
+    repair_start_revision = repository.get_release_revision(v1.model_name)
     repository.set_alias(v1.model_name, ModelAlias.PRODUCTION, v1.version)
     remote_v2 = registry._require_model_version(v2.model_name, v2.version)
     registry._require_client().set_registered_model_alias(
@@ -528,7 +558,7 @@ def test_alias_read_is_side_effect_free_and_reconcile_is_explicit() -> None:
         authority="remote",
         reason="repair durable projection from MLflow",
         requested_by="registry-operator",
-        expected_release_revision=0,
+        expected_release_revision=repair_start_revision,
         idempotency_key="reconcile-remote-001",
     )
     assert reconciled_remote.resolved_version == v2.version
@@ -539,7 +569,7 @@ def test_alias_read_is_side_effect_free_and_reconcile_is_explicit() -> None:
         authority="remote",
         reason="repair durable projection from MLflow",
         requested_by="registry-operator",
-        expected_release_revision=0,
+        expected_release_revision=repair_start_revision,
         idempotency_key="reconcile-remote-001",
     )
     assert replayed_remote.release_id == reconciled_remote.release_id
@@ -550,10 +580,19 @@ def test_alias_read_is_side_effect_free_and_reconcile_is_explicit() -> None:
             authority="remote",
             reason="different reconciliation request",
             requested_by="registry-operator",
-            expected_release_revision=0,
+            expected_release_revision=repair_start_revision,
             idempotency_key="reconcile-remote-001",
         )
 
+    # The old target can become current again only through the real existing
+    # approved rollback operation, which remains available while the flag is off.
+    _request_release(service, model_name=v2.model_name, version=v2.version,
+        release_type=ReleaseType.ROLLBACK, reason="Canonical rollback before projection repair",
+        approval_id="actual-rollback-before-durable-repair", rollback_target=v1.version,
+        monitoring_window="48h", success_criteria=("restore approved model",),
+        fail_criteria=("measured regression",))
+    registry._require_client().set_registered_model_alias(
+        v2.model_name, ModelAlias.PRODUCTION.value, str(remote_v2.version))
     repository.set_alias(v1.model_name, ModelAlias.PRODUCTION, v1.version)
     reconciled_durable = service.reconcile_alias(
         model_name=v1.model_name,
@@ -561,7 +600,7 @@ def test_alias_read_is_side_effect_free_and_reconcile_is_explicit() -> None:
         authority="durable",
         reason="repair MLflow projection from durable registry",
         requested_by="registry-operator",
-        expected_release_revision=1,
+        expected_release_revision=repository.get_release_revision(v1.model_name),
         idempotency_key="reconcile-durable-001",
     )
     assert reconciled_durable.resolved_version == v1.version
@@ -578,17 +617,40 @@ def test_alias_read_is_side_effect_free_and_reconcile_is_explicit() -> None:
 
 
 def test_governed_alias_reconciliation_compensates_remote_and_durable_snapshots(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
+    from fastapi.testclient import TestClient
+
+    from models.shared_ml import LocalModelArtifactStore
+    from shared.auth.feature_flags import DEFAULT_FLAGS, FeatureFlagRegistry
+    from tests.integration.test_real_domain_operation_feature_flags import (
+        MODEL_FLAG,
+        _app,
+        _disable,
+        _enable,
+    )
+
+    # This callback alone owns one explicit flag policy and tracking database.
+    # Registering a model is not a canonical production release approval.
+    flags = FeatureFlagRegistry(dict(DEFAULT_FLAGS))
     repository = InMemoryLearningHubRepository()
-    registry = MlflowRegistryAdapter(repository)
+    registry = MlflowRegistryAdapter(repository, tracking_uri="sqlite:///" + str(tmp_path / "own-existing-alias-fixture-mlflow.sqlite3"))
     service = LearningHubService(
         repository=repository,
         registry=registry,
         audit_log=InMemoryAuditLog(),
+        artifact_store=LocalModelArtifactStore(tmp_path / "own-existing-alias-artifacts"),
+        feature_flags=flags, runtime_mode="poc",
     )
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
+    with TestClient(_app(flags, service.audit_log, None, monkeypatch,
+                         tenant="synthetic-existing-alias-tenant")) as admin:
+        _enable(admin, MODEL_FLAG)
+        _release_full(service, version=v1.version, rollback_target=v1.version)
+        _release_full(service, version=v2.version, rollback_target=v1.version)
+        _disable(admin, MODEL_FLAG)
+    repair_start_revision = repository.get_release_revision(v1.model_name)
     repository.set_alias(v1.model_name, ModelAlias.PRODUCTION, v1.version)
     remote_v2 = registry._require_model_version(v2.model_name, v2.version)
     registry._require_client().set_registered_model_alias(
@@ -610,7 +672,7 @@ def test_governed_alias_reconciliation_compensates_remote_and_durable_snapshots(
             authority="remote",
             reason="exercise governed compensation",
             requested_by="registry-operator",
-            expected_release_revision=0,
+            expected_release_revision=repair_start_revision,
             idempotency_key="reconcile-compensation-001",
         )
 
@@ -638,6 +700,7 @@ def test_release_idempotency_revision_global_scope_and_approval_tags() -> None:
         registry=registry,
         audit_log=InMemoryAuditLog(),
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     v1 = _prepare_candidate(service, "1.0.0")
     command = {
         "model_name": v1.model_name,
@@ -720,6 +783,7 @@ def test_rollback_rejects_stale_command_and_produces_one_production_version() ->
         registry=registry,
         audit_log=InMemoryAuditLog(),
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
     _release_full(service, version=v1.version, rollback_target=v1.version)
@@ -806,6 +870,7 @@ def test_release_saga_survives_process_interruption_and_recovers(
         # makes its orphaned saga eligible for takeover by the next worker.
         release_lease_seconds=0.0,
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
     _release_full(service, version=v1.version, rollback_target=v1.version)
@@ -890,6 +955,7 @@ def test_compensation_failure_is_persisted_and_audited(
         registry=MlflowRegistryAdapter(repository),
         audit_log=audit_log,
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
     _release_full(service, version=v1.version, rollback_target=v1.version)
@@ -926,6 +992,7 @@ def test_concurrent_releases_use_per_model_cas_without_cross_compensation() -> N
         registry=registry,
         audit_log=InMemoryAuditLog(),
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     candidates = (
         _prepare_candidate(service, "1.0.0"),
         _prepare_candidate(service, "1.1.0"),
@@ -1034,6 +1101,7 @@ def test_release_monitor_healthy_records_audit_without_recommending_rollback() -
     repository = InMemoryLearningHubRepository()
     audit_log = InMemoryAuditLog()
     service = LearningHubService(repository=repository, audit_log=audit_log)
+    enable_model_publish(service, tenant_id='tenant-modeling')
     _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
     decision = _release_full(service, version=v2.version, rollback_target="1.0.0")
@@ -1065,6 +1133,7 @@ def test_release_monitor_breach_recommends_rollback_and_leaves_alias_unchanged()
     repository = InMemoryLearningHubRepository()
     audit_log = InMemoryAuditLog()
     service = LearningHubService(repository=repository, audit_log=audit_log)
+    enable_model_publish(service, tenant_id='tenant-modeling')
     from models.shared_ml.registry import ModelAlias
 
     _prepare_candidate(service, "1.0.0")
@@ -1106,6 +1175,7 @@ def test_release_monitor_api_forwards_explicit_baseline_metrics() -> None:
         registry=registry,
         audit_log=InMemoryAuditLog(),
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     candidate = _prepare_candidate(service, "1.0.0")
     decision = _release_full(service, version=candidate.version, rollback_target=candidate.version)
     client = _release_api_client(repository, registry)
@@ -1195,6 +1265,7 @@ def test_release_metadata_compensation_restores_remote_governance_tags(
         registry=registry,
         audit_log=InMemoryAuditLog(),
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
     _release_full(service, version=v1.version, rollback_target=v1.version)
@@ -1258,6 +1329,7 @@ def test_recovery_skips_live_lease_and_fences_the_stale_owner(
         worker_id="worker-a",
         release_lease_seconds=600.0,
     )
+    enable_model_publish(worker_a, tenant_id='tenant-modeling')
     v1 = _prepare_candidate(worker_a, "1.0.0")
     v2 = _prepare_candidate(worker_a, "1.1.0")
     _release_full(worker_a, version=v1.version, rollback_target=v1.version)
@@ -1394,6 +1466,7 @@ def test_production_release_publishes_model_card_validation_and_approval_tags() 
         registry=registry,
         audit_log=InMemoryAuditLog(),
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     candidate = _prepare_candidate(service, "1.0.0")
     decision = _release_full(
         service,
@@ -1429,6 +1502,7 @@ def test_release_fails_closed_when_required_governance_tags_are_not_projected(
         registry=registry,
         audit_log=InMemoryAuditLog(),
     )
+    enable_model_publish(service, tenant_id='tenant-modeling')
     v1 = _prepare_candidate(service, "1.0.0")
     v2 = _prepare_candidate(service, "1.1.0")
     _release_full(service, version=v1.version, rollback_target=v1.version)
@@ -1457,12 +1531,20 @@ def test_release_fails_closed_when_required_governance_tags_are_not_projected(
     assert repository.get_model_version(v2.model_name, v2.version).stage is ModelStage.DEV
 
 
-def _release_api_client(repository: InMemoryLearningHubRepository, registry):
+def _release_api_client(repository: InMemoryLearningHubRepository, registry, *, publish_enabled=False):
     from fastapi import FastAPI, Request
     from fastapi.testclient import TestClient
 
     from apps.api.app.routes.learninghub import create_learninghub_router
+    from tests.integration._operation_flag_fixtures import new_operation_flags
 
+    owner, queue = new_operation_flags(getattr(getattr(repository, "_store", None), "engine", None))
+    if publish_enabled:
+        from types import SimpleNamespace
+
+        enable_model_publish(SimpleNamespace(repository=repository, feature_flags=owner,
+                             job_queue=queue, audit_log=InMemoryAuditLog()),
+                             tenant_id="tenant-modeling")
     app = FastAPI()
 
     @app.middleware("http")
@@ -1475,6 +1557,7 @@ def _release_api_client(repository: InMemoryLearningHubRepository, registry):
             repository=repository,
             registry=registry,
             audit_log=InMemoryAuditLog(),
+            feature_flags=owner, job_queue=queue,
         )
     )
     return TestClient(app, raise_server_exceptions=False)
@@ -1604,7 +1687,7 @@ def test_release_api_binds_actors_and_matches_the_409_428_contract() -> None:
         audit_log=InMemoryAuditLog(),
     )
     _prepare_candidate(preparer, "1.0.0")
-    client = _release_api_client(repository, registry)
+    client = _release_api_client(repository, registry, publish_enabled=True)
     headers = auth_headers(Role.MODEL_OWNER, subject="ml-owner")
 
     missing_precondition = client.post(

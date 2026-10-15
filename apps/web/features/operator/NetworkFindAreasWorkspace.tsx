@@ -2564,7 +2564,7 @@ export function NetworkFindAreasWorkspace({
         allowedTabIndices={allowedTabIndices}
         onTabChange={changeActiveTab}
         steps={expansionSteps}
-        workflowNotice={useFixtureWorkflow ? undefined : workflowProjection.notice}
+        workflowNotice={useFixtureWorkflow || activeTab === 0 ? undefined : workflowProjection.notice}
         workflowNextAction={useFixtureWorkflow ? undefined : workflowProjection.nextAction}
         tabCounts={tabCounts}
         tabs={networkTabs}

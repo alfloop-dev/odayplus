@@ -1752,6 +1752,101 @@
         "title": "BoundReviewDecisionPayload",
         "type": "object"
       },
+      "CampaignBudgetProposalPayload": {
+        "properties": {
+          "budget_amount": {
+            "title": "Budget Amount",
+            "type": "string"
+          },
+          "budget_currency": {
+            "title": "Budget Currency",
+            "type": "string"
+          },
+          "declared_data_version": {
+            "title": "Declared Data Version",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "budget_amount",
+          "budget_currency",
+          "declared_data_version",
+          "reason"
+        ],
+        "title": "CampaignBudgetProposalPayload",
+        "type": "object"
+      },
+      "CampaignCreatePayload": {
+        "properties": {
+          "budget_amount": {
+            "title": "Budget Amount",
+            "type": "string"
+          },
+          "budget_currency": {
+            "title": "Budget Currency",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "creative_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creative Reference"
+          },
+          "declared_data_version": {
+            "title": "Declared Data Version",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "period_end": {
+            "title": "Period End",
+            "type": "string"
+          },
+          "period_start": {
+            "title": "Period Start",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "treatment_store_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Treatment Store Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "budget_amount",
+          "budget_currency",
+          "declared_data_version",
+          "reason",
+          "name",
+          "channel",
+          "treatment_store_ids",
+          "period_start",
+          "period_end"
+        ],
+        "title": "CampaignCreatePayload",
+        "type": "object"
+      },
       "CandidateDisposition": {
         "enum": [
           "KEEP_HISTORICAL",
@@ -1789,6 +1884,86 @@
           "disposition"
         ],
         "title": "CandidateReassignment",
+        "type": "object"
+      },
+      "CanonicalEvidenceExportPayload": {
+        "additionalProperties": false,
+        "description": "Selectors only; identity/classification/retention come from owners.",
+        "properties": {
+          "decision_id": {
+            "minLength": 1,
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "expected_decision_version": {
+            "minimum": 1.0,
+            "title": "Expected Decision Version",
+            "type": "integer"
+          },
+          "expected_document_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Document Sha256"
+          },
+          "format": {
+            "const": "json",
+            "default": "json",
+            "title": "Format",
+            "type": "string"
+          },
+          "from_time": {
+            "title": "From Time",
+            "type": "string"
+          },
+          "program_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Program Label"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "sections": {
+            "items": {
+              "enum": [
+                "decision_log",
+                "audit"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Sections",
+            "type": "array"
+          },
+          "to_time": {
+            "title": "To Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision_id",
+          "expected_decision_version",
+          "sections",
+          "reason",
+          "from_time",
+          "to_time"
+        ],
+        "title": "CanonicalEvidenceExportPayload",
         "type": "object"
       },
       "ClosePayload": {
@@ -12360,6 +12535,347 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/adlift/campaigns": {
+      "post": {
+        "operationId": "create_campaign_api_v1_adlift_campaigns_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CampaignCreatePayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Create Campaign",
+        "tags": [
+          "adlift",
+          "adlift"
+        ]
+      }
+    },
+    "/api/v1/adlift/campaigns/{campaign_id}": {
+      "get": {
+        "operationId": "get_campaign_api_v1_adlift_campaigns__campaign_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Get Campaign",
+        "tags": [
+          "adlift",
+          "adlift"
+        ]
+      }
+    },
+    "/api/v1/adlift/campaigns/{campaign_id}/budget-revisions": {
+      "post": {
+        "operationId": "propose_budget_api_v1_adlift_campaigns__campaign_id__budget_revisions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CampaignBudgetProposalPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Propose Budget",
+        "tags": [
+          "adlift",
+          "adlift"
+        ]
+      }
+    },
     "/api/v1/adlift/incrementality-jobs": {
       "post": {
         "operationId": "create_incrementality_job_api_v1_adlift_incrementality_jobs_post",
@@ -14003,11 +14519,37 @@
     "/api/v1/audit/evidence/export": {
       "post": {
         "operationId": "export_evidence_api_v1_audit_evidence_export_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EvidenceExportPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CanonicalEvidenceExportPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/EvidenceExportPayload"
+                  }
+                ],
+                "title": "Body"
               }
             }
           },
@@ -14342,7 +14884,9 @@
               "default": "zip",
               "enum": [
                 "zip",
-                "pdf"
+                "pdf",
+                "json",
+                "csv"
               ],
               "title": "Format",
               "type": "string"
@@ -14352,6 +14896,11 @@
         "responses": {
           "200": {
             "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
               "application/pdf": {
                 "schema": {
                   "format": "binary",
@@ -14553,6 +15102,109 @@
           }
         },
         "summary": "Apply Legal Hold",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/api/v1/audit/evidence/preview": {
+      "post": {
+        "operationId": "preview_canonical_evidence_api_v1_audit_evidence_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CanonicalEvidenceExportPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Preview Canonical Evidence Api V1 Audit Evidence Preview Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Preview Canonical Evidence",
         "tags": [
           "audit"
         ]
@@ -14760,6 +15412,99 @@
           }
         },
         "summary": "Purge Retained Evidence",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/api/v1/audit/evidence/sources": {
+      "get": {
+        "operationId": "canonical_evidence_sources_api_v1_audit_evidence_sources_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Canonical Evidence Sources Api V1 Audit Evidence Sources Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Canonical Evidence Sources",
         "tags": [
           "audit"
         ]

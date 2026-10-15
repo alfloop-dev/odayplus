@@ -31,6 +31,9 @@ class _FakeCursor:
     def __init__(self, connection: _FakeConnection) -> None:
         self._connection = connection
         self.rowcount = 1
+        self._sequence_result: dict[str, int] | None = None
+        self._document_read = False
+        self._document_result: dict[str, Any] | None = None
 
     def __enter__(self) -> _FakeCursor:
         return self
@@ -39,9 +42,39 @@ class _FakeCursor:
         return None
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+        self._sequence_result = None
+        self._document_read = False
+        self._document_result = None
         self._connection.executed.append((" ".join(sql.split()), params))
+        # Bundle construction now initializes the real durable flag owner.
+        # Model its atomic ordinal RETURNING result without bypassing that
+        # owner or changing the ordinary identity/session fixture responses.
+        if sql.startswith("INSERT INTO durable_sequences(") and "RETURNING counter" in sql:
+            name = params[0]
+            counter = self._connection.sequence_counters.get(name, 0) + 1
+            self._connection.sequence_counters[name] = counter
+            self._sequence_result = {"counter": counter}
+        elif sql.startswith("INSERT INTO durable_documents("):
+            # Keep the actual serialized bytes and seq produced by the real
+            # initializer; its immediate read_versioned validates this value.
+            assert "ON CONFLICT(collection, doc_id) DO NOTHING" in sql
+            row = dict(zip(("collection", "doc_id", "group_key", "seq", "ordinal",
+                            "correlation_id", "data", "created_at"), params, strict=True))
+            key = (row["collection"], row["doc_id"])
+            self.rowcount = int(key not in self._connection.document_rows)
+            if self.rowcount:
+                self._connection.document_rows[key] = row
+        elif sql.startswith(("SELECT ordinal FROM durable_documents ",
+                             "SELECT data, seq FROM durable_documents ")):
+            assert "WHERE collection = %s AND doc_id = %s" in sql
+            self._document_read = True
+            self._document_result = self._connection.document_rows.get(tuple(params))
 
     def fetchone(self) -> Any:
+        if self._sequence_result is not None:
+            return self._sequence_result
+        if self._document_read:
+            return self._document_result
         return self._connection.next_row
 
     def fetchall(self) -> list[Any]:
@@ -54,6 +87,8 @@ class _FakeConnection:
         self.commits = 0
         self.next_row: Any = None
         self.next_rows: list[Any] = []
+        self.sequence_counters: dict[str, int] = {}
+        self.document_rows: dict[tuple[str, str], dict[str, Any]] = {}
 
     def cursor(self) -> _FakeCursor:
         return _FakeCursor(self)
@@ -361,6 +396,10 @@ def test_postgres_bundle_wires_durable_session_repository(monkeypatch: pytest.Mo
     assert isinstance(repository, SqlSessionRepository)
     assert not isinstance(repository, InMemorySessionRepository)
     assert isinstance(bundle.identity_store, SqlIdentityStore)
+    assert fake_pool.connection_obj.sequence_counters["documents:auth.platform_feature_flags"] == 1
+    flags = bundle.feature_flag_registry.all()
+    assert len(flags) == 5 and all(not flag.enabled and not flag.approved_by for flag in flags)
+    assert fake_pool.checked_out == 0
 
 
 # --- Production dict-row regression tests (psycopg dict_row factory) -------

@@ -26,6 +26,10 @@ from modules.learninghub.runtime import (
     learninghub_production_required,
 )
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.infrastructure.persistence.feature_flags import (
+    FeatureFlagOperationDisabled,
+    FeatureFlagStoreUnavailable,
+)
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -238,6 +242,8 @@ else:
         audit_log: InMemoryAuditLog | None = None,
         registry: MlflowRegistryAdapter | None = None,
         runtime_mode: str | None = None,
+        feature_flags: Any | None = None,
+        job_queue: Any | None = None,
     ) -> APIRouter:
         from apps.api.app.routes._common import runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
@@ -270,6 +276,7 @@ else:
                     audit_log=active_audit_log,
                     artifact_store=active_artifacts,
                     runtime_mode=runtime_mode,
+                    feature_flags=feature_flags, job_queue=job_queue,
                 )
             except LearningHubRuntimeConfigurationError as exc:
                 composition_error = exc
@@ -491,6 +498,10 @@ else:
                     idempotency_key=str(body.idempotency_key),
                     release_scope=body.release_scope,
                 )
+            except FeatureFlagOperationDisabled as exc:
+                raise HTTPException(403, detail="FEATURE_FLAG_DISABLED") from exc
+            except FeatureFlagStoreUnavailable as exc:
+                raise HTTPException(503, detail="FEATURE_FLAG_STORE_UNAVAILABLE") from exc
             except LearningHubPreconditionRequiredError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_428_PRECONDITION_REQUIRED,

@@ -60,6 +60,7 @@ from shared.infrastructure.persistence.repositories import DurableDecisionStore
 from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 from solver.netplan import NetPlanConstraints
 from tests.intake_registry_fixture import APPROVER, MANAGER, TENANT
+from tests.integration._operation_flag_fixtures import SITE_GO_FLAG, enable_operation_flag
 from tests.integration.test_intake_registry_calendar_postgresql import _bundle as _postgres_bundle
 from tests.integration.test_operator_intake_workflow_postgresql import (
     bridge_database as bridge_database,
@@ -196,6 +197,7 @@ class CanonicalHarness:
         app = FastAPI()
         app.state.job_queue = self.bundle.job_queue
         app.state.persistence_bundle = self.bundle
+        app.state.feature_flag_registry = self.bundle.feature_flag_registry
 
         @app.middleware("http")
         async def correlation_id(request: Request, call_next: Any) -> Any:
@@ -208,6 +210,8 @@ class CanonicalHarness:
         app.include_router(
             create_operator_router(
                 audit_log=self.bundle.audit_log,
+                feature_flags=self.bundle.feature_flag_registry,
+                job_queue=self.bundle.job_queue,
                 document_store=self.document_store,
                 listing_repository_for_tenant=self.listing,
                 intake_workflow_store=getattr(self.bundle, "assisted_intake_store", None),
@@ -1078,6 +1082,10 @@ def test_growth_and_governance_aggregate_canonical_priceops_and_decisions(
                 if report.recommendation.value in {"GO", "WAIT", "REJECT"}
                 else "RETURN"
             )
+            if action == "GO":
+                enable_operation_flag(harness.bundle.feature_flag_registry, key=SITE_GO_FLAG,
+                                      tenant_id="tenant-a", queue=harness.bundle.job_queue,
+                                      audit_log=harness.bundle.audit_log)
             decision_payload: dict[str, Any] = {
                 "decision": action,
                 "reason": "canonical decision verified by integration reviewer",

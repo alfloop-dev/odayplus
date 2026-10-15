@@ -5,6 +5,7 @@ import { GovernanceWorkspace, inspectGovernanceSnapshot } from "../GovernanceWor
 import { OperatorConsole } from "../OperatorConsole";
 import { normalizeGovernanceApprovals, normalizeGovernanceStatusBoard } from "../governance/governanceEnvelope";
 import { readGovernanceViewState, type GovernanceViewState } from "../governance/governanceUrlState";
+import { catalog, previewValue, reply, selection, source } from "./fixtures/canonicalEvidenceResponses";
 
 // Preserve the existing protected-read premise while the shell now rechecks
 // the canonical session. This is unit transport data, not a grant/principal.
@@ -496,11 +497,16 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
-function stubConsoleGovernance(governanceSnapshot: unknown) {
+function stubConsoleGovernance(governanceSnapshot: unknown, canonicalEvidence = false) {
   const writes: string[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input instanceof Request ? input.url : input), "http://localhost");
     if ((init?.method ?? "GET") !== "GET") writes.push(url.pathname);
+    // Explicit HTTP read fixtures for the new production preview prerequisite;
+    // no authority is granted by a selected persona or a generated UI record.
+    if (canonicalEvidence && url.pathname === "/api/v1/audit/evidence/sources") return reply(catalog());
+    if (canonicalEvidence && url.pathname === "/api/v1/audit/evidence/exports") return reply({ exports: [] });
+    if (canonicalEvidence && url.pathname === "/api/v1/audit/evidence/preview") return reply(previewValue());
     if (url.pathname === "/api/v1/operator/bootstrap") {
       return new Response(JSON.stringify(governEnvelope), { status: 200, headers: { "Content-Type": "application/json" } });
     }
@@ -586,7 +592,7 @@ describe("Governance decision authority in the production Operator Console mount
   });
 
   it("presents decision controls for a server-verified decision actor", async () => {
-    stubConsoleGovernance(decidingSnapshot);
+    stubConsoleGovernance(decidingSnapshot, true);
 
     const view = render(<OperatorConsole searchParams={{ ws: "govern" }} />);
 
@@ -600,6 +606,11 @@ describe("Governance decision authority in the production Operator Console mount
     view.rerender(<OperatorConsole searchParams={{ ws: "govern", tab: "evidencePackage" }} />);
     await screen.findByTestId("governance-export-button");
     fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
+    await screen.findByRole("option", { name: /candidate-engineering/ });
+    fireEvent.change(screen.getByLabelText("決策來源（SiteScore）"), { target: { value: source.decision_id } });
+    fireEvent.change(screen.getByLabelText("匯出理由"), { target: { value: selection.reason } });
+    fireEvent.click(screen.getByRole("button", { name: "預覽實際欄位與遮罩" }));
+    await screen.findByTestId("canonical-evidence-preview");
     expect(screen.getByTestId("governance-export-button")).toBeEnabled();
   });
 

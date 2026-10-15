@@ -26,21 +26,29 @@ import { decisionOptions, decisionTitle, matchConfidence, matchLabel, shortUrl, 
 
 export function IntakeDecisionDialog({
   busy,
+  draft,
   error,
   kind,
   onClose,
+  onDraftChange,
   onSubmit,
   record,
 }: {
   busy: boolean;
+  draft?: { reason: string; riskAcknowledged: boolean };
   error: IntakeApiError | null;
   kind: IntakeDecisionKind;
   onClose: () => void;
+  onDraftChange?: (draft: { reason: string; riskAcknowledged: boolean }) => void;
   onSubmit: (input: { reason: string; riskSummary: string; riskAcknowledged: boolean }) => void;
   record: AssistedIntake;
 }) {
-  const [reason, setReason] = useState("");
-  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
+  // The container owns a scope-bound draft so list/detail reconciliation may
+  // remount this dialog without discarding an unconfirmed command.
+  const [localReason, setReason] = useState("");
+  const [localRiskAcknowledged, setRiskAcknowledged] = useState(false);
+  const reason = draft?.reason ?? localReason;
+  const riskAcknowledged = draft?.riskAcknowledged ?? localRiskAcknowledged;
   const [localError, setLocalError] = useState<string | null>(null);
   const [escapeBlocked, setEscapeBlocked] = useState(false);
 
@@ -123,7 +131,10 @@ export function IntakeDecisionDialog({
             data-testid="intake-decide-reason"
             disabled={busy}
             id="intake-decide-reason"
-            onChange={(event) => setReason(event.target.value)}
+            onChange={(event) => {
+              if (onDraftChange) onDraftChange({ reason: event.target.value, riskAcknowledged });
+              else setReason(event.target.value);
+            }}
             placeholder="例：樓層與提供者 ID 矛盾，實地確認為不同物件…"
             rows={3}
             value={reason}
@@ -141,7 +152,10 @@ export function IntakeDecisionDialog({
               data-testid="intake-decide-risk-ack"
               disabled={busy}
               id="intake-decide-risk-ack"
-              onChange={(event) => setRiskAcknowledged(event.target.checked)}
+              onChange={(event) => {
+                if (onDraftChange) onDraftChange({ reason, riskAcknowledged: event.target.checked });
+                else setRiskAcknowledged(event.target.checked);
+              }}
               type="checkbox"
             />
             <span>我已閱讀並了解上述風險，確認執行此決策（將連同此摘要寫入 Audit）</span>

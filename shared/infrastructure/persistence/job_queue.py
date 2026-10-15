@@ -40,6 +40,11 @@ _CANONICAL_INTAKE_SCORE_ELIGIBILITY = (
 )
 
 
+# Fixed runtime vocabulary, not caller input. Keep SQL arity aligned when a
+# reviewed audit delivery type is added to the shared closed tuple.
+_AUDIT_JOB_PLACEHOLDERS = ", ".join("?" for _ in AUDIT_DELIVERY_JOB_TYPES)
+
+
 class DurableJobQueue:
     """``enqueue`` / ``get`` over the ``durable_jobs`` table."""
 
@@ -161,7 +166,7 @@ class DurableJobQueue:
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
                     + available
                     + self._claim_eligibility
-                    + "ORDER BY CASE WHEN job_type IN (?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1"
+                    + f"ORDER BY CASE WHEN job_type IN ({_AUDIT_JOB_PLACEHOLDERS}) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1"
                     + row_lock,
                     (
                         JobStatus.QUEUED.value,
@@ -294,10 +299,10 @@ class DurableJobQueue:
                     "  WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "    AND lease_expires_at < statement_timestamp())) "
                     "  AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "  AND (? = FALSE OR job_type IN (?, ?, ?)) "
+                    f"  AND (? = FALSE OR job_type IN ({_AUDIT_JOB_PLACEHOLDERS})) "
                     "  AND (available_at IS NULL OR available_at <= statement_timestamp()) "
                     + self._claim_eligibility
-                    + "  ORDER BY CASE WHEN job_type IN (?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id "  # nosec B608
+                    + f"  ORDER BY CASE WHEN job_type IN ({_AUDIT_JOB_PLACEHOLDERS}) THEN 0 ELSE 1 END, created_at, job_id "  # nosec B608
                     "  FOR UPDATE SKIP LOCKED "
                     "  LIMIT 1"
                     ") "
@@ -333,9 +338,9 @@ class DurableJobQueue:
                     "WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "AND lease_expires_at < ?)) "
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "AND (? = FALSE OR job_type IN (?, ?, ?)) "
+                    f"AND (? = FALSE OR job_type IN ({_AUDIT_JOB_PLACEHOLDERS})) "
                     "AND (available_at IS NULL OR julianday(available_at) <= julianday(?)) "
-                    "ORDER BY CASE WHEN job_type IN (?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
+                    f"ORDER BY CASE WHEN job_type IN ({_AUDIT_JOB_PLACEHOLDERS}) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
                     (
                         JobStatus.QUEUED.value,
                         *_LEGACY_RETRYING_STATUS_VALUES,

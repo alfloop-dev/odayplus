@@ -122,7 +122,12 @@ class DurableAuditBacklog:
             if now is not None and now.tzinfo is None:
                 raise ValueError("Audit backlog clock requires a timezone")
             with self.engine.transaction():
-                return self._inspect(tenant_id, now)
+                audit = self._inspect(tenant_id, now)
+                from shared.audit.retained_backlog import RetainedEvidenceBacklog
+
+                retained = RetainedEvidenceBacklog(self.engine, self.sink_id).inspect(tenant_id, now=now)
+                return AuditBacklog(audit.pending + retained.pending,
+                                    max(audit.oldest_seconds, retained.oldest_seconds))
         except Exception as exc:
             raise AuditBacklogUnavailable("Durable audit backlog cannot be verified") from exc
 
@@ -250,6 +255,9 @@ class DurableAuditBacklog:
                 tenants.add(tenant_id)
             if now is not None and now.tzinfo is None:
                 raise ValueError("Audit backlog clock requires a timezone")
+            from shared.audit.retained_backlog import RetainedEvidenceBacklog
+
+            tenants.update(RetainedEvidenceBacklog(self.engine, self.sink_id).tenants())
             health = [self.inspect(tenant_id, now=now) for tenant_id in sorted(tenants)]
             return AuditBacklog(platform.pending + sum(item.pending for item in health),
                                 max(platform.oldest_seconds, max((item.oldest_seconds for item in health), default=0.0)))

@@ -1389,13 +1389,50 @@ def test_durable_batch_missing_scoped_repository_fails_before_writes(tmp_path: P
     from dataclasses import replace
 
     from apps.worker.oday_worker.handlers import build_batch_listing_intake_service
+    from shared.infrastructure.persistence.feature_flags import (
+        COLLECTION as FLAGS_COLLECTION,
+    )
+    from shared.infrastructure.persistence.feature_flags import (
+        DOCUMENT as FLAGS_DOCUMENT,
+    )
+    from shared.infrastructure.persistence.feature_flags import DurableFeatureFlagRegistry
 
     bundle = _durable_bundle(tmp_path / "missing-batch-dependency.sqlite3")
     try:
+        # Factory bootstraps the original platform-global disabled policy before
+        # this command. It is not an intake/listing write or a human approval.
+        assert isinstance(bundle.feature_flag_registry, DurableFeatureFlagRegistry)
+        assert bundle.feature_flag_registry.engine is bundle.engine
+        flags = bundle.feature_flag_registry.all()
+        assert {flag.key for flag in flags} == {
+            "high_risk.priceops.execute", "high_risk.sitescore.approve",
+            "high_risk.adlift.approve", "high_risk.netplan.approve", "high_risk.model.publish",
+        }
+        assert all(not flag.enabled and not flag.approved_by for flag in flags)
+        before_documents = [dict(row) for row in bundle.engine.query(
+            "SELECT * FROM durable_documents ORDER BY collection, doc_id")]
+        assert [(row["collection"], row["doc_id"]) for row in before_documents] == [
+            (FLAGS_COLLECTION, FLAGS_DOCUMENT)]
+        before_jobs = [dict(row) for row in bundle.engine.query(
+            "SELECT * FROM durable_jobs ORDER BY job_id")]
+        before_audit = [dict(row) for row in bundle.engine.query(
+            "SELECT * FROM durable_audit_events ORDER BY seq")]
         incomplete = replace(bundle, **{dependency: None})
         with pytest.raises(RuntimeError, match="tenant-aware batch"):
             build_batch_listing_intake_service("verified-tenant", incomplete)
-        assert bundle.engine.query_one("SELECT count(*) AS total FROM durable_documents")["total"] == 0
+        assert bundle.engine.query_one(
+            "SELECT count(*) AS total FROM durable_documents "
+            "WHERE NOT (collection = ? AND doc_id = ?)",
+            (FLAGS_COLLECTION, FLAGS_DOCUMENT),
+        )["total"] == 0
+        # Every column, including policy bytes/version/ordinal, must be exactly
+        # unchanged. No hidden write to the bootstrap identity is excused.
+        assert [dict(row) for row in bundle.engine.query(
+            "SELECT * FROM durable_documents ORDER BY collection, doc_id")] == before_documents
+        assert [dict(row) for row in bundle.engine.query(
+            "SELECT * FROM durable_jobs ORDER BY job_id")] == before_jobs
+        assert [dict(row) for row in bundle.engine.query(
+            "SELECT * FROM durable_audit_events ORDER BY seq")] == before_audit
     finally:
         bundle.engine.close()
 

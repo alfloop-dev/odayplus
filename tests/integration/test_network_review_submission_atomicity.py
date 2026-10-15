@@ -23,6 +23,7 @@ from shared.infrastructure.persistence.repositories import (
     DurableDecisionStore,
 )
 from tests.contract.test_operator_network_review_submission_api import seeded
+from tests.integration._operation_flag_fixtures import SITE_GO_FLAG, enable_operation_flag
 from tests.integration.test_network_review_canonical_atomicity import durable_bytes
 from tests.unit.test_network_canonical_review_projection import report
 
@@ -225,6 +226,9 @@ def test_current_authority_and_object_scope_are_rechecked_before_receipt_replay(
 
 def test_true_verified_proposer_cannot_approve_but_separate_current_checker_can(tmp_path):
     harness, resolver, _, _, context = setup(tmp_path)
+    enable_operation_flag(harness.bundle.feature_flag_registry, key=SITE_GO_FLAG,
+                          tenant_id=TENANT, queue=harness.bundle.job_queue,
+                          audit_log=harness.bundle.audit_log)
     result = invoke(resolver, "submit_review", **arguments(context))
     args = dict(
         review_id=result["records"]["decisionId"],
@@ -255,6 +259,9 @@ def test_true_verified_proposer_cannot_approve_but_separate_current_checker_can(
 
 def test_stale_candidate_and_metadata_writers_do_not_erase_pending_or_human_owned_fields(tmp_path):
     harness, resolver, candidate, _, context = setup(tmp_path)
+    enable_operation_flag(harness.bundle.feature_flag_registry, key=SITE_GO_FLAG,
+                          tenant_id=TENANT, queue=harness.bundle.job_queue,
+                          audit_log=harness.bundle.audit_log)
     old = deepcopy(harness.listing(TENANT).list_candidates()[0])
     result = invoke(resolver, "submit_review", **arguments(context))
     repository = harness.listing(TENANT)
@@ -538,6 +545,8 @@ def test_own_pg_signed_sql_accounts_sessions_proposer_selfdeny_bodyspoof_checker
     from tests.intake_registry_fixture import MANAGER
 
     database, bundle, harness, tenant, candidate, saved = submit_author_pg
+    enable_operation_flag(bundle.feature_flag_registry, key=SITE_GO_FLAG, tenant_id=tenant,
+                          queue=bundle.job_queue, audit_log=bundle.audit_log)
     checker = "00000000-0000-0000-0000-000000000299"
     with database.connect() as connection:
         connection.execute(
@@ -780,6 +789,9 @@ def test_approved_v1_newer_v2_opens_separate_round_preserving_original_sql_graph
     from shared.workflow.sitescore import CandidateSiteRealizationHook, DecisionStatus
 
     harness, _, candidate, first, context = setup(tmp_path)
+    enable_operation_flag(harness.bundle.feature_flag_registry, key=SITE_GO_FLAG,
+                          tenant_id=TENANT, queue=harness.bundle.job_queue,
+                          audit_log=harness.bundle.audit_log)
     decisions = harness.decisions(TENANT)
     approvals = DurableApprovalRepository(harness.scoped(TENANT))
     realized = DurableRealizedSiteStore(harness.scoped(TENANT))
