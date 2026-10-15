@@ -9,7 +9,112 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi continuation — run pi-20261015T042723Z-64b2f81a (NOT review-ready)
+## Pi batch001 continuation — run pi-20261015T044152Z-8b7b4813
+
+**Incremental source only, NOT review-ready.** Worker Manager allocated the
+renewed Pi lane/workspace/lease with batch001's nine extra paths in canonical
+`files`. Latest fetched admitted base remains `c0c8c8226acaab3cbe8bb76e79f01e5e6694abb3`,
+already an ancestor. No self-granted scope or policy/credential/provider change.
+
+Measured source checkpoint: **a7c1b9c005a63ed82c8c0a37aac3926b359c76c9**,
+tree **708d741c66e86be1829f0e670c8eb76978b26824**. The documentation/index
+successor containing this section is a DIFFERENT head: none of these author
+results is transferred to it or presented as final14/17/canonical/hosted CI proof.
+
+- **7fbd5154f9c4**: complete synthetic GO/gate evidence shape in three leased
+  fixture modules; one prior-consumption clock is scoped to its fixed validity
+  window. No production admission, lease-clock, temporal or approval change.
+  New negatives retain missing/blank signoff, missing/nonexistent evidence,
+  non-independent reviewer, failing receipt and substituted gate refusals.
+  The pooling positive now supplies a real persisted scope row; a separate
+  unknown-account negative requires refusal AND connection return. This adopts
+  the inspected previous Antigravity peer-4 registry/clock strategy, not its
+  whole patch or any independent review. Original assertions remain.
+- **0f7b9c2f8c10**: future ForecastOps lifecycle/feedback and HeatZone scoring/
+  composition/outcome events carry the verified server tenant after the
+  authorized owning operation. No client metadata authority or read-filter
+  relaxation. Signed JWT mounted controls cover both aliases, own-tenant
+  visibility, foreign/anonymous denial, spoofed metadata, score replay and
+  unchanged hidden tenantless history. They do NOT exercise every composition
+  transition or establish whole-composition acceptance. The performance fixture
+  now authenticates its audit read with the existing auditor role in the same
+  tenant; request volume/waves/soak/P95 and CI enforcement remain unchanged.
+- **73c2407ba02d**, **a7c1b9c005a6**: deterministic E2E seed uses a supported
+  tenant-authorized forecast job with persisted fixture timeseries, instead of
+  forbidden generic heartbeat enqueue. All E2E inventory members stay present.
+  The historical `scheduler_job_id` summary key is retained, explicitly NOT
+  scheduler execution proof; `queued_job_type=forecast` discloses the real type.
+  Local durable mounted transport exercises the actual seed HTTP headers,
+  queue/readback/replay/input persistence/audit and forbidden-generic/anonymous/
+  foreign denials. This is NOT complete Docker E2E or a worker-execution receipt.
+
+### Actual author diagnostics, including all failed attempts
+
+Raw logs, terminal records, three performance reports and runner sources are
+retained at the canonical scratch root
+`$PANTHEON_STATUS_ROOT/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/`.
+The committed [diagnostic index](pi-batch001-author-diagnostics.json) binds every
+command, head/tree, dirty flags, 420s cap, sanitized environment names, actual
+exit/duration, raw-log SHA256 and report SHA256. Its own SHA256 is
+`db60dd39656a7c965eff678d0a1fb503cdcbc478867be7422d30d13d3326c28d`.
+This index is expressly **NOT canonical receipts** and is not copied into
+canonical receipt storage.
+
+| Selection directory | Head | Actual result |
+|---|---|---|
+| `fixture-before` | b2c751406 | exit1; original GO/clock/unknown-scope failures retained |
+| `fixture-after` | 7fbd5154f | exit0; four repaired owning modules |
+| `perf-before` | 7fbd5154f | exit1; real anonymous audit-read401 failures |
+| `domain-producer-after` | 0f7b9c2f8 | exit0; whole owning security module |
+| `seed-after` | 73c2407ba | exit1; new test expected403, actual durable tenant-partition404 |
+| `seed-durable-refusal-after` | a7c1b9c00 | exit0; exact404/no payload/no tenant leak, original denials retained |
+| `performance-ratified-attempt-{1,2,3}` | a7c1b9c00 | all exit0; each150/150, failures0, waves10/20/50; P95 2.274833/1.777888/2.034589s < unchanged3.0s |
+| `source-lint` / `source-boundaries` | a7c1b9c00 | both exit0; nine changed Python paths / existing boundary control |
+| `owning-pg-domain-composition` | a7c1b9c00 | exit1; ForecastOps/durable owning cases pass; expansion still missing SiteScore decision event; six PG skips are NOT success |
+| `actual-pg-production-chain` | a7c1b9c00 | exit1; temporary wrapper lacks multiprocessing main guard; bundled PG also lacks required PostGIS; neither erased nor called production pass |
+| `actual-postgis-production-chain` | a7c1b9c00 | exit0; all six actual-PG persistence/production-chain tests, no skips, using fresh local Docker PostgreSQL16.9 + real PostGIS; owned container removed |
+| `scoped-fixture-security-composition` | a7c1b9c00 | exit0; issuer re-export, lease integration, profile, SQL sessions and whole mounted security module |
+
+The three performance measurements are the configured three-run robustness
+protocol, not retries to hide a failure. They measure the load/soak selection
+ONLY: the full hosted performance job also has other performance/capacity
+members and is not claimed green here. The PostGIS attempt explicitly repairs
+local verification infrastructure (fresh CI image, subprocess pytest), without
+changing test source/assertions/caps or faking spatial functions. Initial PG
+skips and wrapper/infrastructure failures remain separately recorded.
+
+### Remaining scope and proof gates
+
+Batch001 scope blocker is resolved. **New narrow Manager lease request:**
+[batch002](MANAGER-SCOPE-BATCH002-REQUEST.md), three exact paths. The export
+service alone cannot infer trusted tenant without its unallocated HTTP caller;
+no unsafe metadata-based attribution was added. Fresh durable expansion exposes
+the separately owned SiteScore decision audit producer. New b2c hosted
+product-db logs show production-auth fixture401, not an unresolved original
+outbox UndefinedTable. Raw/safe b2c product-db/orchestrator downloads are indexed;
+an initial ANSI-download refusal is retained. Not every full old/new CI log or
+all original32 findings has been inspected; further justified fixture scopes
+may be necessary. No claim that these three paths are the complete repair set.
+
+At pre-push readback PR1478 was OPEN at b2c, autoMergeRequest=null, normal
+CI38682527301 had four actual failed leaves and product-lint-unit IN_PROGRESS.
+These are old-head observations, not evidence for a7c or this docs successor.
+Use only normal scoped task-branch push; finish all author work and final-head
+proofs before governed `task_finalize.sh` submission can supersede the author.
+No review submission or no-status-submit bypass is performed by this increment.
+
+Original FULL blocked-task record remains equal to the preceding allocated-run
+snapshot (readback indexed); PR1459 remains OPEN at allocateda129. Seven human
+mainline evidence files are unchanged. Pi's historical failed-owner epoch,
+Antigravity contribution/quota failure, refused Codex assignment and initial
+lost raw Vitest log remain. Final canonical14/all17, terminal normal hosted CI,
+independent configured Codex2 assessment with honest omissions and Human/Ops
+acceptance remain owed. Every changed head needs its own proofs. Operational
+HOLD/quarantine/bindingNULL/cleanupUNKNOWN and goalfalse persist; no approval,
+merge arming, merge, done, live recovery/credential/account/session/deployment/
+cloud/IAM/business/data/model/F11 effect.
+
+## Previous Pi continuation — run pi-20261015T042723Z-64b2f81a (historical)
 
 Current admitted `origin/dev` was fetched and remains `c0c8c8226acaab3cbe8bb76e79f01e5e6694abb3`,
 already an ancestor of this task. Manager allocated the expected task branch to Pi;
