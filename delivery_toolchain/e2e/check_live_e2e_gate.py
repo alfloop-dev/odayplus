@@ -1845,12 +1845,14 @@ class _OwnedGateSessions:
                 self.unknown = True
 
     def request(self, method: str, path: str, **kwargs: Any) -> HttpResponse:
-        if self.unknown and not self.cleaning:
-            raise _SessionCustodyStopped
         headers = kwargs.get("headers") or {}
         raw_cookie = headers.get("cookie", "")
         value = raw_cookie.removeprefix(self._cookie_name + "=")
         owned = self.sessions.get(value) if raw_cookie == self._cookie_name + "=" + value else None
+        if (self.unknown and not self.cleaning
+                and not (method == "GET" and owned is not None and owned["attempted"]
+                         and path in {"/auth/session", "/api/v1/operator/users"})):
+            raise _SessionCustodyStopped
         logout = method == "POST" and path == "/auth/logout"
         issuance = method == "POST" and path in {"/login", "/auth/password"}
         if logout:
@@ -1898,7 +1900,13 @@ class _OwnedGateSessions:
         # outer deadline is NOT an extension of any native work/cleanup budget.
         self.cleaning = True
         deadline = time.monotonic() + 540.0
-        for value, state in tuple(self.sessions.items()):
+        visited: set[str] = set()
+        for _ in range(self._max_sessions):
+            value = next((v for v in self.sessions if v not in visited), None)
+            if value is None:
+                break
+            visited.add(value)
+            state = self.sessions[value]
             headers = {"accept": "application/json", "origin": self.origin,
                        "x-correlation-id": correlation_id,
                        "cookie": self._cookie_name + "=" + value}
