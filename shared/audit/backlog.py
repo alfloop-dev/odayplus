@@ -103,14 +103,26 @@ class DurableAuditBacklog:
         # Select complete fixed statements; tenant and family remain parameters.
         if getattr(self.engine, "dialect", "") == "postgresql":
             catalog = {
-                "tenant_marked": "SELECT event_id FROM durable_audit_events WHERE metadata_json ->> 'tenant_id' = ? AND metadata_json ->> 'audit_delivery_job_type' = ?",
-                "tenant_jobs": "SELECT job_id FROM durable_jobs WHERE job_type = ? AND payload_json ->> 'tenant_id' = ?",
+                "tenant_events": (
+                    "SELECT * FROM durable_audit_events WHERE metadata_json ->> 'tenant_id' = ? "
+                    "AND (metadata_json ->> 'audit_delivery_job_type' = ? "
+                    "OR event_id IN (SELECT payload_json ->> 'audit_event_id' FROM durable_jobs "
+                    "WHERE job_type = ? AND payload_json ->> 'tenant_id' = ?) "
+                    "OR event_id IN (SELECT doc_id FROM durable_documents WHERE collection = ?))"
+                ),
+                "tenant_jobs": "SELECT * FROM durable_jobs WHERE job_type = ? AND payload_json ->> 'tenant_id' = ?",
                 "all_marked": "SELECT metadata_json FROM durable_audit_events WHERE metadata_json ->> 'audit_delivery_job_type' = ?",
             }
         else:
             catalog = {
-                "tenant_marked": "SELECT event_id FROM durable_audit_events WHERE json_extract(metadata_json, '$.tenant_id') = ? AND json_extract(metadata_json, '$.audit_delivery_job_type') = ?",
-                "tenant_jobs": "SELECT job_id FROM durable_jobs WHERE job_type = ? AND json_extract(payload_json, '$.tenant_id') = ?",
+                "tenant_events": (
+                    "SELECT * FROM durable_audit_events WHERE json_extract(metadata_json, '$.tenant_id') = ? "
+                    "AND (json_extract(metadata_json, '$.audit_delivery_job_type') = ? "
+                    "OR event_id IN (SELECT json_extract(payload_json, '$.audit_event_id') FROM durable_jobs "
+                    "WHERE job_type = ? AND json_extract(payload_json, '$.tenant_id') = ?) "
+                    "OR event_id IN (SELECT doc_id FROM durable_documents WHERE collection = ?))"
+                ),
+                "tenant_jobs": "SELECT * FROM durable_jobs WHERE job_type = ? AND json_extract(payload_json, '$.tenant_id') = ?",
                 "all_marked": "SELECT metadata_json FROM durable_audit_events WHERE json_extract(metadata_json, '$.audit_delivery_job_type') = ?",
             }
         return catalog[name]
@@ -126,40 +138,61 @@ class DurableAuditBacklog:
         except Exception as exc:
             raise AuditBacklogUnavailable("Durable audit backlog cannot be verified") from exc
 
-    def _inspect(self, tenant_id: str, observed: datetime | None) -> AuditBacklog:
+    def _delivery_facts(self, tenant_id: str):
         scoped = TenantScopedDocumentStore(self.documents, tenant_id)
-        marked = self.engine.query(
-            self._statement("tenant_marked"),
-            (tenant_id, DURABLE_JOB_TYPE),
+        # Keep the complete fact/intent/job and delivered-receipt cross-check.
+        # Load each family once instead of performing four database round
+        # trips per historical event. History processing remains linear.
+        committed = self.engine.query(
+            self._statement("tenant_events"),
+            (tenant_id, DURABLE_JOB_TYPE, DURABLE_JOB_TYPE, tenant_id, scoped._collection(COLLECTION)),
         )
         jobs = self.engine.query(
             self._statement("tenant_jobs"),
             (DURABLE_JOB_TYPE, tenant_id),
         )
-        event_ids = {str(row["event_id"]) for row in marked}
-        intents = scoped.list_all(COLLECTION)
-        intent_ids = set()
-        for intent in intents:
+        committed_by_id = {str(row["event_id"]): row for row in committed}
+        event_ids = {
+            str(row["event_id"]) for row in committed
+            if json.loads(row["metadata_json"]).get("audit_delivery_job_type") == DURABLE_JOB_TYPE
+        }
+        intents = {}
+        for doc_id, intent in self.documents.list_items(scoped._collection(COLLECTION)):
             event = intent.get("event")
-            if event is None or not event.event_id or event.event_id in intent_ids:
+            if event is None or not event.event_id or event.event_id != doc_id or event.event_id in intents:
                 raise ValueError("Invalid or duplicated audit delivery intent")
-            intent_ids.add(event.event_id)
-        event_ids.update(intent_ids)
-        job_ids = set()
+            intents[event.event_id] = intent
+        event_ids.update(intents)
+        jobs_by_event = {}
         for row in jobs:
-            job = self.queue.get(row["job_id"])
-            event_id = job.payload.get("audit_event_id") if job else None
-            if not isinstance(event_id, str) or not event_id or event_id in job_ids:
+            job = self.queue._row_to_record(row)
+            event_id = job.payload.get("audit_event_id")
+            if (
+                not isinstance(event_id, str) or not event_id or event_id in jobs_by_event
+                or job.idempotency_key != "durable-audit:" + tenant_id + ":" + event_id
+            ):
                 raise ValueError("Invalid or duplicated audit delivery job")
-            job_ids.add(event_id)
-        event_ids.update(job_ids)
+            jobs_by_event[event_id] = job
+        event_ids.update(jobs_by_event)
+        return event_ids, committed_by_id, intents, jobs_by_event
+
+    def _inspect(self, tenant_id: str, observed: datetime | None) -> AuditBacklog:
+        event_ids, committed_by_id, intents, jobs_by_event = self._delivery_facts(tenant_id)
+        if any(
+            event_id not in committed_by_id or event_id not in intents or event_id not in jobs_by_event
+            for event_id in event_ids
+        ):
+            # A complete delivery may commit between the three reads. Refresh
+            # the families once as a batch; persistent missing facts still
+            # fail closed below, without per-event database round trips.
+            refreshed_ids, committed_by_id, intents, jobs_by_event = self._delivery_facts(tenant_id)
+            # Facts observed in either batch cannot silently disappear.
+            event_ids.update(refreshed_ids)
         ages = []
         for event_id in sorted(event_ids):
-            row = self.engine.query_one(
-                "SELECT * FROM durable_audit_events WHERE event_id = ?", (event_id,),
-            )
-            intent = scoped.get(COLLECTION, event_id)
-            job = self.queue.get_by_idempotency_key("durable-audit:" + tenant_id + ":" + event_id)
+            row = committed_by_id.get(event_id)
+            intent = intents.get(event_id)
+            job = jobs_by_event.get(event_id)
             if row is None or intent is None or job is None or not self.sink_id:
                 raise ValueError("Committed audit lacks its bound delivery intent/job/sink")
             event = DurableAuditLog._row_to_event(row)
@@ -224,19 +257,19 @@ class DurableAuditBacklog:
                     raise ValueError("Audit delivery lacks its tenant")
                 tenants.add(tenant_id)
             documents = self.engine.query(
-                "SELECT collection,doc_id FROM durable_documents WHERE collection LIKE ?",
+                "SELECT DISTINCT collection FROM durable_documents WHERE collection LIKE ?",
                 (COLLECTION + ".tenant.%",),
             )
             for row in documents:
-                intent = self.documents.get(row["collection"], row["doc_id"])
-                event = intent.get("event") if intent else None
-                tenant_id = event.metadata.get("tenant_id") if event else None
-                if not isinstance(tenant_id, str) or not tenant_id.strip():
-                    raise ValueError("Audit delivery document lacks its tenant")
-                scoped = TenantScopedDocumentStore(self.documents, tenant_id)
-                if row["collection"] != scoped._collection(COLLECTION) or scoped.get(COLLECTION, event.event_id) != intent:
-                    raise ValueError("Audit delivery document differs from its tenant partition")
-                tenants.add(tenant_id)
+                for doc_id, intent in self.documents.list_items(row["collection"]):
+                    event = intent.get("event") if intent else None
+                    tenant_id = event.metadata.get("tenant_id") if event else None
+                    if not isinstance(tenant_id, str) or not tenant_id.strip():
+                        raise ValueError("Audit delivery document lacks its tenant")
+                    scoped = TenantScopedDocumentStore(self.documents, tenant_id)
+                    if row["collection"] != scoped._collection(COLLECTION) or doc_id != event.event_id:
+                        raise ValueError("Audit delivery document differs from its tenant partition")
+                    tenants.add(tenant_id)
             if now is not None and now.tzinfo is None:
                 raise ValueError("Audit backlog clock requires a timezone")
             health = [self.inspect(tenant_id, now=now) for tenant_id in sorted(tenants)]

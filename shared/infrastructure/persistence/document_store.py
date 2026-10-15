@@ -213,6 +213,14 @@ class SqliteDocumentStore:
         )
         return [pickle.loads(r["data"]) for r in rows]
 
+    def list_items(self, collection: str) -> list[tuple[str, Any]]:
+        """Read persisted keys with their aggregates in the same observation."""
+        rows = self._engine.query(
+            "SELECT doc_id, data FROM durable_documents WHERE collection = ? ORDER BY ordinal",
+            (collection,),
+        )
+        return [(row["doc_id"], pickle.loads(row["data"])) for row in rows]
+
     def list_by_group(self, collection: str, group_key: str) -> list[Any]:
         rows = self._engine.query(
             "SELECT data FROM durable_documents "
