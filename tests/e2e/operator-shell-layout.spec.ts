@@ -275,26 +275,31 @@ test.describe("Operator shared header layout", () => {
         // Measure the row holding the workspace title, not the workspace box: a
         // second padding layer keeps the box in place but moves its content.
         const title = page.locator(titleSelector).first();
-        await expect(title).toBeVisible();
-        const { rowX, shellContentX, rowWidth, shellContentWidth } = await title.evaluate((element) => {
-          const shell = document.querySelector('[data-testid="operator-console"] > main') as HTMLElement;
-          const style = getComputedStyle(shell);
-          const shellBox = shell.getBoundingClientRect();
-          const row = element.parentElement!.getBoundingClientRect();
-          const left = parseFloat(style.paddingLeft);
-          return {
-            rowX: row.x,
-            rowWidth: row.width,
-            shellContentX: shellBox.x + left,
-            shellContentWidth: shellBox.width - left - parseFloat(style.paddingRight),
-          };
-        });
-        // The shell already applies the Package 10 container padding at every
-        // breakpoint; workspaces must not pad again.
-        expect(Math.round(rowX), `${workspace} title row x at ${width}px`).toBe(Math.round(shellContentX));
-        expect(Math.round(rowWidth), `${workspace} title row width at ${width}px`).toBeGreaterThanOrEqual(
-          Math.round(shellContentWidth) - 4,
-        );
+        // A bootstrap refresh can replace a visible title with the loading
+        // gate between visibility and evaluation. Re-resolve the locator and
+        // retry the complete measurement; detached nodes have zero geometry.
+        await expect(async () => {
+          await expect(title).toBeVisible();
+          const { rowX, shellContentX, rowWidth, shellContentWidth } = await title.evaluate((element) => {
+            const shell = document.querySelector('[data-testid="operator-console"] > main') as HTMLElement;
+            const style = getComputedStyle(shell);
+            const shellBox = shell.getBoundingClientRect();
+            const row = element.parentElement!.getBoundingClientRect();
+            const left = parseFloat(style.paddingLeft);
+            return {
+              rowX: row.x,
+              rowWidth: row.width,
+              shellContentX: shellBox.x + left,
+              shellContentWidth: shellBox.width - left - parseFloat(style.paddingRight),
+            };
+          });
+          // The shell already applies the Package 10 container padding at every
+          // breakpoint; workspaces must not pad again.
+          expect(Math.round(rowX), `${workspace} title row x at ${width}px`).toBe(Math.round(shellContentX));
+          expect(Math.round(rowWidth), `${workspace} title row width at ${width}px`).toBeGreaterThanOrEqual(
+            Math.round(shellContentWidth) - 4,
+          );
+        }).toPass({ timeout: 10_000 });
       }
     }
 
