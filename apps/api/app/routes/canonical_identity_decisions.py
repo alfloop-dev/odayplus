@@ -245,13 +245,12 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
     def authorize_resources(request, principal, repo, plan):
         # Verify each native resource's own scope; the case's region/brand may
         # never manufacture a grant to an unrelated graph or candidate.
-        for table, key, expected in (
-            ("identity.properties", "property_id", "expected_property_versions"),
-            ("expansion.listings", "listing_id", "expected_listing_versions"),
+        for query, expected in (
+            ("SELECT * FROM identity.properties WHERE tenant_id=? AND property_id=?", "expected_property_versions"),
+            ("SELECT * FROM expansion.listings WHERE tenant_id=? AND listing_id=?", "expected_listing_versions"),
         ):
             for identity in sorted(plan[expected]):
-                row = repo.graph._one("SELECT * FROM " + table + " WHERE tenant_id=? AND " + key + "=?",
-                    (principal.tenant_id, identity))
+                row = repo.graph._one(query, (principal.tenant_id, identity))
                 authorize(request, principal, row)
         for item in sorted(plan["candidate_reassignment_plan"], key=lambda row: row["candidate_site_id"]):
             row = repo.graph._one("SELECT * FROM expansion.candidate_sites WHERE tenant_id=? AND candidate_site_id=?",
