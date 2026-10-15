@@ -5266,7 +5266,9 @@ else:
         from apps.api.app.routes.canonical_match_cases import create_canonical_match_case_router
 
         router.include_router(create_canonical_match_case_router(active))
-        from apps.api.app.routes.canonical_identity_decisions import create_canonical_identity_decisions_router
+        from apps.api.app.routes.canonical_identity_decisions import (
+            create_canonical_identity_decisions_router,
+        )
 
         router.include_router(create_canonical_identity_decisions_router(active))
         return router
