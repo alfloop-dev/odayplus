@@ -5,7 +5,10 @@ from uuid import uuid4
 import pytest
 
 from modules.opsboard.application.operator_live_repository import OperatorLiveRepository
-from modules.opsboard.application.store_ops import DurableStoreOpsRepository
+from modules.opsboard.application.store_ops import (
+    DurableStoreOpsRepository,
+    StoreOpsLiveDataUnavailable,
+)
 from shared.domain import AddressLocation, Brand, Store, Tenant
 from shared.infrastructure.persistence import PostgresDocumentStore
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
@@ -51,8 +54,13 @@ def test_real_postgresql_issues_are_tenant_brand_region_and_store_scoped(case):
     db, bundle, documents, tenant_a, tenant_b, brand_a, stores, monkeypatch = case
     _write(documents, tenant_a, [_issue(stores[0]), _issue(stores[1]), _issue(stores[2], title="foreign store inside tenant partition")])
     _write(documents, tenant_b, [_issue(stores[2], title="foreign tenant secret")])
-    # A legacy global document must never supply the scoped Today metric.
-    DurableStoreOpsRepository(documents).save_state({"issues": [_issue(stores[0], title="global legacy secret")]})
+    # The public factory must reject unbound writes; only the raw owned store
+    # injects this historical poison to exercise the independent read guard.
+    legacy_global_state = {"issues": [_issue(stores[0], title="global legacy secret")]}
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="authenticated tenant scope"):
+        DurableStoreOpsRepository(documents).save_state(legacy_global_state)
+    assert documents.get("opsboard.store_ops.state", "default") is None
+    documents.put("opsboard.store_ops.state", "default", legacy_global_state)
     scope = {"tenant_id": tenant_a, "brand_ids": (brand_a,), "region_ids": ("north",), "store_ids": (stores[0],)}
     state = OperatorLiveRepository(bundle).load_state(**scope)
     assert state["_meta"]["sections"]["storeOpsIssues"]["recordCount"] == 1
@@ -80,7 +88,16 @@ def test_missing_materialized_issue_state_is_unavailable_and_never_seeded(case):
 
 def test_issue_without_explicit_store_scope_cannot_make_a_zero_metric(case):
     _, bundle, documents, tenant_a, _, _, stores, _ = case
-    _write(documents, tenant_a, [{"status": "new", "severity": "high", "ownerName": ""}])
+    malformed_issues = [{"status": "new", "severity": "high", "ownerName": ""}]
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="issues projection is invalid"):
+        _write(documents, tenant_a, malformed_issues)
+    scoped_documents = TenantScopedDocumentStore(documents, tenant_a)
+    assert scoped_documents.get("opsboard.store_ops.state", "default") is None
+    # Explicit historical malformed data bypasses the command writer only in
+    # this isolated raw fixture; the Today reader must still fail closed.
+    scoped_documents.put("opsboard.store_ops.state", "default", {
+        "issues": malformed_issues, "stores": [], "evidence": [], "auditEvents": [],
+    })
     state = OperatorLiveRepository(bundle).load_state(tenant_id=tenant_a, store_ids=(stores[0],))
     assert state["_meta"]["sections"]["storeOpsIssues"]["state"] == "unavailable"
     assert state["kpis"][0]["value"] is None
