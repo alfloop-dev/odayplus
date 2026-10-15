@@ -1,17 +1,25 @@
 """ODP-STOREOPS-STATE-MATERIALIZER-001: the production Store Ops state writer.
 
-On PostgreSQL ``DurableStoreOpsRepository.get_state`` fails closed until the
-``opsboard.store_ops.state/default`` document exists, and every Store Ops write
-reads that document first, so the materializer is the only path that can end
-the 503. These tests pin that it writes an honest projection (empty when there
-are no stores, never fixtures), is idempotent, keeps the operator lifecycle,
-leaves the fail-closed read semantics intact, and is scheduled + handled.
+On PostgreSQL ``DurableStoreOpsRepository.get_state`` fails closed until a
+tenant's Store Ops state document exists, and every Store Ops write reads that
+document first, so the materializer is the only path that can end the 503.
+These tests pin that it writes an honest projection (empty when there are no
+stores, never fixtures) into the tenant's own partition, is idempotent, never
+rolls back an interleaved operator write, leaves the fail-closed read semantics
+intact, and is scheduled + handled.
+
+The document store is the production ``PostgresDocumentStore`` class over a
+SQLite engine that reports the PostgreSQL dialect, so the versioned
+compare-and-swap runs as real SQL against ``durable_documents``.
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
+from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 from datetime import UTC, datetime
 from typing import Any
 
@@ -38,6 +46,7 @@ from modules.opsboard.application.store_ops import (
     _STORE_OPS_FIXTURE_IDS,
     DurableStoreOpsRepository,
     InMemoryStoreOpsRepository,
+    StoreOpsConcurrentWriteConflict,
     StoreOpsLiveDataUnavailable,
     StoreOpsService,
 )
@@ -46,47 +55,85 @@ from modules.opsboard.application.store_ops_materializer import (
     empty_store_ops_state,
     materialize_store_ops_state,
 )
+from shared.audit import InMemoryAuditLog
 from shared.domain.models import Store
+from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.infrastructure.persistence.factory import build_persistence
+from shared.infrastructure.persistence.postgresql import PostgresDocumentStore
 from shared.jobs.queue import JobRecord, NonRetryableJobError
 
 TENANT_ID = "tenant-store-ops-live"
+OTHER_TENANT_ID = "tenant-store-ops-other"
 BASE = "/api/v1/operator"
-STATE_KEY = ("opsboard.store_ops.state", "default")
+STATE_COLLECTION = "opsboard.store_ops.state"
+STATE_DOC_ID = "default"
 
 
-class _PostgresEngineStub:
+def _state_collection(tenant_id: str = TENANT_ID) -> str:
+    partition = hashlib.sha256(tenant_id.encode("utf-8")).hexdigest()
+    return f"{STATE_COLLECTION}.tenant.{partition}"
+
+
+class _PostgresDialectSqliteEngine(SqliteEngine):
     dialect = "postgresql"
 
 
-class LivePostgresDocumentStore:
-    """Dict-backed document store that reports a PostgreSQL dialect."""
+class LivePostgresDocumentStore(PostgresDocumentStore):
+    """The production document store class, reporting PostgreSQL, on SQLite.
 
-    engine = _PostgresEngineStub()
+    Records state writes, can fail reads, and can run a hook right before the
+    next compare-and-swap to interleave a competing writer deterministically.
+    """
 
-    def __init__(self, documents: dict[tuple[str, str], Any] | None = None) -> None:
-        self.documents = dict(documents or {})
-        self.put_calls: list[tuple[str, str]] = []
+    def __init__(self, path: Path) -> None:
+        super().__init__(_PostgresDialectSqliteEngine(path))  # type: ignore[arg-type]
+        self.put_calls: list[str] = []
         self.fail_reads = False
+        self.before_next_write: Callable[[], None] | None = None
 
-    def get(self, collection: str, doc_id: str) -> Any:
+    def _check_read(self) -> None:
         if self.fail_reads:
             raise ConnectionError("postgres unreachable")
-        value = self.documents.get((collection, doc_id))
-        return copy.deepcopy(value)
 
-    def put(self, collection: str, doc_id: str, value: Any) -> None:
-        self.put_calls.append((collection, doc_id))
-        self.documents[(collection, doc_id)] = copy.deepcopy(value)
+    def get(self, collection: str, doc_id: str) -> Any:
+        self._check_read()
+        return super().get(collection, doc_id)
+
+    def get_versioned(self, collection: str, doc_id: str) -> tuple[Any, int] | None:
+        self._check_read()
+        return super().get_versioned(collection, doc_id)
+
+    def compare_and_put(
+        self, collection: str, doc_id: str, obj: Any, *, expected_version: int | None
+    ) -> int | None:
+        hook, self.before_next_write = self.before_next_write, None
+        if hook is not None:
+            hook()
+        self.put_calls.append(collection)
+        return super().compare_and_put(
+            collection, doc_id, obj, expected_version=expected_version
+        )
+
+    def state(self, tenant_id: str = TENANT_ID) -> Any:
+        return super().get(_state_collection(tenant_id), STATE_DOC_ID)
+
+
+@pytest.fixture
+def document_store(tmp_path: Path) -> LivePostgresDocumentStore:
+    return LivePostgresDocumentStore(tmp_path / "store-ops.db")
 
 
 class FakeStoreRepository:
     def __init__(self, stores: list[Store]) -> None:
         self.stores = stores
         self.calls: list[str | None] = []
+        self.on_list: Callable[[], None] | None = None
 
     def list_stores(self, *, tenant_id: str | None = None, **_kwargs: Any) -> list[Store]:
         self.calls.append(tenant_id)
+        hook, self.on_list = self.on_list, None
+        if hook is not None:
+            hook()
         return [store for store in self.stores if store.tenant_id == tenant_id]
 
 
@@ -95,8 +142,11 @@ class FakeForecastOpsRepository:
         self.alerts = alerts or {}
 
     def list_alerts_by_store(self, tenant_id: str, store_id: str) -> list[dict[str, Any]]:
-        assert tenant_id == TENANT_ID
-        return list(self.alerts.get(store_id, []))
+        return [
+            alert
+            for alert in self.alerts.get(store_id, [])
+            if alert.get("tenant_id") == tenant_id
+        ]
 
 
 def _store(store_id: str, name: str, **overrides: Any) -> Store:
@@ -114,7 +164,7 @@ def _store(store_id: str, name: str, **overrides: Any) -> Store:
 def _alert(alert_id: str, store_id: str, level: str, **overrides: Any) -> dict[str, Any]:
     return {
         "alert_id": alert_id,
-        "tenant_id": TENANT_ID,
+        "tenant_id": overrides.pop("tenant_id", TENANT_ID),
         "store_id": store_id,
         "alert_level": level,
         "alert_reason_code": overrides.pop("alert_reason_code", "sitescore_gap"),
@@ -130,16 +180,22 @@ def _materialize(
     *,
     stores: list[Store] | None = None,
     alerts: dict[str, list[dict[str, Any]]] | None = None,
+    tenant_id: str = TENANT_ID,
+    store_repository: FakeStoreRepository | None = None,
 ):
     return materialize_store_ops_state(
         repository=DurableStoreOpsRepository(document_store),
-        store_repository=FakeStoreRepository(stores or []),
+        store_repository=store_repository or FakeStoreRepository(stores or []),
         forecastops_repository=FakeForecastOpsRepository(alerts),
-        tenant_id=TENANT_ID,
+        tenant_id=tenant_id,
     )
 
 
-def _client(document_store: LivePostgresDocumentStore) -> TestClient:
+def _client(
+    document_store: LivePostgresDocumentStore,
+    *,
+    require_live_data: bool | None = True,
+) -> TestClient:
     app = FastAPI()
 
     @app.middleware("http")
@@ -150,20 +206,29 @@ def _client(document_store: LivePostgresDocumentStore) -> TestClient:
     app.include_router(
         create_operator_store_ops_router(
             repository=DurableStoreOpsRepository(document_store),
-            require_live_data=True,
+            require_live_data=require_live_data,
         ),
         prefix="/api/v1",
     )
     return TestClient(app)
 
 
-def _headers() -> dict[str, str]:
+def _service(
+    document_store: LivePostgresDocumentStore, tenant_id: str = TENANT_ID
+) -> StoreOpsService:
+    return StoreOpsService(
+        repository=DurableStoreOpsRepository(document_store).for_tenant(tenant_id),
+        require_live_data=True,
+    )
+
+
+def _headers(tenant_id: str = TENANT_ID) -> dict[str, str]:
     return {
-        "x-subject-id": f"operator-{TENANT_ID}",
+        "x-subject-id": f"operator-{tenant_id}",
         "x-roles": "operations_manager,site_reviewer,expansion_user",
         "x-operator-role": "ops-lead",
-        "x-tenant-id": TENANT_ID,
-        "x-correlation-id": f"corr-{TENANT_ID}",
+        "x-tenant-id": tenant_id,
+        "x-correlation-id": f"corr-{tenant_id}",
     }
 
 
@@ -177,15 +242,14 @@ def _assert_no_fixture_ids(text: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_empty_core_stores_writes_honest_empty_state_and_api_returns_200() -> None:
-    document_store = LivePostgresDocumentStore()
+def test_empty_core_stores_writes_honest_empty_state_and_api_returns_200(document_store: LivePostgresDocumentStore) -> None:
 
     result = _materialize(document_store)
 
     assert result.status == "written"
     assert result.reason == "created"
-    assert document_store.put_calls == [STATE_KEY]
-    assert document_store.documents[STATE_KEY] == empty_store_ops_state()
+    assert document_store.put_calls == [_state_collection()]
+    assert document_store.state() == empty_store_ops_state()
 
     with _client(document_store) as client:
         summary = client.get(f"{BASE}/store-ops/summary", headers=_headers())
@@ -200,8 +264,8 @@ def test_empty_core_stores_writes_honest_empty_state_and_api_returns_200() -> No
     _assert_no_fixture_ids(summary.text + issues.text)
 
 
-def test_unmaterialized_state_still_returns_503() -> None:
-    with _client(LivePostgresDocumentStore()) as client:
+def test_unmaterialized_state_still_returns_503(document_store: LivePostgresDocumentStore) -> None:
+    with _client(document_store) as client:
         response = client.get(f"{BASE}/store-ops/summary", headers=_headers())
 
     assert response.status_code == 503
@@ -215,8 +279,7 @@ def test_unmaterialized_state_still_returns_503() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_projects_stores_four_lights_and_issues_without_fixture_ids() -> None:
-    document_store = LivePostgresDocumentStore()
+def test_projects_stores_four_lights_and_issues_without_fixture_ids(document_store: LivePostgresDocumentStore) -> None:
     stores = [
         _store("store-b", "板橋 B 店", region_code="NTPC-BANQIAO"),
         _store("store-a", "信義 A 店"),
@@ -239,7 +302,7 @@ def test_projects_stores_four_lights_and_issues_without_fixture_ids() -> None:
     assert result.status == "written"
     assert result.store_count == 2
     assert result.issue_count == 2
-    state = document_store.documents[STATE_KEY]
+    state = document_store.state()
     stores_by_id = {store["id"]: store for store in state["stores"]}
     assert list(stores_by_id) == ["store-a", "store-b"]
     assert stores_by_id["store-a"]["name"] == "信義 A 店"
@@ -287,39 +350,33 @@ def test_projects_stores_four_lights_and_issues_without_fixture_ids() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_materializer_is_idempotent_and_skips_unchanged_writes() -> None:
-    document_store = LivePostgresDocumentStore()
+def test_materializer_is_idempotent_and_skips_unchanged_writes(document_store: LivePostgresDocumentStore) -> None:
     stores = [_store("store-a", "信義 A 店")]
     alerts = {"store-a": [_alert("alert-red", "store-a", "red")]}
 
     first = _materialize(document_store, stores=stores, alerts=alerts)
-    snapshot = copy.deepcopy(document_store.documents[STATE_KEY])
+    snapshot = copy.deepcopy(document_store.state())
     second = _materialize(document_store, stores=stores, alerts=alerts)
 
     assert first.status == "written"
     assert second.status == "unchanged"
     assert second.new_issue_count == 0
-    assert document_store.put_calls == [STATE_KEY]
-    assert document_store.documents[STATE_KEY] == snapshot
+    assert document_store.put_calls == [_state_collection()]
+    assert document_store.state() == snapshot
 
 
-def test_rerun_keeps_operator_lifecycle_and_appends_new_alert_issues() -> None:
-    document_store = LivePostgresDocumentStore()
+def test_rerun_keeps_operator_lifecycle_and_appends_new_alert_issues(document_store: LivePostgresDocumentStore) -> None:
     stores = [_store("store-a", "信義 A 店")]
     alerts = {"store-a": [_alert("alert-red", "store-a", "red")]}
     _materialize(document_store, stores=stores, alerts=alerts)
 
-    service = StoreOpsService(
-        repository=DurableStoreOpsRepository(document_store),
-        require_live_data=True,
-    )
-    service.transition_issue(
+    _service(document_store).transition_issue(
         issue_id="ISS-FC-alert-red",
         action_type="triage",
         payload={"severity": "high"},
         correlation_id="corr-triage",
     )
-    triaged = copy.deepcopy(document_store.documents[STATE_KEY])
+    triaged = copy.deepcopy(document_store.state())
     assert triaged["auditEvents"][0]["id"] == f"AUD-OPS-{MATERIALIZED_AUDIT_ORDINAL_START}"
 
     alerts["store-a"].append(
@@ -330,7 +387,7 @@ def test_rerun_keeps_operator_lifecycle_and_appends_new_alert_issues() -> None:
 
     assert result.status == "written"
     assert result.new_issue_count == 1
-    state = document_store.documents[STATE_KEY]
+    state = document_store.state()
     issues_by_id = {issue["id"]: issue for issue in state["issues"]}
     assert issues_by_id["ISS-FC-alert-red"]["status"] == "triaged"
     assert issues_by_id["ISS-FC-alert-red"]["severity"] == "high"
@@ -345,8 +402,7 @@ def test_rerun_keeps_operator_lifecycle_and_appends_new_alert_issues() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_read_failure_raises_without_writing_and_api_still_returns_503() -> None:
-    document_store = LivePostgresDocumentStore()
+def test_read_failure_raises_without_writing_and_api_still_returns_503(document_store: LivePostgresDocumentStore) -> None:
     _materialize(document_store)
     document_store.fail_reads = True
     document_store.put_calls.clear()
@@ -363,12 +419,11 @@ def test_read_failure_raises_without_writing_and_api_still_returns_503() -> None
     assert "read failed" in response.json()["detail"]["message"]
 
 
-def test_canonical_source_failure_raises_without_writing() -> None:
+def test_canonical_source_failure_raises_without_writing(document_store: LivePostgresDocumentStore) -> None:
     class BrokenStoreRepository:
         def list_stores(self, **_kwargs: Any) -> list[Store]:
             raise RuntimeError("core.stores unavailable")
 
-    document_store = LivePostgresDocumentStore()
 
     with pytest.raises(StoreOpsLiveDataUnavailable, match="could not read stores"):
         materialize_store_ops_state(
@@ -380,9 +435,11 @@ def test_canonical_source_failure_raises_without_writing() -> None:
     assert document_store.put_calls == []
 
 
-def test_refuses_to_overwrite_persisted_fixture_state() -> None:
+def test_refuses_to_overwrite_persisted_fixture_state(
+    document_store: LivePostgresDocumentStore,
+) -> None:
     fixture_state = InMemoryStoreOpsRepository().get_state()
-    document_store = LivePostgresDocumentStore({STATE_KEY: fixture_state})
+    document_store.put(_state_collection(), STATE_DOC_ID, fixture_state)
 
     with pytest.raises(StoreOpsLiveDataUnavailable, match="fixture identifiers"):
         _materialize(document_store, stores=[_store("store-a", "信義 A 店")])
@@ -411,8 +468,7 @@ def test_non_live_repository_is_skipped_and_keeps_seed_state() -> None:
     assert repository.get_state() == before
 
 
-def test_missing_tenant_is_refused_before_any_write() -> None:
-    document_store = LivePostgresDocumentStore()
+def test_missing_tenant_is_refused_before_any_write(document_store: LivePostgresDocumentStore) -> None:
 
     with pytest.raises(StoreOpsLiveDataUnavailable, match="tenant scope"):
         materialize_store_ops_state(
@@ -438,14 +494,16 @@ def _live_bundle(document_store: LivePostgresDocumentStore, stores: list[Store])
     )
 
 
-def test_scheduler_registers_store_ops_job_only_for_live_repository() -> None:
+def test_scheduler_registers_store_ops_job_only_for_live_repository(
+    document_store: LivePostgresDocumentStore,
+) -> None:
     live = ODayScheduler(
-        persistence=_live_bundle(LivePostgresDocumentStore(), []),
+        persistence=_live_bundle(document_store, []),
         tenant_id=TENANT_ID,
         env={FACADE_MODE_ENV: CUTOVER_MODE_PLATFORM_PRIMARY},
     )
     legacy_live = ODayScheduler(
-        persistence=_live_bundle(LivePostgresDocumentStore(), []),
+        persistence=_live_bundle(document_store, []),
         tenant_id=TENANT_ID,
         env={FACADE_MODE_ENV: CUTOVER_MODE_LEGACY_ONLY},
     )
@@ -463,10 +521,9 @@ def test_scheduler_registers_store_ops_job_only_for_live_repository() -> None:
     assert memory.recurring_job_types() == ()
 
 
-def test_scheduler_tick_enqueues_job_and_worker_materializes_state() -> None:
+def test_scheduler_tick_enqueues_job_and_worker_materializes_state(document_store: LivePostgresDocumentStore) -> None:
     from apps.worker.oday_worker.main import ODayWorker
 
-    document_store = LivePostgresDocumentStore()
     bundle = _live_bundle(document_store, [_store("store-a", "信義 A 店")])
     scheduler = ODayScheduler(
         persistence=bundle,
@@ -489,7 +546,7 @@ def test_scheduler_tick_enqueues_job_and_worker_materializes_state() -> None:
 
     assert ODayWorker(persistence=bundle).run_once() is True
 
-    state = document_store.documents[STATE_KEY]
+    state = document_store.state()
     assert [store["id"] for store in state["stores"]] == ["store-a"]
     _assert_no_fixture_ids(repr(state))
 
@@ -498,8 +555,7 @@ def test_worker_registry_handles_store_ops_job() -> None:
     assert build_default_registry().has(STORE_OPS_MATERIALIZE_JOB_TYPE)
 
 
-def test_worker_handler_refuses_job_without_tenant() -> None:
-    document_store = LivePostgresDocumentStore()
+def test_worker_handler_refuses_job_without_tenant(document_store: LivePostgresDocumentStore) -> None:
     job = JobRecord(
         job_id="job-store-ops",
         job_type=STORE_OPS_MATERIALIZE_JOB_TYPE,

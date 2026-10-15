@@ -1,11 +1,12 @@
 """Materialize the production Store Ops state from canonical data.
 
-``DurableStoreOpsRepository`` fails closed on PostgreSQL until the
-``opsboard.store_ops.state/default`` document exists, and every Store Ops write
-reads that document first, so nothing in the request path can ever create it.
-This module is the one writer that may: it projects ``core.stores`` and the
-ForecastOps four-light alerts into the Store Ops view model and saves it through
-the repository, so the fixture-signature write guard still applies.
+``DurableStoreOpsRepository`` fails closed on PostgreSQL until a tenant's
+Store Ops state document exists, and every Store Ops write reads that document
+first, so nothing in the request path can ever create it. This module is the
+one writer that may: it projects the tenant's ``core.stores`` rows and
+ForecastOps four-light alerts into the Store Ops view model and saves it into
+that tenant's own partition through the repository, so the fixture-signature
+write guard still applies and no tenant's state can reach another's.
 
 The projection is honest by construction:
 
@@ -18,6 +19,11 @@ Re-running is idempotent. Stores are re-projected every run, but an issue that
 already exists is left exactly as the operator lifecycle last wrote it, and
 evidence, audit events and attachments are carried forward untouched. When the
 projected state equals the persisted one nothing is written.
+
+The save is a versioned compare-and-swap: if an operator write lands between
+the read and the save, the save is refused, the fresh state is re-read and the
+projection re-applied on top of it, so a recurring run never rolls back
+lifecycle transitions, audit events, attachments or the audit ordinal.
 """
 
 from __future__ import annotations
@@ -32,6 +38,8 @@ from typing import Any
 from modules.opsboard.application.store_ops import (
     _LIGHT_DIMENSIONS,
     _SEVERITY_WEIGHT,
+    _STORE_OPS_WRITE_ATTEMPTS,
+    StoreOpsConcurrentWriteConflict,
     StoreOpsLiveDataUnavailable,
 )
 
@@ -277,29 +285,28 @@ def materialize_store_ops_state(
     forecastops_repository: Any,
     tenant_id: str,
 ) -> StoreOpsMaterializationResult:
-    """Project canonical data into the live Store Ops document.
+    """Project the tenant's canonical data into its live Store Ops document.
 
     Only a live (PostgreSQL) durable repository is materialized; SQLite and
-    in-memory repositories keep their seeded demo state. Any read failure
-    raises :class:`StoreOpsLiveDataUnavailable` before anything is written, and
-    a persisted state carrying fixture identifiers is refused rather than
-    overwritten, so the read path keeps reporting it.
+    in-memory repositories keep their seeded demo state. The document written
+    is the one ``repository.for_tenant(tenant_id)`` owns, never a shared one.
+    Any read failure raises :class:`StoreOpsLiveDataUnavailable` before
+    anything is written, and a persisted state carrying fixture identifiers is
+    refused rather than overwritten, so the read path keeps reporting it.
     """
     if not bool(getattr(repository, "is_live", False)):
         return StoreOpsMaterializationResult(status="skipped", reason="repository_not_live")
     tenant = str(tenant_id or "").strip()
     if not tenant:
         raise StoreOpsLiveDataUnavailable("Store Ops materialization requires a tenant scope")
-
-    existing = repository.read_materialized_state()
-    if existing is not None and repository.contains_fixture_signature(existing):
-        raise StoreOpsLiveDataUnavailable(
-            "Store Ops production state contains canonical fixture identifiers; "
-            "refusing to materialize over it"
-        )
+    tenant_repository = repository.for_tenant(tenant)
 
     try:
-        stores = list(store_repository.list_stores(tenant_id=tenant))
+        stores = [
+            store
+            for store in store_repository.list_stores(tenant_id=tenant)
+            if str(_value(store, "tenant_id", tenant)) == tenant
+        ]
     except Exception as exc:
         raise StoreOpsLiveDataUnavailable(
             f"Store Ops materialization could not read stores: {type(exc).__name__}: {exc}"
@@ -308,35 +315,47 @@ def materialize_store_ops_state(
     for store in stores:
         store_id = str(_value(store, "store_id"))
         try:
-            alerts_by_store[store_id] = list(
-                forecastops_repository.list_alerts_by_store(tenant, store_id)
-            )
+            alerts_by_store[store_id] = [
+                alert
+                for alert in forecastops_repository.list_alerts_by_store(tenant, store_id)
+                if str(_value(alert, "tenant_id", tenant)) == tenant
+            ]
         except Exception as exc:
             raise StoreOpsLiveDataUnavailable(
                 "Store Ops materialization could not read ForecastOps alerts: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
 
-    state = project_store_ops_state(
-        stores=stores,
-        alerts_by_store=alerts_by_store,
-        existing_state=existing,
-    )
-    previous_issue_count = len(existing.get("issues", [])) if existing else 0
-    result_fields = {
-        "store_count": len(state["stores"]),
-        "issue_count": len(state["issues"]),
-        "new_issue_count": len(state["issues"]) - previous_issue_count,
-    }
-    if existing is not None and state == existing:
-        return StoreOpsMaterializationResult(
-            status="unchanged", reason="state_current", **result_fields
+    for _attempt in range(_STORE_OPS_WRITE_ATTEMPTS):
+        existing, version = tenant_repository.read_versioned_state()
+        if existing is not None and tenant_repository.contains_fixture_signature(existing):
+            raise StoreOpsLiveDataUnavailable(
+                "Store Ops production state contains canonical fixture identifiers; "
+                "refusing to materialize over it"
+            )
+        state = project_store_ops_state(
+            stores=stores,
+            alerts_by_store=alerts_by_store,
+            existing_state=existing,
         )
-    repository.save_state(state)
-    return StoreOpsMaterializationResult(
-        status="written",
-        reason="created" if existing is None else "refreshed",
-        **result_fields,
+        previous_issue_count = len(existing.get("issues", [])) if existing else 0
+        result_fields = {
+            "store_count": len(state["stores"]),
+            "issue_count": len(state["issues"]),
+            "new_issue_count": len(state["issues"]) - previous_issue_count,
+        }
+        if existing is not None and state == existing:
+            return StoreOpsMaterializationResult(
+                status="unchanged", reason="state_current", **result_fields
+            )
+        if tenant_repository.compare_and_save_state(state, expected_version=version):
+            return StoreOpsMaterializationResult(
+                status="written",
+                reason="created" if existing is None else "refreshed",
+                **result_fields,
+            )
+    raise StoreOpsConcurrentWriteConflict(
+        "Store Ops state kept changing during materialization; nothing was written, retry"
     )
 
 
