@@ -1805,11 +1805,12 @@ class _OwnedGateSessions:
     """
 
     _cookie_name = "__Host-oday_web_session"
-    _max_sessions = 8
+    _max_sessions = 4
 
     def __init__(self, web: HttpClient, config: GateConfig) -> None:
         self.web = web
         self.origin = _web_origin(config.web_url)
+        self.username = config.dev_admin_username or config.bootstrap_admin_username
         self.sessions: dict[str, dict[str, bool]] = {}
         self.unknown = False
         self.cleaning = False
@@ -1844,6 +1845,29 @@ class _OwnedGateSessions:
             if not issuance:
                 self.unknown = True
 
+    def _issuance_valid(self, path: str, headers: Mapping[str, str], result: HttpResponse) -> bool:
+        cookies = {name: value for name, value in result.cookies.items() if value}
+        single = set(cookies) == {self._cookie_name}
+        if result.failed or result.custody_uncertain:
+            return False
+        if path == "/auth/password":
+            return result.status == 200 and result.payload.get("ok") is True and single
+        if headers.get("content-type") != "application/x-www-form-urlencoded":
+            return (
+                result.status == 200 and single and result.payload.get("ok") is True
+                and result.payload.get("subject") == self.username
+            ) or (result.status == 401 and not cookies and _payload_mentions(result, "AUTH_INVALID_CREDENTIALS"))
+        destination = urllib.parse.urlsplit(result.location)
+        if result.status != 303 or _origin(result.location) != _origin(self.origin) or destination.fragment:
+            return False
+        return (
+            single and destination.path == "/operator" and destination.query == "view=admin"
+        ) or (
+            not cookies and destination.path == "/login"
+            and urllib.parse.parse_qs(destination.query, keep_blank_values=True)
+            == {"error": ["AUTH_INVALID_CREDENTIALS"], "returnTo": ["/operator?view=admin"]}
+        )
+
     def request(self, method: str, path: str, **kwargs: Any) -> HttpResponse:
         headers = kwargs.get("headers") or {}
         raw_cookie = headers.get("cookie", "")
@@ -1873,6 +1897,13 @@ class _OwnedGateSessions:
             self.unknown = True
             raise _SessionCustodyStopped from None
         self._observe(result, issuance=issuance)
+        if issuance:
+            try:
+                valid_issuance = self._issuance_valid(path, headers, result)
+            except (TypeError, ValueError):
+                valid_issuance = False
+            if not valid_issuance:
+                self.unknown = True
         if logout and owned is not None:
             owned["acknowledged"] = (
                 not result.failed and not result.custody_uncertain and result.status == 200
@@ -1895,7 +1926,7 @@ class _OwnedGateSessions:
         return result
 
     def finish(self, checks: list[CheckResult], report: dict[str, Any], correlation_id: str) -> None:
-        # <=8 distinct cookies, <=3 cleanup calls each, no login/rotation/retry
+        # <=4 distinct cookies, <=3 cleanup calls each, no login/rotation/retry
         # or compensation. Calls retain the configured transport timeout. This
         # outer deadline is NOT an extension of any native work/cleanup budget.
         self.cleaning = True
@@ -1934,7 +1965,7 @@ class _OwnedGateSessions:
         complete = not self.unknown and all(all(s.values()) for s in self.sessions.values())
         report["dev_admin"]["session_cleanup"] = {
             "outcome": "completed" if complete else "unknown",
-            "observed_sessions": len(self.sessions),
+            "retained_observed_sessions": len(self.sessions),
             "logout_attempts": sum(s["attempted"] for s in self.sessions.values()),
             "verified_sessions": sum(all(s.values()) for s in self.sessions.values()),
             "specific_owned_sessions_only": True,

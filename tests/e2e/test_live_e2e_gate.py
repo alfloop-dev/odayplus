@@ -2654,7 +2654,7 @@ def test_standalone_all_early_exits_release_observed_cookies(failure: str) -> No
     assert "do not disclose raw exception" not in json.dumps(report)
 
 
-@pytest.mark.parametrize("failure", ["lost_login", "partial_login", "duplicate_cookies", "lost_logout", "invalid_logout", "live_replay"])
+@pytest.mark.parametrize("failure", ["lost_login", "partial_login", "partial_rotation", "duplicate_cookies", "lost_logout", "invalid_logout", "live_replay", "cleanup_issuance"])
 def test_standalone_partial_lost_custody_remains_unknown_without_retry(failure: str) -> None:
     from tests.e2e import test_live_e2e_gate_dev_admin as admin
 
@@ -2670,21 +2670,56 @@ def test_standalone_partial_lost_custody_remains_unknown_without_retry(failure: 
                     return response(200, result.payload, cookies=result.cookies,
                                     set_cookie_pairs=((admin.SESSION_COOKIE, admin.SESSION_VALUE),
                                                       (admin.SESSION_COOKIE, "sealed-rotation-session-reference")))
+            if method == "POST" and path == "/auth/password" and failure == "partial_rotation":
+                return response(0, error="lost rotation body", cookies=result.cookies)
             if method == "POST" and path == "/auth/logout":
+                if failure == "cleanup_issuance" and (kwargs.get("headers") or {}).get("cookie") == f"{admin.SESSION_COOKIE}={admin.SESSION_VALUE}":
+                    return response(200, {"ok": True}, cookies={admin.SESSION_COOKIE: "sealed-rotation-session-reference"})
                 if failure == "lost_logout":
                     raise OSError("lost acknowledgement")
                 if failure == "invalid_logout":
                     return response(500)
             return result
 
-    web = UncertainWeb(admin.web_routes(), revoke_on_logout=failure != "live_replay")
-    _, report, _ = admin.run_dev_admin(web=web)
+    fresh = failure == "partial_rotation"
+    web = UncertainWeb(admin.web_routes(), is_fresh=fresh, revoke_on_logout=failure != "live_replay")
+    _, report, _ = admin.run_dev_admin(
+        web=web, cfg=admin.dev_admin_config(dev_admin_initial_password=admin.INITIAL_PASSWORD if fresh else ""),
+    )
     assert report["ok"] is False
     assert report["dev_admin"]["session_cleanup"]["outcome"] == "unknown"
     logouts = [h["cookie"] for c, h in web.headers_seen if c == "POST /auth/logout"]
     assert len(logouts) == len(set(logouts))
-    assert len(logouts) == (0 if failure == "lost_login" else 2 if failure == "duplicate_cookies" else 1)
+    assert len(logouts) == (0 if failure == "lost_login" else 2 if failure in {"duplicate_cookies", "partial_rotation", "cleanup_issuance"} else 1)
     assert not any("sealed-form-session-reference" in h.get("cookie", "") for _, h in web.headers_seen)
+
+
+def test_standalone_ambiguous_cookie_overflow_is_bounded_and_unknown() -> None:
+    from tests.e2e import test_live_e2e_gate_dev_admin as admin
+
+    class CleanupOnly:
+        def __init__(self) -> None:
+            self.cookies: list[str] = []
+
+        def request(self, method: str, path: str, **kwargs: Any) -> Any:
+            cookie = kwargs["headers"]["cookie"]
+            if method == "POST":
+                assert path == "/auth/logout"
+                self.cookies.append(cookie)
+                return response(200, {"ok": True}, cookies={admin.SESSION_COOKIE: ""})
+            assert path in {"/auth/session", "/api/v1/operator/users"}
+            return response(401)
+
+    web = CleanupOnly()
+    custody = gate._OwnedGateSessions(web, admin.dev_admin_config())
+    pairs = tuple((admin.SESSION_COOKIE, f"owned-{i}") for i in range(custody._max_sessions + 1))
+    custody._observe(response(200, cookies=dict(pairs), set_cookie_pairs=pairs), issuance=True)
+    checks: list[Any] = []
+    report: dict[str, Any] = {"dev_admin": {}}
+    custody.finish(checks, report, CORRELATION_ID)
+    assert len(web.cookies) == custody._max_sessions == len(set(web.cookies))
+    assert report["dev_admin"]["session_cleanup"]["outcome"] == "unknown"
+    assert checks[-1].ok is False
 
 
 def test_native_cleanup_barrier_remains_delegated_without_finally_logout() -> None:
