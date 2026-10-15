@@ -9,7 +9,115 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi batch003 continuation — run pi-20261015T052543Z-a1757def
+## Pi batch004 / measurement freeze — run pi-20261015T062622Z-389a6bb6
+
+**Source authoring checkpoint; NOT admission or review-ready.** Canonical live
+owner Pi / reviewer Human/Ops, renewed Manager workspace allocation and354-path
+scope/nine source documents were verified before editing. The batch004 request
+is resolved by canonical assignment, not by the earlier incorrect coordinator
+claim that this path was already leased. All correction/refusal history remains.
+Fetched admitted dev is `c0c8c8226acaab3cbe8bb76e79f01e5e6694abb3`, contained in
+this branch. No supervisor/provider/authentication/approval policy was changed.
+
+Source anchor **7a3604d8578a01873d2e9575417b32d443c57da2**, tree
+**5a2d67f681230670da203c08676ea59d9690f6b5**, changes ONLY
+`tests/integration/test_official_real_estate_postgresql.py`:
+
+- Bind each of the three local HTTP fixture clients and both concurrent workers
+  to the actual owning PostgreSQL tenant/store, using the existing supported
+  test authentication mode. Shared `_authz.py` and production auth stay intact.
+- Retain actual independent engines, schema/Alembic migrations, barriers, row
+  locks/CAS, exact200/409 + `STALE_UPDATE_CONFLICT`, versions, audit winner/loser,
+  relational/document lineage and no duplicate/orphan assertions.
+- New independent foreign404 and anonymous403 GET/adjust controls verify no
+  mutation to the approved document or SQL lineage and no lifecycle event.
+  Both engines' persisted original/replacement tenants and future event tenant
+  attribution are checked; legacy records are not retagged/backfilled.
+- First full actual-PG diagnostic:10pass/2fail. The old repository-read hook now
+  fired in HTTP ownership preflight, causing early version rejection rather
+  than the intended locked revalidation. The fixture now hooks the workflow's
+  real initial `_require` snapshot (still delegates to actual repository/FOR
+  UPDATE), preserving the exact three-step interleaving assertion. Full updated
+  module:12pass/no skips; then clean7a360 full module again:12pass/no skips,
+  exit0/78.221s under420s, PostgreSQL16.9 + PostGIS. Owned container removed.
+  These are author diagnostics, not final documentation-head receipts.
+
+The [batch004 diagnostic index](pi-batch004-diagnostics.json) retains all three
+terminal records, exact commands/head/dirty-state/caps, raw-log hashes, actual
+allocation/protected-original readbacks and old-head CI readbacks. Initial
+`gh run view --log` refused while the workflow was running; direct job downloads
+then refused terminal escapes. Distinct subsequent redirected downloads used
+`--allow-escape-sequences` solely to archive bytes and produce inert safe views.
+No failure or raw log was overwritten or treated as success.
+
+### Composition and final measurement contract
+
+The cumulative source now includes the original315-path artifact, the preserved
+newer mainline evidence and the explicitly leased batch001–004 additions described
+below and in their committed requests. Full new production/test bodies (including
+extra API routes, intervention domain/workflow/repositories, privacy/export,
+AVM/PriceOps, SQL prerequisites, production-artifact/PG/HTTP fixtures and mounted
+security controls) MUST be inventoried in fresh reviewer packets, not the old
+60-source/64-test diff-only packets. Imports and unchanged dependencies are NOT
+implicitly covered. A bounded supplied-text advisory is never whole-tree approval.
+
+This document is committed BEFORE final measurement. The immutable measurement
+head is the Git head containing this section, NOT7a360 or55f1. All final receipts
+must resolve and bind that exact head/tree/branch; do not edit this document to
+append later results. Store terminal receipts, canonical receipt paths/hashes,
+normal hosted CI URLs/statuses and assessment packets/reports externally and in
+canonical task notes. Any source or documentation change invalidates transfer to
+its successor and requires fresh14/all17/CI/review. No receipt copying/relabeling.
+
+Required fresh evidence at that frozen head:
+
+1. All14 canonical command strings under THIS task, unchanged; use the live
+   canonical status declaration and the governed task-verification receipt tool.
+2. ALL17 inherited supplemental selections, every member and graph/framing/schema
+   control retained, plus new owning-path tests including this actual-PG module.
+   Serial1200s/others420s, Vitest5000ms, Web300kB, Argon2>=64MiB/time3,
+   native480s work/540s explicit owned cleanup, transport/byte/lifetime/custody,
+   randomness/denial/numerical assertions all unchanged. Sanitize credentials,
+   DB/audit environment; test NODE_ENV=test, build/budget production; existing
+   frozen-lock Node/PNPM and genuine local throwaway PostgreSQL/PostGIS only.
+   Missing infrastructure is failure, not skip/substitution/loosened caps.
+3. Normal new-head hosted CI, actual mandatory terminal statuses, no widened
+   triggers, old-head reruns, deployment dispatch or CLI0-as-CI-success claim.
+4. Configured Codex2 non-contributing supplied-text assessment using
+   gpt-6-astra/ultra/read-only/ephemeral,1048576-char cap, no tools/network/fallback/
+   bypass. Include this README and actual terminal records; list omitted bodies,
+   imports, late/uninspected results and whole-composition coverage gaps explicitly.
+   Different configured pool labels do NOT prove separate authenticated accounts
+   from Pi's openai-codex author lane: obtain Manager-verifiable non-secret
+   provenance or disclose unresolved independence. Never inspect credentials.
+5. Human/Ops final disposition remains PENDING. Governed current
+   `task_finalize.sh` has been checked against origin/dev: it does NOT arm
+   auto-merge; only submit after all owned work/evidence, as it may supersede the
+   author. No direct handoff/no-status-submit/draft-ready or approval bypass.
+
+### Actual historical CI observations, not frozen-head evidence
+
+At55f1 normal [CI38691861663](https://github.com/alfloop-dev/odayplus/actions/runs/38691861663)
+readback: E2E job116279437043 actually succeeds, **129 passed**, plus9 visual
+passes and emitted E2E receipt errors0. DB116279437134 fails4/8 at tenantless
+Intervention creation403. Orchestrator/security/Node/performance/API-contract
+leaves succeed; product-unit and overall workflow remain IN_PROGRESS at readback.
+At934 CI38691575647 similarly has successful full E2E and failed DB, unit running.
+At e838 CI38689309039 is now terminal FAILURE: product-unit succeeded, DB/E2E
+failed and product aggregate failed; release job skipped. These independent
+readbacks close earlier unknown statuses ONLY at those old heads, not at7a360 or
+this document's head. PR1478 was OPEN@55f1 with autoMergeRequest=null.
+
+Original COMPLETE blocked/six-reopen task record remains equal to this run's
+pre-edit canonical snapshot; seven human-decision files remain Git-equal to dev.
+Original PR1459/a129, failed owners/epochs, quota/refusals/lost initial raw-log gap,
+absent-original UNKNOWN and pinned dcf1/review roots are preserved. Pi remains a
+failed ORIGINAL owner and an author, not an independent assessor or epoch clearance.
+HOLD/quarantine/bindingNULL/cleanupUNKNOWN and goalfalse remain. No source approval,
+auto-merge arming, merge, final disposition/done, recovery, credential/account/
+session, deployment/cloud/IAM/business/data/model/F11 effect is authorized.
+
+## Pi batch003 continuation — run pi-20261015T052543Z-a1757def (historical)
 
 **Incremental source only, NOT review-ready.** Manager-assigned353 paths/eight
 source documents and exact branch were verified. Fetched `origin/dev` remains
