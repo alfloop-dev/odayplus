@@ -1797,6 +1797,16 @@ class _SessionCustodyStopped(Exception):
     """Stop standalone probes after ambiguous issuance or cleanup; no retry."""
 
 
+class _CallerOwnedSessionCleanup:
+    """Nominal in-process custody contract, declared ONLY by trusted owner code.
+
+    The native consumer already fences issuance and owns its cleanup reserve.
+    Do not add a second finally-owner around it. This is not a request/header,
+    response flag, duck-typed attribute, or proof that cleanup has completed.
+    Recovery separately supplies its quarantine-before-cleanup barrier.
+    """
+
+
 class _OwnedGateSessions:
     """Memory-only specific-cookie custody, never the native recovery owner.
 
@@ -2034,9 +2044,11 @@ def _check_dev_admin_session(
     report: dict[str, Any],
     session_cleanup_barrier: Callable[[Sequence[CheckResult]], None] | None = None,
 ) -> None:
-    if web is None or session_cleanup_barrier is not None:
-        # NEVER finally-logout around native recovery's barrier, including when
-        # it or its transport raises: the native owner quarantines FIRST.
+    if (web is None or session_cleanup_barrier is not None
+            or isinstance(web, _CallerOwnedSessionCleanup)):
+        # NEVER finally-logout around an existing native custody owner, including
+        # when it or transport raises. Recovery quarantines FIRST; the consumer
+        # explicitly spends its own bounded cleanup reserve after evaluation.
         _check_dev_admin_session_journey(
             web=web, config=config, correlation_id=correlation_id, checks=checks,
             report=report, session_cleanup_barrier=session_cleanup_barrier,

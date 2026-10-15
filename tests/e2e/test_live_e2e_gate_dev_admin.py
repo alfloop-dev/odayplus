@@ -256,6 +256,10 @@ class AdminWeb(base.FakeHttp):
             p = body.get("password")
             if u == USERNAME and p == PASSWORD and self.password_rotated:
                 self.logged_out = False
+                # Retain the value ACTUALLY issued now, not only constants that
+                # were selected when this synthetic server was constructed.
+                # Shared-owner tests select an opaque SID after construction.
+                self.issued_sessions.add(SESSION_VALUE)
                 return base.response(
                     200,
                     {"ok": True, "subject": USERNAME, "returnTo": "/operator?view=admin"},
@@ -263,6 +267,7 @@ class AdminWeb(base.FakeHttp):
                 )
             if u == USERNAME and p == INITIAL_PASSWORD and not self.password_rotated:
                 self.logged_out = False
+                self.issued_sessions.add(FRESH_SESSION_VALUE)
                 return base.response(
                     200,
                     {"ok": True, "subject": USERNAME, "returnTo": "/operator?view=admin"},

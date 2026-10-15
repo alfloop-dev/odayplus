@@ -484,7 +484,7 @@ def _login_reply_canonical(response: Any, kwargs: dict[str, Any], *, issued: boo
         return False
 
 
-class _ObservedWeb:
+class _ObservedWeb(gate._CallerOwnedSessionCleanup):
     """Memory-only owned cookies plus safe ACK times; no account-wide cleanup.
 
     A login may commit even when its reply is lost or malformed. Such custody

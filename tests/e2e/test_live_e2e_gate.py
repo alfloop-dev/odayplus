@@ -11,6 +11,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import time
 from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -2744,6 +2745,75 @@ def test_native_cleanup_barrier_remains_delegated_without_finally_logout() -> No
                                       report=report, session_cleanup_barrier=quarantine_first)
     assert not any(c == "POST /auth/logout" for c, _ in web.headers_seen)
     assert "session_cleanup" not in report["dev_admin"]
+
+
+def test_native_consumer_custody_is_delegated_without_premature_cleanup() -> None:
+    from delivery_toolchain.release import consume_dev_smoke as consumer
+    from tests.e2e import test_live_e2e_gate_dev_admin as admin
+
+    class AmbiguousWeb(admin.AdminWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Any:
+            result = super().request(method, path, **kwargs)
+            if method == "POST" and path == "/login" and result.status == 200:
+                result.cookies["routing"] = "not-session-authority"
+            return result
+
+    web = AmbiguousWeb(admin.web_routes())
+    now = time.monotonic()
+    owner = consumer._ObservedWeb(web, execution_id="offline-delegation", deadline=now + 30,
+                                  cleanup_deadline=now + 35, login_pair=(admin.USERNAME, admin.PASSWORD))
+    clock = FakeClock()
+    checks, report = consumer.gate.evaluate_gate(
+        admin.dev_admin_config(), http=FakeHttp(admin.api_routes()),
+        worker_driver=consumer.gate.ScheduledWorkerDriver(), correlation_id=CORRELATION_ID,
+        now=NOW, web_http=owner, monotonic=clock.monotonic, sleep=clock.sleep,
+    )
+    positive = max(i for i, (path, _) in enumerate(web.headers_seen) if path == "POST /login")
+    assert owner.uncertainty_latched and not report["ok"]
+    assert not all(c.ok for c in checks)
+    assert web.headers_seen[positive + 1:] == []
+    assert "session_cleanup" not in report["dev_admin"]
+    assert owner.cleanup_owned_sessions() is False
+    tail = web.headers_seen[positive + 1:]
+    assert [p for p, _ in tail] == ["POST /auth/logout", "GET /auth/session", "GET /api/v1/auth/principal"]
+    assert {h["cookie"] for _, h in tail} == {f"{admin.SESSION_COOKIE}={admin.SESSION_VALUE}"}
+    before = list(web.headers_seen)
+    assert owner.cleanup_owned_sessions() is False
+    assert web.headers_seen == before
+
+
+def test_client_flags_cannot_declare_native_cleanup_ownership() -> None:
+    from tests.e2e import test_live_e2e_gate_dev_admin as admin
+
+    web = admin.AdminWeb(admin.web_routes())
+    # Arbitrary client attributes or a cleanup-shaped method confer no nominal
+    # owner contract. Ordinary clients still get complete standalone custody.
+    web.native_session_owner = True
+    web.owns_session_cleanup = True
+    web.cleanup_owned_sessions = lambda: pytest.fail("untrusted cleanup callback invoked")
+    _, report, _ = admin.run_dev_admin(web=web)
+    assert report["ok"] is True
+    assert report["dev_admin"]["session_cleanup"]["outcome"] == "completed"
+    assert report["dev_admin"]["session_cleanup"]["logout_attempts"] == 2
+
+
+def test_admin_fixture_retains_runtime_selected_cookie_only_after_issuance(monkeypatch: Any) -> None:
+    from tests.e2e import test_live_e2e_gate_dev_admin as admin
+
+    web = admin.AdminWeb(admin.web_routes())
+    selected = "offline-runtime-selected-shared-owner-cookie"
+    monkeypatch.setattr(admin, "SESSION_VALUE", selected)
+    headers = {"cookie": f"{admin.SESSION_COOKIE}={selected}", "origin": WEB_URL}
+    assert selected not in web.issued_sessions
+    assert web.request("GET", "/auth/session", authenticated=False, headers=headers).status == 401
+    login = web.request("POST", "/login", authenticated=False, headers={"origin": WEB_URL},
+                        body={"username": admin.USERNAME, "password": admin.PASSWORD})
+    assert login.cookies == {admin.SESSION_COOKIE: selected}
+    assert selected in web.issued_sessions
+    assert web.request("GET", "/auth/session", authenticated=False, headers=headers).status == 200
+    assert web.request("POST", "/auth/logout", authenticated=False, headers=headers).status == 200
+    assert web.request("GET", "/auth/session", authenticated=False, headers=headers).status == 401
+    assert selected in web.revoked_sessions
 
 
 class RotationSupersedingWeb:
