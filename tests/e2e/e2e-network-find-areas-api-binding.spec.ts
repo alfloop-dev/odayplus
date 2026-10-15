@@ -30,6 +30,11 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     await expect(
       page.getByRole("button", { name: "展店經理", exact: true }),
     ).toBeVisible();
+    // The persona preference can render before the fixture API envelope.
+    // Bind this API suite to the applied envelope before navigating once.
+    await expect(page.getByTestId("operator-envelope-source")).toHaveText(
+      "operator-shell-api-envelope", { timeout: 15_000 },
+    );
     // Click the Network tab in the workspace navigation.
     const networkTab = page.getByRole("button", { name: /network/i }).first();
     await networkTab.click();
