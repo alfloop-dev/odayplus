@@ -9,7 +9,69 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi batch008 owning corrections — new source/docs candidate, NOT acceptance
+## Pi actual-CI native-custody follow-up — new frozen candidate, NOT acceptance
+
+Actual Manager run `pi-20261015T170912Z-ded8d170` verified running allocation,
+workspace/base810,362-entry serialized lease,22 materialized source documents
+and full original blocked-six-reopen object equality BEFORE edits. The22nd doc
+requires resolving ACTUAL0137 hosted CI's15 original consumer/recovery-gate
+failures BEFORE expensive final proof. Prior e0 owning178/UI300/recovery-only
+passes did NOT measure these failing consumer/recovery-gate modules.
+
+At exact e0, the original complete two-module command reproduces SAME15 failures,
+native1/21.229s under420. A distinct single-case read-only diagnostic (native1/
+7.618s) records recovery's actual failed session/account read checks before its
+barrier: its synthetic Web fixture did not recognize the shared-owner cookie
+selected AFTER fixture construction. Both failed attempts and all custody seals
+remain. This is not a timing/root-cause claim for unrelated historical failures.
+
+Anchor `b58d641720a4` fixes TWO owning seams, not the original assertions:
+- The native consumer's actual observer explicitly declares a nominal trusted
+  in-process caller-owned-cleanup contract. The gate delegates to that existing
+  owner rather than adding standalone finally-cleanup around it. No request,
+  response, header, generic attribute or cleanup-shaped method grants this
+  contract; no automatic global native exception or success/GO is inferred.
+  Consumer issuance fencing, partial/raw custody, sticky UNKNOWN, explicit
+  bounded cleanup reserve and once-only logout remain authoritative. Ordinary
+  standalone clients still get the specific-cookie finally owner. Recovery's
+  separate quarantine-before-delegated-cleanup barrier/source is unchanged.
+- AdminWeb retains the opaque SID ACTUALLY issued by its positive login, even if
+  the synthetic test selected it after construction. Merely changing the constant
+  does not grant a session before issuance. Specific-cookie revocation remains
+  authoritative; the old global logged_out diagnostic is not release proof.
+
+At exact b58, original consumer/recovery-gate command terminates native0/20.472s
+under420 (273 passing progress records), full base+admin native0/36.116s (408
+passing records including THREE separate new owning controls), scoped Ruff0.
+Native waits/ECHILD/accessible-owned-writer closure precede exact own-PG removal
+and hash-verified seals. No repeated run was used just to recover a test count.
+The new controls cover genuine native deferred cleanup, fake client flags NOT
+bypassing standalone custody, and runtime-selected fixture issuance/revocation.
+ALL original129/80 function/assertion ASTs, whole original consumer/recovery-gate/
+recovery security blobs and the UI fixture remain equal to their prior identities.
+Original2178/178 selections, caps and specific rotation-operation witness remain.
+See [complete native follow-up receipts](pi-native-custody-followup-diagnostics.json).
+
+THIS documentation commit is the new frozen source+docs identity; resolve head/
+tree from Git. No b58/e0/0137/13c/older pass transfer. ALL fresh14 canonical,
+unchanged17 supplemental (2178 serial-n0/1200, other420), original178/applicable
+F1/F2/F3/base/UI300/StoreOps/actual-PG controls, normal terminalCI/all129E2E/
+strict3x150/waves10,20,50/P95<3s and ALL configured sequential Codex2 packets PLUS
+synthesis remain owed. Obtain TWO sustained genuine current-Manager/native
+observations in still-required bounded controls BEFORE1200 commands; no private
+90s abort, fake heartbeat or cap/policy change. Preserve failures/UNKNOWNs.
+
+Frozen-head full bodies/imports/README/final terminals/cross-file coverage and
+explicit omissions are required within1048576 INCLUDING common context, configured
+gpt-6-astra/ultra/read-only/ephemeral/no tools/network/fallback. Rejected old
+packet1/uninspected16 and account-independence UNRESOLVED remain. Standalone Web
+skips/outer PG guard are NOT actual-PG application proof. Historical/external/
+inaccessible writer visibility stays UNKNOWN. Original complete failed-Pi/blocked6/
+a129PR1459/human evidence/pinned roots preserved; Human/Ops finalPENDING/HOLD/
+quarantine/bindingNULL/cleanupUNKNOWN/goalfalse. No task_finalize/review submission
+before complete author proof; no approval/merge/done/deployment/recovery/live effects.
+
+## Historical Pi batch008 owning corrections — NOT current-head acceptance
 
 Actual Manager run `pi-20261015T164215Z-d9425ec0` verified the running isolated
 workspace/serialized task lease, admitted810, canonical362 source entries/21

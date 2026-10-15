@@ -1,0 +1,832 @@
+{
+  "kind": "source-only-native-custody-repair-diagnostics-not-final-proof",
+  "run": "pi-20261015T170912Z-ded8d170",
+  "source_anchor": "b58d641720a444b4656ad8befe71c48a1246ff8e",
+  "source_tree": "cae7e9517767fbd97aa3299d73401948063b8b65",
+  "admitted_base": "81072d0ae396c772b39e53db0761a7522524e8fd",
+  "renewal": {
+    "run": "pi-20261015T170912Z-ded8d170",
+    "status": "running",
+    "workspace": "/tmp/pantheon-worker-worktrees/pantheon/odp-recovery-source-integration-001",
+    "base": "81072d0ae396c772b39e53db0761a7522524e8fd",
+    "head": "e0c43dcea83dcad9cef00445575397315ead73d8",
+    "scope_entries": 362,
+    "lease_acquired_at": "2026-10-15T17:09:12Z",
+    "lease_expires_at": "2026-10-15T17:39:18Z",
+    "materialized_hashes": [
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-authorized-20261015/HANDOFF.md",
+        "sha256": "95574920ea9bc0c9419ae914ba2b7b9df52450c0b8c530c4805e3d36146f857d"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-authorized-20261015/user-authorization.json",
+        "sha256": "f0663570a1c031a78d621db9ca2ce2b1cb66b93b74b92d443b34a34d56ec1a8e"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/coarse-framing-dcf1f258f/README.md",
+        "sha256": "f5f1e2a5b1cbced28cc4582dfd6c3e8c92b1f2b73d90373bd32dc1dc5a88744b"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/coarse-framing-dcf1f258f/AUTHORIZED-INTEGRATION-REQUIRED.md",
+        "sha256": "177992f8bee98a3f7e4819bab31d799a47544416f85d35962e5c61339413a6d1"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/integration-admission-dcf1f258f/DECISION-REQUEST.md",
+        "sha256": "169c5005433c141ef8260b20b56451f9fe7b794ab06ad908da6df98d73ec61f1"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-001-20261015/REQUEST.actual-b2c751406.md",
+        "sha256": "df4ef971b24270d3ef02bd2996b2b5b4caf0522fed4ffec7a3e25de6691ec816"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-002-20261015/REQUEST.actual-886c5a67d.md",
+        "sha256": "688ab342daac54fbaad03da40c407e6e6ce2dc1e5e590862f969a7b35fd47b9e"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-003-20261015/REQUEST.actual-74e5e6ada.md",
+        "sha256": "24eb6e3261849cbd2a71739629aeb14634ad54276fb8bc02d9112de16758ef6f"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-004-20261015/REQUEST.actual-55f1e0787.md",
+        "sha256": "335d94c9cefe4c4feb26664fca74b8dac9129b39dc0b5d23dad608259b290565"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-e99cb8460-20261015/README.md",
+        "sha256": "5dcb5b9bb06f65f97c6acfd74bc3c78bdcbaeb2b1d9d06fedc6043befb705b64"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-e99cb8460-20261015/MANAGER-BOUNDED-DIAGNOSTIC-PLAN.md",
+        "sha256": "9a538cf8343af5622dab64fac950fd9d1d28f24be15198fcdb9c3c49ff3a2045"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-005-20261015/REQUEST.actual-e99cb8460.md",
+        "sha256": "2ab419c03b255113b2b5f4c5ae68b39a495733ce62482507f864f22dcd0346a7"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-1ac806841-20261015/MANAGER-FOREGROUND-OBSERVABILITY-DISPOSITION.md",
+        "sha256": "71fd17852a894833e755680524ff5a99e6458757d2fd8f828e523e9ea5fd7b7c"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-006-20261015/REQUEST.actual-d41028303.md",
+        "sha256": "2b78ac07364a027b10a89d8c1785e3e5babde9e8bc5ecf2a20f8d3520f2d0e5d"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-13c5fb2af-20261015/MANAGER-OBSERVATION-SAMPLING-DISPOSITION.md",
+        "sha256": "d0cb3d1cdd0e90e01d31a1c989edae4149ebf4bd03e0794f936af1471cf34ab7"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/REQUEST.actual-13c5fb2af.md",
+        "sha256": "79f4d6c05c4437185e5ec48eaf1fcfcace046fca14b0419b9fcf4924476dbb27"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-CONTRACT-DISPOSITION.md",
+        "sha256": "7abbed1317e750197cf7e5a348bd0bf81ab68f45f71715cb24b38195e3fe62d7"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-F1-DESCRIPTOR-AND-FIXTURE-CLARIFICATION.md",
+        "sha256": "b9fa16515b8e1d7c279e0eb11bc4d5ceb47c25361e555aeeeba9c26e9597801b"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/REQUEST.actual-5b299a40b.md",
+        "sha256": "6774edf3541cfe9d0670299b93a44a73367e7a4386093ffa16f2d5110936617c"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/MANAGER-BOUNDED-OWNING-DISPOSITION.md",
+        "sha256": "05c15fa44c24cea81bfa3ac524b7bc3fb77c161eb7a86eee9533c90fa658fa3c"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/F3-ROTATION-SUPERSESSION-CROSSFILE.DATA-ONLY.md",
+        "sha256": "0536078a9ff0ae7c21846407f2065cd1b692d3e63cf1abde86ad9dcfef6cbf5b"
+      },
+      {
+        "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/ACTUAL-CI0137-NATIVE-CUSTODY-FOLLOWUP.md",
+        "sha256": "cdfa4a30441b67adc171bf1b0d61f7a38db231f81d623ba542299f8aad7277f8"
+      },
+      {
+        "path": ".orchestrator/task-briefs/odp_recovery_source_integration_001.md",
+        "sha256": "2d58087e4d69c870d304df47877b2dc55d6f9db9542fa54dcd480ec4e04b3455"
+      }
+    ],
+    "coordination_leases": {
+      "ODP-RECOVERY-SOURCE-INTEGRATION-001": {
+        "task_id": "ODP-RECOVERY-SOURCE-INTEGRATION-001",
+        "workspace_task_id": "ODP-RECOVERY-SOURCE-INTEGRATION-001",
+        "branch": "task/ODP-RECOVERY-SOURCE-INTEGRATION-001",
+        "path": "/tmp/pantheon-worker-worktrees/pantheon/odp-recovery-source-integration-001",
+        "status_root": "/home/lupin/odayplus",
+        "repo_root_source": "repository:pantheon",
+        "repository_id": "pantheon",
+        "base_ref": "origin/dev",
+        "base_sha": "81072d0ae396c772b39e53db0761a7522524e8fd",
+        "base_relation": "contains_base",
+        "last_queue_event_id": "evt-20261015T170911Z-8303231d",
+        "last_target_agent": "Pi",
+        "last_used_at": "2026-10-15T17:09:12Z",
+        "materialized_context_files": [
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-authorized-20261015/HANDOFF.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-authorized-20261015/user-authorization.json",
+          "support/handoffs/recovery-response-boundary-repair-20261012/coarse-framing-dcf1f258f/README.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/coarse-framing-dcf1f258f/AUTHORIZED-INTEGRATION-REQUIRED.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/integration-admission-dcf1f258f/DECISION-REQUEST.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-001-20261015/REQUEST.actual-b2c751406.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-002-20261015/REQUEST.actual-886c5a67d.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-003-20261015/REQUEST.actual-74e5e6ada.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-004-20261015/REQUEST.actual-55f1e0787.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-e99cb8460-20261015/README.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-e99cb8460-20261015/MANAGER-BOUNDED-DIAGNOSTIC-PLAN.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-005-20261015/REQUEST.actual-e99cb8460.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-1ac806841-20261015/MANAGER-FOREGROUND-OBSERVABILITY-DISPOSITION.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-006-20261015/REQUEST.actual-d41028303.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-13c5fb2af-20261015/MANAGER-OBSERVATION-SAMPLING-DISPOSITION.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/REQUEST.actual-13c5fb2af.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-CONTRACT-DISPOSITION.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-F1-DESCRIPTOR-AND-FIXTURE-CLARIFICATION.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/REQUEST.actual-5b299a40b.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/MANAGER-BOUNDED-OWNING-DISPOSITION.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/F3-ROTATION-SUPERSESSION-CROSSFILE.DATA-ONLY.md",
+          "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/ACTUAL-CI0137-NATIVE-CUSTODY-FOLLOWUP.md",
+          ".orchestrator/task-briefs/odp_recovery_source_integration_001.md"
+        ],
+        "materialized_source_manifest": [
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-authorized-20261015/HANDOFF.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-authorized-20261015/HANDOFF.md",
+            "sha256": "95574920ea9bc0c9419ae914ba2b7b9df52450c0b8c530c4805e3d36146f857d"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-authorized-20261015/user-authorization.json",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-authorized-20261015/user-authorization.json",
+            "sha256": "f0663570a1c031a78d621db9ca2ce2b1cb66b93b74b92d443b34a34d56ec1a8e"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/coarse-framing-dcf1f258f/README.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/coarse-framing-dcf1f258f/README.md",
+            "sha256": "f5f1e2a5b1cbced28cc4582dfd6c3e8c92b1f2b73d90373bd32dc1dc5a88744b"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/coarse-framing-dcf1f258f/AUTHORIZED-INTEGRATION-REQUIRED.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/coarse-framing-dcf1f258f/AUTHORIZED-INTEGRATION-REQUIRED.md",
+            "sha256": "177992f8bee98a3f7e4819bab31d799a47544416f85d35962e5c61339413a6d1"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/integration-admission-dcf1f258f/DECISION-REQUEST.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/integration-admission-dcf1f258f/DECISION-REQUEST.md",
+            "sha256": "169c5005433c141ef8260b20b56451f9fe7b794ab06ad908da6df98d73ec61f1"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-001-20261015/REQUEST.actual-b2c751406.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-001-20261015/REQUEST.actual-b2c751406.md",
+            "sha256": "df4ef971b24270d3ef02bd2996b2b5b4caf0522fed4ffec7a3e25de6691ec816"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-002-20261015/REQUEST.actual-886c5a67d.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-002-20261015/REQUEST.actual-886c5a67d.md",
+            "sha256": "688ab342daac54fbaad03da40c407e6e6ce2dc1e5e590862f969a7b35fd47b9e"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-003-20261015/REQUEST.actual-74e5e6ada.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-003-20261015/REQUEST.actual-74e5e6ada.md",
+            "sha256": "24eb6e3261849cbd2a71739629aeb14634ad54276fb8bc02d9112de16758ef6f"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-004-20261015/REQUEST.actual-55f1e0787.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-004-20261015/REQUEST.actual-55f1e0787.md",
+            "sha256": "335d94c9cefe4c4feb26664fca74b8dac9129b39dc0b5d23dad608259b290565"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-e99cb8460-20261015/README.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-e99cb8460-20261015/README.md",
+            "sha256": "5dcb5b9bb06f65f97c6acfd74bc3c78bdcbaeb2b1d9d06fedc6043befb705b64"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-e99cb8460-20261015/MANAGER-BOUNDED-DIAGNOSTIC-PLAN.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-e99cb8460-20261015/MANAGER-BOUNDED-DIAGNOSTIC-PLAN.md",
+            "sha256": "9a538cf8343af5622dab64fac950fd9d1d28f24be15198fcdb9c3c49ff3a2045"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-005-20261015/REQUEST.actual-e99cb8460.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-005-20261015/REQUEST.actual-e99cb8460.md",
+            "sha256": "2ab419c03b255113b2b5f4c5ae68b39a495733ce62482507f864f22dcd0346a7"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-1ac806841-20261015/MANAGER-FOREGROUND-OBSERVABILITY-DISPOSITION.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-1ac806841-20261015/MANAGER-FOREGROUND-OBSERVABILITY-DISPOSITION.md",
+            "sha256": "71fd17852a894833e755680524ff5a99e6458757d2fd8f828e523e9ea5fd7b7c"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-006-20261015/REQUEST.actual-d41028303.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-006-20261015/REQUEST.actual-d41028303.md",
+            "sha256": "2b78ac07364a027b10a89d8c1785e3e5babde9e8bc5ecf2a20f8d3520f2d0e5d"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-13c5fb2af-20261015/MANAGER-OBSERVATION-SAMPLING-DISPOSITION.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-13c5fb2af-20261015/MANAGER-OBSERVATION-SAMPLING-DISPOSITION.md",
+            "sha256": "d0cb3d1cdd0e90e01d31a1c989edae4149ebf4bd03e0794f936af1471cf34ab7"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/REQUEST.actual-13c5fb2af.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/REQUEST.actual-13c5fb2af.md",
+            "sha256": "79f4d6c05c4437185e5ec48eaf1fcfcace046fca14b0419b9fcf4924476dbb27"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-CONTRACT-DISPOSITION.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-CONTRACT-DISPOSITION.md",
+            "sha256": "7abbed1317e750197cf7e5a348bd0bf81ab68f45f71715cb24b38195e3fe62d7"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-F1-DESCRIPTOR-AND-FIXTURE-CLARIFICATION.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-F1-DESCRIPTOR-AND-FIXTURE-CLARIFICATION.md",
+            "sha256": "b9fa16515b8e1d7c279e0eb11bc4d5ceb47c25361e555aeeeba9c26e9597801b"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/REQUEST.actual-5b299a40b.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/REQUEST.actual-5b299a40b.md",
+            "sha256": "6774edf3541cfe9d0670299b93a44a73367e7a4386093ffa16f2d5110936617c"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/MANAGER-BOUNDED-OWNING-DISPOSITION.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/MANAGER-BOUNDED-OWNING-DISPOSITION.md",
+            "sha256": "05c15fa44c24cea81bfa3ac524b7bc3fb77c161eb7a86eee9533c90fa658fa3c"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/F3-ROTATION-SUPERSESSION-CROSSFILE.DATA-ONLY.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/F3-ROTATION-SUPERSESSION-CROSSFILE.DATA-ONLY.md",
+            "sha256": "0536078a9ff0ae7c21846407f2065cd1b692d3e63cf1abde86ad9dcfef6cbf5b"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/ACTUAL-CI0137-NATIVE-CUSTODY-FOLLOWUP.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/ACTUAL-CI0137-NATIVE-CUSTODY-FOLLOWUP.md",
+            "sha256": "cdfa4a30441b67adc171bf1b0d61f7a38db231f81d623ba542299f8aad7277f8"
+          },
+          {
+            "relative_path": ".orchestrator/task-briefs/odp_recovery_source_integration_001.md",
+            "canonical_source_path": "/home/lupin/odayplus/.orchestrator/task-briefs/odp_recovery_source_integration_001.md",
+            "sha256": "2d58087e4d69c870d304df47877b2dc55d6f9db9542fa54dcd480ec4e04b3455"
+          }
+        ],
+        "source_manifest": [
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-authorized-20261015/HANDOFF.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-authorized-20261015/HANDOFF.md",
+            "sha256": "95574920ea9bc0c9419ae914ba2b7b9df52450c0b8c530c4805e3d36146f857d"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-authorized-20261015/user-authorization.json",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-authorized-20261015/user-authorization.json",
+            "sha256": "f0663570a1c031a78d621db9ca2ce2b1cb66b93b74b92d443b34a34d56ec1a8e"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/coarse-framing-dcf1f258f/README.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/coarse-framing-dcf1f258f/README.md",
+            "sha256": "f5f1e2a5b1cbced28cc4582dfd6c3e8c92b1f2b73d90373bd32dc1dc5a88744b"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/coarse-framing-dcf1f258f/AUTHORIZED-INTEGRATION-REQUIRED.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/coarse-framing-dcf1f258f/AUTHORIZED-INTEGRATION-REQUIRED.md",
+            "sha256": "177992f8bee98a3f7e4819bab31d799a47544416f85d35962e5c61339413a6d1"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/integration-admission-dcf1f258f/DECISION-REQUEST.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/integration-admission-dcf1f258f/DECISION-REQUEST.md",
+            "sha256": "169c5005433c141ef8260b20b56451f9fe7b794ab06ad908da6df98d73ec61f1"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-001-20261015/REQUEST.actual-b2c751406.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-001-20261015/REQUEST.actual-b2c751406.md",
+            "sha256": "df4ef971b24270d3ef02bd2996b2b5b4caf0522fed4ffec7a3e25de6691ec816"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-002-20261015/REQUEST.actual-886c5a67d.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-002-20261015/REQUEST.actual-886c5a67d.md",
+            "sha256": "688ab342daac54fbaad03da40c407e6e6ce2dc1e5e590862f969a7b35fd47b9e"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-003-20261015/REQUEST.actual-74e5e6ada.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-003-20261015/REQUEST.actual-74e5e6ada.md",
+            "sha256": "24eb6e3261849cbd2a71739629aeb14634ad54276fb8bc02d9112de16758ef6f"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-004-20261015/REQUEST.actual-55f1e0787.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-004-20261015/REQUEST.actual-55f1e0787.md",
+            "sha256": "335d94c9cefe4c4feb26664fca74b8dac9129b39dc0b5d23dad608259b290565"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-e99cb8460-20261015/README.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-e99cb8460-20261015/README.md",
+            "sha256": "5dcb5b9bb06f65f97c6acfd74bc3c78bdcbaeb2b1d9d06fedc6043befb705b64"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-e99cb8460-20261015/MANAGER-BOUNDED-DIAGNOSTIC-PLAN.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-e99cb8460-20261015/MANAGER-BOUNDED-DIAGNOSTIC-PLAN.md",
+            "sha256": "9a538cf8343af5622dab64fac950fd9d1d28f24be15198fcdb9c3c49ff3a2045"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-005-20261015/REQUEST.actual-e99cb8460.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-005-20261015/REQUEST.actual-e99cb8460.md",
+            "sha256": "2ab419c03b255113b2b5f4c5ae68b39a495733ce62482507f864f22dcd0346a7"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-1ac806841-20261015/MANAGER-FOREGROUND-OBSERVABILITY-DISPOSITION.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-1ac806841-20261015/MANAGER-FOREGROUND-OBSERVABILITY-DISPOSITION.md",
+            "sha256": "71fd17852a894833e755680524ff5a99e6458757d2fd8f828e523e9ea5fd7b7c"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-006-20261015/REQUEST.actual-d41028303.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-006-20261015/REQUEST.actual-d41028303.md",
+            "sha256": "2b78ac07364a027b10a89d8c1785e3e5babde9e8bc5ecf2a20f8d3520f2d0e5d"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-13c5fb2af-20261015/MANAGER-OBSERVATION-SAMPLING-DISPOSITION.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-pi-13c5fb2af-20261015/MANAGER-OBSERVATION-SAMPLING-DISPOSITION.md",
+            "sha256": "d0cb3d1cdd0e90e01d31a1c989edae4149ebf4bd03e0794f936af1471cf34ab7"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/REQUEST.actual-13c5fb2af.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/REQUEST.actual-13c5fb2af.md",
+            "sha256": "79f4d6c05c4437185e5ec48eaf1fcfcace046fca14b0419b9fcf4924476dbb27"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-CONTRACT-DISPOSITION.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-CONTRACT-DISPOSITION.md",
+            "sha256": "7abbed1317e750197cf7e5a348bd0bf81ab68f45f71715cb24b38195e3fe62d7"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-F1-DESCRIPTOR-AND-FIXTURE-CLARIFICATION.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-F1-DESCRIPTOR-AND-FIXTURE-CLARIFICATION.md",
+            "sha256": "b9fa16515b8e1d7c279e0eb11bc4d5ceb47c25361e555aeeeba9c26e9597801b"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/REQUEST.actual-5b299a40b.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/REQUEST.actual-5b299a40b.md",
+            "sha256": "6774edf3541cfe9d0670299b93a44a73367e7a4386093ffa16f2d5110936617c"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/MANAGER-BOUNDED-OWNING-DISPOSITION.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/MANAGER-BOUNDED-OWNING-DISPOSITION.md",
+            "sha256": "05c15fa44c24cea81bfa3ac524b7bc3fb77c161eb7a86eee9533c90fa658fa3c"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/F3-ROTATION-SUPERSESSION-CROSSFILE.DATA-ONLY.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/F3-ROTATION-SUPERSESSION-CROSSFILE.DATA-ONLY.md",
+            "sha256": "0536078a9ff0ae7c21846407f2065cd1b692d3e63cf1abde86ad9dcfef6cbf5b"
+          },
+          {
+            "relative_path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/ACTUAL-CI0137-NATIVE-CUSTODY-FOLLOWUP.md",
+            "canonical_source_path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-scope-ci-batch-008-20261015/ACTUAL-CI0137-NATIVE-CUSTODY-FOLLOWUP.md",
+            "sha256": "cdfa4a30441b67adc171bf1b0d61f7a38db231f81d623ba542299f8aad7277f8"
+          },
+          {
+            "relative_path": ".orchestrator/task-briefs/odp_recovery_source_integration_001.md",
+            "canonical_source_path": "/home/lupin/odayplus/.orchestrator/task-briefs/odp_recovery_source_integration_001.md",
+            "sha256": "2d58087e4d69c870d304df47877b2dc55d6f9db9542fa54dcd480ec4e04b3455"
+          }
+        ]
+      }
+    },
+    "original_complete_task_equal": true
+  },
+  "native_receipts": {
+    "native-consumer-gate-before": {
+      "terminal": {
+        "at": "2026-10-15T17:12:09.132543+00:00",
+        "head": "e0c43dcea83dcad9cef00445575397315ead73d8",
+        "tree": "2e522c163cba482b4138c3864a5d3e1f4acd4e10",
+        "argv": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/security/test_dev_smoke_consumer.py",
+          "tests/security/test_dev_smoke_recovery_gate.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "duration_seconds": 21.22858138103038,
+        "exit_code": 1,
+        "interrupted": false,
+        "kernel_child_closure": {
+          "kernel_waitpid_echild": true
+        },
+        "descendant_exit_unknown": false,
+        "writer_scan": {
+          "same_uid_writers": [],
+          "same_uid_permission_denied": [
+            1085478,
+            1085479,
+            1085599,
+            1085724
+          ],
+          "other_uids_not_inspected": true
+        },
+        "external_writer_exclusion_unproven": true,
+        "raw_sha256": "537b4a38d698e22b0c5dd26bcc6c67ebc21e672b3619886f3bd8909cc43af6f1",
+        "manager_activity_recognized": false,
+        "distinct_manager_observations": 0,
+        "not_canonical_or_review": true
+      },
+      "coordinator_terminal": {
+        "at": "2026-10-15T17:12:09.596008+00:00",
+        "head": "e0c43dcea83dcad9cef00445575397315ead73d8",
+        "owned_closed": true,
+        "owned_container": "6e24394613da9994c01815249a6a09c111b47f0fcbe000d09168921682bbc14b",
+        "owned_container_removed": true,
+        "total_seconds": 27.97879574354738
+      },
+      "seal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T170912Z-ded8d170/native-consumer-gate-before-seal.json",
+      "seal_sha256": "7bfafd69c0b418d3d28782e236fd8de4782dda0b46e773554a167e81f765f785",
+      "all_archived_file_hashes_verified": true
+    },
+    "recovery-alias-diagnostic": {
+      "terminal": {
+        "at": "2026-10-15T17:13:27.702931+00:00",
+        "head": "e0c43dcea83dcad9cef00445575397315ead73d8",
+        "tree": "2e522c163cba482b4138c3864a5d3e1f4acd4e10",
+        "argv": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/security/test_dev_smoke_recovery_gate.py::test_canonical_gate_logout_also_claims_shared_owner_intent[False]",
+          "-q",
+          "-p",
+          "native_seam_diagnostic"
+        ],
+        "cap_seconds": 420,
+        "duration_seconds": 7.618276932276785,
+        "exit_code": 1,
+        "interrupted": false,
+        "kernel_child_closure": {
+          "kernel_waitpid_echild": true
+        },
+        "descendant_exit_unknown": false,
+        "writer_scan": {
+          "same_uid_writers": [],
+          "same_uid_permission_denied": [
+            1085478,
+            1085479,
+            1085599,
+            1085724
+          ],
+          "other_uids_not_inspected": true
+        },
+        "external_writer_exclusion_unproven": true,
+        "raw_sha256": "6db100141d0d0d55a8c6795b0af8fa9429d92fa4a7f794de94783a80eea9c5a1",
+        "manager_activity_recognized": false,
+        "distinct_manager_observations": 0,
+        "not_canonical_or_review": true
+      },
+      "coordinator_terminal": {
+        "at": "2026-10-15T17:13:28.144023+00:00",
+        "head": "e0c43dcea83dcad9cef00445575397315ead73d8",
+        "owned_closed": true,
+        "owned_container": "0aeb7af76de0e3bdafb33a62df79d5da6edd3c3c62ca79b0b0e2f8d0591487b1",
+        "owned_container_removed": true,
+        "total_seconds": 16.549731999170035
+      },
+      "seal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T170912Z-ded8d170/recovery-alias-diagnostic-seal.json",
+      "seal_sha256": "56c0793eca4ef6662825639bce490dff3622a4d9240c65d27c9bdd179fb1fa97",
+      "all_archived_file_hashes_verified": true
+    },
+    "native-consumer-gate-after": {
+      "terminal": {
+        "at": "2026-10-15T17:15:29.485157+00:00",
+        "head": "b58d641720a444b4656ad8befe71c48a1246ff8e",
+        "tree": "cae7e9517767fbd97aa3299d73401948063b8b65",
+        "argv": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/security/test_dev_smoke_consumer.py",
+          "tests/security/test_dev_smoke_recovery_gate.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "duration_seconds": 20.47232598485425,
+        "exit_code": 0,
+        "interrupted": false,
+        "kernel_child_closure": {
+          "kernel_waitpid_echild": true
+        },
+        "descendant_exit_unknown": false,
+        "writer_scan": {
+          "same_uid_writers": [],
+          "same_uid_permission_denied": [
+            1085478,
+            1085479,
+            1085599,
+            1085724
+          ],
+          "other_uids_not_inspected": true
+        },
+        "external_writer_exclusion_unproven": true,
+        "raw_sha256": "942f94cd6009cd5afe6e0a865aa631c62566f0636434726875cdd9100b2cea70",
+        "manager_activity_recognized": false,
+        "distinct_manager_observations": 0,
+        "not_canonical_or_review": true
+      },
+      "coordinator_terminal": {
+        "at": "2026-10-15T17:15:29.940013+00:00",
+        "head": "b58d641720a444b4656ad8befe71c48a1246ff8e",
+        "owned_closed": true,
+        "owned_container": "33b5da310c28dc551e5637b756cd195b8e1543415a4be9f285d5a9be93ef1c7e",
+        "owned_container_removed": true,
+        "total_seconds": 26.10739051317796
+      },
+      "seal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T170912Z-ded8d170/native-consumer-gate-after-seal.json",
+      "seal_sha256": "a9c6f6b622442bd76eed76e4677adbd7f85ec7674f165c9690b008bb723643c1",
+      "all_archived_file_hashes_verified": true
+    },
+    "gate-base-and-admin-after": {
+      "terminal": {
+        "at": "2026-10-15T17:16:18.433808+00:00",
+        "head": "b58d641720a444b4656ad8befe71c48a1246ff8e",
+        "tree": "cae7e9517767fbd97aa3299d73401948063b8b65",
+        "argv": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/e2e/test_live_e2e_gate.py",
+          "tests/e2e/test_live_e2e_gate_dev_admin.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "duration_seconds": 36.11583493696526,
+        "exit_code": 0,
+        "interrupted": false,
+        "kernel_child_closure": {
+          "kernel_waitpid_echild": true
+        },
+        "descendant_exit_unknown": false,
+        "writer_scan": {
+          "same_uid_writers": [],
+          "same_uid_permission_denied": [
+            1085478,
+            1085479,
+            1085599,
+            1085724
+          ],
+          "other_uids_not_inspected": true
+        },
+        "external_writer_exclusion_unproven": true,
+        "raw_sha256": "12ac20298de1c58959aa8b42d974ad5426bce66b3dc868e4bbee17b3340e91b2",
+        "manager_activity_recognized": false,
+        "distinct_manager_observations": 0,
+        "not_canonical_or_review": true
+      },
+      "coordinator_terminal": {
+        "at": "2026-10-15T17:16:18.885135+00:00",
+        "head": "b58d641720a444b4656ad8befe71c48a1246ff8e",
+        "owned_closed": true,
+        "owned_container": "a911995fe214f469ac4dfd6d680829701f12837b6f4cb394d0d43a0b099983f3",
+        "owned_container_removed": true,
+        "total_seconds": 41.71764685725793
+      },
+      "seal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T170912Z-ded8d170/gate-base-and-admin-after-seal.json",
+      "seal_sha256": "080753515b13aa65ffe52cfad16c4c82c018769366c6f0452c9e136d2f620719",
+      "all_archived_file_hashes_verified": true
+    },
+    "native-seam-ruff": {
+      "terminal": {
+        "at": "2026-10-15T17:17:03.360785+00:00",
+        "head": "b58d641720a444b4656ad8befe71c48a1246ff8e",
+        "tree": "cae7e9517767fbd97aa3299d73401948063b8b65",
+        "argv": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "ruff",
+          "check",
+          "delivery_toolchain/e2e/check_live_e2e_gate.py",
+          "delivery_toolchain/release/consume_dev_smoke.py",
+          "tests/e2e/test_live_e2e_gate.py",
+          "tests/e2e/test_live_e2e_gate_dev_admin.py"
+        ],
+        "cap_seconds": 420,
+        "duration_seconds": 0.1800313489511609,
+        "exit_code": 0,
+        "interrupted": false,
+        "kernel_child_closure": {
+          "kernel_waitpid_echild": true
+        },
+        "descendant_exit_unknown": false,
+        "writer_scan": {
+          "same_uid_writers": [],
+          "same_uid_permission_denied": [
+            1085478,
+            1085479,
+            1085599,
+            1085724
+          ],
+          "other_uids_not_inspected": true
+        },
+        "external_writer_exclusion_unproven": true,
+        "raw_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+        "manager_activity_recognized": false,
+        "distinct_manager_observations": 0,
+        "not_canonical_or_review": true
+      },
+      "coordinator_terminal": {
+        "at": "2026-10-15T17:17:03.875638+00:00",
+        "head": "b58d641720a444b4656ad8befe71c48a1246ff8e",
+        "owned_closed": true,
+        "owned_container": "c80d96d9afa997a64b815687793c831c3c6e67e1077f60a65558c9513eb31097",
+        "owned_container_removed": true,
+        "total_seconds": 6.364367697387934
+      },
+      "seal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T170912Z-ded8d170/native-seam-ruff-seal.json",
+      "seal_sha256": "295b2f735f5088edd776c1ad98a6f80cd62b7475b9c36cbd633141e64d3369b4",
+      "all_archived_file_hashes_verified": true
+    }
+  },
+  "recovery_alias_diagnostic": {
+    "node": "tests/security/test_dev_smoke_recovery_gate.py::test_canonical_gate_logout_also_claims_shared_owner_intent[False]",
+    "failed_checks": [
+      "session:session_resolves_account",
+      "admin:identity_user_list"
+    ],
+    "calls": [
+      [
+        "api",
+        "GET",
+        "/platform/version",
+        "gate"
+      ],
+      [
+        "api",
+        "GET",
+        "/readiness",
+        "gate"
+      ],
+      [
+        "api",
+        "GET",
+        "/api/v1/operator/bootstrap",
+        "gate"
+      ],
+      [
+        "api",
+        "GET",
+        "/api/v1/operator/bootstrap",
+        "gate"
+      ],
+      [
+        "web",
+        "GET",
+        "/operator",
+        "gate"
+      ],
+      [
+        "api",
+        "GET",
+        "/api/v1/learninghub/models",
+        "gate"
+      ],
+      [
+        "api",
+        "POST",
+        "/api/v1/jobs",
+        "gate"
+      ],
+      [
+        "api",
+        "POST",
+        "/api/v1/jobs",
+        "gate"
+      ],
+      [
+        "api",
+        "GET",
+        "/api/v1/jobs/job-01HZZ0000000000000000001",
+        "gate"
+      ],
+      [
+        "api",
+        "GET",
+        "/api/v1/audit/events?correlation_id=corr-recovery-gate-b44f1ecb-4640-46cf-a86c-cb73f4f158c9",
+        "gate"
+      ],
+      [
+        "api",
+        "GET",
+        "/api/v1/external-data/ingestion-runs?limit=100",
+        "gate"
+      ],
+      [
+        "web",
+        "GET",
+        "/auth/session",
+        "gate"
+      ],
+      [
+        "web",
+        "GET",
+        "/api/v1/operator/bootstrap",
+        "gate"
+      ],
+      [
+        "web",
+        "POST",
+        "/login",
+        "gate"
+      ],
+      [
+        "web",
+        "POST",
+        "/login",
+        "gate"
+      ],
+      [
+        "web",
+        "GET",
+        "/api/v1/operator/users",
+        "gate"
+      ],
+      [
+        "web",
+        "GET",
+        "/auth/session",
+        "gate"
+      ],
+      [
+        "web",
+        "GET",
+        "/api/v1/operator/users",
+        "gate"
+      ],
+      [
+        "original",
+        "POST",
+        "quarantine",
+        "quarantine"
+      ],
+      [
+        "web",
+        "POST",
+        "/auth/logout",
+        "cleanup"
+      ],
+      [
+        "web",
+        "GET",
+        "/auth/session",
+        "cleanup"
+      ]
+    ],
+    "purpose": "diagnostic only; no changed behavior or assertions"
+  },
+  "static_preservation": {
+    "tests/e2e/test_live_e2e_gate.py": {
+      "original_top_level_functions_exact_AST_preserved": 129
+    },
+    "tests/e2e/test_live_e2e_gate_dev_admin.py": {
+      "original_top_level_functions_exact_AST_preserved": 80
+    },
+    "head": "b58d641720a444b4656ad8befe71c48a1246ff8e",
+    "human_seven_exact_paths_preserved": [
+      "docs/evidence/human-decisions/HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001/README.md",
+      "docs/evidence/human-decisions/HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001/readback.json",
+      "docs/evidence/human-decisions/HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001/requirement-disposition-approval-receipt.json",
+      "docs/evidence/human-decisions/HUMAN-OSS-LEGAL-APPROVAL-001/README.md",
+      "docs/evidence/human-decisions/HUMAN-OSS-LEGAL-APPROVAL-001/oss-license-amendment-1-receipt.json",
+      "docs/evidence/human-decisions/HUMAN-OSS-LEGAL-APPROVAL-001/oss-license-amendment-2-receipt.json",
+      "docs/evidence/human-decisions/HUMAN-OSS-LEGAL-APPROVAL-001/oss-license-amendments-readback.json"
+    ],
+    "pinned_source_tree_unchanged": true
+  },
+  "original_complete_blocked_six_reopen_task_unchanged": true,
+  "whole_blob_equal_to_e0": [
+    "tests/security/test_dev_smoke_consumer.py",
+    "tests/security/test_dev_smoke_recovery_gate.py",
+    "tests/security/test_dev_smoke_recovery.py",
+    "apps/web/features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx"
+  ],
+  "diagnosis": {
+    "consumer": "Standalone finally-custody wrapped the already owned native observer. Cleanup occurred during evaluation, claiming logout before explicit native reserve and consuming once-only native requests. Original15 failures reproduced at e0; explicit nominal server-owned delegation avoids second owner, not a client flag or success waiver.",
+    "recovery": "Diagnostic fails session:session_resolves_account and admin:identity_user_list before cleanup. AdminWeb constructor snapshots SESSION_VALUE but shared-owner test selects different issued SID later. Retain only actual successful issuance in fixture, leaving production recovery/quarantine/shared intent untouched."
+  },
+  "new_owning_controls": [
+    "real native observer extra-cookie evaluation performs no premature cleanup; explicit reserve once-only cleanup and sticky UNKNOWN",
+    "untrusted client ownership flags/cleanup-shaped method do not bypass standalone custody",
+    "runtime-selected fixture cookie unknown before issuance, usable after positive login, denied after specific logout"
+  ],
+  "limits": [
+    "Pre-docs-freeze anchor measurements only: NO pass transfer to documentation successor.",
+    "Standalone offline Web/native fixtures are NOT actual-PG application proof; outer real PG guard alone is not application coverage.",
+    "External/non-owned/inaccessible writers and historical missing exits remain UNKNOWN.",
+    "No sustained two-update current-Manager observation established by these short stages; no1200 run admitted yet.",
+    "ALL final-head14 canonical/original17/178 and other owning/CI/full configured packets+synthesis remain owed.",
+    "Original failed-Pi/full blocked6/a129PR1459 unchanged; HumanOpsPENDING/HOLD/goalfalse; no approval/merge/done/live."
+  ]
+}
