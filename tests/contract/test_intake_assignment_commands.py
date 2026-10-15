@@ -316,6 +316,35 @@ def test_claim_transfer_accept_complete_and_sla_are_audited_atomic_and_replayabl
     assert _snapshot(store) == snapshot
 
 
+def test_completed_assignment_rejects_reassignment_as_state_conflict_without_mutations(journey):
+    client, store, iid, aid, _, _ = journey
+    assert _action(journey, "claim").status_code == 200
+    _cancel(journey)
+    completed = _action(journey, "complete")
+    assert completed.status_code == 200, completed.text
+    assert store.assignments[aid]["status"] == "COMPLETED"
+    before = _snapshot(store)
+
+    response = client.put(
+        f"/api/v1/intakes/{iid}/assignment",
+        json={
+            "owner_subject_id": OWNER,
+            "owner_role": "expansion-staff",
+            "due_at": "2026-10-13T02:30:00Z",
+            "reason": "Synthetic attempt to reassign completed work",
+        },
+        headers={
+            **_headers(),
+            "Idempotency-Key": "synthetic-completed-reassignment",
+            "If-Match": f'W/"{store.intakes[iid]["version"]}"',
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "WORKFLOW_STATE_DENIED"
+    assert _snapshot(store) == before
+
+
 @pytest.mark.parametrize(
     "mode",
     [

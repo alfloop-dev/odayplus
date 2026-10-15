@@ -3194,10 +3194,10 @@ else:
                 if active_assignment is not None and active_assignment.get("status") != "UNASSIGNED":
                     raise HTTPException(409, "OWNER_CONFLICT")
                 active_sla = next((s for s in active.slas.values() if s.get("intake_id") == intake_id), None)
+                if active_sla is not None and active_sla.get("state") in {"PAUSED", "COMPLETED", "BREACHED"}:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 if active_assignment is None or active_sla is None or workflow_policy is None:
                     raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
-                if active_sla.get("state") in {"PAUSED", "COMPLETED", "BREACHED"}:
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 try:
                     schedule = schedule_from_record(active_sla)
                     authorized_scope = copy.deepcopy(current["scope"])
