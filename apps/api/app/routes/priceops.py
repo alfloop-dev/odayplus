@@ -368,14 +368,23 @@ else:
                 )
             return "__local__"
 
-        def canonical_store(item: Any, expected_tenant: str | None) -> Any:
+        def canonical_store(item: Any, expected_tenant: str | None, *,
+                            read_cache: dict[tuple[str, str], Any] | None = None) -> Any:
             if store_repository is None and brand_repository is None and not production_required:
                 return None
             try:
-                store = store_repository.get_store(item.store_id)
+                def read_master(kind: str, key: str, load: Any) -> Any:
+                    if read_cache is None:
+                        return load(key)
+                    identity = (kind, key)
+                    if identity not in read_cache:
+                        read_cache[identity] = load(key)
+                    return read_cache[identity]
+
+                store = read_master("store", item.store_id, store_repository.get_store)
                 if store is None or not store.is_current or store.tenant_id != expected_tenant:
                     return None
-                brand = brand_repository.get_brand(store.brand_id)
+                brand = read_master("brand", store.brand_id, brand_repository.get_brand)
                 if brand is None or brand.tenant_id != expected_tenant:
                     return None
                 return store
@@ -385,7 +394,8 @@ else:
                     "message": "Canonical pricing ownership is unavailable",
                 }) from exc
 
-        def items_in_scope(items: Any, principal: Any, expected_tenant: str | None) -> bool:
+        def items_in_scope(items: Any, principal: Any, expected_tenant: str | None, *,
+                           read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
             scope = principal.scope
             if not (
                 scope.permits_module("priceops")
@@ -395,7 +405,7 @@ else:
             ):
                 return False
             for item in items:
-                store = canonical_store(item, expected_tenant)
+                store = canonical_store(item, expected_tenant, read_cache=read_cache)
                 canonical_required = store_repository is not None or brand_repository is not None or production_required
                 if canonical_required and (
                     store is None or item.brand_id != store.brand_id
@@ -409,13 +419,14 @@ else:
                     return False
             return True
 
-        def plan_in_scope(plan: Any, principal: Any) -> bool:
+        def plan_in_scope(plan: Any, principal: Any, *,
+                          read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
             scope = principal.scope
             if scope.tenant_id and plan.tenant_id != scope.tenant_id:
                 return False
             if (durable_commands_required or production_required) and not scope.tenant_id:
                 return False
-            return items_in_scope(plan.items, principal, plan.tenant_id)
+            return items_in_scope(plan.items, principal, plan.tenant_id, read_cache=read_cache)
 
         def require_proposal_scope(body: PriceOpsPlanPayload, request: Request) -> None:
             principal = request.state.operator_principal
@@ -660,9 +671,12 @@ else:
             `has_more`, so a caller that ignores the new fields and passes no
             query parameters sees what it saw before.
             """
+            # Reuse master rows only within this list request. Every plan still
+            # passes scope checks; commands retain uncached, locked rechecks.
+            read_cache: dict[tuple[str, str], Any] = {}
             rows = [
                 plan.to_dict() for plan in service.repository.list_plans()
-                if plan_in_scope(plan, request.state.operator_principal)
+                if plan_in_scope(plan, request.state.operator_principal, read_cache=read_cache)
             ]
             if tenant_id is not None:
                 rows = [row for row in rows if row.get("tenant_id") == tenant_id]
