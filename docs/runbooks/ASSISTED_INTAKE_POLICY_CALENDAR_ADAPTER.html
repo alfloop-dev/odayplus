@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-Hant"><meta charset="utf-8"><title>Intake policy／calendar adapter 工程契約</title>
+<style>body{font:16px/1.65 sans-serif;max-width:1000px;margin:40px auto;color:#182337;padding:0 24px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccd5e0;padding:9px;text-align:left}code{overflow-wrap:anywhere}h1,h2{line-height:1.3}.status{background:#fff4d8;padding:16px}</style>
+<h1>Intake policy／calendar adapter 工程契約</h1>
+<p class="status">狀態：新增實作待獨立工程審查與 Workflow／Ops owner 確認。這份文件定義讀取格式，不批准業務數值、帳戶、租戶範圍或正式上線。</p>
+<h2>權威來源與 migration</h2>
+<p>PostgreSQL bundle 使用 <code>SqlDecisionPolicyRepository</code> 和 <code>SqlIdentityStore</code>，讀取現有 <code>workflow.decision_policies</code>、<code>identity.accounts</code>、角色與範圍。Alembic <code>0023</code> 擴充政策種類限制並保護新增種類的版本內容，保留既有七種類並允許 <code>intake_workflow</code>、<code>intake_business_calendar</code>。新增兩種類的參數／批准／身份不能覆寫或刪除，有效期可關閉一次以 supersede；既有種類維持原行為；不新增政策、日曆、帳戶、授權或批准資料。正式 migration 執行須走既有發布流程。</p>
+<p>版本 ID 必須是 registry 現存的 tenant-qualified ID。初始作業依提交時間解析政策；指派、暫停與恢復沿用該 SLA 記錄的確切政策與日曆版本。批准時間必須不晚於 governing timestamp；批准帳戶必須仍有效、屬於同租戶，持有記錄的 owner role，且允許 listing module 及工作所需的五個範圍軸。沒有有效紀錄時拒絕產生期限。</p>
+<h2>Intake policy parameters（schema_version = 1）</h2>
+<table><tr><th>欄位</th><th>工程解析規則</th><th>權威資料責任</th></tr>
+<tr><td>calendar_version_id、queue_key</td><td>必填非空字串，日曆 ID 必須能解析</td><td>Workflow／Ops 提供實際版本與 routing queue</td></tr>
+<tr><td>warning_work_minutes、due_work_minutes、breach_work_minutes</td><td>整數、非 bool；0 ≤ warning ≤ due ≤ breach，due &gt; 0</td><td>不得採用測試 fixture 的數值作正式政策</td></tr>
+<tr><td>assignee_role_bindings</td><td>請求 owner_role → canonical Role；目標帳戶必須實際持有該角色與工作範圍</td><td>Identity／Workflow owner 確認 role mapping</td></tr>
+<tr><td>deadline_override</td><td>明確 KEEP_POLICY，或 BOUNDED_WORK_MINUTES 加 minimum_minutes、maximum_minutes、actor_roles。提議時間必須落在批准的工作量範圍並等於日曆 checkpoint</td><td>不得由 UI 任意覆寫服務期限</td></tr>
+<tr><td>completion_requirements</td><td>非空工作清單：kind（intake／decision／correction／promotion／job）、allowed_states（只允許該種類終態）、minimum_count ≥ 1、require_audit（必填 bool），可明列 decision action／job type。需宣告 work_evidence input；資料從後端持久化記錄解析，前端不能提供 completed flag。</td><td>Workflow／Ops 必須批准每個工作類型的必要證據及稽核要求；沒有正式預設。</td></tr>
+<tr><td>approved_pause_reasons</td><td>明確批准原因字串清單；請求原因必須吻合</td><td>Workflow／Ops 確認清單與批准來源</td></tr>
+<tr><td>declared_inputs（registry 欄位）</td><td>初始化須含 scope、submitted_at；指派須另含 actor_account、target_account、requested_due_at</td><td>治理紀錄須揭露實際使用輸入</td></tr></table>
+<h2>Business calendar parameters（schema_version = 1）</h2>
+<table><tr><th>欄位</th><th>工程解析規則</th></tr>
+<tr><td>timezone、coverage_from、coverage_through</td><td>明確 IANA timezone 與 ISO 日期；區間不得反向，最多 3660 日的差值為資源防護，不是 SLA 時限</td></tr>
+<tr><td>duration_basis</td><td>必須明確 UTC_ELAPSED；計入真正工作區間經過的時間</td></tr>
+<tr><td>weekly_windows</td><td>必須明列字串鍵 1–7；每個值為 [[HH:MM, HH:MM], …]。空陣列表示關閉；區間不得重疊、為零或跨夜；結束可用 24:00</td></tr>
+<tr><td>date_overrides</td><td>必填 object，ISO 日期 → 當天完整工作區間；日期須落在 coverage；空陣列表示休假</td></tr>
+<tr><td>ambiguous_time</td><td>明確 EARLIER／LATER／REJECT；處理 DST 重複邊界</td></tr>
+<tr><td>nonexistent_time</td><td>必須明確 REJECT；不偷偷位移不存在的 DST 邊界</td></tr></table>
+<p>不預設時區、工作日、工作時間、午休或假日。工作量跨關閉區間時跳過它；超出已批准 coverage 時拒絕猜測期限。所有持久化 checkpoint 使用帶時區的 UTC。</p>
+<h2>任務轉移與完成</h2>
+<p>claim 僅允許当前 assignee；轉派與完成允許 owner／manager，帳戶須仍有效且角色／scope 匹配。轉派接手人使用實際 SQL identity；沒有 deadline proposal 時保留現在的 SLA checkpoint，有提議時套用批准的 override policy。目标的 claim 先提交 TRANSFERRED → ASSIGNED 接手，再 ASSIGNED → CLAIMED，每個版本都有自己的 audit／catalog event。</p>
+<p>任務完成先驗證批准的 completion_requirements：canonical UUID、tenant／父 Intake scope、記錄版本、終態及所要求的 current audit；尚有 pending decision／correction／promotion 時返回 WORK_INCOMPLETE。證據 ID／version／state 被留在 completion_evidence。接著以 Workflow/SLA service 身分完成 SLA，真實 paused interval 被關閉並排除其工作量。任務、SLA、父 Intake、audit、outbox 與冪等 receipt 同交易。完成後 GET detail 保留 completed Assignment，供查證。</p>
+<p>重播前核對当前 registry identity/scope；自己的既有轉派收據在 ownership 變更後可重播，但不会重新執行轉派。每个新 command 在交易鎖內重新讀取版本與父範圍。舊封套缺少 canonical Intake/SLA 關聯時拒絕生成成功收據，需核准對帳。</p>
+<h2>暫停與恢復</h2>
+<p>HTTP 命令先檢查實際父 Intake 範圍，再檢查 If-Match、冪等鍵及仍有效的 manager／steward 帳戶。讀取冪等快取前也重新核對 registry 帳戶、角色與 scope，不能由舊成功收據保留已撤銷授權。暫停原因必須被 policy 允許，expected_resume_at 必須在未來，已達 breach 的 SLA 即使狀態尚未更新也不能暫停。記錄區間 UUID、開始／預期恢復時間、原因、created_by、approved_by 與 approval_policy_version；自我批准被拒絕。</p>
+<p><strong>批准來源的工程限制：</strong>本 adapter 的 approved_by 來自已存在 policy 的批准帳戶，是批准原因清單的來源，不是新產生的人工作業核准。Workflow／Ops 必須確認這個映射符合正式 pause approval 規則；若需逐次批准紀錄，須另接實際批准工作流，不能把 policy 批准說成新的逐次批准。</p>
+<p>恢復以服務時間關閉真實區間；排除該區間內的工作量，調整 warning／due／breach，並重新推導當前狀態。paused_duration_seconds 記錄實際暫停秒數，與日曆排除的工作秒數不同。Intake 與 Assignment 的期限變更一起增加版本並留下稽核。SLA 收據指向真正已寫入的 audit UUID。</p>
+<p>命令、區間、稽核、catalog outbox event 與 replay receipt 屬於同一 rollback 邊界；失敗不保留成功重播。缺乏父 Intake 或權威 schedule 的舊封套拒絕操作，等待核准的對帳與遷移。這個交易邊界不包含需要保存失敗狀態的 SiteScore promotion saga。</p>
+<h2>驗證及正式使用前的條件</h2>
+<p>測試使用隔離的 synthetic 政策與帳戶。測試位置：<code>tests/unit/listing/test_intake_registry_calendar.py</code>、<code>tests/contract/test_intake_sla_calendar_commands.py</code>、<code>tests/integration/test_intake_registry_calendar_postgresql.py</code>。PostgreSQL 測試執行完整 Alembic、檢查既有 registry rows、SQL identity 撤銷、重啟讀回與部分 flush 失敗回滾。</p>
+<p>這些測試不證明正式政策已批准、不取代 canonical Workflow schema ownership／RLS 驗收，也不證明 outbox 已發布或 WORM 已保存。正式開啟前仍需 owner 批准的 registry records、獨立 source review、migration／回復計畫、歷史資料對帳、真實角色 UAT、資料與模型證據、Gate 0–6 及部署批准。</p>
+</html>

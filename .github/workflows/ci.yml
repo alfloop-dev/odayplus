@@ -497,7 +497,7 @@ jobs:
         run: make product-e2e-bootstrap
 
       # Fixture UI geometry/axe checks are supplemental, not part of the exact
-      # 18-spec/122-test business-acceptance receipt inventory. Fail this required
+      # 18-spec/129-test deterministic product receipt inventory. Fail this required
       # lane on visual regressions without changing release authority or counts.
       - name: Verify Store Ops Package 10 geometry and accessibility
         run: npx playwright test --config tests/visual/operator-store-ops-parity.config.ts
@@ -507,7 +507,29 @@ jobs:
       # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while
       # dev -> main promotion separately requires an authentic GO decision.
       - name: Run product E2E dev merge gate
+        id: product_e2e
         run: make product-e2e-gate
+
+      - name: Collect current-source product E2E evidence
+        if: always()
+        env:
+          E2E_RUNNER_OUTCOME: ${{ steps.product_e2e.outcome }}
+        run: |
+          args=()
+          if [[ "$E2E_RUNNER_OUTCOME" == "success" ]]; then
+            args+=(--expect-complete)
+          fi
+          python3 delivery_toolchain/e2e/collect_ci_product_e2e_evidence.py \
+            --output "$RUNNER_TEMP/product-e2e-evidence" "${args[@]}"
+
+      - name: Preserve product E2E execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-evidence/
+          if-no-files-found: error
+          retention-days: 90
 
   automatic-dev-release:
     name: Request automatic dev release after checks

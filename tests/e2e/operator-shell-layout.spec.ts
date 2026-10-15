@@ -78,6 +78,8 @@ test.describe("Operator shared header layout", () => {
         (time) => `external-fetch:listing.partner_feed:blocked:${time}:e34f2117-de4b-478c-82fd-13c4ef428d42`,
       );
       const title = "External ingestion requires review";
+      const auditActor = "17e9cb99-db46-4a07-8e61-6bf9b22cf5d2";
+      const auditTime = "2026-10-11T15:53:07.811458+00:00";
       await page.route(/\/api\/v1\/operator\/(bootstrap|today)(\?.*)?$/, async (route) => {
         const response = await route.fetch();
         expect(response.status()).toBe(200);
@@ -88,6 +90,10 @@ test.describe("Operator shared header layout", () => {
           description: "External provider fetch is disabled for this deployment.",
           meta: "listing.partner_feed", status: "failed", owner: "Data Operations",
         }));
+        envelope.today.auditFeed = [{
+          actor: auditActor, time: auditTime,
+          detail: "view operator_console: allow", category: "security.authorization",
+        }];
         await route.fulfill({ response, json: envelope });
       });
       await page.setViewportSize({ width, height: 900 });
@@ -120,6 +126,17 @@ test.describe("Operator shared header layout", () => {
         });
       }));
       expect(geometry.flat().filter((label) => !label.readable), "clipped identifier/title text").toEqual([]);
+      const audit = page.getByTestId("operator-audit-feed").locator("article").first();
+      await expect(audit.locator("time")).toHaveText("23:53");
+      await expect(audit.locator("time")).toHaveAttribute("datetime", auditTime);
+      await expect(audit.locator("time")).toHaveAttribute("title", auditTime);
+      await expect(audit.locator("p")).toContainText(auditActor);
+      const auditGeometry = await audit.evaluate((row) => ({
+        rowWidth: row.getBoundingClientRect().width,
+        textWidth: row.querySelector("p")!.getBoundingClientRect().width,
+      }));
+      expect(auditGeometry.textWidth, "audit text squeezed by the timestamp column")
+        .toBeGreaterThan(auditGeometry.rowWidth * 0.65);
       expect((await measureHeader(page)).docScrollWidth).toBeLessThanOrEqual(width);
       await testInfo.attach(`today-long-identifiers-${width}`, {
         body: await page.screenshot({ fullPage: true }), contentType: "image/png",
@@ -162,6 +179,24 @@ test.describe("Operator shared header layout", () => {
         expect(reference.innerWidth).toBe(1720);
         expect(reference.innerX).toBe((width - 1720) / 2);
       }
+
+      // Native focus/anchor scrolling must leave controls below the sticky
+      // header, including its taller wrapped mobile/tablet form. A low-height
+      // viewport supplies genuine scrolling space without modifying the DOM.
+      await page.setViewportSize({ width, height: 360 });
+      await openWorkspace(page, "network");
+      await page.evaluate(() => document.fonts.ready);
+      const radarTab = page.getByTestId("network-tab-1");
+      await expect(radarTab).toBeVisible();
+      await radarTab.evaluate((element) => element.scrollIntoView({ block: "start", behavior: "instant" }));
+      const scrolled = await radarTab.evaluate((element) => ({
+        controlTop: element.getBoundingClientRect().top,
+        headerBottom: document.querySelector('[data-screen-label="Top Navigation"]')!.getBoundingClientRect().bottom,
+      }));
+      expect(scrolled.controlTop, "native scrolling placed the tab under the sticky header")
+        .toBeGreaterThanOrEqual(scrolled.headerBottom);
+      await radarTab.click();
+      await expect(radarTab).toHaveAttribute("aria-selected", "true");
     });
   }
 

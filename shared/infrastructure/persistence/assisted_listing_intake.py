@@ -28,6 +28,7 @@ import json
 import pickle
 import threading
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -225,6 +226,8 @@ _STATE_COLLECTIONS: dict[str, str] = {
     "slas": "assisted_intake.slas",
     "saved_views": "assisted_intake.saved_views",
     "replays": "assisted_intake.idempotency_replays",
+    "workflow_audits": "assisted_intake.workflow_audits",
+    "workflow_outbox": "assisted_intake.workflow_outbox",
 }
 
 _STATE_KEY_FIELDS: dict[str, tuple[str, ...]] = {
@@ -236,6 +239,8 @@ _STATE_KEY_FIELDS: dict[str, tuple[str, ...]] = {
     "promotions": ("promotion_decision_id",),
     "slas": ("sla_instance_id",),
     "saved_views": ("saved_view_id",),
+    "workflow_audits": ("audit_event_id",),
+    "workflow_outbox": ("event_id",),
 }
 
 
@@ -363,6 +368,20 @@ class DurableAssistedIntakeStore:
                 current[name] = dict(value)
         return current
 
+    @contextmanager
+    def transaction(self):
+        """Roll back request state as well as SQL on command/commit failure."""
+        self._current_collections()  # Require a verified tenant binding.
+        collections = deepcopy(self._local.collections)
+        baseline = deepcopy(self._local.baseline)
+        try:
+            with self._engine.lock:
+                yield
+        except BaseException:
+            self._local.collections = collections
+            self._local.baseline = baseline
+            raise
+
     def _read_locked(
         self,
         collection: str,
@@ -398,6 +417,8 @@ class DurableAssistedIntakeStore:
             for key, value in current_values.items():
                 baseline = baseline_values.get(key)
                 if key not in baseline_values or value != baseline:
+                    if name == "workflow_audits" and key in baseline_values:
+                        raise AssistedIntakePersistenceConflict("Workflow audit records are append-only")
                     changes.append((name, collection, key, baseline, value))
 
         if not changes:
