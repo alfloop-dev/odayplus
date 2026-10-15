@@ -222,3 +222,100 @@ def test_generic_correlation_filter_cannot_hide_malformed_fixed_history(
     )
     assert response.status_code == 403
     assert "DO-NOT-ECHO" not in response.text
+
+
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+def test_future_domain_audit_uses_verified_tenant_and_keeps_history_hidden(
+    monkeypatch: Any, prefix: str
+) -> None:
+    """Mounted JWT producers, not a read-filter waiver or historical rewrite."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from modules.forecastops import default_forecast_alert_policy
+    from shared.governance import InMemoryDecisionPolicyRepository
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    boundary = AuthenticationBoundary(
+        AuthBoundaryConfig(
+            issuer="https://idp.example.test",
+            audiences=frozenset({"oday-api"}),
+            jwks_uri="https://offline.invalid/jwks",
+            principal_mappings={
+                "operator-real-1": {
+                    "roles": ["operations_manager", "regional_supervisor", "expansion_user", "auditor"],
+                    "scope": {"tenant_id": TENANT},
+                },
+                "foreign-auditor": {"roles": ["auditor"], "scope": {"tenant_id": OTHER}},
+            },
+        ),
+        key_resolver=JwksResolver(
+            "https://offline.invalid/jwks", fetch=lambda _: {"keys": [_jwk(key, "offline-key")]}
+        ),
+    )
+    monkeypatch.setattr(deps, "default_boundary", lambda: boundary)
+    correlation = "same-domain-producer-selector"
+    headers = {
+        "authorization": "Bearer " + _token(key, "offline-key"),
+        "x-correlation-id": correlation,
+    }
+    foreign = {"authorization": "Bearer " + _token(key, "offline-key", sub="foreign-auditor")}
+    audit = InMemoryAuditLog()
+    historical = audit.record(AuditEvent(
+        event_type="offline.tenantless-history", actor="fixture", action="offline",
+        resource="offline", outcome="retained", correlation_id=correlation,
+        metadata={"marker": "TENANTLESS-HISTORY-MUST-STAY-HIDDEN"},
+    ))
+    frozen = historical.to_dict()
+    policies = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT)])
+    with TestClient(create_app(audit_log=audit, forecastops_policy_repository=policies)) as client:
+        forecast = client.post(prefix + "/forecastops/forecast-jobs", headers=headers, json={
+            "prediction_origin_time": "2026-06-27T09:00:00+00:00",
+            "inputs": [{"store_id": "offline-store", "observations": [
+                {"business_date": "2026-06-25", "actual_revenue": 120000, "site_score_baseline_p50": 120000},
+                {"business_date": "2026-06-26", "actual_revenue": 90000, "site_score_baseline_p50": 120000},
+            ]}],
+        })
+        assert forecast.status_code == 202, forecast.text
+        body = forecast.json()
+        alert_id = body["alerts"][0]["alert_id"]
+        handoff_id = body["handoffs"][0]["handoff_id"]
+        ack = client.post(prefix + f"/forecastops/alerts/{alert_id}/acknowledge", headers=headers,
+                          json={"actor": "offline-operator", "note": "offline-triage"})
+        assert ack.status_code == 200, ack.text
+        handoff = client.post(prefix + f"/forecastops/intervention-handoffs/{handoff_id}/execute",
+                              headers=headers, json={"actor": "offline-operator", "intervention_id": "offline-intervention"})
+        assert handoff.status_code == 200, handoff.text
+        feedback = client.post(prefix + "/forecastops/feedbacks", headers=headers, json={
+            "store_id": "offline-store", "feedback_type": "context_annotation",
+            "reason": "offline-context", "actor": "offline-operator",
+            "target_date_start": "2026-06-25", "target_date_end": "2026-06-26",
+            "metadata": {"tenant_id": OTHER},
+        })
+        assert feedback.status_code == 201, feedback.text
+        scored = client.post(prefix + "/heatzones/score-jobs", headers=headers, json={
+            "features": [{"h3_index": "h3r9_0200_0200", "poi_count": 15, "competitor_count": 1,
+                          "active_listing_count": 4, "median_listing_rent": 50000,
+                          "average_confidence": 0.9, "source_snapshot_ids": ["offline-source"], "tenant_id": OTHER}],
+            "idempotency_key": "offline-heatzone-replay",
+        })
+        assert scored.status_code == 202, scored.text
+        replay = client.post(prefix + "/heatzones/score-jobs", headers=headers,
+                             json={"features": [], "idempotency_key": "offline-heatzone-replay"})
+        assert replay.status_code == 202 and replay.json()["created"] is False, replay.text
+        expected_ids = {r.json()["audit_event_id"] for r in (ack, handoff, feedback, scored, replay)}
+        own = client.get(prefix + "/audit/events", headers=headers, params={"correlation_id": correlation})
+        assert own.status_code == 200, own.text
+        own_events = {event["event_id"]: event for event in own.json()["events"]}
+        assert expected_ids <= own_events.keys()
+        assert all(own_events[event_id]["metadata"]["tenant_id"] == TENANT for event_id in expected_ids)
+        for denied_headers in ({}, foreign):
+            denied = client.get(prefix + "/audit/events", headers=denied_headers,
+                                params={"correlation_id": correlation})
+            if denied_headers:
+                assert denied.status_code == 200, denied.text
+                assert not (expected_ids & {event["event_id"] for event in denied.json()["events"]})
+            else:
+                assert denied.status_code in (401, 403)
+            assert "offline-triage" not in denied.text
+        assert "TENANTLESS-HISTORY-MUST-STAY-HIDDEN" not in own.text
+        assert historical.to_dict() == frozen

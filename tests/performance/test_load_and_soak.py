@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from shared.infrastructure.persistence.factory import _durable_bundle
-from tests.integration._authz import FORECASTOPS_HEADERS
+from tests.integration._authz import AUDIT_HEADERS, FORECASTOPS_HEADERS
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def load_db_path(tmp_path) -> str:
 def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
     """Executable load and soak tests measuring API queue and database behavior
 
-    at declared concurrency (10, 50, 100) and volumes.
+    at declared concurrency (10, 20, 50) and volumes.
     """
     # 1. Setup durable database engine and app (using default WAL mode for durability)
     bundle = _durable_bundle(load_db_path)
@@ -100,7 +100,17 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
             assert resp_get.json()["job_id"] == job_id
 
             # Step C: Write and Read Audit Log (Read/Write from Audit DB)
-            resp_audit = client.get("/audit/events", params={"correlation_id": correlation_id})
+            # Audit reads require their own grant, in the SAME tenant/subject
+            # as the accepted job. No anonymous read or tenant-filter exemption.
+            resp_audit = client.get(
+                "/audit/events",
+                params={"correlation_id": correlation_id},
+                headers={
+                    **FORECASTOPS_HEADERS,
+                    "x-roles": AUDIT_HEADERS["x-roles"],
+                    "X-Correlation-ID": correlation_id,
+                },
+            )
             assert resp_audit.status_code == 200
             assert len(resp_audit.json()["events"]) >= 1
 
