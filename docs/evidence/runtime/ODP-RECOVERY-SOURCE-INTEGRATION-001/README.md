@@ -9,6 +9,74 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
+## Pi batch007 F3 owning checkpoint — source repair, NOT final proof
+
+Actual renewed Manager run `pi-20261015T160454Z-adf4a1d3` verified running isolated
+workspace/lease,361 entries/18 source documents and materialized/canonical hashes
+BEFORE edits. The complete original blocked-six-reopen object remains equal.
+Only the leased standalone gate and its two owning test modules changed.
+
+Source anchors `37f6ddc1dc40`, `ce5278f7a622`, `a79fd9e36eac`, `7c1d224021b0`,
+`73067861e561` add standalone memory-only custody around the unchanged journey:
+
+- Retain every safely observed distinct login/rotation/form session value,
+  including raw duplicate/contradictory cookie evidence and failed bodies.
+  Four retained cookies maximum; malformed/overflow/unobserved authority stays
+  UNKNOWN, never inferred absent or safe. Do not log cookie values.
+- ALL standalone exits execute specific owned-cookie cleanup. Claim logout
+  BEFORE transport; never repeat a lost/invalid logout or revocation read.
+  Require exact acknowledgement/cleared cookie AND both Web401/API401-or403
+  replay refusal. No account-wide revocation, login retry or compensation.
+  Even an already unresolvable cookie's401 alone is NOT completed cleanup.
+- Partial/lost/malformed issuance or cleanup blocks further journey mutations,
+  preserves failed observations and records UNKNOWN. Cleanup may handle another
+  safely observed issued cookie within the same four-cookie bound. Finite
+  cleanup calls retain existing transport timeouts and an outer540s deadline;
+  no native480/540 or transport/byte/lifetime boundary is extended.
+- Native recovery's explicit cleanup barrier selects its EXISTING delegated
+  custody path, with NO new finally-logout around its quarantine-first owner.
+  Native recovery/Web production issuance and logout source are unchanged.
+
+The offline AdminWeb fixture now distinguishes per-cookie revocation and separate
+JSON/form/rotation sessions; its old global logged_out bit is not authority.
+ALL129 original base functions and ALL80 original dev-admin top-level functions
+(including their assertion ASTs) equal13c. The original journey body is AST-equal
+to76e4 after ONLY its internal function rename. Five new owning functions add23
+cases outside original supplemental/178 selections: distinct sessions, ten early
+exit seams, partial/lost/duplicate/contradictory custody, cleanup-issued cookie,
+overflow and native barrier delegation. No original member/assertion is removed.
+
+Two real failed attempts remain:37f6 omitted the second original revoked-API
+failed diagnostic; a79 stopped after initial503 without the original failed
+password-login check. The repairs retain both read-only revocation observations
+and an explicit NOT COMPLETED password-login diagnostic WITHOUT sending another
+login on custody uncertainty. At exact7306, full base+dev-admin owning exits0 in
+35.052s/420, native recovery security module exits0 in25.232s/420, scoped Ruff0.
+See [F3 diagnostics](pi-batch007-f3-diagnostics.json) for ALL9 terminal receipts,
+commands/hashes/heads/caps and both failures, plus initial read-only lease-key
+and stale-upstream preflight refusals (no test child launched by those refusals).
+Native waits/adopted waits/ECHILD/accessible-owned-writer closure precede exact
+owned-PG removal and hash-verified seals. External/inaccessible visibility remains
+UNKNOWN. Offline Web doubles are NOT actual-PG application proof; short commands
+are NOT sustained long-command Manager-recognition proof.
+
+This documentation successor has a DIFFERENT identity: no7306 pass transfers.
+F3 owning source repair is an author checkpoint, NOT independent acceptance.
+Fetched origin/dev advanced to `81072d0ae396c772b39e53db0761a7522524e8fd`
+(PR1482/nav alignment,18 paths); this run's renewed Manager admitted base remains
+`19562ad2a8773099db26366446b3488b446e630c`. No self-granted incoming path edit,
+merge/rebase/reset or claim of latest-base composition was made. NEXT actual
+Manager renewal must admit/compose that latest base and preserve incoming bodies
+before final source/docs freeze; see [finite base request](MANAGER-BASE-ADVANCE-REQUEST.md).
+Then obtain ALL fresh14/unchanged17/applicable
+owning/normal terminalCI129E2E+strict3x150/P95<3s/full configured sequential
+supplied-text assessment at ONE immutable identity. No old-head proof transfer,
+review submission or task_finalize before complete owned author proof. Rejected
+13c packet1/uninspected16 and unresolved underlying account independence remain.
+Human/Ops final PENDING, original blocked6/failedPi/a129PR1459/human evidence/pinned
+roots, quarantine/bindingNULL/cleanupUNKNOWN/HOLD/goalfalse unchanged. No approval,
+merge arming/merge/done/deployment/recovery/live account/session/credential effect.
+
 ## Pi batch007 F1 owning checkpoint — clarification applied, NOT final proof
 
 Actual renewed Manager run `pi-20261015T154802Z-6ffcf9c7` verified the running
