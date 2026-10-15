@@ -2777,6 +2777,8 @@ class RotationSupersedingWeb:
                         return response(200, admin.admin_users())
                     if fault == "lost_read":
                         return response(0, error="lost denial")
+                if fault == "early_users_transport" and method == "GET" and path == "/api/v1/operator/users" and value == admin.SESSION_VALUE and value not in self.revoked_sessions:
+                    return response(0, error="users read unavailable")
                 if fault == "lost_replacement_logout" and method == "POST" and path == "/auth/logout" and value == "sealed-rotation-session-reference":
                     return response(0, error="lost B logout")
                 return result
@@ -2827,6 +2829,22 @@ def test_standalone_rotation_witness_never_hides_unknown_or_live_owned_sessions(
     assert len(logouts) == len(set(logouts))
     if fault in {"lost_rotation", "partial_rotation", "contradictory_rotation", "same_cookie"}:
         assert report["dev_admin"]["session_cleanup"]["rotation_release_witnesses"] == 0
+
+
+def test_standalone_rotation_witness_retains_all_custody_on_early_exit() -> None:
+    from tests.e2e import test_live_e2e_gate_dev_admin as admin
+
+    web = RotationSupersedingWeb(fault="early_users_transport")
+    _, report, _ = admin.run_dev_admin(web=web, cfg=admin.dev_admin_config(dev_admin_initial_password=admin.INITIAL_PASSWORD))
+    assert report["ok"] is False  # A failed journey never becomes GO via cleanup.
+    cleanup = report["dev_admin"]["session_cleanup"]
+    assert cleanup["outcome"] == "completed"
+    assert cleanup["retained_observed_sessions"] == cleanup["verified_sessions"] == 3
+    assert cleanup["rotation_release_witnesses"] == 1
+    logouts = [h["cookie"] for c, h in web.headers_seen if c == "POST /auth/logout"]
+    assert set(logouts) == {f"{admin.SESSION_COOKIE}={v}" for v in
+                            ("sealed-rotation-session-reference", admin.SESSION_VALUE)}
+    assert len(logouts) == 2
 
 
 def test_standalone_arbitrary_unresolvable_logout_is_not_a_release_witness() -> None:

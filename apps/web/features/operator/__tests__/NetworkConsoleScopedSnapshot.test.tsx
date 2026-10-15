@@ -10,7 +10,7 @@
  * but empty scoped snapshot is reported as empty, not as an error or fixtures.
  */
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole } from "../OperatorConsole";
 import { resolveNetworkCountState } from "../NetworkFindAreasWorkspace";
@@ -263,7 +263,12 @@ describe("Network Find Areas in the production Operator Console composition", ()
   it("initialises from the scoped operator snapshot without requesting denied legacy domains", async () => {
     const { legacyDomainPaths, networkListingUrls } = stubProductionFetch(scopedSnapshot);
 
-    render(<OperatorConsole searchParams={{ ws: "network" }} />);
+    // Own the async bootstrap -> unselected snapshot -> server-selected zone
+    // mount effects in the fixture's act boundary, not an unawaited render.
+    // Real components, fetch responses and the original 1000ms find stay intact.
+    await act(async () => {
+      render(<OperatorConsole searchParams={{ ws: "network" }} />);
+    });
 
     expect(await screen.findByTestId("network-panel-find-areas")).toBeInTheDocument();
     // Production no longer preloads RBAC-only domain bindings.
