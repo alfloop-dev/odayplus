@@ -19,8 +19,8 @@ import copy
 import hashlib
 from collections.abc import Callable
 from dataclasses import replace
-from pathlib import Path
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -395,6 +395,243 @@ def test_rerun_keeps_operator_lifecycle_and_appends_new_alert_issues(document_st
     assert issues_by_id["ISS-FC-alert-yellow"]["status"] == "new"
     assert state["auditEvents"] == triaged["auditEvents"]
     assert state["nextAuditOrdinal"] == triaged["nextAuditOrdinal"]
+
+
+# ---------------------------------------------------------------------------
+# Concurrent writers: no lost updates in either direction
+# ---------------------------------------------------------------------------
+
+
+def _triage(document_store: LivePostgresDocumentStore) -> None:
+    _service(document_store).transition_issue(
+        issue_id="ISS-FC-alert-red",
+        action_type="triage",
+        payload={"severity": "high"},
+        correlation_id="corr-interleaved-triage",
+    )
+
+
+def test_operator_write_during_canonical_reads_survives_materialization(
+    document_store: LivePostgresDocumentStore,
+) -> None:
+    alerts = {"store-a": [_alert("alert-red", "store-a", "red")]}
+    _materialize(document_store, stores=[_store("store-a", "信義 A 店")], alerts=alerts)
+    renamed = FakeStoreRepository([_store("store-a", "信義 A 店（改名）")])
+    renamed.on_list = lambda: _triage(document_store)
+
+    result = _materialize(document_store, alerts=alerts, store_repository=renamed)
+
+    assert result.status == "written"
+    state = document_store.state()
+    issue = state["issues"][0]
+    assert issue["status"] == "triaged"
+    assert issue["storeName"] == "信義 A 店（改名）"
+    assert [event["action"] for event in state["auditEvents"]] == ["issue.triage"]
+    assert state["nextAuditOrdinal"] == MATERIALIZED_AUDIT_ORDINAL_START + 1
+
+
+def test_operator_write_between_read_and_save_forces_reprojection(
+    document_store: LivePostgresDocumentStore,
+) -> None:
+    alerts = {"store-a": [_alert("alert-red", "store-a", "red")]}
+    _materialize(document_store, stores=[_store("store-a", "信義 A 店")], alerts=alerts)
+    _service(document_store).add_attachment(
+        issue_id="ISS-FC-alert-red",
+        payload={"filename": "before.txt"},
+        tenant_id=TENANT_ID,
+    )
+    # The operator write lands after the materializer read the state and right
+    # before its save: the stale save must be refused and the projection redone.
+    document_store.before_next_write = lambda: _triage(document_store)
+    document_store.put_calls.clear()
+
+    result = _materialize(
+        document_store, stores=[_store("store-a", "信義 A 店（改名）")], alerts=alerts
+    )
+
+    assert result.status == "written"
+    state = document_store.state()
+    assert state["issues"][0]["status"] == "triaged"
+    assert state["issues"][0]["storeName"] == "信義 A 店（改名）"
+    assert [event["action"] for event in state["auditEvents"]] == [
+        "attachment.uploaded",
+        "issue.triage",
+    ]
+    assert [item["filename"] for item in state["attachments"]] == ["before.txt"]
+    assert state["nextAuditOrdinal"] == MATERIALIZED_AUDIT_ORDINAL_START + 2
+    # materializer attempt (refused), the triage, materializer retry.
+    assert len(document_store.put_calls) == 3
+
+
+def test_materialization_between_operator_read_and_save_keeps_both(
+    document_store: LivePostgresDocumentStore,
+) -> None:
+    alerts = {"store-a": [_alert("alert-red", "store-a", "red")]}
+    _materialize(document_store, stores=[_store("store-a", "信義 A 店")], alerts=alerts)
+    alerts["store-a"].append(
+        _alert("alert-yellow", "store-a", "yellow", opened_at=datetime(2026, 10, 2, tzinfo=UTC))
+    )
+    document_store.before_next_write = lambda: _materialize(
+        document_store, stores=[_store("store-a", "信義 A 店（改名）")], alerts=alerts
+    )
+
+    _triage(document_store)
+
+    state = document_store.state()
+    issues_by_id = {issue["id"]: issue for issue in state["issues"]}
+    assert issues_by_id["ISS-FC-alert-red"]["status"] == "triaged"
+    assert issues_by_id["ISS-FC-alert-red"]["storeName"] == "信義 A 店（改名）"
+    assert issues_by_id["ISS-FC-alert-yellow"]["status"] == "new"
+    assert [store["name"] for store in state["stores"]] == ["信義 A 店（改名）"]
+    assert [event["action"] for event in state["auditEvents"]] == ["issue.triage"]
+
+
+def test_write_gives_up_without_saving_when_state_never_settles(
+    document_store: LivePostgresDocumentStore,
+) -> None:
+    alerts = {"store-a": [_alert("alert-red", "store-a", "red")]}
+    _materialize(document_store, stores=[_store("store-a", "信義 A 店")], alerts=alerts)
+    before = document_store.state()
+
+    class AlwaysStale(LivePostgresDocumentStore):
+        def compare_and_put(self, *args: Any, **kwargs: Any) -> int | None:
+            return None
+
+    contended = AlwaysStale.__new__(AlwaysStale)
+    contended.__dict__.update(document_store.__dict__)
+
+    with pytest.raises(StoreOpsConcurrentWriteConflict):
+        _triage(contended)
+    with pytest.raises(StoreOpsConcurrentWriteConflict):
+        _materialize(contended, stores=[_store("store-a", "改名")], alerts=alerts)
+    assert document_store.state() == before
+
+
+# ---------------------------------------------------------------------------
+# Tenant isolation on the production router path
+# ---------------------------------------------------------------------------
+
+
+def _production_client(
+    document_store: LivePostgresDocumentStore, monkeypatch: pytest.MonkeyPatch
+) -> TestClient:
+    """Mount the router exactly as ``apps/api/oday_api/main.py`` does.
+
+    Production passes only the bundle repository and audit log; live mode comes
+    from the runtime environment, and the bundle repository is the unscoped
+    ``DurableStoreOpsRepository`` over ``PostgresDocumentStore``.
+    """
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def correlation_id(request: Request, call_next: Any) -> Any:
+        request.state.correlation_id = "corr-store-ops-tenants"
+        return await call_next(request)
+
+    app.include_router(
+        create_operator_store_ops_router(
+            repository=DurableStoreOpsRepository(document_store),
+            audit_log=InMemoryAuditLog(),
+        ),
+        prefix="/api/v1",
+    )
+    return TestClient(app)
+
+
+def test_tenants_never_see_or_overwrite_each_others_state(
+    document_store: LivePostgresDocumentStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stores = [
+        _store("store-a", "信義 A 店"),
+        _store("store-b", "板橋 B 店", tenant_id=OTHER_TENANT_ID),
+    ]
+    alerts = {
+        "store-a": [_alert("alert-a", "store-a", "red")],
+        "store-b": [_alert("alert-b", "store-b", "red", tenant_id=OTHER_TENANT_ID)],
+    }
+    _materialize(document_store, stores=stores, alerts=alerts)
+
+    with _production_client(document_store, monkeypatch) as client:
+        other_before = client.get(
+            f"{BASE}/store-ops/summary", headers=_headers(OTHER_TENANT_ID)
+        )
+        other_issue = client.get(
+            f"{BASE}/store-ops/issues/ISS-FC-alert-a", headers=_headers(OTHER_TENANT_ID)
+        )
+        # Tenant B's own (empty) materialization must not touch tenant A.
+        assert _materialize(document_store, alerts=alerts, tenant_id=OTHER_TENANT_ID).status == (
+            "written"
+        )
+        own = client.get(f"{BASE}/store-ops/issues", headers=_headers())
+        other = client.get(f"{BASE}/store-ops/issues", headers=_headers(OTHER_TENANT_ID))
+        cross_write = client.post(
+            f"{BASE}/store-ops/issues/ISS-FC-alert-a/triage",
+            headers=_headers(OTHER_TENANT_ID),
+            json={"payload": {"severity": "low"}},
+        )
+        own_write = client.post(
+            f"{BASE}/store-ops/issues/ISS-FC-alert-a/triage",
+            headers={**_headers(), "Idempotency-Key": "shared-key"},
+            json={"payload": {"severity": "high"}},
+        )
+
+    assert other_before.status_code == 503
+    assert other_before.json()["detail"]["message"] == (
+        "Store Ops production state has not been materialized"
+    )
+    assert "store-a" not in other_before.text
+    assert other_issue.status_code == 503
+
+    assert own.status_code == 200
+    assert [issue["id"] for issue in own.json()["issues"]] == ["ISS-FC-alert-a"]
+    assert [store["id"] for store in own.json()["stores"]] == ["store-a"]
+    assert other.status_code == 200
+    assert other.json()["issues"] == []
+    assert other.json()["stores"] == []
+    assert "store-a" not in other.text and "alert-a" not in other.text
+
+    assert cross_write.status_code == 404
+    assert own_write.status_code == 200
+    assert document_store.state()["issues"][0]["status"] == "triaged"
+    assert document_store.state(OTHER_TENANT_ID)["issues"] == []
+    assert document_store.state(OTHER_TENANT_ID)["auditEvents"] == []
+
+    # Idempotency results are partitioned too: the same key in another tenant
+    # is not a replay of tenant A's transition.
+    assert (
+        DurableStoreOpsRepository(document_store)
+        .for_tenant(OTHER_TENANT_ID)
+        .get_idempotency_result("shared-key")
+        is None
+    )
+    assert (
+        DurableStoreOpsRepository(document_store)
+        .for_tenant(TENANT_ID)
+        .get_idempotency_result("shared-key")
+        is not None
+    )
+
+
+def test_production_never_reads_or_writes_an_unscoped_document(
+    document_store: LivePostgresDocumentStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A legacy global document must neither be served nor overwritten.
+    document_store.put(STATE_COLLECTION, STATE_DOC_ID, empty_store_ops_state())
+    unscoped = DurableStoreOpsRepository(document_store)
+
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="authenticated tenant scope"):
+        unscoped.get_state()
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="authenticated tenant scope"):
+        unscoped.save_state(empty_store_ops_state())
+    with _production_client(document_store, monkeypatch) as client:
+        response = client.get(f"{BASE}/store-ops/summary", headers=_headers())
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["message"] == (
+        "Store Ops production state has not been materialized"
+    )
+    assert document_store.put_calls == []
 
 
 # ---------------------------------------------------------------------------
