@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -45,6 +48,10 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0020",
         "0021",
         "0022",
+        "0023",
+        "0024",
+        "0025",
+        "0026",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -275,6 +282,36 @@ def test_invitation_acceptance_budget_migration_is_reachable_from_alembic_head()
         if asset.role == "sql"
     } == {"infra/db/migrations/000028_identity_invitation_acceptance_budget.sql"}
     assert len(budget_step.sha256) == 64
+
+
+@pytest.mark.parametrize("revision,parent,name,sql_name", [
+    ("0023", "0022", "dev_smoke_recovery_capability", "000029_dev_smoke_recovery_capability.sql"),
+    ("0024", "0023", "dev_smoke_session_fence", "000030_dev_smoke_session_fence.sql"),
+    ("0025", "0024", "audit_worm_outbox", "000032_audit_worm_outbox.sql"),
+    ("0026", "0025", "legacy_oidc_session_migrations", "000033_legacy_oidc_session_migrations.sql"),
+])
+def test_recovery_migration_chain_assets_and_preserving_downgrade(
+    monkeypatch: pytest.MonkeyPatch, revision: str, parent: str, name: str, sql_name: str,
+) -> None:
+    """Security fences/intent must be shipped/hashed, never erased by rollback."""
+    root = Path(__file__).resolve().parents[2]
+    plan = build_migration_plan(environment="dev")
+    step = next(step for step in plan.steps if step.revision == revision)
+    assert step.path == f"infra/db/migrations/versions/{revision}_{name}.py"
+    sql_assets = [asset for asset in step.assets if asset.role == "sql"]
+    assert [asset.path for asset in sql_assets] == [f"infra/db/migrations/{sql_name}"]
+    assert sql_assets[0].sha256 == hashlib.sha256((root / sql_assets[0].path).read_bytes()).hexdigest()
+    assert len(step.sha256) == 64
+
+    spec = importlib.util.spec_from_file_location(f"offline_recovery_revision_{revision}", root / step.path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == revision and module.down_revision == parent
+    statements: list[str] = []
+    monkeypatch.setattr(module.op, "execute", lambda statement: statements.append(str(statement)))
+    module.downgrade()  # Mocked SQL only: no database/credential effects.
+    assert statements == ["SELECT 1"]
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:

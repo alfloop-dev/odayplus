@@ -2,7 +2,11 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveGoogleMetadataIdentityToken } from "../cloudRunIdentity";
 import { localJwtExpiresAt, mintLocalJwt } from "../localAuth";
-import { buildUpstreamHeaders, proxyApiRequest } from "../proxy";
+import { buildUpstreamHeaders, proxyApiRequest as productionProxyApiRequest } from "../proxy";
+// Explicit configured offline BFF signing authority for the new OIDC bridge.
+const proxyApiRequest = (...args: Parameters<typeof productionProxyApiRequest>) => productionProxyApiRequest(
+  args[0], args[1], { ODP_IDENTITY_TOKEN_SIGNING_KEY: "offline-bridge-signing-material-at-least32bytes",
+    ODP_AUTH_LOCAL_AUDIENCES: "oday-plus", ...args[2], NODE_ENV: args[2]?.NODE_ENV ?? "test" }, args[3]);
 import {
   readWebSession,
   sealWebSessionReference,
@@ -69,7 +73,7 @@ describe("production BFF", () => {
       accountId: "account-123",
       provider: "oidc",
       accessToken: "real-access-token",
-      subject: "user-123",
+      subject: "user-123", tenantId: "offline-tenant",
       idleTimeoutMs: 30 * 60 * 1000,
       absoluteLifetimeMs: 8 * 60 * 60 * 1000,
     });
@@ -415,7 +419,7 @@ async function productionSessionCookie(): Promise<string> {
     accountId: "account-123",
     provider: "oidc",
     accessToken: "real-access-token",
-    subject: "user-123",
+    subject: "user-123", tenantId: "offline-tenant",
     idleTimeoutMs: 30 * 60 * 1000,
     absoluteLifetimeMs: 8 * 60 * 60 * 1000,
   });

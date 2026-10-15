@@ -275,6 +275,7 @@ def test_2_scoped_retry_and_zero_duplication(db_path: str) -> None:
             payload={
                 "tenant_id": tenant_id,
                 "items": items_payload,
+                "submitter": "exp-mgr",  # Fixture is an owned staff submission.
             },
             idempotency_key="batch-test-2-idemp",
         )
@@ -389,6 +390,7 @@ def test_2_full_convergence_subtest(db_path: str) -> None:
             payload={
                 "tenant_id": tenant_id,
                 "items": items_payload,
+                "submitter": "exp-mgr",
             },
             idempotency_key="batch-test-2-converge-idemp",
         )
@@ -463,14 +465,14 @@ def test_3_orthogonality_and_delivery_state_clear(db_path: str) -> None:
             probe_key = f"ortho-probe-{is_durable}"
             registry = JobRegistry()
             registry.register(
-                "probe-job",
+                "external-fetch",  # Supported read type; this fixture handler never fetches.
                 lambda job, p: (_ for _ in ()).throw(
                     _TransientProbeError("Transient network timeout")
                 ),
             )
             reg_job, _ = bundle.job_queue.enqueue(
                 JobRequest(
-                    job_type="probe-job",
+                    job_type="external-fetch",
                     payload={"tenant_id": "tenant-test"},
                     idempotency_key=probe_key,
                 ),
@@ -524,7 +526,7 @@ def test_3_orthogonality_and_delivery_state_clear(db_path: str) -> None:
             client = TestClient(app)
             api_resp = client.get(
                 f"/jobs/{reg_job.job_id}",
-                headers=_auth_headers("tenant-test"),
+                headers=_auth_headers("tenant-test", role="data_owner"),
             )
             assert api_resp.status_code == 200
             api_job = api_resp.json()
@@ -575,7 +577,7 @@ def test_4_restart_re_readability_and_cancellation(db_path: str) -> None:
         )
         job_req = JobRequest(
             job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
-            payload={"tenant_id": tenant_id, "items": items_payload},
+            payload={"tenant_id": tenant_id, "items": items_payload, "submitter": "exp-mgr"},
             idempotency_key="restart-test-idemp",
         )
         record, _ = bundle.job_queue.enqueue(job_req, correlation_id="corr-restart")
@@ -884,7 +886,7 @@ def test_5_duplicate_delivery_and_out_of_order(db_path, caplog, delivery_order):
     bundle = _durable_bundle(db_path)
     try:
         tenant = "replay-tenant"
-        request = JobRequest(job_type=BATCH_LISTING_INTAKE_JOB_TYPE, payload={"tenant_id": tenant, "items": [{"item_id": key, "address_raw": "Address " + key} for key in ("X", "Y", "Z")]}, idempotency_key="replay-batch")
+        request = JobRequest(job_type=BATCH_LISTING_INTAKE_JOB_TYPE, payload={"tenant_id": tenant, "submitter": "exp-mgr", "items": [{"item_id": key, "address_raw": "Address " + key} for key in ("X", "Y", "Z")]}, idempotency_key="replay-batch")
         record, created = bundle.job_queue.enqueue(request, correlation_id="replay")
         duplicate, duplicated = bundle.job_queue.enqueue(request, correlation_id="duplicate")
         assert created and not duplicated and duplicate.job_id == record.job_id
@@ -1050,6 +1052,7 @@ def test_6_auth_and_tenant_isolation_guards(db_path: str) -> None:
             job_id,
             JobStatus.PARTIAL,
             payload={
+                **bundle.job_queue.get(job_id).payload,  # Preserve authenticated enqueue ownership.
                 "tenant_id": tenant_a,
                 "receipt": {
                     "items": [
@@ -2111,6 +2114,7 @@ def test_review_finding_r5_pre_execution_cancellation_canonical_envelope(db_path
                 payload={
                     "tenant_id": tenant,
                     "items": [{"item_id": "row-before-start", "address_raw": "synthetic address"}],
+                    "submitter": "exp-mgr",
                 },
                 idempotency_key="synthetic-prestart-idempotency",
             ),
@@ -2223,7 +2227,7 @@ def test_foreground_replay_authorizes_actual_job(db_path, backend):
         legitimate = client.post("/api/v1/jobs", headers=owner, json=request)
         assert legitimate.status_code == 202 and legitimate.json()["created"] is False
         assert legitimate.json()["job_id"] == first.json()["job_id"]
-        reserved = client.post("/api/v1/jobs", json={"job_type": "unregistered", "idempotency_key": "batch-listing-intake:v1:review-tenant:private-key", "payload": {}})
+        reserved = client.post("/api/v1/jobs", headers=owner, json={"job_type": "unregistered", "idempotency_key": "batch-listing-intake:v1:review-tenant:private-key", "payload": {}})
         assert reserved.status_code == 422, reserved.text
         # A pre-existing legacy collision must still authorize the returned
         # record; protecting only newly constructed namespace strings is not enough.
@@ -2379,23 +2383,32 @@ def test_foreground_denied_enqueue_creates_no_work_and_is_audited(db_path, backe
     try:
         client = TestClient(create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log, persistence=bundle))
         cases = [({}, "private-tenant", "denied-anonymous", 401),
-                 (_auth_headers("other-tenant"), "private-tenant", "denied-foreign", 404)]
+                 (_auth_headers("other-tenant", role="data_owner"), "private-tenant", "denied-foreign", 403)]
         for headers, tenant, key, expected in cases:
-            response = client.post("/api/v1/jobs", headers={**headers, "x-correlation-id": key}, json={"job_type": "synthetic-generic", "payload": {"tenant_id": tenant}, "idempotency_key": key})
+            response = client.post("/api/v1/jobs", headers={**headers, "x-correlation-id": key}, json={"job_type": "external-fetch", "payload": {"tenant_id": tenant}, "idempotency_key": key})
             assert response.status_code == expected
             assert bundle.job_queue.get_by_idempotency_key(key) is None
-            events = bundle.audit_log.list_events(correlation_id=key)
+            all_events = bundle.audit_log.list_events(correlation_id=key)
+            events = [event for event in all_events if event.event_type == "job.enqueue"]
             assert len(events) == 1
             assert events[0].event_type == "job.enqueue" and events[0].outcome == "denied"
             assert events[0].metadata["status_code"] == expected
+            canonical = [event for event in all_events if event.event_type == "security.authorization" and event.outcome == "deny"]
+            assert len(canonical) == (1 if expected == 403 else 0)
+            if canonical:
+                assert canonical[0].metadata["tenant_id"] == "other-tenant"
         denied_batch = client.post("/api/v1/jobs", headers={**_auth_headers("private-tenant", role="auditor"), "x-correlation-id": "denied-batch"}, json={"job_type": BATCH_LISTING_INTAKE_JOB_TYPE, "payload": {"items": [{"item_id": "one", "address_raw": "PRIVATE"}]}})
         assert denied_batch.status_code == 403
-        assert bundle.audit_log.list_events(correlation_id="denied-batch")[0].outcome == "denied"
-        accepted = client.post("/api/v1/jobs", headers=_auth_headers("private-tenant"), json={"job_type": "synthetic-generic", "payload": {"tenant_id": "private-tenant"}, "idempotency_key": "allowed-generic"})
+        batch_events = bundle.audit_log.list_events(correlation_id="denied-batch")
+        assert [event for event in batch_events if event.event_type == "job.enqueue"][0].outcome == "denied"
+        assert len([event for event in batch_events if event.event_type == "security.authorization" and event.outcome == "deny"]) == 1
+        unknown = client.post("/api/v1/jobs", headers=_auth_headers("private-tenant", role="data_owner"), json={"job_type": "synthetic-generic", "payload": {"tenant_id": "private-tenant"}, "idempotency_key": "forbidden-generic"})
+        assert unknown.status_code == 403 and bundle.job_queue.get_by_idempotency_key("forbidden-generic") is None
+        accepted = client.post("/api/v1/jobs", headers=_auth_headers("private-tenant", role="data_owner"), json={"job_type": "external-fetch", "payload": {"tenant_id": "private-tenant"}, "idempotency_key": "allowed-supported"})
         assert accepted.status_code == 202
         calls = []
         registry = JobRegistry()
-        registry.register("synthetic-generic", lambda job, persistence: calls.append(job.job_id))
+        registry.register("external-fetch", lambda job, persistence: calls.append(job.job_id))  # No external provider.
         worker = ODayWorker(persistence=bundle, registry=registry)
         assert worker.run_once() is True
         assert worker.run_once() is False
@@ -2430,7 +2443,17 @@ def test_foreground_legacy_namespace_replay_preserves_separate_tenants(db_path, 
             assert replay.json()["job_id"] == expected_id
         denied = client.post("/api/v1/jobs", headers={**_auth_headers("tenant:segment", subject="different-owner"), "x-correlation-id": "denied-legacy-replay"}, json=body)
         assert denied.status_code == 403
-        assert bundle.audit_log.list_events(correlation_id="denied-legacy-replay")[0].outcome == "denied"
+        events = bundle.audit_log.list_events(correlation_id="denied-legacy-replay")
+        # Preflight permission for the caller-owned input may be allowed before
+        # the ACTUAL legacy replay is refused. Keep the original domain denial
+        # assertion, now scoped by outcome rather than unrelated event order.
+        legacy_denials = [event for event in events if event.outcome == "denied"]
+        assert len(legacy_denials) == 1 and legacy_denials[0].outcome == "denied"
+        canonical_denials = [event for event in events if event.event_type == "security.authorization" and event.outcome == "deny"]
+        assert len(canonical_denials) == 1
+        assert canonical_denials[0].actor == "different-owner"
+        assert canonical_denials[0].metadata["reason"] == "OWNERSHIP_REQUIRED"
+        assert canonical_denials[0].metadata["tenant_id"] == "tenant:segment"
     finally:
         if getattr(bundle, "engine", None) is not None:
             bundle.engine.close()

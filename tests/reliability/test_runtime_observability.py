@@ -4929,35 +4929,31 @@ def test_file_authority_store_b27_schema_validation_mutations(tmp_path):
     def _val(r):
         return True, "DELIVERED", None
 
+    # Each targeted mutation starts with a valid envelope. Missing-version
+    # rejection remains separately covered by B29, not as a fallback here.
+    valid_shape = json.dumps({"version": 1, "records": {delivery_id: rec.to_dict()}, "consumed": []})
+    valid_path = tmp_path / "valid_shape.json"
+    valid_path.write_text(valid_shape, encoding="utf-8")
+    assert FileDeliveryAuthorityStore(valid_path).get_authority_record(delivery_id) == rec
+    assert valid_path.read_text(encoding="utf-8") == valid_shape
     malformed_shapes = [
-        # (1) Reviewer's exact reproducer: records is list, consumed is list
-        '{"records": [], "consumed": []}',
-        # (2) Top-level is non-dict
-        "[1, 2, 3]",
-        '"just a string"',
-        "123.45",
-        # (3) Records is string
-        '{"records": "not a dict", "consumed": []}',
-        # (4) Consumed is string/dict instead of list
-        '{"records": {}, "consumed": "not a list"}',
-        '{"records": {}, "consumed": {"d1": true}}',
-        # (5) Duplicate items in consumed
-        '{"records": {}, "consumed": ["del-1", "del-1"]}',
-        # (6) Non-string items in consumed
-        '{"records": {}, "consumed": [123]}',
-        # (7) Unrecognized top-level key
-        '{"records": {}, "consumed": [], "unrecognized_key": 99}',
-        # (8) Invalid schema version
-        '{"version": 99, "records": {}, "consumed": []}',
-        # (9) Record object is not a dict
-        '{"records": {"del-1": "not a dict"}, "consumed": []}',
-        # (10) Record object missing required fields
-        '{"records": {"del-1": {"delivery_id": "del-1"}}, "consumed": []}',
-        # (11) Record key mismatch
-        json.dumps({"records": {"del-mismatch": rec.to_dict()}, "consumed": []}),
+        ('{"version": 1, "records": [], "consumed": []}', "Store data 'records' must be a dict"),
+        ("[1, 2, 3]", "Store data must be a JSON object"),
+        ('"just a string"', "Store data must be a JSON object"),
+        ("123.45", "Store data must be a JSON object"),
+        ('{"version": 1, "records": "not a dict", "consumed": []}', "Store data 'records' must be a dict"),
+        ('{"version": 1, "records": {}, "consumed": "not a list"}', "Store data 'consumed' must be a list"),
+        ('{"version": 1, "records": {}, "consumed": {"d1": true}}', "Store data 'consumed' must be a list"),
+        ('{"version": 1, "records": {}, "consumed": ["del-1", "del-1"]}', "Duplicate delivery ID in consumed list"),
+        ('{"version": 1, "records": {}, "consumed": [123]}', "Invalid non-canonical entry in consumed list"),
+        ('{"version": 1, "records": {}, "consumed": [], "unrecognized_key": 99}', "unrecognized top-level key"),
+        ('{"version": 99, "records": {}, "consumed": []}', "Unsupported or invalid store schema version"),
+        ('{"version": 1, "records": {"del-1": "not a dict"}, "consumed": []}', "Record for delivery ID 'del-1' must be a dict"),
+        ('{"version": 1, "records": {"del-1": {"delivery_id": "del-1"}}, "consumed": []}', "Invalid record object for delivery ID 'del-1'"),
+        (json.dumps({"version": 1, "records": {"del-mismatch": rec.to_dict()}, "consumed": []}), "Record delivery ID mismatch"),
     ]
 
-    for idx, shape in enumerate(malformed_shapes):
+    for idx, (shape, reason) in enumerate(malformed_shapes):
         file_path = tmp_path / f"corrupt_shape_{idx}.json"
         file_path.write_text(shape, encoding="utf-8")
 
@@ -4972,6 +4968,7 @@ def test_file_authority_store_b27_schema_validation_mutations(tmp_path):
         assert is_del is False
         assert st == "PENDING_VERIFICATION"
         assert "Authority store read failed" in str(err)
+        assert reason in str(err)
 
         # 3. _store_authority_record_for_testing fails closed and does not overwrite
         with pytest.raises(ValueError, match="Authority store data is corrupt or unreadable"):
@@ -5694,28 +5691,45 @@ def test_b36_copied_local_record_rejection_and_canonical_intents(tmp_path):
         store_disk_data = json.load(f)
     assert delivery_id not in store_disk_data.get("consumed", [])
 
-    # 4. Test non-canonical intent filename rejection
-    intent_file.unlink()
-    noncanonical_file = store.journal_dir / "arbitrary_noncanonical_name.intent"
-    noncanonical_file.write_text(json.dumps(intent_data, indent=2), encoding="utf-8")
-
-    store_nc = FileDeliveryAuthorityStore(store_file)
+    # 4. Separate namespace/trust context: these signatures are AUTHENTIC for
+    # this fixture store, not for production. Filename tests cannot fall through
+    # the unrelated invalid-signature refusal above.
+    from modules.notifications.domain.authority import verify_journal_intent_record
+    fixture_public = _get_pub_pem(fake_key)
+    filename_file = tmp_path / "authority_b36_filename.json"
+    filename_store = FileDeliveryAuthorityStore(filename_file, authority_public_key_pem=fixture_public)
+    filename_store._store_authority_record_for_testing(rec)
+    valid_intent = {**intent_data, "store_identity":filename_store.store_identity}
+    assert verify_journal_intent_record(valid_intent, filename_store.store_identity, rec, fixture_public) is None
+    durable_before = filename_file.read_bytes()
+    noncanonical_file = filename_store.journal_dir / "arbitrary_noncanonical_name.intent"
+    noncanonical_file.write_text(json.dumps(valid_intent, indent=2), encoding="utf-8")
+    bad_before = noncanonical_file.read_bytes()
+    store_nc = FileDeliveryAuthorityStore(filename_file, authority_public_key_pem=fixture_public)
     is_del_nc, st_nc, err_nc = store_nc.atomic_consume_if_valid(delivery_id, lambda r: (True, "DELIVERED", None))
     assert is_del_nc is False
     assert st_nc == "PENDING_VERIFICATION"
-    assert "Non-canonical journal intent filename" in str(err_nc) or "Authority store read failed" in str(err_nc)
+    assert "Authority store read failed" in str(err_nc)
+    assert "Non-canonical journal intent filename" in str(err_nc)
+    assert filename_file.read_bytes() == durable_before and noncanonical_file.read_bytes() == bad_before
 
-    # 5. Test duplicate intent rejection
+    # 5. A second file for the same ID necessarily has a noncanonical name:
+    # hash(ID).intent is unique. Prove this filename guarantee, NOT independent
+    # reachability of the later defensive duplicate-ID check.
     noncanonical_file.unlink()
-    intent_file.write_text(json.dumps(intent_data, indent=2), encoding="utf-8")
-    dup_file = store.journal_dir / "duplicate_intent.intent"
-    dup_file.write_text(json.dumps(intent_data, indent=2), encoding="utf-8")
-
-    store_dup = FileDeliveryAuthorityStore(store_file)
+    canonical_file = filename_store.journal_dir / f"{expected_stem}.intent"
+    canonical_file.write_text(json.dumps(valid_intent, indent=2), encoding="utf-8")
+    dup_file = filename_store.journal_dir / "duplicate_intent.intent"
+    dup_file.write_text(json.dumps(valid_intent, indent=2), encoding="utf-8")
+    intents_before = {path.name:path.read_bytes() for path in filename_store.journal_dir.iterdir()}
+    store_dup = FileDeliveryAuthorityStore(filename_file, authority_public_key_pem=fixture_public)
     is_del_dup, st_dup, err_dup = store_dup.atomic_consume_if_valid(delivery_id, lambda r: (True, "DELIVERED", None))
     assert is_del_dup is False
     assert st_dup == "PENDING_VERIFICATION"
-    assert "Duplicate journal intent" in str(err_dup) or "Non-canonical" in str(err_dup) or "Authority store read failed" in str(err_dup)
+    assert "Authority store read failed" in str(err_dup)
+    assert "Non-canonical journal intent filename" in str(err_dup)
+    assert filename_file.read_bytes() == durable_before
+    assert {path.name:path.read_bytes() for path in filename_store.journal_dir.iterdir()} == intents_before
 
 
 def test_b37_test_secret_cannot_mint_live_provider_readback():
@@ -5987,7 +6001,16 @@ def test_b41b_every_metric_definition_in_the_repo_declares_an_owner() -> None:
                         ranges.append((node.lineno, node.end_lineno or node.lineno))
         return ranges
 
-    for path in root.rglob("*.py"):
+    def included_python_paths():
+        # Prune only directories the original scan already excluded. Do not
+        # traverse dependency trees before deciding to ignore their contents.
+        for parent, directories, files in os.walk(root, topdown=True, followlinks=False):
+            directories[:] = [name for name in directories if name not in skip_parts]
+            for name in files:
+                if name.endswith(".py"):
+                    yield Path(parent) / name
+
+    for path in included_python_paths():
         if skip_parts.intersection(path.parts):
             continue
         try:
@@ -6009,6 +6032,36 @@ def test_b41b_every_metric_definition_in_the_repo_declares_an_owner() -> None:
             offenders.append(f"{path.relative_to(root)}:{node.lineno}")
 
     assert not offenders, f"MetricDefinition sites without an explicit owner: {offenders}"
+
+
+def test_b41c_owner_scan_prunes_only_excluded_directories(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "module" / "metrics.py"
+    source.parent.mkdir()
+    source.write_text("MetricDefinition('valid', owner='operations')")
+    for excluded in (".git", ".venv", "venv", "node_modules", "__pycache__"):
+        path = tmp_path / "nested" / excluded / "ownerless.py"
+        path.parent.mkdir(parents=True)
+        path.write_text("MetricDefinition('excluded')")
+    visited = []
+    walk = os.walk
+
+    def observed(*args, **kwargs):
+        for entry in walk(*args, **kwargs):
+            visited.append(Path(entry[0]))
+            yield entry
+
+    monkeypatch.setattr(os, "walk", observed)
+    monkeypatch.setitem(globals(), "__file__", str(tmp_path / "tests" / "reliability" / "scanner.py"))
+    test_b41b_every_metric_definition_in_the_repo_declares_an_owner()
+    assert all(p.name not in {".git", ".venv", "venv", "node_modules", "__pycache__"} for p in visited)
+    source.write_text("MetricDefinition('ownerless')")
+    with pytest.raises(AssertionError, match="MetricDefinition sites without an explicit owner"):
+        test_b41b_every_metric_definition_in_the_repo_declares_an_owner()
+    # Expected-failure probes remain excluded by AST context, not file location.
+    source.write_text("with pytest.raises(ValueError):\n    MetricDefinition('probe')\n")
+    import ast
+    assert isinstance(ast.parse(source.read_text()).body[0], ast.With)
+    test_b41b_every_metric_definition_in_the_repo_declares_an_owner()
 
 
 def test_b42_alerts_runbook_anchors_and_headings_are_valid() -> None:

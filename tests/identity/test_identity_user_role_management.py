@@ -504,10 +504,13 @@ def test_disable_revokes_sessions_and_reenable_requires_admin(stack: Any) -> Non
     assert stack.client.get("/api/v1/operator/users", headers=_sign_in(stack, member_id)).status_code == 200
     assert _audit_types(stack)[-2:] == ["identity.account.disabled", "identity.account.enabled"]
 
-    stack.service.set_user_status(subject_id=member_id, status="disabled", tenant_id=TENANT)
+    from modules.opsboard.auth import Credentials
+    principal = stack.boundary.authenticate(Credentials.from_headers(admin)).principal
+    stack.service.set_user_status(subject_id=member_id, status="disabled", tenant_id=TENANT, verified_principal=principal)
     with pytest.raises(UserRolePolicyError, match="requires platform_admin"):
         stack.service.set_user_status(
-            subject_id=member_id, status="active", tenant_id=TENANT, actor_roles=frozenset({"auditor"})
+            subject_id=member_id, status="active", tenant_id=TENANT, actor_roles=frozenset({"auditor"}),
+            verified_principal=principal,
         )
 
 
@@ -537,11 +540,15 @@ def test_audit_failure_rolls_back_the_privilege_change(stack: Any) -> None:
         def record(self, event: Any) -> Any:
             raise RuntimeError("audit sink unavailable")
 
+    from modules.opsboard.auth import Credentials
+    _rotate_password(stack, admin_id)
+    principal = stack.boundary.authenticate(Credentials.from_headers(_sign_in(stack, admin_id))).principal
     broken = IdentityUserRoleManagementService(engine=stack.engine, audit_log=BrokenAudit())
     with pytest.raises(RuntimeError):
-        broken.save_user(subject_id=member_id, roles=["platform_admin"], tenant_id=TENANT, actor_name=admin_id)
+        broken.save_user(subject_id=member_id, roles=["platform_admin"], tenant_id=TENANT, actor_name=admin_id,
+                         verified_principal=principal)
     with pytest.raises(RuntimeError):
-        broken.set_user_status(subject_id=member_id, status="disabled", tenant_id=TENANT)
+        broken.set_user_status(subject_id=member_id, status="disabled", tenant_id=TENANT, verified_principal=principal)
 
     assert _q(stack, "SELECT role FROM identity.account_roles WHERE account_id = %s", (member_id,)) == [
         ("operations_manager",)
