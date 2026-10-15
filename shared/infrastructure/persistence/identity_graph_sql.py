@@ -99,7 +99,7 @@ class CanonicalIdentityGraphRepository:
             return {"match_case": case, "intake": intake}
 
     def _fence(self, tenant: str, decision_id: str, delivery: JobRecord,
-               business_fence: int) -> tuple[dict, dict, dict, dict]:
+               business_fence: int, *, allow_cancellation: bool = False) -> tuple[dict, dict, dict, dict]:
         # Lock the physical transport row before inspecting queue.get(). A
         # concurrent lease reclaim cannot invalidate the fence before commit.
         self._one("SELECT job_id FROM durable_jobs WHERE job_id=? FOR UPDATE", (delivery.job_id,))
@@ -123,7 +123,7 @@ class CanonicalIdentityGraphRepository:
                 or job["status"] not in {"RUNNING", "SUCCEEDED"} or job["fence_token"] != business_fence):
             raise JobFenceRejectedError("IDENTITY_BUSINESS_FENCE_REJECTED")
         completed = job["status"] == "SUCCEEDED"
-        if not completed and (job["cancellation_requested_at"] is not None
+        if not completed and ((job["cancellation_requested_at"] is not None and not allow_cancellation)
                 or job["lease_expires_at"] is None or _time(job["lease_expires_at"]) <= now
                 or _time(job["timeout_at"]) <= now):
             raise JobFenceRejectedError("IDENTITY_BUSINESS_FENCE_REJECTED")

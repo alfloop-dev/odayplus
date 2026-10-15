@@ -1577,6 +1577,200 @@
         "title": "CandidateReassignment",
         "type": "object"
       },
+      "CanonicalIdentityJobReceipt": {
+        "properties": {
+          "attempt": {
+            "minimum": 0.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "cancellation_requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Requested At"
+          },
+          "checkpoint": {
+            "title": "Checkpoint",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "format": "uuid",
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "max_attempts": {
+            "minimum": 1.0,
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "SUCCEEDED",
+              "FAILED",
+              "RETRYING",
+              "CANCELLED",
+              "DEAD_LETTER"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "timeout_at": {
+            "format": "date-time",
+            "title": "Timeout At",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job_id",
+          "decision_id",
+          "match_case_id",
+          "intake_id",
+          "version",
+          "status",
+          "checkpoint",
+          "attempt",
+          "max_attempts",
+          "timeout_at",
+          "cancellation_requested_at",
+          "correlation_id",
+          "audit_event_id"
+        ],
+        "title": "CanonicalIdentityJobReceipt",
+        "type": "object"
+      },
+      "CanonicalIdentityJobSummary": {
+        "properties": {
+          "attempt": {
+            "minimum": 0.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "cancellation_requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Requested At"
+          },
+          "checkpoint": {
+            "title": "Checkpoint",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "format": "uuid",
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "max_attempts": {
+            "minimum": 1.0,
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "SUCCEEDED",
+              "FAILED",
+              "RETRYING",
+              "CANCELLED",
+              "DEAD_LETTER"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "timeout_at": {
+            "format": "date-time",
+            "title": "Timeout At",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job_id",
+          "decision_id",
+          "match_case_id",
+          "intake_id",
+          "version",
+          "status",
+          "checkpoint",
+          "attempt",
+          "max_attempts",
+          "timeout_at",
+          "cancellation_requested_at",
+          "correlation_id"
+        ],
+        "title": "CanonicalIdentityJobSummary",
+        "type": "object"
+      },
       "CanonicalIdentityReceipt": {
         "properties": {
           "audit_event_id": {
@@ -4221,6 +4415,22 @@
           }
         },
         "title": "HeatZoneScoreJobPayload",
+        "type": "object"
+      },
+      "IdentityJobCancelRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "IdentityJobCancelRequest",
         "type": "object"
       },
       "IdentityPartition": {
@@ -16854,11 +17064,97 @@
           "409": {
             "description": "Native version, custody, plan or idempotency conflict"
           },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
           "503": {
             "description": "Canonical storage, execution configuration or audit unavailable"
           }
         },
         "summary": "Read",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-identity-decisions/{decision_id}/actions/cancel-job": {
+      "post": {
+        "operationId": "cancelCanonicalIdentityJob",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Decision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityJobCancelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIdentityJobReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Cancel Job",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -16934,11 +17230,65 @@
           "409": {
             "description": "Native version, custody, plan or idempotency conflict"
           },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
           "503": {
             "description": "Canonical storage, execution configuration or audit unavailable"
           }
         },
         "summary": "Review",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-identity-decisions/{decision_id}/job": {
+      "get": {
+        "operationId": "getCanonicalIdentityJob",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Decision Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIdentityJobSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Read Job",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -30814,6 +31164,9 @@
           },
           "409": {
             "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
           },
           "503": {
             "description": "Canonical storage, execution configuration or audit unavailable"

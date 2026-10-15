@@ -172,6 +172,10 @@ class IdentityJobAdmission:
                 self.graph.queue.update_status(delivery.job_id, JobStatus.SUCCEEDED,
                     expected_version=current.version, fence_token=current.fence_token)
                 return
+            if job["status"] == "CANCELLED" and job["cancellation_requested_at"] is not None:
+                self.graph.queue.update_status(delivery.job_id, JobStatus.CANCELLED,
+                    expected_version=current.version, fence_token=current.fence_token)
+                return
             if error is None:
                 raise JobFenceRejectedError("IDENTITY_RESULT_NOT_COMMITTED")
             if job["status"] not in {"QUEUED", "RETRYING", "FAILED"}:

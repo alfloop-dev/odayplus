@@ -308,6 +308,39 @@ export type CandidateReassignment = {
   target_property_id?: string | null;
 };
 
+/** CanonicalIdentityJobReceipt */
+export type CanonicalIdentityJobReceipt = {
+  attempt: number;
+  audit_event_id: string;
+  cancellation_requested_at: string | null;
+  checkpoint: string;
+  correlation_id: string;
+  decision_id: string;
+  intake_id: string;
+  job_id: string;
+  match_case_id: string;
+  max_attempts: number;
+  status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "RETRYING" | "CANCELLED" | "DEAD_LETTER";
+  timeout_at: string;
+  version: number;
+};
+
+/** CanonicalIdentityJobSummary */
+export type CanonicalIdentityJobSummary = {
+  attempt: number;
+  cancellation_requested_at: string | null;
+  checkpoint: string;
+  correlation_id: string;
+  decision_id: string;
+  intake_id: string;
+  job_id: string;
+  match_case_id: string;
+  max_attempts: number;
+  status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "RETRYING" | "CANCELLED" | "DEAD_LETTER";
+  timeout_at: string;
+  version: number;
+};
+
 /** CanonicalIdentityReceipt */
 export type CanonicalIdentityReceipt = {
   audit_event_id: string;
@@ -856,6 +889,11 @@ export type HeatZoneScoreJobPayload = {
   features?: Record<string, unknown>[];
   idempotency_key?: string | null;
   prediction_origin_time?: string | null;
+};
+
+/** IdentityJobCancelRequest */
+export type IdentityJobCancelRequest = {
+  reason: string;
 };
 
 /** IdentityPartition */
@@ -2340,7 +2378,9 @@ export const API_PATHS = {
   "/api/v1/avm/deal-outcomes/export": ["POST"],
   "/api/v1/avm/deal-outcomes/{outcome_id}": ["GET"],
   "/api/v1/canonical-identity-decisions/{decision_id}": ["GET"],
+  "/api/v1/canonical-identity-decisions/{decision_id}/actions/cancel-job": ["POST"],
   "/api/v1/canonical-identity-decisions/{decision_id}/actions/review": ["POST"],
+  "/api/v1/canonical-identity-decisions/{decision_id}/job": ["GET"],
   "/api/v1/external-data/freshness": ["GET"],
   "/api/v1/external-data/ingestion-runs": ["GET", "POST"],
   "/api/v1/external-data/ingestion-runs/{run_id}": ["GET"],

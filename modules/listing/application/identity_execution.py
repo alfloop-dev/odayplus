@@ -136,11 +136,15 @@ class IdentityExecutionService:
         if getattr(self.engine._local, "connection", None) is not None:
             raise IdentityConflictError("IDENTITY_FAILURE_MUST_OWN_TRANSACTION")
         with self.graph.transaction(tenant):
-            job, decision, case, intake = self.graph._fence(tenant, decision_id, delivery, business_fence)
+            job, decision, case, intake = self.graph._fence(tenant, decision_id, delivery, business_fence,
+                                                         allow_cancellation=True)
             if job["status"] != "RUNNING":
                 raise JobFenceRejectedError("IDENTITY_FAILED_ATTEMPT_NOT_OWNED")
+            cancelled = job["cancellation_requested_at"] is not None
+            job_status = "CANCELLED" if cancelled else "FAILED"
             failure = {"status": "FAILED", "job_id": delivery.job_id, "business_fence": business_fence,
-                       "attempt": job["attempt"], "reason_code": "IDENTITY_GRAPH_TRANSACTION_FAILED"}
+                       "attempt": job["attempt"], "reason_code": "IDENTITY_CANCELLATION_REQUESTED" if cancelled
+                       else "IDENTITY_GRAPH_TRANSACTION_FAILED"}
             after_graph = {**decision["after_graph"], "execution_failure": failure}
             for sql, params in (
                 ("UPDATE identity.match_decisions SET status='FAILED',version=version+1,after_graph=?::jsonb "
@@ -149,9 +153,9 @@ class IdentityExecutionService:
                 ("UPDATE identity.match_cases SET status='FAILED',version=version+1,updated_at=clock_timestamp() "
                  "WHERE tenant_id=? AND match_case_id=? AND status='EXECUTING' AND version=?",
                  (tenant, case["match_case_id"], case["version"])),
-                ("UPDATE workflow.jobs SET status='FAILED',checkpoint='FAILED',last_error=?::jsonb,version=version+1,"
+                ("UPDATE workflow.jobs SET status=?,checkpoint=?,last_error=?::jsonb,version=version+1,"
                  "updated_at=clock_timestamp() WHERE tenant_id=? AND job_id=? AND status='RUNNING' AND version=? AND fence_token=?",
-                 (_json(failure), tenant, delivery.job_id, job["version"], business_fence)),
+                 (job_status, job_status, _json(failure), tenant, delivery.job_id, job["version"], business_fence)),
             ):
                 if self.engine.execute(sql, params).rowcount != 1:
                     raise JobFenceRejectedError("IDENTITY_FAILED_ATTEMPT_NOT_OWNED")

@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -141,6 +142,38 @@ class CanonicalIdentitySummary(BaseModel):
     job_version: NativeVersion | None
 
 
+class IdentityJobCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=4000)
+
+    @field_validator("reason")
+    @classmethod
+    def require_reason(cls, value):
+        if len(value.strip()) < 3:
+            raise ValueError("A cancellation reason is required")
+        return value.strip()
+
+
+class CanonicalIdentityJobSummary(BaseModel):
+    job_id: UUID
+    decision_id: UUID
+    match_case_id: UUID
+    intake_id: UUID
+    version: NativeVersion
+    status: Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "RETRYING", "CANCELLED", "DEAD_LETTER"]
+    checkpoint: str
+    attempt: Annotated[int, Field(ge=0, strict=True)]
+    max_attempts: NativeVersion
+    timeout_at: datetime
+    cancellation_requested_at: datetime | None
+    correlation_id: UUID
+
+
+class CanonicalIdentityJobReceipt(CanonicalIdentityJobSummary):
+    audit_event_id: UUID
+
+
 KeyHeader = Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128,
                                   pattern=r"^[A-Za-z0-9._:-]+$")]
 VersionHeader = Annotated[str, Header(alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$')]
@@ -203,6 +236,7 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
         (401, "Authentication required"), (403, "Current actor, segregation or resource scope denied"),
         (404, "Canonical Intake, case, decision or affected resource not found"),
         (409, "Native version, custody, plan or idempotency conflict"),
+        (422, "Invalid request headers, path, body or identity plan"),
         (503, "Canonical storage, execution configuration or audit unavailable"),
     )}
 
@@ -237,7 +271,7 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
             resource["url"] = None  # The existing matrix's Intake discriminator.
         authorize_intake_action(principal, action,
             resource=resource,
-            risk_acknowledged=body.risk_acknowledged if body else False,
+            risk_acknowledged=getattr(body, "risk_acknowledged", False),
             risk_summary=body.reason if body else None,
             audit_log=request.state.canonical_identity_access_audit,
             correlation_id=request.headers.get("x-correlation-id"))
@@ -263,7 +297,8 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
         except (ValueError, KeyError, TypeError) as exc:
             raise IdentityConflictError("CANONICAL_IDENTITY_PLAN_UNAVAILABLE") from exc
 
-    def command(request, response, principal, repo, key, if_match, resource_id, operation, body, permission, make):
+    def command(request, response, principal, repo, key, if_match, resource_id, operation, body, permission, make,
+                receipt_model=CanonicalIdentityReceipt):
         tenant, actor = principal.tenant_id, principal.subject_id
         body_json = body.model_dump(mode="json")
         digest = hashlib.sha256(json.dumps({"body": body_json, "if_match": if_match},
@@ -281,7 +316,7 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
                     response.headers["Idempotency-Replayed"] = "true"
                 else:
                     CanonicalAuditBacklog(repo.engine).require_available(tenant)
-                    receipt = CanonicalIdentityReceipt.model_validate(make(int(if_match[3:-1]))).model_dump(mode="json")
+                    receipt = receipt_model.model_validate(make(int(if_match[3:-1]))).model_dump(mode="json")
                     store.replays[replay_key] = (digest, receipt, 201 if operation == "proposeCanonicalIdentity" else 200)
                     store.flush()
                 response.headers["ETag"] = f'W/"{receipt["version"]}"'
@@ -358,5 +393,41 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
                     "proposer_subject_id": decision["proposer_subject_id"], "reviewer_subject_id": decision["reviewer_subject_id"],
                     "plan": plan, "job_id": job["job_id"] if job else None,
                     "job_status": job["status"] if job else None, "job_version": job["version"] if job else None}
+
+    @router.get("/canonical-identity-decisions/{decision_id}/job", operation_id="getCanonicalIdentityJob",
+                response_model=CanonicalIdentityJobSummary, responses=errors)
+    def read_job(decision_id: UUID, request: Request, response: Response) -> dict:
+        from modules.listing.application.identity_job_controls import IdentityJobControls
+
+        with _identity_errors(request):
+            principal, repo = context(request)
+            with repo.graph.transaction(principal.tenant_id):
+                controls = IdentityJobControls(repo.graph)
+                selected = controls.context(principal.tenant_id, str(decision_id))
+                authorize(request, principal, selected["intake"])
+                response.headers["ETag"] = f'W/"{selected["job"]["version"]}"'
+                return controls.summary(selected)
+
+    @router.post("/canonical-identity-decisions/{decision_id}/actions/cancel-job",
+                 operation_id="cancelCanonicalIdentityJob", response_model=CanonicalIdentityJobReceipt, responses=errors)
+    def cancel_job(decision_id: UUID, body: IdentityJobCancelRequest, request: Request, response: Response,
+                   key: KeyHeader, if_match: VersionHeader) -> dict:
+        from modules.listing.application.identity_job_controls import IdentityJobControls
+
+        with _identity_errors(request):
+            principal, repo = context(request)
+            controls = IdentityJobControls(repo.graph)
+
+            def permission():
+                selected = controls.context(principal.tenant_id, str(decision_id))
+                # An accepted identity decision requires the existing manager/
+                # steward authority. Own staff may stop unaccepted work.
+                action = "reject_identity" if "delivery_fence" in selected["job"]["payload"] else "cancel"
+                authorize(request, principal, selected["intake"], action, body=body)
+
+            return command(request, response, principal, repo, key, if_match, str(decision_id),
+                "cancelCanonicalIdentityJob", body, permission,
+                lambda expected: controls.cancel(principal.tenant_id, str(decision_id), expected_version=expected,
+                    actor_id=principal.subject_id, reason=body.reason), receipt_model=CanonicalIdentityJobReceipt)
 
     return router
