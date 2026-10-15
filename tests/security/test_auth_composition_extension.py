@@ -319,3 +319,53 @@ def test_future_domain_audit_uses_verified_tenant_and_keeps_history_hidden(
             assert "offline-triage" not in denied.text
         assert "TENANTLESS-HISTORY-MUST-STAY-HIDDEN" not in own.text
         assert historical.to_dict() == frozen
+
+
+def test_product_seed_uses_supported_authorized_queue_and_real_fixture_inputs(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
+    """Exercise the actual seed HTTP helper against durable mounted routes.
+
+    This local transport control is not a substitute for the complete Docker
+    E2E inventory or a scheduler-execution receipt.
+    """
+    import io
+    from urllib.error import HTTPError
+    from urllib.parse import urlsplit
+
+    from delivery_toolchain.e2e import seed_product_e2e_data as seed
+    from shared.infrastructure.persistence.factory import _durable_bundle
+
+    bundle = _durable_bundle(str(tmp_path / "offline-seed.sqlite3"))
+    with TestClient(create_app(persistence=bundle)) as client:
+        def local_http(request: Any, timeout: float) -> Any:
+            path = urlsplit(request.full_url).path
+            response = client.request(request.get_method(), path,
+                                      headers=dict(request.header_items()), content=request.data)
+            if response.status_code >= 400:
+                raise HTTPError(request.full_url, response.status_code, response.text, {}, None)
+            return io.BytesIO(response.content)
+
+        monkeypatch.setattr(seed, "urlopen", local_http)
+        first = seed.seed_supported_queue_job("http://offline.invalid", case_id="offline-case")
+        replay = seed.seed_supported_queue_job("http://offline.invalid", case_id="offline-case")
+        assert first["job_id"] == replay["job_id"] and replay["created"] is False
+        record = seed.get_json("http://offline.invalid/jobs/" + first["job_id"])
+        assert record["job_type"] == "forecast"
+        assert record["payload"]["tenant_id"] == seed.TENANT_ID
+        series = bundle.forecastops_repository.get_series(seed.TENANT_ID, record["payload"]["store_id"])
+        assert series is not None and len(series.observations) == 2
+        own = seed.get_json("http://offline.invalid/audit/events")
+        assert any(event["event_id"] == first["audit_event_id"] for event in own["events"])
+        with pytest.raises(HTTPError) as denied:
+            seed.post_json("http://offline.invalid/jobs", {
+                "job_type": "product-e2e.scheduler.heartbeat", "payload": {"tenant_id": seed.TENANT_ID},
+            })
+        assert denied.value.code == 403
+        anonymous = client.get("/jobs/" + first["job_id"])
+        assert anonymous.status_code in (401, 403)
+        foreign = client.get("/jobs/" + first["job_id"], headers={
+            "x-subject-id": "foreign-fixture", "x-roles": "operations_manager", "x-tenant-id": "foreign-tenant",
+        })
+        assert foreign.status_code == 403
+    bundle.engine.close()
