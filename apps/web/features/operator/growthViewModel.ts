@@ -84,13 +84,17 @@ export type PriceOpsRecommendation = {
   title: string;
   currentPrice: string;
   candidatePrice: string;
+  planId?: string;
+  itemId?: string;
+  /** Percent only when provided with its denominator; canonical absolute ΔGM stays separate. */
+  expectedIncrementalGrossMargin?: number;
   /** expected P50 revenue lift, percent. */
-  expectedRevenueLift: number;
+  expectedRevenueLift: number | null;
   /** expected P50 gross-margin lift, percent. */
-  expectedMarginLift: number;
+  expectedMarginLift: number | null;
   constraintStatus: "PASS" | "SOFT_WARNING" | "HARD_CONSTRAINT_FAILED";
   constraintDetail: string;
-  confidence: ConfidenceLevel;
+  confidence?: ConfidenceLevel;
   /** PriceOps only ever hands over a recommendation, never an approved decision. */
   decisionStatus: Extract<DecisionStatus, "SYSTEM_RECOMMENDED" | "DRAFT">;
   /** Optional operational fields supplied by richer PriceOps projections. */
@@ -101,6 +105,28 @@ export type PriceOpsRecommendation = {
   rollbackCondition?: string;
   linkedActionId?: string;
 };
+
+/** Preserve canonical plan/item identity; never turn an absolute amount into a percentage. */
+export function normalizePriceRecommendation(raw: PriceOpsRecommendation & {
+  recommendedPrice?: number; storeId?: string; bindingConstraints?: string[]; riskLevel?: string;
+}): PriceOpsRecommendation {
+  const canonical = typeof raw.planId === "string" && typeof raw.itemId === "string";
+  return {
+    ...raw,
+    currentPrice: String(raw.currentPrice ?? ""),
+    candidatePrice: String(raw.candidatePrice ?? raw.recommendedPrice ?? ""),
+    title: raw.title ?? `${raw.storeId ?? raw.itemId ?? raw.id} 定價建議`,
+    store: raw.store ?? raw.storeId,
+    marginRisk: raw.marginRisk ?? raw.riskLevel,
+    constraintStatus: raw.constraintStatus === "HARD_CONSTRAINT_FAILED" ? "HARD_CONSTRAINT_FAILED"
+      : raw.constraintStatus === "SOFT_WARNING" ? "SOFT_WARNING"
+      : ["PASS", "SAFE"].includes(raw.constraintStatus) ? "PASS" : "HARD_CONSTRAINT_FAILED",
+    constraintDetail: raw.constraintDetail ?? raw.bindingConstraints?.join("、") ?? "未提供",
+    expectedRevenueLift: Number.isFinite(raw.expectedRevenueLift) ? raw.expectedRevenueLift : null,
+    expectedMarginLift: Number.isFinite(raw.expectedMarginLift) ? raw.expectedMarginLift : null,
+    decisionStatus: canonical ? "SYSTEM_RECOMMENDED" : raw.decisionStatus,
+  };
+}
 
 /** Effectiveness verdict for an observed growth action. */
 export type GrowthOutcome =
@@ -391,7 +417,7 @@ export const GROWTH_ITEMS: GrowthItem[] = [
 const GROWTH_API_BASE = "/api/v1/operator/growth";
 
 /** Generate a short idempotency key for browser-side requests. */
-function newIdempotencyKey(): string {
+export function newIdempotencyKey(): string {
   return `ik-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
@@ -402,12 +428,15 @@ function newCorrelationId(): string {
 
 async function apiFetch<T>(
   path: string,
-  options: RequestInit & { correlationId?: string } = {},
+  options: RequestInit & { correlationId?: string; timeoutMs?: number } = {},
 ): Promise<T | null> {
-  const { correlationId, ...fetchOptions } = options;
+  const { correlationId, timeoutMs, ...fetchOptions } = options;
+  const controller = timeoutMs ? new AbortController() : undefined;
+  const timeout = timeoutMs ? setTimeout(() => controller?.abort(), timeoutMs) : undefined;
   try {
     const res = await fetch(`${GROWTH_API_BASE}${path}`, {
       ...fetchOptions,
+      signal: controller?.signal ?? fetchOptions.signal,
       headers: {
         "Content-Type": "application/json",
         "X-Correlation-Id": correlationId ?? newCorrelationId(),
@@ -419,6 +448,8 @@ async function apiFetch<T>(
     return (await res.json()) as T;
   } catch {
     return null;
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
@@ -437,8 +468,9 @@ export async function createGrowthDraft(params: {
   observationWindowDays?: number;
   rationale?: string;
   rollbackPlan?: string;
+  idempotencyKey?: string;
 }): Promise<{ id: string; status: string; kind: string; correlationId: string } | null> {
-  const idempotencyKey = newIdempotencyKey();
+  const idempotencyKey = params.idempotencyKey ?? newIdempotencyKey();
   const correlationId = newCorrelationId();
   const result = await apiFetch<{
     id: string;
@@ -447,6 +479,7 @@ export async function createGrowthDraft(params: {
     correlation_id: string;
   }>("/actions", {
     method: "POST",
+    timeoutMs: 20_000,
     correlationId,
     headers: {
       "Idempotency-Key": idempotencyKey,
@@ -467,7 +500,7 @@ export async function createGrowthDraft(params: {
       rollbackPlan: params.rollbackPlan ?? "",
     }),
   });
-  if (!result) return null;
+  if (!result || typeof result.id !== "string" || !result.id.trim() || result.status !== "DRAFT" || result.kind !== (params.kind ?? "offpeak")) return null;
   return {
     id: result.id,
     status: result.status,
@@ -535,6 +568,7 @@ export async function checkGrowthConflicts(params: {
 /** Submit a DRAFT Growth Action for approval; creates a Govern item. */
 export async function submitGrowthForApproval(params: {
   actionId: string;
+  idempotencyKey?: string;
 }): Promise<{ actionId: string; status: string; approval: GrowthApproval; correlationId: string } | null> {
   const correlationId = newCorrelationId();
   const result = await apiFetch<{
@@ -544,11 +578,12 @@ export async function submitGrowthForApproval(params: {
     correlation_id: string;
   }>(`/actions/${params.actionId}/submit`, {
     method: "POST",
+    timeoutMs: 20_000,
     correlationId,
-    headers: { "Idempotency-Key": newIdempotencyKey() },
+    headers: { "Idempotency-Key": params.idempotencyKey ?? newIdempotencyKey() },
     body: JSON.stringify({}),
   });
-  if (!result) return null;
+  if (!result || result.id !== params.actionId || result.status !== "PENDING_APPROVAL" || !result.approval?.id || result.approval.ref !== params.actionId || result.approval.module !== "Growth" || result.approval.status !== "pending") return null;
   return {
     actionId: result.id,
     status: result.status,
@@ -560,6 +595,7 @@ export async function submitGrowthForApproval(params: {
 /** Approve or reject a Growth approval; advances the linked Growth state. */
 export async function resolveGrowthApproval(params: {
   approvalId: string;
+  idempotencyKey?: string;
   decision: "approved" | "rejected";
   reason?: string;
 }): Promise<{ approvalId: string; growthStatus: string; correlationId: string } | null> {
@@ -567,14 +603,16 @@ export async function resolveGrowthApproval(params: {
   const result = await apiFetch<{
     id: string;
     growthStatus: string;
+    status: string;
     correlation_id: string;
   }>(`/approvals/${params.approvalId}/decision`, {
     method: "POST",
+    timeoutMs: 20_000,
     correlationId,
-    headers: { "Idempotency-Key": newIdempotencyKey() },
+    headers: { "Idempotency-Key": params.idempotencyKey ?? newIdempotencyKey() },
     body: JSON.stringify({ decision: params.decision, reason: params.reason ?? "" }),
   });
-  if (!result) return null;
+  if (!result || result.id !== params.approvalId || result.status !== params.decision || result.growthStatus !== (params.decision === "approved" ? "APPROVED" : "DRAFT")) return null;
   return {
     approvalId: result.id,
     growthStatus: result.growthStatus,
@@ -585,6 +623,7 @@ export async function resolveGrowthApproval(params: {
 /** Advance a Growth Action through the server-owned lifecycle. */
 export async function transitionGrowthAction(params: {
   actionId: string;
+  idempotencyKey?: string;
   targetStatus: GrowthStatus;
 }): Promise<{ actionId: string; status: GrowthStatus; correlationId: string } | null> {
   const correlationId = newCorrelationId();
@@ -594,11 +633,12 @@ export async function transitionGrowthAction(params: {
     correlation_id: string;
   }>(`/actions/${params.actionId}/transition`, {
     method: "POST",
+    timeoutMs: 20_000,
     correlationId,
-    headers: { "Idempotency-Key": newIdempotencyKey() },
+    headers: { "Idempotency-Key": params.idempotencyKey ?? newIdempotencyKey() },
     body: JSON.stringify({ targetStatus: params.targetStatus }),
   });
-  if (!result) return null;
+  if (!result || result.id !== params.actionId || result.status !== params.targetStatus) return null;
   return {
     actionId: result.id,
     status: result.status,
@@ -614,8 +654,9 @@ export async function writeGrowthOutcome(params: {
   observedLift?: number | null;
   evidenceLevel?: EvidenceLevel | null;
   rationale?: string;
+  idempotencyKey?: string;
 }): Promise<{ actionId: string; outcome: string; correlationId: string } | null> {
-  const idempotencyKey = newIdempotencyKey();
+  const idempotencyKey = params.idempotencyKey ?? newIdempotencyKey();
   const correlationId = newCorrelationId();
   const result = await apiFetch<{
     id: string;
@@ -860,7 +901,7 @@ export async function fetchGrowthApiData(params: {
         return {
           freshness: freshnessRes,
           segments: segmentsRes.items,
-          recommendations: recommendationsRes.items,
+          recommendations: recommendationsRes.items.map(normalizePriceRecommendation),
           items: actionsRes.items,
           fromApi: true,
           availability: "ready",
@@ -1034,13 +1075,34 @@ export function formatLift(value: number | null): string {
   return `${sign}${value.toFixed(1)}%`;
 }
 
+export function matchesGrowthStatusFilter(status: string, filter?: string): boolean {
+  if (!filter) return true;
+  const normalized = status.toUpperCase();
+  if (filter === "candidate") return normalized === "SYSTEM_RECOMMENDED";
+  if (filter === "draft") return normalized === "DRAFT";
+  if (filter === "pending") return normalized === "PENDING_APPROVAL";
+  if (filter === "run") return ["APPROVED", "SCHEDULED", "RUNNING", "EXECUTED", "OBSERVING"].includes(normalized);
+  if (filter === "out") return ["OUTCOME_READY", "INEFFECTIVE", "CLOSED"].includes(normalized);
+  return true;
+}
+
+/** Existing display classification for actions predating explicit entry kinds. */
+export function growthItemKind(item: GrowthItem): GrowthActionKind {
+  if (item.kind) return item.kind;
+  if (item.sourceRecommendationId) return "priceops";
+  if (item.name.includes("AdLift") || item.name.includes("廣告")) return "adlift";
+  if (item.name.includes("優惠券")) return "coupon";
+  if (item.name.includes("召回")) return "winback";
+  return "offpeak";
+}
+
 export type GrowthViewModel = {
   segments: GrowthSegment[];
   recommendations: PriceOpsRecommendation[];
   items: GrowthItem[];
   selectedSegment: GrowthSegment | null;
-  selectedItem: GrowthItem;
-  selectedItemGate: CloseoutGate;
+  selectedItem: GrowthItem | null;
+  selectedItemGate: CloseoutGate | null;
   draftRecommendation: PriceOpsRecommendation | null;
   summary: {
     segmentCount: number;
@@ -1064,6 +1126,8 @@ export function buildGrowthViewModel(
     segmentId?: string;
     itemId?: string;
     draftId?: string;
+    kindFilter?: string;
+    statusFilter?: string;
   },
   apiData?: GrowthApiData,
 ): GrowthViewModel {
@@ -1074,20 +1138,23 @@ export function buildGrowthViewModel(
   const selectedSegment =
     allSegments.find((segment) => segment.id === params.segmentId) ?? null;
 
-  const recommendations = selectedSegment
-    ? allRecommendations.filter((rec) => rec.segmentId === selectedSegment.id)
+  const recommendations = params.segmentId
+    ? allRecommendations.filter((rec) => selectedSegment && rec.segmentId === selectedSegment.id)
     : allRecommendations;
 
-  const items = selectedSegment
-    ? allItems.filter((item) => item.segmentId === selectedSegment.id)
+  const items = params.segmentId
+    ? allItems.filter((item) => selectedSegment && item.segmentId === selectedSegment.id)
     : allItems;
 
-  const fallbackItem = items[0] ?? allItems[0];
-  const selectedItem =
-    items.find((item) => item.id === params.itemId) ?? fallbackItem;
+  const selectedItem = params.itemId
+    ? items.find((item) => item.id === params.itemId) ?? null
+    : items.find((item) =>
+        (!params.kindFilter || growthItemKind(item) === params.kindFilter) &&
+        matchesGrowthStatusFilter(item.status, params.statusFilter),
+      ) ?? null;
 
   const draftRecommendation = params.draftId
-    ? allRecommendations.find((rec) => rec.id === params.draftId) ?? null
+    ? recommendations.find((rec) => rec.id === params.draftId) ?? null
     : null;
 
   const activeStatuses: GrowthStatus[] = [
@@ -1103,7 +1170,7 @@ export function buildGrowthViewModel(
     items,
     selectedSegment,
     selectedItem,
-    selectedItemGate: closeoutGate(selectedItem),
+    selectedItemGate: selectedItem ? closeoutGate(selectedItem) : null,
     draftRecommendation,
     dataSource: apiData?.fromApi ? "api" : "fixture",
     summary: {

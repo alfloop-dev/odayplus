@@ -271,6 +271,7 @@ class ListingPipeline:
             feasibility_flags=(),
             heat_zone_id=address.h3_res_9,
             listing_source=source_id,
+            dataset_snapshot_id=listing.snapshot_id or None,
         )
         self.repository.save_candidate(candidate)
         return ListingPipelineRecord(

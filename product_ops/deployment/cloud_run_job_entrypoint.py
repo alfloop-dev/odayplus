@@ -11,6 +11,7 @@ import logging
 import os
 import socket
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import replace
@@ -184,9 +185,12 @@ class TrackingJobQueue:
         self.claim_errors: list[Exception] = []
         self.enqueue_errors: list[Exception] = []
 
-    def claim_next(self, worker_id: str = "cloud-run-worker") -> JobRecord | None:
+    def claim_next(self, worker_id: str = "cloud-run-worker", *, audit_only: bool = False) -> JobRecord | None:
         try:
-            record = self._delegate.claim_next(worker_id=worker_id)
+            if audit_only:
+                record = self._delegate.claim_next(worker_id=worker_id, audit_only=True)
+            else:
+                record = self._delegate.claim_next(worker_id=worker_id)
         except Exception as exc:
             self.claim_errors.append(exc)
             raise
@@ -352,36 +356,57 @@ def _worker_result(record: JobRecord) -> tuple[int, str]:
     return EXIT_CONTRACT_INVALID, "invalid_terminal_state"
 
 
-def run_worker(*, max_jobs: int, require_job: bool) -> int:
+def run_worker(*, max_jobs: int, require_job: bool, audit_only: bool = False,
+               run_for_seconds: int = 0) -> int:
     bundle = bootstrap_runtime()
     tracking_queue = TrackingJobQueue(bundle.job_queue)
-    worker = build_worker(replace(bundle, job_queue=tracking_queue))
+    if audit_only:
+        worker = build_worker(replace(bundle, job_queue=tracking_queue), audit_only=True)
+    else:
+        worker = build_worker(replace(bundle, job_queue=tracking_queue))
     processed: list[dict[str, Any]] = []
+    deadline = time.monotonic() + run_for_seconds if run_for_seconds else None
+    receipt_kind = "audit_publisher" if audit_only else "worker"
 
-    for _ in range(max_jobs):
+    while len(processed) < max_jobs:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         claimed_before = len(tracking_queue.claimed)
         worker.run_once()
         if tracking_queue.claim_errors:
             exc = tracking_queue.claim_errors[-1]
             _emit_receipt(
-                "worker",
+                receipt_kind,
                 "failed",
                 reason="claim_exception",
                 error_class=type(exc).__name__,
                 processed=processed,
             )
             return EXIT_FAILED
+        if audit_only:
+            try:
+                worker.export_metrics()
+            except Exception as exc:
+                _emit_receipt(
+                    receipt_kind, "failed", reason="metrics_export_exception",
+                    error_class=type(exc).__name__, processed=processed,
+                    claimed_job_ids=[job.job_id for job in tracking_queue.claimed],
+                )
+                return EXIT_FAILED
         if len(tracking_queue.claimed) == claimed_before:
+            if deadline is not None:
+                time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+                continue
             if not processed and require_job:
                 _emit_receipt(
-                    "worker",
+                    receipt_kind,
                     "failed",
                     reason="required_job_not_claimed",
                     queue_active=tracking_queue.count_active_jobs(),
                 )
                 return EXIT_FAILED
             _emit_receipt(
-                "worker",
+                receipt_kind,
                 "drained",
                 processed=processed,
                 processed_count=len(processed),
@@ -393,7 +418,7 @@ def run_worker(*, max_jobs: int, require_job: bool) -> int:
         persisted = tracking_queue.get(claimed.job_id)
         if persisted is None:
             _emit_receipt(
-                "worker",
+                receipt_kind,
                 "failed",
                 reason="claimed_job_receipt_missing",
                 job_id=claimed.job_id,
@@ -413,7 +438,7 @@ def run_worker(*, max_jobs: int, require_job: bool) -> int:
         processed.append(item)
         if exit_code != 0:
             _emit_receipt(
-                "worker",
+                receipt_kind,
                 outcome,
                 processed=processed,
                 processed_count=len(processed),
@@ -422,11 +447,13 @@ def run_worker(*, max_jobs: int, require_job: bool) -> int:
             return exit_code
 
     _emit_receipt(
-        "worker",
-        "bounded_complete",
+        receipt_kind,
+        "observation_window_complete" if deadline is not None and len(processed) < max_jobs else "bounded_complete",
         processed=processed,
         processed_count=len(processed),
         queue_active=tracking_queue.count_active_jobs(),
+        audit_only=audit_only,
+        run_for_seconds=run_for_seconds,
     )
     return 0
 
@@ -485,6 +512,9 @@ def main(argv: list[str] | None = None) -> int:
     worker = subparsers.add_parser("worker")
     worker.add_argument("--max-jobs", type=int, default=100)
     worker.add_argument("--require-job", action="store_true")
+    publisher = subparsers.add_parser("audit-publisher")
+    publisher.add_argument("--max-jobs", type=int, default=100)
+    publisher.add_argument("--run-for-seconds", type=int, default=60)
     subparsers.add_parser("public-egress-probe")
     args = parser.parse_args(argv)
 
@@ -495,6 +525,11 @@ def main(argv: list[str] | None = None) -> int:
         return run_scheduler()
     if args.command == "public-egress-probe":
         return run_public_egress_probe()
+    if args.command == "audit-publisher":
+        if args.max_jobs < 1 or not 1 <= args.run_for_seconds <= 3600:
+            parser.error("audit-publisher requires --max-jobs >= 1 and --run-for-seconds in 1..3600")
+        return run_worker(max_jobs=args.max_jobs, require_job=False, audit_only=True,
+                          run_for_seconds=args.run_for_seconds)
     if args.max_jobs < 1:
         parser.error("--max-jobs must be at least 1")
     return run_worker(max_jobs=args.max_jobs, require_job=args.require_job)

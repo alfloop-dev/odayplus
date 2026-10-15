@@ -551,7 +551,7 @@ class BusinessWeb:
                 self.governance["decisions"].append({
                     "id": "DEC-1", "approvalId": approval["id"],
                     "finalDecision": {"approve": "Approved", "return": "Returned", "reject": "Rejected"}[ctx.body["action"]],
-                    "reason": ctx.body.get("reason") or "符合風險與預算規範",
+                    "reason": ctx.body.get("reason") or "",
                     "actor": ctx.body.get("actorName"), "decidedAt": NOW,
                 })
             if "governance" not in self.drop_audit:
@@ -559,7 +559,7 @@ class BusinessWeb:
                     {
                         "id": "AUD-GOV-1",
                         "category": "approval",
-                        "correlationId": f"corr-{ctx.body.get('approvalId')}",
+                        "correlationId": ctx.headers.get("x-correlation-id"),
                         "actor": ctx.body.get("actorName"),
                         "action": {"approve": "決策核准", "return": "決策退回", "reject": "決策駁回"}[ctx.body["action"]],
                         "entityRef": (approval or {}).get("entityRef") or ctx.body.get("approvalId"),
@@ -1953,7 +1953,11 @@ def test_ready_intake_creates_tenant_bound_listing_surviving_repository_restart(
     repository.save_intake({
         "id": "OFFLINE-DURABLE-INTAKE", "sourceId": "OFFLINE-SOURCE", "tenantId": TENANT,
         "heatZoneId": "HZ-01", "originalUrl": "https://example.invalid/offline",
-        "stage": "READY", "version": 3, "parsedFields": {}, "auditEvents": [],
+        "stage": "READY", "version": 3, "parsedFields": {
+            "address": {"normalizedValue": "Synthetic offline address"},
+            "rent": {"normalizedValue": "54000"},
+            "areaPing": {"normalizedValue": "22.5"},
+        }, "auditEvents": [],
         "matchResult": {"targetListingId": "L-2024"},
     })
     service = NetworkListingService(bundle.listing_repository, repository, tenant_id=TENANT)
@@ -1966,7 +1970,8 @@ def test_ready_intake_creates_tenant_bound_listing_surviving_repository_restart(
         idempotency_key="offline-create", correlation_id="offline-create-corr",
     )
     assert result["stage"] == before["stage"] == "READY"
-    assert result["version"] == before["version"] == 3
+    assert before["version"] == 3
+    assert result["version"] == before["version"] + 1
     target_id = result["matchResult"]["targetListingId"]
     assert target_id not in prior_ids
     bundle.engine.close()
@@ -1974,6 +1979,7 @@ def test_ready_intake_creates_tenant_bound_listing_surviving_repository_restart(
     rebuilt = NetworkListingService(restarted.listing_repository, restarted.operator_intake_repository,
                                     seed_fixtures=False, tenant_id=TENANT)
     saved = rebuilt.get_intake(before["id"])
+    assert saved["version"] == result["version"]
     row = next(row for row in rebuilt.snapshot(tenant_id=TENANT)["listings"] if row["id"] == target_id)
     assert row["tenantId"] == TENANT and row["sourceId"] == before["sourceId"]
     assert saved["matchResult"]["targetListingId"] == target_id
@@ -2150,7 +2156,7 @@ def test_governance_vocabulary_matches_actual_service(action: str) -> None:
         correlation_id="offline-corr",
     )
     assert response["action"] == action and response["decision"]["id"]
-    assert service.snapshot()["auditRows"][0]["correlationId"] == f"corr-{approval_id}"
+    assert service.snapshot()["auditRows"][0]["correlationId"] == "offline-corr"
     assert action in bj.JOURNEYS_BY_ID["governance"].writes_allowed["decision"]
 
 
@@ -2171,7 +2177,11 @@ def test_intake_actual_action_vocabulary_accepts_authorized_scope(action: str) -
             "heatZoneId": "HZ-01",
             "originalUrl": "https://example.invalid/offline",
             "stage": "READY",
-            "parsedFields": {},
+            "parsedFields": {
+                "address": {"normalizedValue": "Synthetic manual address"},
+                "rent": {"normalizedValue": "54000"},
+                "areaPing": {"normalizedValue": "22"},
+            },
             "auditEvents": [],
             "matchResult": {"targetListingId": "L-2024"},
         }
@@ -2616,13 +2626,15 @@ def test_real_netplan_decide_producer_is_root_approval_and_reads_same_record(
         assert result["captured"][f"disclosure_checked_at_{stage}"] in web.observed_times
 
 
-@pytest.mark.parametrize("action,reason", [("approve", "Offline scoped approval"), ("return", "Offline scoped return justification"), ("reject", "Offline scoped reject justification"), ("approve", "")])
+@pytest.mark.parametrize("action,reason", [("approve", "Offline scoped approval"), ("return", "Offline scoped return justification"), ("reject", "Offline scoped reject justification")])
 def test_runner_matches_actual_governance_http_decision_audit(action: str, reason: str) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from apps.api.app.routes.operator_modules.governance import create_governance_sub_router
+    from apps.api.oday_api.security.dependencies import require_operator_permission
     from modules.opsboard.application.governance import GovernanceService
+    from shared.auth import Action
 
     service = GovernanceService()  # OFFLINE in-memory producer and durable read
     original = service.snapshot()["approvals"][0]
@@ -2633,8 +2645,15 @@ def test_runner_matches_actual_governance_http_decision_audit(action: str, reaso
         request.state.correlation_id = request.headers.get("x-correlation-id", "offline")
         return await call_next(request)
 
-    app.include_router(create_governance_sub_router(service), prefix="/api/v1/operator")
-    client = TestClient(app)
+    app.include_router(create_governance_sub_router(
+        service,
+        require_view_permission_fn=require_operator_permission(),
+        require_decision_permission_fn=require_operator_permission("intervention", Action.APPROVE),
+    ), prefix="/api/v1/operator")
+    client = TestClient(app, headers={
+        "x-subject-id": account_id("governance.lead"), "x-roles": "operations_manager",
+        "x-tenant-id": TENANT, "x-operator-role": "ops-lead",
+    })
 
     class RealGovernanceWeb(BusinessWeb):
         def __init__(self) -> None:
@@ -2665,12 +2684,12 @@ def test_runner_matches_actual_governance_http_decision_audit(action: str, reaso
     assert row["actor"] == entry["account_ids"]["primary"]
     assert row["approvalId"] == original["id"]
     assert row["finalDecision"] == {"approve": "Approved", "return": "Returned", "reject": "Rejected"}[action]
-    assert row["reason"] == (reason or "符合風險與預算規範")
+    assert row["reason"] == reason
     assert any(item["id"] == result["captured"]["governance_audit_id"] for item in actual["auditRows"])
     assert bj.journey_receipt_problems(bj.JOURNEYS_BY_ID["governance"], result) == []
 
 
-@pytest.mark.parametrize("fault", ["status", "replacement", "finalDecision", "reason", "actor", "approvalId", "auditActor", "auditAction", "auditReason", "auditTarget"])
+@pytest.mark.parametrize("fault", ["status", "replacement", "finalDecision", "reason", "actor", "approvalId", "auditActor", "auditAction", "auditReason", "auditTarget", "auditCorrelation"])
 def test_governance_wrong_or_replaced_decision_and_audit_cannot_pass(fault: str) -> None:
     class WrongDecision(BusinessWeb):
         def request(self, method: str, path: str, **kwargs: Any) -> Resp:
@@ -2682,7 +2701,7 @@ def test_governance_wrong_or_replaced_decision_and_audit_cannot_pass(fault: str)
                 elif fault == "replacement":
                     decision.update(id="UNRELATED-DECISION", finalDecision="Rejected")
                 elif fault.startswith("audit"):
-                    key = {"auditActor": "actor", "auditAction": "action", "auditReason": "reason", "auditTarget": "entityRef"}[fault]
+                    key = {"auditActor": "actor", "auditAction": "action", "auditReason": "reason", "auditTarget": "entityRef", "auditCorrelation": "correlationId"}[fault]
                     self.governance["auditRows"][-1][key] = "Unrelated value"
                 else:
                     decision[fault] = "Unrelated value"
@@ -2712,6 +2731,15 @@ def test_resealed_governance_receipt_needs_current_decision_and_audit(fault: str
 def test_governance_caller_actor_override_blocks_before_any_write() -> None:
     scope = scope_document()
     scope["journeys"]["governance"]["writes"]["decision"]["body"]["actorName"] = "Someone else"
+    receipt, web, _ = run(scope=scope, selection=["governance"])
+    assert receipt["journeys"]["governance"]["status"] == "BLOCKED"
+    _zero_writes(receipt, web, "governance")
+
+
+@pytest.mark.parametrize("reason", ["", "   ", None])
+def test_governance_missing_authored_reason_blocks_before_any_write(reason) -> None:
+    scope = scope_document()
+    scope["journeys"]["governance"]["writes"]["decision"]["body"]["reason"] = reason
     receipt, web, _ = run(scope=scope, selection=["governance"])
     assert receipt["journeys"]["governance"]["status"] == "BLOCKED"
     _zero_writes(receipt, web, "governance")

@@ -19,6 +19,7 @@ const FORWARDED_REQUEST_HEADERS = [
   "accept",
   "accept-language",
   "content-type",
+  "if-actor-match",
   "if-match",
   "idempotency-key",
   "x-correlation-id",

@@ -11,6 +11,7 @@ repository.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -168,15 +169,19 @@ class PriceOpsService:
         correlation_id: str,
         plan_id: str | None = None,
         created_at: datetime | None = None,
+        created_by: str | None = None,
     ) -> PricingPlan:
+        if self.production_required and not (created_by and created_by.strip()):
+            raise ValueError("production pricing plans require a verified creator")
         plan = PricingPlan.create(
             tenant_id=tenant_id,
             items=tuple(items),
             correlation_id=correlation_id,
             plan_id=plan_id,
             created_at=created_at,
+            created_by=created_by,
         )
-        return self.repository.save_plan(plan)
+        return self.repository.insert_plan(plan)
 
     def _validate_exploration_gate(
         self,
@@ -193,6 +198,9 @@ class PriceOpsService:
         not reach a production solver and a valid gate must cover the concrete
         plan resources, not just the tenant or a caller-provided scope.
         """
+        canonical = getattr(self.repository, "canonical_exploration", None)
+        if self.production_required and canonical is None:
+            raise ExplorationNotAuthorizedError("Production exploration requires canonical workflow/pricing authorization")
         gate = self.repository.get_gate(gate_id, tenant_id=plan.tenant_id)
         if gate is None:
             raise ExplorationNotAuthorizedError(
@@ -214,6 +222,8 @@ class PriceOpsService:
                 f"({gate.budget_consumed} >= {gate.budget_limit})"
             )
         validate_gate_scope(gate, tenant_id=plan.tenant_id, items=plan.items)
+        if canonical is not None:
+            canonical.validate_items(gate, plan.items)
         return gate
 
     # -- simulation -------------------------------------------------------
@@ -242,6 +252,29 @@ class PriceOpsService:
 
     # -- optimization -----------------------------------------------------
     def optimize(
+        self,
+        plan_id: str,
+        *,
+        actor: str = "system",
+        reason: str = "constrained price optimization",
+        optimized_at: datetime | None = None,
+        exploration_gate_id: str | None = None,
+        exploration_algorithm: str = "THOMPSON_SAMPLING",
+        exploration_seed: int | None = None,
+        exploration_history: Sequence[tuple[float, float]] | None = None,
+    ) -> PlanOptimization:
+        canonical = getattr(self.repository, "canonical_exploration", None)
+        if exploration_gate_id is not None and self.production_required and canonical is None:
+            raise ExplorationNotAuthorizedError("Production exploration requires canonical workflow/pricing authorization")
+        context = canonical.transaction(exploration_gate_id, self._require_plan(plan_id).tenant_id) if canonical is not None and exploration_gate_id is not None else nullcontext()
+        with context:
+            return self._optimize(
+                plan_id, actor=actor, reason=reason, optimized_at=optimized_at,
+                exploration_gate_id=exploration_gate_id, exploration_algorithm=exploration_algorithm,
+                exploration_seed=exploration_seed, exploration_history=exploration_history,
+            )
+
+    def _optimize(
         self,
         plan_id: str,
         *,
@@ -283,6 +316,9 @@ class PriceOpsService:
             solver_version = PRICEOPS_SOLVER_VERSION
 
         if gate is not None:
+            if getattr(self.repository, "canonical_exploration", None) is not None:
+                now = datetime.now(UTC)
+                gate = self._validate_exploration_gate(plan, gate.gate_id, at=now, require_budget=True)
             effective_seed = exploration_seed if exploration_seed is not None else 0
             effective_history = tuple(exploration_history or ())
             bandit_candidates = [
@@ -316,7 +352,10 @@ class PriceOpsService:
                     + ", ".join(unsafe_candidates)
                 )
             total_exploration_cost = sum(
-                candidate.estimated_exploration_cost for candidate in bandit_candidates
+                float(self.repository.canonical_exploration.budget_cost(candidate.estimated_exploration_cost))
+                if getattr(self.repository, "canonical_exploration", None) is not None
+                else candidate.estimated_exploration_cost
+                for candidate in bandit_candidates
             )
             if not gate.has_budget(total_exploration_cost):
                 raise ExplorationNotAuthorizedError(
@@ -325,10 +364,11 @@ class PriceOpsService:
                 )
 
             # Record exploration decisions and deduct budget
+            recorded_decisions = []
             for candidate in bandit_candidates:
-                self.repository.record_exploration_decision(
+                recorded_decisions.append(self.repository.record_exploration_decision(
                     ExplorationDecision(
-                        decision_id=f"pricing-exploration-dec-{uuid4()}",
+                        decision_id=str(uuid4()) if getattr(self.repository, "canonical_exploration", None) is not None else f"pricing-exploration-dec-{uuid4()}",
                         gate_id=gate.gate_id,
                         tenant_id=plan.tenant_id,
                         sku_id=candidate.sku_id,
@@ -338,9 +378,12 @@ class PriceOpsService:
                         budget_consumed=candidate.estimated_exploration_cost,
                         algorithm=candidate.algorithm,
                         created_at=now,
+                        created_by=actor,
                     )
-                )
+                ))
 
+            solver_metadata["exploration_decision_ids"] = [decision.decision_id for decision in recorded_decisions]
+            solver_metadata["exploration_budget_consumed"] = sum(decision.budget_consumed for decision in recorded_decisions)
             solver_metadata["exploration_enabled"] = True
             solver_metadata["gate_id"] = gate.gate_id
             solver_metadata["gate_scope"] = _gate_scope_snapshot(gate)
@@ -435,6 +478,17 @@ class PriceOpsService:
             occurred_at=occurred_at,
         )
 
+    def approval_actor_blockers(self, plan_id: str, actor_id: str, *, decision: str = "approved") -> list[str]:
+        plan = self._require_plan(plan_id)
+        if normalize_approval_decision(decision) != "approved":
+            return []
+        creator = getattr(plan, "created_by", None)
+        if creator and creator == actor_id:
+            return ["plan creator cannot approve their own pricing plan"]
+        if self.production_required and not creator:
+            return ["verified plan creator is missing; independent approval cannot be established"]
+        return []
+
     def approve(
         self,
         plan_id: str,
@@ -445,7 +499,15 @@ class PriceOpsService:
         approved_at: datetime | None = None,
     ) -> ApprovalRecord:
         plan = self._require_plan(plan_id)
-        normalized_decision = _normalize_approval_decision(decision)
+        normalized_decision = normalize_approval_decision(decision)
+        if normalized_decision not in {"approved", "rejected"}:
+            raise ApprovalBlockedError("unsupported pricing approval decision")
+        if not reason.strip():
+            raise ApprovalBlockedError("decision reason is required")
+        if normalized_decision == "approved":
+            actor_blockers = self.approval_actor_blockers(plan_id, actor_id)
+            if actor_blockers:
+                raise ApprovalBlockedError("; ".join(actor_blockers))
         target = (
             PlanStatus.APPROVED_FOR_PILOT if normalized_decision == "approved" else PlanStatus.STOP
         )
@@ -506,29 +568,52 @@ class PriceOpsService:
     ) -> DecisionWritebackRecord:
         plan = self._require_plan(plan_id)
         normalized_decision = (
-            _normalize_approval_decision(decision)
+            normalize_approval_decision(decision)
             if decision.lower() in {"approved", "rejected"}
             else decision.lower()
         )
         now = occurred_at or datetime.now(UTC)
 
-        # Check idempotency
+        if normalized_decision not in {"approved", "rejected", "scenario_selected"}:
+            raise ValueError("unsupported pricing decision")
+        if not actor.strip() or not reason.strip():
+            raise ValueError("actor and decision reason are required")
+
         existing_decisions = self.repository.list_decision_writebacks(plan_id)
         if idempotency_key:
             for existing in existing_decisions:
                 if existing.idempotency_key == idempotency_key:
+                    if (existing.actor, existing.decision, existing.reason, existing.selected_scenario_id) != (
+                        actor, normalized_decision, reason, selected_scenario_id
+                    ):
+                        raise ValueError("decision idempotency key conflicts with the original intent")
                     return existing
 
-        # Fail closed if simulation/optimization is unavailable or infeasible for approval / scenario selection
+        scenario = None
+        if selected_scenario_id:
+            scenario = self.repository.get_scenario_simulation(selected_scenario_id)
+            if scenario is None or scenario.plan_id != plan_id:
+                raise ValueError("selected scenario does not belong to this plan")
+        if normalized_decision == "scenario_selected" and scenario is None:
+            raise ValueError("scenario selection requires a retained scenario")
         if normalized_decision in {"approved", "scenario_selected"}:
             optimization = self.repository.get_optimization(plan_id)
-            if optimization is None or not optimization.is_feasible:
+            if optimization is None or not optimization.is_feasible or (
+                scenario is not None and not scenario.is_feasible
+            ):
+                raise UnavailableSimulationResultError("cannot perform decision writeback: pricing comparison or selected scenario is infeasible")
+            if normalized_decision == "approved" and scenario is not None:
+                optimized_prices = {item.item_id: item.result.recommended_price for item in optimization.items}
+                if any(optimized_prices.get(item.item_id) != item.candidate_price for item in scenario.items):
+                    raise ValueError("approval must match the optimized plan prices; select an alternative scenario without approving it")
+        if normalized_decision in {"approved", "rejected"}:
+            target = PlanStatus.APPROVED_FOR_PILOT if normalized_decision == "approved" else PlanStatus.STOP
+            if not plan.can_transition_to(target):
+                raise ValueError(f"cannot write back {normalized_decision} from {plan.status.value}")
+            if normalized_decision == "approved":
                 blockers = self._approval_blockers(plan_id)
-                if optimization is None:
-                    blockers.append("plan has no optimization comparison")
-                raise UnavailableSimulationResultError(
-                    f"plan {plan_id} cannot perform decision writeback: {'; '.join(blockers)}"
-                )
+                if blockers:
+                    raise ApprovalBlockedError("; ".join(blockers))
 
         solver_version = (
             PRICEOPS_OSS_SOLVER_VERSION if self.production_required else PRICEOPS_SOLVER_VERSION
@@ -547,17 +632,10 @@ class PriceOpsService:
             idempotency_key=idempotency_key,
         )
 
+        if normalized_decision in {"approved", "rejected"}:
+            self.approve(plan_id, actor_id=actor, reason=reason,
+                         decision=normalized_decision, approved_at=now)
         self.repository.save_decision_writeback(record)
-        target = (
-            PlanStatus.APPROVED_FOR_PILOT
-            if normalized_decision == "approved"
-            else PlanStatus.STOP
-            if normalized_decision == "rejected"
-            else plan.status
-        )
-        if plan.can_transition_to(target):
-            self._advance(plan, target, actor=actor, reason=reason, occurred_at=now)
-
         return record
 
 
@@ -1001,7 +1079,7 @@ class PriceOpsService:
         return blockers
 
 
-def _normalize_approval_decision(decision: str) -> str:
+def normalize_approval_decision(decision: str) -> str:
     normalized = decision.strip().lower().replace("-", "_").replace(" ", "_")
     if normalized in {"approve", "approved"}:
         return "approved"
@@ -1019,4 +1097,5 @@ __all__ = [
     "MissingRollbackPlanError",
     "PlanNotFoundError",
     "PriceOpsService",
+    "normalize_approval_decision",
 ]

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -23,6 +22,7 @@ from modules.external_data.application.market_data_facade import (
 )
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
 from tests.integration._authz import EXTERNAL_DATA_HEADERS
+from tests.production_composition_binding import bind_offline_score_participants
 
 
 @pytest.fixture(autouse=True)
@@ -97,13 +97,7 @@ def _unavailable_provider() -> Any:
 
 
 def _production_backed_bundle(path: Path) -> Any:
-    bundle = _durable_bundle(path)
-    bundle.engine.is_production = True
-    return replace(
-        bundle,
-        mode="postgresql",
-        assisted_intake_store=SimpleNamespace(),
-    )
+    return bind_offline_score_participants(_durable_bundle(path))
 
 
 def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
@@ -243,6 +237,8 @@ def test_require_live_data_composes_remote_runtime_and_oss_dependencies(
     assert captured["netplan"]["audit_log"] is bundle.audit_log
     assert captured["netplan"]["production_executor"] is not None
     assert captured["priceops"]["repository"] is bundle.priceops_repository
+    assert captured["priceops"]["store_repository"] is bundle.store_repository
+    assert captured["priceops"]["brand_repository"] is bundle.brand_repository
     assert captured["priceops"]["audit_log"] is bundle.audit_log
     assert captured["priceops"]["job_queue"] is bundle.job_queue
     assert captured["priceops"]["require_durable_commands"] is True
@@ -431,7 +427,8 @@ def test_production_routes_gate_only_the_dependency_they_use(
                 headers=operator_headers,
             )
             assert operator.status_code == 200, operator.text
-            assert operator.json()["meta"]["dataMode"] == "live"
+            assert operator.json()["meta"]["dataMode"] == "degraded"
+            assert operator.json()["meta"]["sections"]["storeOpsIssues"]["state"] == "unavailable"
             assert "r4-seed" not in operator.text
 
             history = client.get(

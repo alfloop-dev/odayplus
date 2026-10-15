@@ -50,9 +50,12 @@ import type {
   IntakeSubmitPayload as GeneratedIntakeSubmitPayload,
   NetworkListingActorPayload as GeneratedNetworkListingActorPayload,
   NetworkListingMergePayload as GeneratedNetworkListingMergePayload,
+  NetworkListingReadResponse,
   ErrorEnvelope,
   ReasonCommand,
   AssignmentTransferRequest,
+  AssignmentTransferTargetPage,
+  AssignmentState,
   AssignmentReceipt,
   AssignmentRequest,
   SlaPauseRequest,
@@ -231,14 +234,30 @@ export type ExternalDataFreshnessResponse = {
 
 /**
  * Raw heatzone score row returned by GET /heatzones.
- * Shape mirrors HeatZoneBatchScoreResult.to_dict().
+ * Score producer fields mirror the baseline and V3 to_dict() responses.
+ * V3 may abstain, leaving the overall score null.
  */
 export type HeatZoneScore = {
-  /** H3 hex index used as a stable identifier. */
+  /** Entity identity used by candidate heat_zone_id relationships. */
+  heat_zone_id: string;
+  /** Geometry identity; baseline and V3 entities may share a cell. */
   h3_index: string;
-  score: number;
-  rank: number;
-  unmet_demand: number;
+  score: number | null;
+  priority_rank: number;
+  unmet_demand_score: number;
+  /** Older producer aliases, when present. */
+  rank?: number;
+  unmet_demand?: number;
+  format_fit_score?: number;
+  cannibalization_risk_score?: number;
+  rent_feasibility_score?: number;
+  listing_availability_score?: number;
+  model_version?: string;
+  execution_mode?: string;
+  is_shadow?: boolean;
+  abstained?: boolean;
+  feature_version?: string;
+  source_snapshot_ids?: string[];
   confidence: number | null;
   state: string;
   [key: string]: unknown;
@@ -308,8 +327,18 @@ export type NetPlanScenarioDetail = {
  */
 export type CandidateSiteCard = {
   candidateSiteId: string;
+  listingId?: string | null;
   address: string;
-  geocodeConfidence: number;
+  geocodeConfidence: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  h3Index: string | null;
+  score: number | null;
+  recommendation: string | null;
+  modelVersion: string | null;
+  datasetSnapshotId: string | null;
+  reviewId?: string | null;
+  siteStatus: string;
   rent: number;
   area: number;
   frontage?: number | null;
@@ -904,6 +933,7 @@ type RequestOptions = {
   correlationId?: string;
   idempotencyKey?: string;
   ifMatch?: string;
+  ifActorMatch?: string;
   query?: Record<string, string | undefined>;
 };
 
@@ -969,6 +999,7 @@ export class OdpApiClient {
           ...(options.correlationId ? { [CORRELATION_ID_HEADER]: options.correlationId } : {}),
           ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
           ...(options.ifMatch ? { "If-Match": options.ifMatch } : {}),
+          ...(options.ifActorMatch ? { "If-Actor-Match": options.ifActorMatch } : {}),
         },
         body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       });
@@ -1071,28 +1102,28 @@ export class OdpApiClient {
   /**
    * List heatzone scores from the most recent batch scoring run.
    * Returns an empty `items` array when no scoring job has been run yet.
-   * Corresponds to GET /heatzones.
+   * Corresponds to GET /api/v1/heatzones (also available through the Web BFF).
    */
   listHeatzones(options: { limit?: number } = {}): Promise<ListResponse<HeatZoneScore>> {
-    return this.request<ListResponse<HeatZoneScore>>("/heatzones", {
+    return this.request<ListResponse<HeatZoneScore>>("/api/v1/heatzones", {
       query: options.limit !== undefined ? { limit: String(options.limit) } : undefined,
     });
   }
 
   /**
    * List candidate sites that have passed hard-rule checks.
-   * Corresponds to GET /listings/candidates.
+   * Corresponds to GET /api/v1/listings/candidates.
    */
   listCandidates(): Promise<{ candidates: CandidateSiteCard[] }> {
-    return this.request<{ candidates: CandidateSiteCard[] }>("/listings/candidates");
+    return this.request<{ candidates: CandidateSiteCard[] }>("/api/v1/listings/candidates");
   }
 
   /**
    * List the latest SiteScore report per candidate site.
-   * Corresponds to GET /sitescore/reports.
+   * Corresponds to GET /api/v1/sitescore/reports.
    */
   listSiteScoreReports(): Promise<ListResponse<SiteScoreReportSummary>> {
-    return this.request<ListResponse<SiteScoreReportSummary>>("/sitescore/reports");
+    return this.request<ListResponse<SiteScoreReportSummary>>("/api/v1/sitescore/reports");
   }
 
   listNetplanScenarios(): Promise<ListResponse<NetPlanScenarioSummary>> {
@@ -1413,7 +1444,7 @@ export class OdpApiClient {
     payload: NetworkListingActorPayload,
     options: { correlationId?: string; idempotencyKey?: string } = {},
   ): Promise<ConvertListingResponse> {
-    return this.request<ConvertListingResponse>(`/api/v1/operator/network-listings/listings/${listingId}/convert`, {
+    return this.request<ConvertListingResponse>(`/api/v1/operator/network-listings/listings/${encodeURIComponent(listingId)}/convert`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
@@ -1424,26 +1455,30 @@ export class OdpApiClient {
   mergeListing(
     listingId: string,
     payload: NetworkListingMergePayload,
-    options: { correlationId?: string; idempotencyKey?: string } = {},
+    options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string; ifActorMatch?: string } = {},
   ): Promise<MergeListingResponse> {
-    return this.request<MergeListingResponse>(`/api/v1/operator/network-listings/listings/${listingId}/merge`, {
+    return this.request<MergeListingResponse>(`/api/v1/operator/network-listings/listings/${encodeURIComponent(listingId)}/merge`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
       idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
+      ifActorMatch: options.ifActorMatch,
     });
   }
 
   archiveListing(
     listingId: string,
-    payload: NetworkListingActorPayload,
-    options: { correlationId?: string; idempotencyKey?: string } = {},
+    payload: NetworkListingArchivePayload,
+    options: { correlationId?: string; idempotencyKey?: string; ifMatch?: string; ifActorMatch?: string } = {},
   ): Promise<ArchiveListingResponse> {
-    return this.request<ArchiveListingResponse>(`/api/v1/operator/network-listings/listings/${listingId}/archive`, {
+    return this.request<ArchiveListingResponse>(`/api/v1/operator/network-listings/listings/${encodeURIComponent(listingId)}/archive`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
       idempotencyKey: options.idempotencyKey,
+      ifMatch: options.ifMatch,
+      ifActorMatch: options.ifActorMatch,
     });
   }
 
@@ -1504,12 +1539,13 @@ export class OdpApiClient {
   retryIntake(
     intakeId: string,
     payload: NetworkListingActorPayload,
-    options: { correlationId?: string } = {},
+    options: { correlationId?: string; idempotencyKey?: string } = {},
   ): Promise<AssistedIntake> {
     return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}/retry`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
     });
   }
 
@@ -1552,6 +1588,16 @@ export class OdpApiClient {
       idempotencyKey: options.idempotencyKey,
       ifMatch: options.ifMatch,
     });
+  }
+
+  listAssignmentTransferTargets(
+    assignmentId: string,
+    options: { correlationId?: string } = {},
+  ): Promise<AssignmentTransferTargetPage> {
+    return this.request<AssignmentTransferTargetPage>(
+      `/api/v1/assignments/${encodeURIComponent(assignmentId)}/transfer-targets`,
+      { method: "GET", correlationId: options.correlationId },
+    );
   }
 
   transferAssignment(
@@ -1916,12 +1962,20 @@ export type AssistedIntake = {
   id: string;
   originalUrl: string;
   canonicalUrl: string;
-  submitter: string;
-  owner: string;
+  submitter: string | null;
+  owner: string | null;
+  submittedBy?: string | null;
+  ownerSubjectId?: string | null;
+  assignedAreaId?: string | null;
+  submittedAt?: string | null;
+  updatedAt?: string | null;
+  lastObservedAt?: string | null;
+  masked?: boolean;
+  restricted?: boolean | null;
   heatZoneId: string | null;
   intakeMethod?: "URL" | "MANUAL" | "CSV" | "APPROVED_FEED";
   stage: IntakeStage;
-  sourceId: string;
+  sourceId: string | null;
   policy: SourcePolicyState;
   policyLabel: string;
   policyReason: string;
@@ -1937,8 +1991,10 @@ export type AssistedIntake = {
   failure?: IntakeFailure | null;
   version: number;
   assignmentId?: string | null;
-  assignmentStatus?: string | null;
+  assignmentVersion?: number | null;
+  assignmentStatus?: AssignmentState | null;
   slaInstanceId?: string | null;
+  slaVersion?: number | null;
   slaState?: string | null;
   slaReceipt?: string | null;
   dueAt?: string | null;
@@ -1954,6 +2010,18 @@ export type IntakeInboxQuery = {
   intakeStage?: string;
   matchOutcome?: string;
   slaState?: string;
+  sourceId?: string;
+  submittedBy?: string;
+  ownerId?: string;
+  assignmentStatus?: AssignmentState;
+  assignedAreaId?: string;
+  observedFrom?: string;
+  observedTo?: string;
+  updatedFrom?: string;
+  updatedTo?: string;
+  masked?: boolean;
+  restricted?: boolean;
+  retryable?: boolean;
   sortBy?: string;
   sortOrder?: "asc" | "desc";
 };
@@ -1995,21 +2063,26 @@ export type NetworkListingRadarSnapshot = {
     id: string;
     sourceId: string;
     sourceListingId: string;
-    heatZoneId: string;
+    heatZoneId: string | null;
     address: string;
     status: string;
     rentPerMonth: number;
     areaPing: number;
     floor: string;
-    frontageMeters: number;
-    geocodeConfidence: number;
-    hardRuleFailures: string[];
+    frontageMeters: number | null;
+    geocodeConfidence: number | null;
+    /** Null or absent means unmeasured; [] records no failures, not promotion authorization. */
+    hardRuleFailures: NetworkListingReadResponse["hardRuleFailures"];
     hardRuleSummary: string;
     sourceEvidence: string[];
-    fitScore: number;
+    fitScore: number | null;
     firstSeenAt: string;
     sourceUrl: string;
     contentFingerprint?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    h3Index?: string | null;
+    snapshotId?: string | null;
   }>;
   candidates: Array<{
     id: string;
@@ -2052,6 +2125,9 @@ export type ConvertListingResponse = {
 };
 
 export type MergeListingResponse = {
+  actorSubjectId: string;
+  actorRoleId: string;
+  idempotencyKey: string;
   source: any;
   target: any;
   sourceEvidenceRetained: string[];
@@ -2061,6 +2137,9 @@ export type MergeListingResponse = {
 };
 
 export type ArchiveListingResponse = {
+  actorSubjectId: string;
+  actorRoleId: string;
+  idempotencyKey: string | null;
   listing: any;
   auditEvent: any;
   correlationId: string | null;
@@ -2071,6 +2150,11 @@ export type NetworkListingActorPayload = {
   actorRoleId?: string;
   actorName?: string | null;
   reason?: string | null;
+};
+
+export type NetworkListingArchivePayload = NetworkListingActorPayload & {
+  /** Constraint checked against the trusted principal; never an identity grant. */
+  expectedActorSubjectId?: string | null;
 };
 
 /**
@@ -2090,6 +2174,8 @@ export type RiskDisclosure = {
 export type NetworkListingMergePayload = NetworkListingActorPayload &
   RiskDisclosure & {
     targetListingId: string;
+    targetIfMatch?: string;
+    expectedActorSubjectId?: string | null;
   };
 
 export type IntakeSubmitPayload = {

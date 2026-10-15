@@ -72,6 +72,26 @@ class TenantScopedDocumentStore:
             return False
         return str(item_tenant).strip() == self._tenant_id
 
+    def put_if_absent(
+        self,
+        collection: str,
+        doc_id: str,
+        obj: Any,
+        *,
+        group_key: str | None = None,
+        seq: int | None = None,
+        correlation_id: str | None = None,
+    ) -> bool:
+        """Keep the underlying atomic insert inside this tenant's partition."""
+        return self._store.put_if_absent(
+            self._collection(collection),
+            doc_id,
+            obj,
+            group_key=group_key,
+            seq=seq,
+            correlation_id=correlation_id,
+        )
+
     @staticmethod
     def _object_key(obj: Any) -> Any:
         for attr in (
@@ -154,6 +174,14 @@ class DurableOperatorDomainStateRepository:
             raise ValueError("domain is required")
         self._store = store
         self._domain = domain.strip()
+
+    @property
+    def engine(self) -> Any:
+        return self._store.engine
+
+    @property
+    def domain(self) -> str:
+        return self._domain
 
     def load(self, tenant_id: str) -> dict[str, Any] | None:
         scoped = TenantScopedDocumentStore(self._store, tenant_id)

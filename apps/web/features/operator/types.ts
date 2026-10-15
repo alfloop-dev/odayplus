@@ -1,3 +1,5 @@
+import type { NetworkListingReadResponse } from "@oday-plus/openapi-client";
+
 export const OPERATOR_ROLE_IDS = [
   "opsLead",
   "supportLead",
@@ -63,6 +65,9 @@ export const LISTING_STATUSES = [
 export type ListingStatus = (typeof LISTING_STATUSES)[number];
 
 export const CANDIDATE_STATUSES = [
+  "new",
+  "scored",
+  "SCORING_FAILED",
   "missingdata",
   "scoring",
   "wait",
@@ -289,15 +294,25 @@ export type ListingSource = {
 export type Listing = {
   id: string;
   sourceId: string;
-  heatZoneId: string;
+  heatZoneId: string | null;
   address: string;
   status: ListingStatus;
   rentPerMonth: number;
   areaPing: number;
-  geocodeConfidence: number;
+  geocodeConfidence: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  h3Index?: string | null;
   duplicateOfId?: string;
-  hardRuleFailures: string[];
+  /** Unknown checks must remain distinct from a recorded empty failure list. */
+  hardRuleFailures: NetworkListingReadResponse["hardRuleFailures"];
   candidateId?: string;
+  /** Actual producer revision; absent means versioned writes are unavailable. */
+  version?: number | null;
+  tenantId?: string | null;
+  mergedIntoId?: string | null;
+  hasLegalHold?: boolean | null;
+  legalHold?: boolean | null;
 };
 
 export type Candidate = {
@@ -306,13 +321,18 @@ export type Candidate = {
   heatZoneId: string;
   title: string;
   address: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  geocodeConfidence?: number | null;
+  h3Index?: string | null;
   status: CandidateStatus;
-  score: number;
-  recommendation: "GO" | "WAIT" | "REJECT";
-  modelVersion: string;
-  datasetSnapshotId: string;
+  score: number | null;
+  confidence?: number | null;
+  recommendation: "GO" | "WAIT" | "REJECT" | "INVESTIGATE" | null;
+  modelVersion: string | null;
+  datasetSnapshotId: string | null;
   missingData: string[];
-  reviewId?: string;
+  reviewId?: string | null;
 };
 
 export type SiteReview = {

@@ -34,6 +34,7 @@ from tests.integration._authz import auth_headers
 # PriceOps view/create/approve/execute is held by the pricing manager; reuse the
 # shared bundle rather than hand-rolling headers that drift from the RBAC matrix.
 WRITE_HEADERS = auth_headers(Role.PRICING_MANAGER)
+REVIEWER_HEADERS = auth_headers(Role.PRICING_MANAGER, subject="independent-pricing-reviewer")
 
 
 def _plan_body(plan_id: str = "PLAN-IDEM-1", *, tenant_id: str = "tenant-a") -> dict[str, Any]:
@@ -275,7 +276,7 @@ def test_transition_replay_returns_the_first_result_and_does_not_double_apply() 
     _seed_submittable_plan(client, "PLAN-REPLAY")
     body = {"actor_id": "approver", "reason": "pilot approved", "decision": "APPROVE"}
     headers = {
-        **WRITE_HEADERS,
+        **REVIEWER_HEADERS,
         "Idempotency-Key": "idem-approve-1",
         "x-correlation-id": "corr-approve-1",
     }
@@ -310,7 +311,7 @@ def test_reusing_a_key_with_a_different_body_is_a_409_conflict() -> None:
     """
     client = _client()
     _seed_submittable_plan(client, "PLAN-CONFLICT")
-    headers = {**WRITE_HEADERS, "Idempotency-Key": "idem-conflict-1"}
+    headers = {**REVIEWER_HEADERS, "Idempotency-Key": "idem-conflict-1"}
 
     approve = client.post(
         "/api/v1/priceops/plans/PLAN-CONFLICT/approve",
@@ -492,7 +493,7 @@ def test_mutation_without_an_idempotency_key_still_works() -> None:
     response = client.post(
         "/api/v1/priceops/plans/PLAN-NOKEY/approve",
         json={"actor_id": "approver", "reason": "approved without a key", "decision": "APPROVE"},
-        headers=WRITE_HEADERS,
+        headers=REVIEWER_HEADERS,
     )
     assert response.status_code == 200, response.text
 

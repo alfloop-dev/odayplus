@@ -204,7 +204,13 @@ def merged_listing_client(tmp_path):
         ))
         return service, TestClient(app)
 
-    _, writer = mount()
+    service, writer = mount()
+    # This isolated read-scope fixture deliberately merges across zones. Its
+    # recorded duplicate relation must name that intended target before the
+    # real write owner can create the durable relationship under test.
+    source = next(row for row in service._state["listings"] if row["id"] == "L-2029")
+    source["duplicateOfId"] = "L-2024"
+    service._sync_listing_to_repo("L-2029")
     merged = writer.post("/network-listings/listings/L-2029/merge", headers={
         "X-Subject-Id": "merger", "X-Roles": "expansion_user,site_reviewer",
         "X-Tenant-Id": "tenant-a", "X-Operator-Role": "expansion-manager",

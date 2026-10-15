@@ -5,6 +5,7 @@ import os
 import socket
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
 
@@ -29,11 +30,13 @@ class _LeaseHeartbeat:
         queue: Any,
         job: JobRecord,
         interval_seconds: float,
+        heartbeat: Callable[..., int] | None = None,
     ) -> None:
         self._queue = queue
         self._job_id = job.job_id
         self._fence_token = job.fence_token
         self._interval_seconds = max(interval_seconds, 0.01)
+        self._heartbeat = heartbeat or queue.heartbeat
         self._version = job.version
         self._failure: BaseException | None = None
         self._state_lock = threading.Lock()
@@ -95,7 +98,7 @@ class _LeaseHeartbeat:
                     return
 
                 try:
-                    new_version = self._queue.heartbeat(
+                    new_version = self._heartbeat(
                         self._job_id,
                         expected_version=latest.version,
                         fence_token=self._fence_token,
@@ -133,6 +136,7 @@ class ODayWorker:
         telemetry: Telemetry | None = None,
         worker_id: str | None = None,
         heartbeat_interval_seconds: float = 15.0,
+        audit_only: bool = False,
     ) -> None:
         self.persistence = persistence or build_persistence()
         self.job_queue = self.persistence.job_queue
@@ -142,11 +146,16 @@ class ODayWorker:
         self.telemetry = telemetry or Telemetry("oday-worker")
         self.worker_id = worker_id or _default_worker_id()
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.audit_only = audit_only
 
     def run_once(self) -> bool:
         """Claim and execute the next queued job. Returns True if a job was executed."""
+        self.sample_audit_backlog()
         try:
-            job = self.job_queue.claim_next(worker_id=self.worker_id)
+            if self.audit_only:
+                job = self.job_queue.claim_next(worker_id=self.worker_id, audit_only=True)
+            else:
+                job = self.job_queue.claim_next(worker_id=self.worker_id)
         except Exception as exc:
             self.telemetry.logger.error(
                 "Failed to claim next job: %s",
@@ -158,6 +167,25 @@ class ODayWorker:
 
         if job is None:
             return False
+
+        from modules.listing.application.intake_score_delivery import (
+            INTAKE_SITESCORE_JOB_TYPE,
+            IntakeScoreJobRepository,
+        )
+        from modules.sitescore.application.score_delivery import (
+            SITESCORE_EXECUTION_JOB_TYPE,
+            ScoreExecutionJobRepository,
+        )
+        canonical_score_job = job.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}
+        score_owner = ScoreExecutionJobRepository if job.job_type == SITESCORE_EXECUTION_JOB_TYPE else IntakeScoreJobRepository
+
+        def score_heartbeat(job_id: str, *, expected_version: int, fence_token: int) -> int:
+            # This adapter renews both the authoritative SQL lease and its
+            # delivery lease in one transaction. Resolve it lazily so a
+            # dependency failure enters the heartbeat's ownership handling.
+            return score_owner(self.persistence).heartbeat(
+                job_id, expected_version=expected_version, fence_token=fence_token,
+            )
 
         context = TraceContext(
             correlation_id=job.correlation_id,
@@ -181,6 +209,7 @@ class ODayWorker:
                 queue=self.job_queue,
                 job=job,
                 interval_seconds=self.heartbeat_interval_seconds,
+                heartbeat=score_heartbeat if canonical_score_job else None,
             )
             heartbeat.start()
             try:
@@ -208,6 +237,26 @@ class ODayWorker:
                         action="execute",
                         result=status_label,
                     )
+                    return True
+
+                if canonical_score_job:
+                    if (latest_job is not None
+                            and latest_job.status == JobStatus.QUEUED
+                            and latest_job.delivery_state == JobDeliveryState.RETRYING):
+                        self.telemetry.logger.info(
+                            f"Job {job.job_id} retry committed by canonical score handler",
+                            correlation_id=job.correlation_id,
+                            resource=f"job/{job.job_type}", action="retry", result="queued",
+                        )
+                    else:
+                        self._record_stale_worker(
+                            job, heartbeat_failure or JobFenceRejectedError(
+                                "Canonical score handler did not commit a terminal or retry checkpoint"
+                            ),
+                        )
+                    # Only the canonical handler can commit the SQL job and
+                    # delivery together. Never turn a return into a delivery-
+                    # only success; retain unresolved leases for recovery.
                     return True
 
                 if (
@@ -292,6 +341,12 @@ class ODayWorker:
                         error_code=type(exc).__name__,
                     )
 
+                    if canonical_score_job:
+                        # A storage/authorization/fence failure must not be
+                        # converted into a separate delivery-only retry. The
+                        # authoritative checkpoint stays recoverable.
+                        return True
+
                     # Retry behavior
                     is_retryable = not isinstance(exc, NonRetryableJobError)
                     payload = (
@@ -371,18 +426,72 @@ class ODayWorker:
     def loop(self, stop_event: Any = None) -> None:
         while stop_event is None or not stop_event.is_set():
             executed = self.run_once()
-            if executed:
-                try:
-                    self.export_metrics()
-                except Exception as exc:
-                    self.telemetry.logger.error(
-                        f"Worker lifecycle export_metrics failed: {exc}",
-                        correlation_id="unknown",
-                        resource="worker/metrics",
-                        error_code=type(exc).__name__,
-                    )
+            try:
+                self.export_metrics()
+            except Exception as exc:
+                self.telemetry.logger.error(
+                    f"Worker lifecycle export_metrics failed: {exc}",
+                    correlation_id="unknown",
+                    resource="worker/metrics",
+                    error_code=type(exc).__name__,
+                )
             if not executed:
                 time.sleep(1.0)
+
+    def sample_audit_backlog(self):
+        self.sample_durable_audit_backlog()
+        if getattr(getattr(self.persistence, "engine", None), "dialect", None) != "postgresql":
+            return None
+
+        from shared.audit.backlog import CanonicalAuditBacklog
+        try:
+            health = CanonicalAuditBacklog(self.persistence.engine).all_tenants()
+            labels = {"service": "oday-worker"}
+            self.telemetry.metrics.set("audit_worm_pending_count", health.pending, labels=labels)
+            self.telemetry.metrics.set("audit_worm_oldest_pending_seconds", health.oldest_seconds, labels=labels)
+            return health
+        except Exception as exc:
+            try:
+                self.telemetry.metrics.increment("audit_worm_backlog_check_failure_count", labels={"service": "oday-worker", "error_class": type(exc).__name__})
+            except Exception as metric_exc:
+                self.telemetry.logger.error(
+                    "Canonical audit backlog failure metric unavailable",
+                    correlation_id="unknown", resource="audit/backlog",
+                    error_code=type(metric_exc).__name__,
+                )
+            self.telemetry.logger.error("Canonical audit backlog observation unavailable", correlation_id="unknown", resource="audit/backlog", error_code=type(exc).__name__)
+            return None
+
+    def sample_durable_audit_backlog(self):
+        engine = getattr(self.persistence, "engine", None)
+        if engine is None:
+            return None
+        from shared.audit.backlog import DurableAuditBacklog
+
+        sink = getattr(self.persistence.audit_log, "_worm_sink", None)
+        labels = {"service": "oday-worker"}
+        try:
+            health = DurableAuditBacklog(engine, getattr(sink, "sink_id", None)).all_tenants()
+            self.telemetry.metrics.set("durable_audit_worm_pending_count", health.pending, labels=labels)
+            self.telemetry.metrics.set("durable_audit_worm_oldest_pending_seconds", health.oldest_seconds, labels=labels)
+            return health
+        except Exception as exc:
+            try:
+                self.telemetry.metrics.increment(
+                    "durable_audit_worm_backlog_check_failure_count",
+                    labels={**labels, "error_class": type(exc).__name__},
+                )
+            except Exception as metric_exc:
+                self.telemetry.logger.error(
+                    "Durable audit backlog failure metric unavailable",
+                    correlation_id="unknown", resource="audit/backlog",
+                    error_code=type(metric_exc).__name__,
+                )
+            self.telemetry.logger.error(
+                "Durable audit backlog observation unavailable",
+                correlation_id="unknown", resource="audit/backlog", error_code=type(exc).__name__,
+            )
+            return None
 
     def export_metrics(self) -> dict[str, Any] | None:
         """Export worker metrics snapshot via ProductionMetricsExporter if exact 40-char release SHA is present in environment."""
