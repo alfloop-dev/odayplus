@@ -106,6 +106,18 @@ afterEach(() => {
 });
 
 describe("Package 10 R7 Today workspace", () => {
+  it("renders an unavailable metric as a dash even if the response carries a zero", () => {
+    const envelope = buildEnvelope();
+    envelope.today.kpis[0] = { label: "高風險未指派", value: "0", availability: "unavailable", meta: "資料尚未備妥" };
+    // Normalize at the actual transport boundary before rendering.
+    const normalized = normalizeShellEnvelope(envelope, { allowFixtureFallback: false });
+    render(<TodayWorkspace envelope={normalized} onApprovalDecision={vi.fn()} onTargetSelect={vi.fn()} />);
+    const card = screen.getByText("高風險未指派").closest("article")!;
+    expect(card).toHaveAttribute("data-availability", "unavailable");
+    expect(within(card).getByText("—")).toBeInTheDocument();
+    expect(within(card).queryByText("0")).not.toBeInTheDocument();
+  });
+
   it("renders the canonical six-card, queue, and ordered decision rail structure", () => {
     render(
       <TodayWorkspace

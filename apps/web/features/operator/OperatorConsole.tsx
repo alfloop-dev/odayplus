@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -26,7 +27,8 @@ import {
   normalizeGovernanceDecisionRows,
 } from "./governance/governanceEnvelope";
 import { GrowthWorkspace } from "./GrowthWorkspace";
-import { NetworkFindAreasWorkspace } from "./NetworkFindAreasWorkspace";
+import { readGovernanceViewState, serializeGovernanceViewState, type GovernanceViewState } from "./governance/governanceUrlState";
+import type { NetworkFindAreasWorkspaceProps } from "./NetworkFindAreasWorkspace";
 import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
 import { ISSUE_FIXTURES } from "./fixtures";
 import {
@@ -80,6 +82,14 @@ const GovernanceWorkspace = dynamic<GovernanceWorkspaceProps>(
   {
     ssr: false,
     loading: () => <div aria-live="polite" role="status">治理工作區載入中…</div>,
+  },
+);
+
+const NetworkFindAreasWorkspace = dynamic<NetworkFindAreasWorkspaceProps>(
+  () => import("./NetworkFindAreasWorkspace").then((mod) => mod.NetworkFindAreasWorkspace),
+  {
+    ssr: false,
+    loading: () => <div aria-live="polite" role="status">展店與店網工作區載入中…</div>,
   },
 );
 
@@ -373,6 +383,9 @@ function dataModeBannerCopy(
   fixturesAllowed: boolean,
 ): { detail: string; label: string } {
   if (status === "ready") {
+    if (fixturesAllowed) {
+      return { label: "開發／驗收 API 資料", detail: "目前顯示開發或驗收環境的 API 資料。" };
+    }
     return { label: "Live API", detail: "目前顯示的是經驗證的正式營運資料。" };
   }
   if (fixturesAllowed) {
@@ -408,6 +421,7 @@ export function OperatorConsole({
   const [activeStoreOpsDialog, setActiveStoreOpsDialog] = useState<StoreOpsWorkflowDialogType | null>(null);
   const [selectedStoreOpsIssue, setSelectedStoreOpsIssue] = useState<Issue | undefined>(undefined);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const [governanceView, setGovernanceView] = useState(() => readGovernanceViewState(searchParams));
   const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isTaskCenterOpen, setIsTaskCenterOpen] = useState(false);
@@ -425,6 +439,7 @@ export function OperatorConsole({
   const [searchValue, setSearchValue] = useState("");
   const [hasHydratedPreferences, setHasHydratedPreferences] = useState(false);
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const topbarRef = useRef<HTMLElement>(null);
 
   const [shellEnvelope, setShellEnvelope] = useState<OperatorShellEnvelope>(() =>
     normalizeShellEnvelope(undefined, { allowFixtureFallback: fixturesAllowed }),
@@ -519,6 +534,28 @@ export function OperatorConsole({
   const isGovernContent = canRenderWorkspace && activeWorkspaceId === "govern";
   const dataModeBanner = dataModeBannerCopy(shellDataStatus, fixturesAllowed);
 
+  useLayoutEffect(() => {
+    const topbar = topbarRef.current;
+    if (!topbar) return;
+    const root = document.documentElement;
+    const property = "--operator-sticky-header-height";
+    const previousValue = root.style.getPropertyValue(property);
+    const updateHeight = () => {
+      const height = Math.ceil(topbar.getBoundingClientRect().height);
+      if (height > 0) root.style.setProperty(property, `${height}px`);
+    };
+    updateHeight();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateHeight);
+    observer?.observe(topbar);
+    window.addEventListener("resize", updateHeight);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateHeight);
+      if (previousValue) root.style.setProperty(property, previousValue);
+      else root.style.removeProperty(property);
+    };
+  }, []);
+
   useEffect(() => {
     const storedRole = getOperatorRole(window.sessionStorage.getItem(roleStorageKey));
     setActiveRoleId(storedRole.id);
@@ -546,8 +583,25 @@ export function OperatorConsole({
     }
     setSelectedEntityId(entity);
     setActiveTabId(tab);
+    setGovernanceView(readGovernanceViewState(searchParams));
     setHasHydratedPreferences(true);
   }, [searchParams]);
+
+  useEffect(() => {
+    function restoreLocation() {
+      const params = new URLSearchParams(window.location.search);
+      const requested = params.get("ws") ?? DEFAULT_WORKSPACE_ID;
+      const role = getOperatorRole(activeRoleId);
+      const workspace = isWorkspaceId(requested) && isWorkspaceAllowed(role, requested) ? requested : DEFAULT_WORKSPACE_ID;
+      setActiveWorkspaceId(workspace);
+      setSelectedEntityId(params.get("entity"));
+      setActiveTabId(params.get("tab") ?? "overview");
+      setGovernanceView(readGovernanceViewState(params));
+      window.sessionStorage.setItem(workspaceStorageKey, workspace);
+    }
+    window.addEventListener("popstate", restoreLocation);
+    return () => window.removeEventListener("popstate", restoreLocation);
+  }, [activeRoleId]);
 
   useEffect(() => {
     if (!hasHydratedPreferences) return;
@@ -655,6 +709,11 @@ export function OperatorConsole({
         }
 
         applyOperatorEnvelope(payload);
+        // The server resolves the selected persona from the authenticated
+        // principal; a stale/default browser preference must not impersonate
+        // operations when that principal is an expansion contributor.
+        const resolvedRoleId = normalizeShellEnvelope(payload, { allowFixtureFallback: fixturesAllowed }).meta.role.id;
+        if (isOperatorRoleId(resolvedRoleId)) setActiveRoleId(resolvedRoleId);
         setShellDataStatus(inspection.status === "ready" ? "ready" : "fixture");
       } catch (err) {
         console.error("Error loading operator shell envelope:", err);
@@ -945,10 +1004,12 @@ export function OperatorConsole({
     setToast(message);
   }
 
-  function updateDeepLink(target: ShellTarget) {
+  function updateDeepLink(target: ShellTarget, historyMode: "push" | "replace" = "replace") {
     if (typeof window === "undefined") return;
     const nextUrl = new URL(window.location.href);
     nextUrl.searchParams.set("ws", target.workspace);
+    nextUrl.searchParams.delete("evidence");
+    nextUrl.searchParams.delete("auditCategory");
     if (target.entityId) {
       nextUrl.searchParams.set("entity", target.entityId);
     } else {
@@ -959,7 +1020,9 @@ export function OperatorConsole({
     } else {
       nextUrl.searchParams.delete("tab");
     }
-    window.history.replaceState({}, "", `${nextUrl.pathname}${nextUrl.search}`);
+    const href = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+    if (historyMode === "push") window.history.pushState(null, "", href);
+    else window.history.replaceState(null, "", href);
   }
 
   function handleTargetSelect(target: ShellTarget, label: string) {
@@ -975,7 +1038,8 @@ export function OperatorConsole({
     setSelectedEntityId(target.entityId ?? null);
     setActiveTabId(target.tab ?? "overview");
     window.sessionStorage.setItem(workspaceStorageKey, workspaceId);
-    updateDeepLink({ ...target, workspace: workspaceId });
+    setGovernanceView(readGovernanceViewState({ tab:target.tab, entity:target.entityId }));
+    updateDeepLink({ ...target, workspace: workspaceId }, "push");
     setIsSearchOpen(false);
     setIsCommandPaletteOpen(false);
     setSearchValue("");
@@ -995,6 +1059,15 @@ export function OperatorConsole({
     handleTargetSelect({ workspace: workspaceId, tab: "overview" }, getWorkspace(workspaceId).label);
   }
 
+  function handleGovernanceViewChange(next: GovernanceViewState) {
+    if (!isWorkspaceAllowed(activeRole, "govern")) return;
+    const url = new URL(window.location.href);
+    url.search = serializeGovernanceViewState(next, url.searchParams).toString();
+    const href = `${url.pathname}${url.search}${url.hash}`;
+    if (href !== `${window.location.pathname}${window.location.search}${window.location.hash}`) window.history.pushState(null, "", href);
+    setGovernanceView(next); setSelectedEntityId(next.approvalId); setActiveTabId(next.tab);
+  }
+
   function handleRoleSelect(roleId: OperatorRoleId) {
     const nextRole = getOperatorRole(roleId);
     setActiveRoleId(nextRole.id);
@@ -1005,9 +1078,12 @@ export function OperatorConsole({
       setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
       window.sessionStorage.setItem(workspaceStorageKey, DEFAULT_WORKSPACE_ID);
       updateDeepLink({ workspace: DEFAULT_WORKSPACE_ID, tab: "overview" });
+    } else {
+      updateDeepLink({ workspace:activeWorkspaceId, tab:"overview" });
     }
     setSelectedEntityId(null);
     setActiveTabId("overview");
+    setGovernanceView(readGovernanceViewState({}));
 
     showToast(`已切換為 ${nextRole.label}`);
   }
@@ -1021,6 +1097,7 @@ export function OperatorConsole({
     setActiveTabId("overview");
     setSearchValue("");
     setCommandQuery("");
+    setGovernanceView(readGovernanceViewState({}));
     updateDeepLink({ workspace: DEFAULT_WORKSPACE_ID, tab: "overview" });
     showToast("已重置為營運主管 Today");
   }
@@ -1181,7 +1258,7 @@ export function OperatorConsole({
       data-intake-detail-open={intakeDetailOpen ? "true" : undefined}
       data-testid="operator-console"
     >
-      <header className={styles.topbar} data-screen-label="Top Navigation">
+      <header ref={topbarRef} className={styles.topbar} data-screen-label="Top Navigation">
         <div className={styles.topbarInner} data-testid="operator-topbar-inner">
           <div className={styles.brandCluster} aria-label="Oday Plus Operator Console">
             <span className={styles.brandMark}>O+</span>
@@ -1541,6 +1618,8 @@ export function OperatorConsole({
         ) : activeWorkspaceId === "govern" ? (
           // GovernanceWorkspace renders its own Package 10 page header.
           <GovernanceWorkspace
+            viewState={governanceView}
+            onViewStateChange={handleGovernanceViewChange}
             approvals={liveApprovals.length ? liveApprovals : undefined}
             auditRows={liveGovernanceAuditRows.length ? liveGovernanceAuditRows : undefined}
             callbacks={{

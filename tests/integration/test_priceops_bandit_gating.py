@@ -446,12 +446,12 @@ def test_production_required_with_exploration() -> None:
     # 1. Without source snapshot lineage, production optimization must fail closed
     item_no_lineage = _make_item()
     plan_no_lineage = prod_service.create_plan(
-        tenant_id=TENANT_ID, items=[item_no_lineage], correlation_id="corr-p1"
+        tenant_id=TENANT_ID, items=[item_no_lineage], correlation_id="corr-p1", created_by="synthetic-producer"
     )
     prod_service.simulate(plan_no_lineage.plan_id)
     with pytest.raises(PriceOpsProductionExecutionError, match="lineage"):
         prod_service.optimize(
-            plan_no_lineage.plan_id, exploration_gate_id=gate.gate_id, exploration_seed=42
+            plan_no_lineage.plan_id
         )
 
     # 2. With lineage, production optimization succeeds and outputs PRICEOPS_OSS_SOLVER_VERSION
@@ -477,19 +477,20 @@ def test_production_required_with_exploration() -> None:
         source_snapshot_ids=("snap-lineage-001",),
     )
     plan_with_lineage = prod_service.create_plan(
-        tenant_id=TENANT_ID, items=[item_with_lineage], correlation_id="corr-p2"
+        tenant_id=TENANT_ID, items=[item_with_lineage], correlation_id="corr-p2", created_by="synthetic-producer"
     )
     prod_service.simulate(plan_with_lineage.plan_id)
     opt = prod_service.optimize(
         plan_with_lineage.plan_id,
-        exploration_gate_id=gate.gate_id,
-        exploration_seed=42,
     )
 
     assert opt.solver_version == PRICEOPS_OSS_SOLVER_VERSION
-    assert opt.solver_metadata["exploration_enabled"] is True
-    assert opt.solver_metadata["gate_id"] == gate.gate_id
+    assert opt.solver_metadata["exploration_enabled"] is False
     assert "engines" in opt.solver_metadata
+    # A facade over memory/free-text gate references is not workflow authority.
+    with pytest.raises(ExplorationNotAuthorizedError, match="canonical workflow"):
+        prod_service.optimize(plan_with_lineage.plan_id, exploration_gate_id=gate.gate_id)
+    assert repo.list_exploration_decisions(gate.gate_id) == []
 
 
 

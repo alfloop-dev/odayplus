@@ -1,0 +1,56 @@
+import { expect, test } from "@playwright/test";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+const target="ap-network-3319";
+const tabs=["decisions","audit","userManagement","evidencePackage","statusBoard","featureFlags","learningHub","approvals"];
+
+for(const width of [1440,1024,390]){
+  test(`Governance requested target, URL state and browser history at ${width}`,async({page},info)=>{
+    test.setTimeout(120_000);
+    await page.setViewportSize({width,height:900});
+    await page.addInitScript(()=>sessionStorage.setItem("oday.operator.role","ops-lead"));
+    let writes=0;
+    page.on("request",request=>{if(request.method()==="POST"&&/\/governance\/(?:decisions|evidence-packages)/.test(request.url()))writes+=1;});
+    await page.goto(`/operator?ws=govern&tab=approvals&entity=${target}&evidence=ev-score&trace=local-governance-check`);
+    const detail=page.getByRole("article",{name:"Approval detail"});
+    await expect(detail.getByRole("heading",{name:"Approve SiteScore override"})).toBeVisible();
+    await expect(page.getByTestId("governance-selected-evidence")).toContainText("ev-score");
+    await page.reload();
+    await expect(detail.getByRole("heading",{name:"Approve SiteScore override"})).toBeVisible();
+    const states=[];
+    for(const tab of tabs){
+      await page.getByTestId(`governance-tab-${tab}`).click();
+      await expect(page.getByTestId(`governance-tab-${tab}`)).toHaveAttribute("aria-current","page");
+      await expect(page).toHaveURL(new RegExp(`tab=${tab}(?:&|$)`));
+      expect(new URL(page.url()).searchParams.get("entity")).toBe(target);
+      expect(new URL(page.url()).searchParams.get("trace")).toBe("local-governance-check");
+      states.push({tab,url:page.url()});
+    }
+    await page.goBack();
+    await expect(page.getByTestId("governance-tab-learningHub")).toHaveAttribute("aria-current","page");
+    await page.goForward();
+    await expect(page.getByTestId("governance-tab-approvals")).toHaveAttribute("aria-current","page");
+    await expect(detail.getByRole("heading",{name:"Approve SiteScore override"})).toBeVisible();
+    await page.getByTestId("governance-tab-audit").click();
+    await page.getByRole("button",{name:"影像調閱",exact:true}).click();
+    await expect(page).toHaveURL(/auditCategory=camera/);
+    await page.reload();
+    await expect(page.getByTestId("governance-tab-audit")).toHaveAttribute("aria-current","page");
+    await expect(page.getByRole("button",{name:"影像調閱",exact:true})).toHaveAttribute("aria-current","true");
+    await page.goto("/operator?ws=govern&tab=approvals&entity=NOT-IN-SCOPE");
+    await expect(page.getByTestId("governance-approval-unavailable")).toContainText("指定核准項目未取得");
+    await expect(detail.getByRole("button",{name:"核准",exact:true})).toHaveCount(0);
+    await page.goto(`/operator?ws=govern&tab=approvals&entity=${target}&evidence=NOT-IN-SCOPE`);
+    await expect(page.getByTestId("governance-evidence-unavailable")).toBeVisible();
+    await expect(page.getByTestId("governance-selected-evidence")).toHaveCount(0);
+    const geometry=await page.getByTestId("governance-workspace").evaluate(element=>({
+      rect:element.getBoundingClientRect().toJSON(),documentWidth:document.documentElement.scrollWidth,viewport:innerWidth,
+    }));
+    expect(geometry.documentWidth).toBeLessThanOrEqual(width);
+    expect(writes).toBe(0);
+    const evidence=process.env.STORE_OPS_PARITY_EVIDENCE_DIR??info.outputDir;await mkdir(evidence,{recursive:true});
+    await page.screenshot({path:path.join(evidence,`governance-navigation-${width}.png`),animations:"disabled"});
+    await writeFile(path.join(evidence,`governance-navigation-${width}.json`),JSON.stringify({states,geometry,writes,scope:"Synthetic local URL/history checks; not remote visual approval"},null,2));
+  });
+}

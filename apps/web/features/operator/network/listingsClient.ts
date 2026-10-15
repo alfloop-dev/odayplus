@@ -10,7 +10,7 @@
 // Composes with: ListingMergeDialog (collects reason + risk acknowledgement)
 //                and NetworkListingService.merge_listing on the server.
 
-import type { MergeListingResponse, OdpApiClient } from "@oday-plus/openapi-client";
+import type { ArchiveListingResponse, MergeListingResponse, OdpApiClient } from "@oday-plus/openapi-client";
 import {
   buildOperatorNetworkClient,
   guardCall,
@@ -54,6 +54,8 @@ const MERGE_ERRORS: Record<number, StatusErrorSpec> = {
     next: "請填寫合併原因並勾選風險確認後再送出。",
     retryable: false,
   },
+  428: { code: "ODP-LISTING-PRECONDITION-REQUIRED", next: "請重新載入目前物件版本後再確認。", retryable: false },
+  503: { code: "ODP-LISTING-VERSION-UNAVAILABLE", next: "目前沒有可驗證的物件版本，請聯繫維運確認版本來源。", retryable: false },
 };
 
 export function toListingApiError(error: unknown): OperatorApiError {
@@ -61,9 +63,9 @@ export function toListingApiError(error: unknown): OperatorApiError {
     byStatus: MERGE_ERRORS,
     fallbackPrefix: "ODP-LISTING-MERGE",
     roleDenied: ROLE_DENIED,
-    timeoutSummary: "連線逾時 — 後端未在時限內回應，本次合併未寫入。",
-    networkSummary: "無法連線至後端服務，本次合併未寫入。",
-    transportNextAction: "請確認網路連線後重試；你輸入的原因已保留。",
+    timeoutSummary: "連線逾時 — 尚無法確認本次操作是否完成。",
+    networkSummary: "連線中斷 — 尚無法確認本次操作是否完成。",
+    transportNextAction: "請保留此確認視窗並以同一操作重試；原因與請求識別已保留。",
   });
 }
 
@@ -96,6 +98,10 @@ export function newMergeIdempotencyKey(
   return `merge-${sourceListingId}-${targetListingId}-${randomToken()}`;
 }
 
+export function newArchiveIdempotencyKey(listingId: string): string {
+  return `archive-${listingId}-${randomToken()}`;
+}
+
 export const listingsApi = {
   /**
    * `riskSummary` is the exact text the dialog rendered and `riskAcknowledged`
@@ -118,6 +124,9 @@ export const listingsApi = {
       riskSummary: string;
       riskAcknowledged: boolean;
       idempotencyKey: string;
+      ifMatch?: string;
+      targetIfMatch?: string;
+      ifActorMatch?: string;
     },
   ): Promise<OperatorApiResult<MergeListingResponse>> {
     return guardCall(
@@ -130,13 +139,25 @@ export const listingsApi = {
             reason: input.reason,
             riskSummary: input.riskSummary,
             riskAcknowledged: input.riskAcknowledged,
+            targetIfMatch: input.targetIfMatch,
+            expectedActorSubjectId: input.ifActorMatch,
           },
           {
             correlationId: newCorrelationId(),
             idempotencyKey: input.idempotencyKey,
+            ifMatch: input.ifMatch,
+            ifActorMatch: input.ifActorMatch,
           },
         ),
       toListingApiError,
     );
+  },
+  archive(client: OdpApiClient, listingId: string, input: {
+    actorRoleId: string; reason: string; idempotencyKey: string; ifMatch?: string; ifActorMatch?: string;
+  }): Promise<OperatorApiResult<ArchiveListingResponse>> {
+    return guardCall(() => client.archiveListing(listingId, { actorRoleId: input.actorRoleId, reason: input.reason,
+      expectedActorSubjectId: input.ifActorMatch }, {
+      correlationId: newCorrelationId(), idempotencyKey: input.idempotencyKey, ifMatch: input.ifMatch, ifActorMatch: input.ifActorMatch,
+    }), toListingApiError);
   },
 };

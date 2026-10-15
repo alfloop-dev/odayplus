@@ -6,10 +6,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from apps.api.app.routes.listings import create_assisted_intake_router
+from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 from tests.unit.listing.test_xlsx_import import _create_mock_xlsx
 
 app = FastAPI()
-router = create_assisted_intake_router()
+router = create_assisted_intake_router(workflow_policy=SyntheticIntakeWorkflowPolicy())
 app.include_router(router)
 client = TestClient(app)
 

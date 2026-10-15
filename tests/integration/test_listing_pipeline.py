@@ -122,6 +122,10 @@ def test_listing_pipeline_imports_parses_dedups_and_converts_candidates() -> Non
     assert candidate["rent"] == 45000.0
     assert candidate["area"] == 25.5
     assert candidate["heatZone"]
+    assert candidate["score"] is None
+    assert candidate["recommendation"] is None
+    assert candidate["modelVersion"] is None
+    assert candidate["datasetSnapshotId"] == "listing-2026-06-26"
     assert result.records[2].issues[0].code == "rent_per_ping_above_format_maximum"
     assert {issue.code for issue in result.records[3].issues} == {"floor_not_ground_level"}
     assert result.records[4].issues[0].code == "missing_required_field"

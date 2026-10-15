@@ -30,6 +30,26 @@
   flex-wrap: wrap;
 }
 
+.inboxPaginationControls {
+  display: flex;
+  flex: 0 1 320px;
+  width: 320px;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.inboxPaginationControls .select {
+  width: auto;
+  flex: 1 1 100px;
+  min-width: 0;
+}
+
+.inboxPaginationControls button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .addButton {
   background: #2e3a97;
   color: #ffffff;
@@ -467,6 +487,40 @@
 .inboxFilterControls .select {
   width: auto;
   max-width: 220px;
+}
+
+.inboxFilterField {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+  color: #5a6478;
+  font-size: 10px;
+}
+
+.inboxFilterField .input,
+.inboxFilterField .select {
+  width: 190px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.inboxRowMetadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.inboxMetadataGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .noteBox {

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.app.routes.listings import AssistedIntakeStore
 from apps.api.oday_api.main import create_app
+from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 ACTOR_A = "00000000-0000-0000-0000-000000000101"
@@ -29,7 +31,7 @@ HEADERS_A_REVIEWER = {
 
 
 def test_promotion_api_contract_flow() -> None:
-    app = create_app()
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     client = TestClient(app)
 
     # 1. Submit an intake to /api/v1/intakes/url (resolves to READY)
@@ -101,6 +103,8 @@ def test_promotion_api_contract_flow() -> None:
         rent_amount=50000.0,
         area_ping=25.0,
     )
+    # This positive synthetic fixture records a completed hard-rule check.
+    object.__setattr__(listing, "hard_rule_failures", [])
     repository.save_listing(listing, address, key)
 
     # 2. Request promotion (None -> REQUESTED -> VALIDATING)
@@ -151,21 +155,23 @@ def test_promotion_api_contract_flow() -> None:
         json=review_payload,
         headers=review_headers,
     )
-    assert review_resp.status_code == 200, review_resp.text
-    reviewed_data = review_resp.json()
-    assert reviewed_data["status"] == "COMPLETED"
-    assert reviewed_data["reviewer_subject_id"] == ACTOR_A_REVIEWER
-    assert reviewed_data["candidate_site_id"] is not None
-    assert reviewed_data["site_score_job_id"] is not None
-    candidate = repository.list_candidates()[0]
-    assert candidate.dataset_snapshot_id == "FS-SN-99"
-    job = store.jobs[reviewed_data["site_score_job_id"]]
-    assert job["status"] == "SUCCEEDED"
-    assert job["checkpoint"] == "SCORE_QUEUED"
+    # Explicit POC persistence has no canonical workflow.jobs dispatcher.
+    # A successful review response here used to manufacture a score receipt.
+    assert review_resp.status_code == 503, review_resp.text
+    assert "SCORE_DELIVERY_UNAVAILABLE" in review_resp.text
+    retained = client.get(f"/api/v1/promotion-decisions/{promo_decision_id}", headers=HEADERS_A)
+    assert retained.status_code == 200, retained.text
+    assert retained.json()["status"] == "PENDING_REVIEW"
+    assert retained.json()["version"] == promo_data["version"]
+    assert not retained.json().get("candidate_site_id")
+    assert not retained.json().get("site_score_job_id")
+    assert not any(c.candidate_site.listing_id == target_listing_id for c in repository.list_candidates())
 
 
-def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> None:
-    app = create_app()
+@pytest.mark.parametrize("score_failure", [False, True])
+def test_operator_intake_cannot_invent_delivery_without_a_canonical_dispatcher(monkeypatch, score_failure) -> None:
+    monkeypatch.setenv("CI", "1")
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     client = TestClient(app)
 
     submitted = client.post(
@@ -230,6 +236,10 @@ def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> No
             area_ping=18.0,
         ),
     )
+    # Record the fixture verdict; absence must continue to fail in production.
+    listing = app.state.listing_repository.get_listing(target_listing_id)
+    assert listing is not None
+    object.__setattr__(listing, "hard_rule_failures", [])
     operator_record = app.state.operator_intake_repository.intakes[intake["id"]]
     operator_record["matchResult"]["targetListingId"] = target_listing_id
     app.state.operator_intake_repository.save_intake(operator_record)
@@ -287,58 +297,20 @@ def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> No
             "x-operator-role": "expansion-manager",
             "Idempotency-Key": f"operator-review-{uuid4()}",
             "If-Match": f'W/"{decision["version"]}"',
+            **({"X-ODP-Test-Fault": "score-failure"} if score_failure else {}),
         },
     )
-    assert reviewed.status_code == 200, reviewed.text
-    job_id = reviewed.json()["site_score_job_id"]
-    receipt = client.get(
-        f"/api/v1/jobs/{job_id}/receipt",
-        headers={
-            "x-subject-id": ACTOR_A_REVIEWER,
-            "x-tenant-id": OPERATOR_TENANT,
-            "x-roles": "site_reviewer,data_owner,expansion_user",
-            "x-operator-role": "expansion-manager",
-        },
+    assert reviewed.status_code == 503, reviewed.text
+    assert "SCORE_DELIVERY_UNAVAILABLE" in reviewed.text
+    retained = client.get(
+        f"/api/v1/intakes/{intake['id']}/promotion-decision",
+        headers={"x-subject-id": ACTOR_A_REVIEWER, "x-tenant-id": OPERATOR_TENANT,
+                 "x-roles": "site_reviewer,data_owner,expansion_user"},
     )
-    assert receipt.status_code == 200, receipt.text
-    assert receipt.json()["job_id"] == job_id
-    assert receipt.json()["version"] == 1
-
-    # The retry route must resolve the linked operator intake too; otherwise
-    # SCORE_FAILED UI replay would fail with DEPENDENCY_CONFLICT.
-    store = next(store for store in reversed(AssistedIntakeStore._instances) if job_id in store.jobs)
-    store.jobs[job_id]["status"] = "FAILED"
-    retry_key = f"operator-job-retry-{uuid4()}"
-    retry_body = {
-        "checkpoint": "SCORE_QUEUED",
-        "reason": "Retry authoritative SiteScore checkpoint",
-        "risk_acknowledged": True,
-    }
-    retry_headers = {
-        "x-subject-id": ACTOR_A_REVIEWER,
-        "x-tenant-id": OPERATOR_TENANT,
-        "x-roles": "site_reviewer,data_owner,expansion_user",
-        "x-operator-role": "expansion-manager",
-        "Idempotency-Key": retry_key,
-        "If-Match": 'W/"1"',
-    }
-    retried = client.post(
-        f"/api/v1/jobs/{job_id}/retry",
-        json=retry_body,
-        headers=retry_headers,
-    )
-    assert retried.status_code == 202, retried.text
-    assert retried.json()["status"] == "QUEUED"
-    assert retried.json()["version"] == 2
-    assert retried.headers["idempotency-replayed"] == "false"
-    assert retried.headers["etag"] == 'W/"2"'
-
-    replayed = client.post(
-        f"/api/v1/jobs/{job_id}/retry",
-        json=retry_body,
-        headers=retry_headers,
-    )
-    assert replayed.status_code == 202, replayed.text
-    assert replayed.json() == retried.json()
-    assert replayed.headers["idempotency-replayed"] == "true"
-    assert replayed.headers["etag"] == 'W/"2"'
+    assert retained.status_code == 200, retained.text
+    assert retained.json()["status"] == "PENDING_REVIEW"
+    assert retained.json()["version"] == decision["version"]
+    assert not retained.json().get("candidate_site_id")
+    assert not retained.json().get("site_score_job_id")
+    assert not any(c.candidate_site.listing_id == target_listing_id
+                   for c in app.state.listing_repository.list_candidates())

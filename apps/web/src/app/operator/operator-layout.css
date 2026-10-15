@@ -3,6 +3,26 @@ body {
   padding: 0 !important;
 }
 
+/* Native scrolling must leave controls below the sticky, responsive topbar. */
+html:has([data-testid="operator-console"]) {
+  --operator-header-before-hydration: 53px;
+  scroll-padding-top: calc(var(--operator-sticky-header-height, var(--operator-header-before-hydration)) + 12px);
+}
+
+/* Server-rendered controls can receive native focus before React measures
+ * the header. Match its responsive rows until the measured value is ready. */
+@media (max-width: 1240px) {
+  html:has([data-testid="operator-console"]) {
+    --operator-header-before-hydration: 91px;
+  }
+}
+
+@media (max-width: 768px) {
+  html:has([data-testid="operator-console"]) {
+    --operator-header-before-hydration: 171px;
+  }
+}
+
 /*
  * Intake detail is the sole content layer below the Package 10 top navigation.
  * Neutralize legacy console minimum widths only while that durable detail

@@ -28,7 +28,7 @@ from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.factory import build_persistence
 from shared.infrastructure.persistence.job_queue import DurableJobQueue, JobFenceRejectedError
-from shared.infrastructure.persistence.postgresql import PostgresEngine
+from shared.infrastructure.persistence.postgresql import PostgresEngine, PostgreSQLSchemaError
 from shared.infrastructure.persistence.repositories import TenantScopeRequiredError
 from shared.jobs.queue import JobRequest, JobStatus
 
@@ -249,6 +249,27 @@ def test_postgresql_claim_is_atomic_across_worker_processes() -> None:
         engine.close()
 
 
+def test_applied_bootstrap_does_not_take_ddl_locks_against_active_commands(intake_blank_db: Any) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    url = intake_blank_db.url()
+    first = PostgresEngine(url, validate_schema=False)
+    try:
+        with intake_blank_db.connect(autocommit=False) as connection:
+            connection.execute("LOCK TABLE odp_runtime.durable_jobs IN ROW EXCLUSIVE MODE")
+            # A repeated CREATE INDEX/ALTER TABLE bootstrap used to block here
+            # and deadlock with the command's later document/audit locks.
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(PostgresEngine, url, validate_schema=False)
+                try:
+                    other = future.result(timeout=5)
+                finally:
+                    connection.rollback()
+                other.close()
+    finally:
+        first.close()
+
+
 def test_the_migration_job_provisions_every_relation_the_bundle_requires(
     intake_blank_db: Any,
 ) -> None:
@@ -266,6 +287,39 @@ def test_the_migration_job_provisions_every_relation_the_bundle_requires(
     try:
         # Raises PostgreSQLSchemaError naming whatever is missing.
         engine.validate_schema()
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize(
+    "missing_relation",
+    ["odp_runtime.durable_sequences", "odp_runtime.notification_inapp_inbox"],
+)
+def test_applied_bootstrap_refuses_missing_runtime_table_without_repair(
+    intake_blank_db: Any, missing_relation: str,
+) -> None:
+    from psycopg import sql
+
+    _provision_canonical_schema(intake_blank_db)
+    engine = PostgresEngine(intake_blank_db.url())
+    try:
+        applied = engine.query(
+            "SELECT migration_id FROM odp_runtime.schema_migrations "
+            "WHERE migration_id LIKE ?",
+            ("000008_postgresql_runtime_persistence:sha256:%",),
+        )
+        assert len(applied) == 1
+        with intake_blank_db.connect() as connection:
+            connection.execute(
+                sql.SQL("DROP TABLE {}").format(sql.Identifier(*missing_relation.split(".")))
+            )
+        with pytest.raises(PostgreSQLSchemaError, match=missing_relation):
+            PostgresEngine(intake_blank_db.url(), pool=engine._pool)
+        assert engine.query_one("SELECT to_regclass(?) AS relation", (missing_relation,)) == {"relation": None}
+        assert engine.query_one(
+            "SELECT migration_id FROM odp_runtime.schema_migrations WHERE migration_id = ?",
+            (applied[0]["migration_id"],),
+        ) == applied[0]
     finally:
         engine.close()
 
@@ -449,10 +503,8 @@ def test_postgresql_address_store_and_transaction_contracts_are_tenant_scoped(
         assert tenant_b_envelope["meta"]["tenantId"] == tenant_b.tenant_id
         assert tenant_a_envelope["meta"]["recordCounts"]["stores"] == 1
         assert tenant_b_envelope["meta"]["recordCounts"]["stores"] == 1
-        tenant_a_kpis = {item["label"]: item["value"] for item in tenant_a_envelope["kpis"]}
-        tenant_b_kpis = {item["label"]: item["value"] for item in tenant_b_envelope["kpis"]}
-        assert tenant_a_kpis["交易淨額"] == "110.00"
-        assert tenant_b_kpis["交易淨額"] == "220.00"
+        assert tenant_a_envelope["meta"]["recordCounts"]["successfulTransactionNet"] == 110.0
+        assert tenant_b_envelope["meta"]["recordCounts"]["successfulTransactionNet"] == 220.0
         assert store_b.store_id not in str(tenant_a_envelope)
         assert transaction_b.transaction_id not in str(tenant_a_envelope)
 
@@ -563,4 +615,3 @@ def test_postgresql_manual_correction_readback_and_rollback(
         assert bundle.audit_log.verify_chain().ok is True
     finally:
         bundle.engine.close()
-

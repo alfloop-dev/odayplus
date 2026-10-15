@@ -57,7 +57,16 @@ class DurableAssistedIntakeRepository:
         return self._store.get(self._LISTING_META, listing_id) or {}
 
     def save_listing_metadata(self, listing_id: str, metadata: dict[str, Any]) -> None:
-        self._store.put(self._LISTING_META, listing_id, metadata)
+        engine = self._store.engine
+        with engine.lock:
+            if getattr(engine, "dialect", None) == "postgresql":
+                collection = (self._store._collection(self._LISTING_META)
+                              if hasattr(self._store, "_collection") else self._LISTING_META)
+                # Match the score reader's key even when no row exists yet;
+                # FOR UPDATE alone cannot serialize a late first insertion.
+                engine.query_one("SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                                 (f"{collection}:{listing_id}",))
+            self._store.put(self._LISTING_META, listing_id, metadata)
 
     def get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
         return self._store.get(self._CANDIDATE_META, candidate_id) or {}

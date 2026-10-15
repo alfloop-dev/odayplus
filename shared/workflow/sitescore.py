@@ -24,6 +24,7 @@ from uuid import uuid4
 
 from modules.sitescore.domain.scoring import SiteScoreRecommendation, SiteScoreReport
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.domain.models import Approval
 
 POLICY_VERSION = "sitescore-decision-policy-v1"
 
@@ -64,6 +65,18 @@ class DecisionTransition:
     action: str
     reason: str
     at: datetime
+    network_action: str | None = None
+    conditions: str | None = None
+    required_data: tuple[str, ...] | None = None
+    override_ack: bool | None = None
+    actor_role_id: str | None = None
+    tenant_id: str | None = None
+    report_id: str | None = None
+    report_version: int | None = None
+    model_version: str | None = None
+    approval_id: str | None = None
+    version: int | None = None
+    correlation_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +86,12 @@ class DecisionTransition:
             "action": self.action,
             "reason": self.reason,
             "at": self.at.isoformat(),
+            **{
+                key: getattr(self, key, None)
+                for key in ("network_action", "conditions", "override_ack", "actor_role_id",
+                            "tenant_id", "report_id", "report_version", "model_version", "approval_id", "version", "correlation_id")
+            },
+            "required_data": (list(self.required_data) if getattr(self, "required_data", None) is not None else None),
         }
 
 
@@ -90,6 +109,14 @@ class SiteScoreDecision:
     created_at: datetime
     history: tuple[DecisionTransition, ...] = ()
     tenant_id: str = ""
+    # Zero denotes a legacy record without a persisted concurrency version.
+    version: int = 0
+    network_action: str | None = None
+    conditions: str | None = None
+    required_data: tuple[str, ...] | None = None
+    override_ack: bool | None = None
+    actor_role_id: str | None = None
+    approval_id: str | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -109,6 +136,10 @@ class SiteScoreDecision:
             "created_at": self.created_at.isoformat(),
             "history": [transition.to_dict() for transition in self.history],
             "tenant_id": self.tenant_id,
+            "version": getattr(self, "version", 0),
+            **{key: getattr(self, key, None) for key in
+               ("network_action", "conditions", "override_ack", "actor_role_id", "approval_id")},
+            "required_data": (list(self.required_data) if getattr(self, "required_data", None) is not None else None),
         }
 
 
@@ -310,11 +341,13 @@ class SiteScoreDecisionWorkflow:
         hooks: Iterable[RealizationHook] | None = None,
         policy_version: str = POLICY_VERSION,
         store: DecisionStore | None = None,
+        approval_store: Any | None = None,
     ) -> None:
         self.audit_log = audit_log or InMemoryAuditLog()
         self.hooks: list[RealizationHook] = list(hooks or ())
         self.policy_version = policy_version
         self._store: DecisionStore = store or InMemoryDecisionStore()
+        self._approval_store = approval_store
 
     def register_hook(self, hook: RealizationHook) -> None:
         self.hooks.append(hook)
@@ -329,6 +362,10 @@ class SiteScoreDecisionWorkflow:
     ) -> SiteScoreDecision:
         """Seed a decision from a SiteScore report (system recommendation)."""
         now = datetime.now(UTC)
+        store_tenant = getattr(self._store, "tenant_id", "")
+        if store_tenant and tenant_id and store_tenant != tenant_id:
+            raise SiteScoreDecisionError("decision tenant differs from the scoped repository")
+        tenant_id = tenant_id or store_tenant
         decision = SiteScoreDecision(
             decision_id=f"sitescore-decision-{uuid4()}",
             candidate_site_id=report.candidate_site_id,
@@ -341,6 +378,7 @@ class SiteScoreDecisionWorkflow:
             created_by=created_by,
             created_at=now,
             tenant_id=tenant_id,
+            version=1,
         )
         self._store.save_report(decision.decision_id, report)
         self._store.save_decision(decision)
@@ -372,6 +410,8 @@ class SiteScoreDecisionWorkflow:
             actor=submitted_by,
             action="submit",
             reason="送審",
+            approval_id=self._create_approval(decision),
+            correlation_id=correlation_id,
         )
         self._record_audit(
             updated,
@@ -391,6 +431,11 @@ class SiteScoreDecisionWorkflow:
         actor: str,
         reason: str = "",
         correlation_id: str = "",
+        network_action: str | None = None,
+        conditions: str | None = None,
+        required_data: Iterable[str] | None = None,
+        override_ack: bool | None = None,
+        actor_role_id: str | None = None,
     ) -> SiteScoreDecisionOutcome:
         decision = self._require(decision_id)
         resolved_action = DecisionAction(action)
@@ -404,17 +449,45 @@ class SiteScoreDecisionWorkflow:
             )
 
         target = _ACTION_TARGET[resolved_action]
+        # Existing native APPROVE/REJECT calls retain their documented behavior.
+        # Old persisted records without this evidence remain unknown.
+        explicit_network_action = network_action
+        recorded_required_data = tuple(required_data) if required_data is not None else None
+        if explicit_network_action is None:
+            explicit_network_action = {
+                DecisionAction.APPROVE: "GO", DecisionAction.REJECT: "REJECT",
+            }.get(resolved_action)
+        if explicit_network_action is not None:
+            expected = {"GO": DecisionAction.APPROVE, "WAIT": DecisionAction.APPROVE,
+                        "RETURN": DecisionAction.REQUEST_REVISION, "REJECT": DecisionAction.REJECT}
+            if expected.get(explicit_network_action) is not resolved_action:
+                raise SiteScoreDecisionError("network action does not match the native transition")
+            if explicit_network_action == "WAIT" and (not isinstance(conditions, str) or not conditions.strip()):
+                raise SiteScoreDecisionError("WAIT requires its recorded approval conditions")
+            if explicit_network_action == "RETURN" and (not recorded_required_data or not all(
+                isinstance(item, str) and item.strip() for item in recorded_required_data
+            )):
+                raise SiteScoreDecisionError("RETURN requires its recorded missing-data list")
         updated = self._transition(
             decision,
             to_status=target,
             actor=actor,
             action=resolved_action.value,
             reason=reason,
+            network_action=explicit_network_action,
+            conditions=conditions,
+            required_data=recorded_required_data,
+            override_ack=override_ack,
+            actor_role_id=actor_role_id,
+            approval_id=(getattr(decision, "approval_id", None) or self._create_approval(decision)),
+            correlation_id=correlation_id,
         )
 
         realization_events: tuple[SiteScoreRealizationEvent, ...] = ()
-        if target is DecisionStatus.APPROVED:
+        if target is DecisionStatus.APPROVED and explicit_network_action != "WAIT":
             realization_events = self._realize(updated, actor=actor)
+
+        self._decide_approval(updated, actor=actor, reason=reason)
 
         audit_event = self._record_audit(
             updated,
@@ -443,6 +516,8 @@ class SiteScoreDecisionWorkflow:
         *,
         actor: str,
     ) -> tuple[SiteScoreRealizationEvent, ...]:
+        if getattr(decision, "network_action", None) == "WAIT":
+            return ()
         report = self._store.get_report(decision.decision_id)
         if report is None:
             raise SiteScoreDecisionError(
@@ -475,6 +550,13 @@ class SiteScoreDecisionWorkflow:
         actor: str,
         action: str,
         reason: str,
+        network_action: str | None = None,
+        conditions: str | None = None,
+        required_data: tuple[str, ...] | None = None,
+        override_ack: bool | None = None,
+        actor_role_id: str | None = None,
+        approval_id: str | None = None,
+        correlation_id: str = "",
     ) -> SiteScoreDecision:
         transition = DecisionTransition(
             from_status=decision.status,
@@ -483,12 +565,31 @@ class SiteScoreDecisionWorkflow:
             action=action,
             reason=reason,
             at=datetime.now(UTC),
+            network_action=network_action,
+            conditions=conditions,
+            required_data=required_data,
+            override_ack=override_ack,
+            actor_role_id=actor_role_id,
+            tenant_id=decision.tenant_id,
+            report_id=decision.report_id,
+            report_version=decision.report_version,
+            model_version=decision.model_version,
+            approval_id=approval_id or getattr(decision, "approval_id", None),
+            version=getattr(decision, "version", 0) + 1,
+            correlation_id=correlation_id,
         )
         updated = SiteScoreDecision(
             **{
                 **decision.__dict__,
                 "status": to_status,
                 "history": (*decision.history, transition),
+                "version": getattr(decision, "version", 0) + 1,
+                "network_action": network_action,
+                "conditions": conditions,
+                "required_data": required_data,
+                "override_ack": override_ack,
+                "actor_role_id": actor_role_id,
+                "approval_id": approval_id or getattr(decision, "approval_id", None),
             }
         )
         self._store.save_decision(updated)
@@ -522,9 +623,36 @@ class SiteScoreDecisionWorkflow:
                     "policy_version": decision.policy_version,
                     "reason": reason,
                     "realized_sites": realized,
+                    "tenant_id": decision.tenant_id,
+                    "model_version": decision.model_version,
+                    "version": getattr(decision, "version", 0),
+                    **{key: getattr(decision, key, None) for key in
+                       ("network_action", "conditions", "override_ack", "actor_role_id", "approval_id")},
+                    "required_data": (list(decision.required_data) if getattr(decision, "required_data", None) is not None else None),
                 },
             )
         )
+
+    def _create_approval(self, decision: SiteScoreDecision) -> str | None:
+        if self._approval_store is None:
+            return None
+        approval = Approval(decision_id=decision.decision_id)
+        self._approval_store.save(approval)
+        return approval.approval_id
+
+    def _decide_approval(self, decision: SiteScoreDecision, *, actor: str, reason: str) -> None:
+        if self._approval_store is None:
+            return
+        approval_id = getattr(decision, "approval_id", None)
+        approval = self._approval_store.get(approval_id) if approval_id else None
+        if not isinstance(approval, Approval) or approval.decision_id != decision.decision_id:
+            raise SiteScoreDecisionError("no associated canonical approval retained for decision")
+        status = {DecisionStatus.APPROVED: "approved", DecisionStatus.REJECTED: "rejected",
+                  DecisionStatus.DRAFT: "returned"}[decision.status]
+        self._approval_store.save(Approval(approval_id=approval.approval_id,
+                                         decision_id=decision.decision_id, approver_id=actor,
+                                         approval_status=status, approved_at=decision.history[-1].at,
+                                         comment=reason))
 
     def _require(self, decision_id: str) -> SiteScoreDecision:
         decision = self._store.get_decision(decision_id)

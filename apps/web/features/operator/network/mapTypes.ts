@@ -4,7 +4,7 @@ export type HeatZone = {
   h3: string;
   centroid: [number, number];
   h3Resolution: number;
-  score: number;
+  score: number | null;
   confidence: number | null;
   state:
     | "UNTOUCHED"
@@ -12,27 +12,31 @@ export type HeatZone = {
     | "SATURATED"
     | "UNDER_REALIZED"
     | "STILL_EXPANDABLE"
-    | "SUPPRESSED_LOW_CONFIDENCE";
+    | "SUPPRESSED_LOW_CONFIDENCE"
+    | "ABSTAINED"
+    | "UNKNOWN";
   rank: number;
-  listings: number;
+  listings: number | null;
   warnings: string[];
   reasons: string[];
   modelVersion: string;
+  executionMode?: string;
   featureVersion: string;
   featureSnapshotTime: string;
   predictionOriginTime: string;
   lastScoredAt: string;
   sourceSnapshotIds: string[];
-  unmetDemandScore: number;
-  formatFitScore: number;
-  cannibalizationRisk: number;
-  rentFeasibility: number;
-  listingAvailability: number;
-  poiCount: number;
-  competitorCount: number;
-  competitorCapacity: number;
-  medianListingRent: number;
-  existingStoreCount: number;
+  unmetDemandScore: number | null;
+  formatFitScore: number | null;
+  cannibalizationRisk: number | null;
+  rentFeasibility: number | null;
+  listingAvailability: number | null;
+  competitorPressureScore?: number | null;
+  poiCount: number | null;
+  competitorCount: number | null;
+  competitorCapacity: number | null;
+  medianListingRent: number | null;
+  existingStoreCount: number | null;
   dataQualityScore: number | null;
   isMerged?: boolean;
   compositionKind?: "MERGED" | "SPLIT_CHILD" | "ATOMIC";
@@ -57,8 +61,8 @@ export type Listing = {
   area: string;
   geocode: string;
   duplicate: string;
-  heatZoneId: string;
-  coordinates: [number, number];
+  heatZoneId: string | null;
+  coordinates: [number, number] | null;
   updatedAt: string;
   action: string;
 };
@@ -75,8 +79,8 @@ export type CandidateSite = {
     | "approved"
     | "opened";
   heatZoneId: string;
-  coordinates: [number, number];
-  heatZoneScore: number;
+  coordinates: [number, number] | null;
+  heatZoneScore: number | null;
   rentArea: string;
   geocode: string;
   feasibility: string;

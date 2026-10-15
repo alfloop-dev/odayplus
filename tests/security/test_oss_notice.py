@@ -65,6 +65,49 @@ def test_attribution_only_licences_are_named_too() -> None:
     assert "### Apache-2.0" in text
 
 
+def test_platform_omitted_libvips_keeps_its_locked_lgpl_attribution(tmp_path, monkeypatch) -> None:
+    generator = _load_generator()
+    node_modules = tmp_path / "node_modules"
+    installed = node_modules / "@img" / "sharp-libvips-linux-x64"
+    installed.mkdir(parents=True)
+    (installed / "package.json").write_text(json.dumps({
+        "name": "@img/sharp-libvips-linux-x64", "version": "1.3.4",
+        "license": "LGPL-3.0-or-later",
+    }))
+    lock = tmp_path / "package-lock.json"
+    lock.write_text(json.dumps({"packages": {
+        "node_modules/@img/sharp-libvips-linux-x64": {
+            "version": "1.3.4", "license": "LGPL-3.0-or-later", "optional": True,
+        },
+        "node_modules/@img/sharp-libvips-linuxmusl-x64": {
+            "version": "1.3.4", "license": "LGPL-3.0-or-later", "optional": True,
+        },
+    }}))
+    monkeypatch.setattr(generator, "PACKAGE_LOCK", lock)
+    components = generator.collect_npm(node_modules)
+    assert [(c.name, c.version, c.license) for c in components] == [
+        ("@img/sharp-libvips-linux-x64", "1.3.4", "LGPL-3.0-or-later"),
+        ("@img/sharp-libvips-linuxmusl-x64", "1.3.4", "LGPL-3.0-or-later"),
+    ]
+    assert not (node_modules / "@img" / "sharp-libvips-linuxmusl-x64").exists()
+
+
+@pytest.mark.parametrize("missing_field", ["license", "version"])
+def test_locked_native_attribution_requires_explicit_metadata(tmp_path, monkeypatch, missing_field) -> None:
+    generator = _load_generator()
+    node_modules = tmp_path / "node_modules"
+    node_modules.mkdir()
+    info = {"version": "1.3.4", "license": "LGPL-3.0-or-later", "optional": True}
+    del info[missing_field]
+    lock = tmp_path / "package-lock.json"
+    lock.write_text(json.dumps({"packages": {
+        "node_modules/@img/sharp-libvips-linuxmusl-x64": info,
+    }}))
+    monkeypatch.setattr(generator, "PACKAGE_LOCK", lock)
+    with pytest.raises(RuntimeError, match="Locked native attribution lacks"):
+        generator.collect_npm(node_modules)
+
+
 def test_first_party_packages_are_not_attributed_to_a_third_party() -> None:
     """@oday-plus/* are ours; listing them here would misrepresent our own code
     as an unidentified third-party dependency. They are declared UNLICENSED in

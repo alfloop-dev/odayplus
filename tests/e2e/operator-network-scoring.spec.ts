@@ -1,4 +1,5 @@
 import { expect, request as playwrightRequest, test } from "@playwright/test";
+import { primeOperatorPersona } from "./_operatorPersona";
 
 // ODP-OC-R4-006 — Candidate data gate, SiteScore Lab, and Compare.
 // Screens verified against package 6 (sha db3ea3d…): data-screen-label values
@@ -15,7 +16,8 @@ const SCORING_HEADERS = {
 test.describe.configure({ mode: "serial" });
 
 test.describe("ODP-OC-R4-006 Network SiteScore scoring", () => {
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ page }) => {
+    await primeOperatorPersona(page, "expansion-staff");
     const api = await apiContext();
     const reset = await api.post("/api/v1/operator/network-scoring/reset");
     expect(reset.status()).toBe(200);

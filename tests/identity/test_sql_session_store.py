@@ -111,6 +111,65 @@ def _session(account_id: Any = None, session_id: Any = None) -> Session:
     )
 
 
+@pytest.mark.parametrize("dict_row", [False, True])
+def test_scoped_active_account_directory_uses_bound_tenant_and_returns_pool_connection(pool, dict_row):
+    tenant_id, account_id = uuid4(), uuid4()
+    columns = {
+        "account_id": account_id, "tenant_id": tenant_id,
+        "username": "synthetic-login", "email": "private@example.invalid",
+        "display_name": "Synthetic target", "status": "active", "created_at": None,
+        "created_by": "synthetic-test", "updated_at": None,
+        "disabled_at": None, "disabled_reason": None,
+    }
+    pool.connection_obj.next_rows = [columns if dict_row else tuple(columns.values())]
+    identities = SqlIdentityStore(pool.connection)
+    targets = identities.list_scoped_active_accounts(tenant_id)
+    assert len(targets) == 1
+    assert targets[0].account_id == account_id
+    assert targets[0].tenant_id == tenant_id
+    assert targets[0].display_name == "Synthetic target"
+    sql, parameters = pool.connection_obj.executed[-1]
+    assert "JOIN identity.account_scopes s ON s.account_id = a.account_id" in sql
+    assert "WHERE a.tenant_id = %s AND a.status = 'active'" in sql
+    assert parameters == (str(tenant_id),)
+    assert pool.checked_out == 0 and pool.peak_checked_out == 1
+    assert pool.connection_obj.commits == 0
+
+
+def test_scoped_account_directory_unavailable_connection_is_not_empty_success():
+    with pytest.raises(RuntimeError, match="connection unavailable"):
+        SqlIdentityStore().list_scoped_active_accounts(uuid4())
+
+
+def test_explicit_sql_scope_missing_cannot_fall_back_to_tenant_wide_grant(pool):
+    account_id = uuid4()
+    pool.connection_obj.next_row = None
+    with pytest.raises(PermissionError, match="Explicit identity scope"):
+        SqlIdentityStore(pool.connection).get_account_scope(account_id, require_explicit=True)
+    assert len(pool.connection_obj.executed) == 1
+    assert "FROM identity.account_scopes" in pool.connection_obj.executed[0][0]
+    assert pool.checked_out == 0
+
+
+def test_explicit_sql_scope_unavailable_connection_denies():
+    with pytest.raises(PermissionError, match="Explicit identity scope"):
+        SqlIdentityStore().get_account_scope(uuid4(), require_explicit=True)
+
+
+@pytest.mark.parametrize("axis", ["brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids", "modules"])
+@pytest.mark.parametrize("value", [None, {}, [None], [3], [""], [" "]])
+def test_explicit_sql_scope_malformed_axis_is_not_unrestricted(pool, axis, value):
+    row = {name: [] for name in (
+        "brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids", "modules",
+    )}
+    row.update(clearance="confidential", tenant_id=str(uuid4()))
+    row[axis] = value
+    pool.connection_obj.next_row = row
+    with pytest.raises(PermissionError, match="scope grant is malformed"):
+        SqlIdentityStore(pool.connection).get_account_scope(uuid4(), require_explicit=True)
+    assert pool.checked_out == 0
+
+
 # --- Durable session persistence (Contract §5.1) ---------------------------
 
 

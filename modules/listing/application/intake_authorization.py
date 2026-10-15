@@ -25,6 +25,32 @@ from shared.auth import (
     check_tenant_isolation,
 )
 
+LEGAL_HOLD_FIELDS = ("hasLegalHold", "legalHold", "has_legal_hold", "legal_hold")
+
+
+def has_recorded_legal_hold(resource: dict[str, Any]) -> bool:
+    """Recognize positive custody facts from Privacy and operator producers.
+
+    False means no positive boolean was found. It does not establish that a
+    required current hold observation is available or well formed.
+    """
+    return any(resource.get(name) is True for name in LEGAL_HOLD_FIELDS)
+
+
+def recorded_legal_hold_state(resource: dict[str, Any]) -> bool | None:
+    """Project current custody observations without a false default.
+
+    Any recorded positive hold remains protective. A missing, null or malformed
+    observation cannot establish the negative state the Radar controls require.
+    """
+    values = [resource[name] for name in LEGAL_HOLD_FIELDS if name in resource]
+    if any(value is True for value in values):
+        return True
+    if not values or any(not isinstance(value, bool) for value in values):
+        return None
+    return False
+
+
 _SCOPE_AXIS_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("brand", ("brand_id", "brandId")),
     ("region", ("region_id", "regionId")),
@@ -172,6 +198,7 @@ def authorize_intake_action(
             "submit_url": Action.CREATE,
             "submit_csv": Action.CREATE,
             "cancel": Action.UPDATE,
+            "archive": Action.UPDATE,
             "correct": Action.UPDATE,
             "decide": Action.UPDATE,
             "merge": Action.UPDATE,
@@ -332,7 +359,7 @@ def authorize_intake_action(
         if not (is_staff or is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
-    elif action == "cancel":
+    elif action in ("cancel", "archive"):
         if is_staff and resource is not None:
             owner = resource.get("owner")
             submitter = resource.get("submitter")
@@ -340,6 +367,8 @@ def authorize_intake_action(
                 _raise_and_audit(status_code=403, detail="OWNERSHIP_REQUIRED")
         if not (is_staff or is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
+        if action == "archive" and has_legal_hold:
+            _raise_and_audit(status_code=409, detail="LEGAL_HOLD_CONFLICT")
 
     elif action == "correct":
         # Check risk acknowledgement for corrections
@@ -377,6 +406,9 @@ def authorize_intake_action(
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
         if not (is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
+
+        if action == "merge" and has_legal_hold:
+            _raise_and_audit(status_code=409, detail="LEGAL_HOLD_CONFLICT")
 
         # Check risk acknowledgement for merge/split/unmerge
         if not risk_summary or not risk_summary.strip():
@@ -496,7 +528,7 @@ def mask_listing(principal: Principal, listing: dict[str, Any]) -> dict[str, Any
 def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
     """Mask fields based on principal clearance and field classification."""
     clearance = principal.scope.clearance if principal.authenticated else DataClassification.PUBLIC
-    if clearance >= DataClassification.RESTRICTED:
+    if clearance >= DataClassification.HIGHLY_RESTRICTED:
         return intake
 
     masked = intake.copy()

@@ -104,7 +104,8 @@ export function toOperatorApiError(
     };
   }
 
-  // AbortError (client timeout) and network failures never reach the server.
+  // A timeout or lost connection does not establish whether the server wrote
+  // the command; callers preserve its idempotency key until the outcome is known.
   const isAbort = error instanceof Error && error.name === "AbortError";
   return {
     status: 0,
@@ -130,7 +131,17 @@ export async function guardCall<T>(
 }
 
 export function newCorrelationId(): string {
-  return `corr-${randomToken()}`;
+  // Canonical audit/event envelopes store correlation_id as UUID. Prefixing
+  // the token was accepted by legacy routes but rejects real PG commands.
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  if (typeof crypto === "undefined" || typeof crypto.getRandomValues !== "function") {
+    throw new Error("Correlation UUID generation is unavailable");
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 export function randomToken(): string {

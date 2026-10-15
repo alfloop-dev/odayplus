@@ -71,7 +71,9 @@ def test_production_priceops_executes_optuna_and_cvxpy(
         tenant_id="tenant-live",
         items=[_item()],
         correlation_id="corr-price-live",
+        created_by="synthetic-production-author",
     )
+    assert plan.created_by == "synthetic-production-author"
     service.simulate(plan.plan_id)
 
     result = service.optimize(plan.plan_id)
@@ -96,6 +98,7 @@ def test_production_priceops_missing_lineage_has_no_fallback(
         tenant_id="tenant-live",
         items=[_item(snapshots=())],
         correlation_id="corr-price-live",
+        created_by="synthetic-production-author",
     )
 
     with pytest.raises(PriceOpsProductionExecutionError):

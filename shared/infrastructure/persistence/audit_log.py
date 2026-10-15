@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -37,18 +40,36 @@ _INTEGRITY_COLUMNS: dict[str, str] = {
     "worm_sink_id": "TEXT",
 }
 
+_TRANSACTIONAL_WORM: ContextVar[tuple[Any, Any] | None] = ContextVar(
+    "transactional_audit_worm", default=None
+)
+
 
 class DurableAuditLog:
     """``record`` / ``list_events`` over the ``durable_audit_events`` table."""
 
-    def __init__(
-        self, engine: SqliteEngine, *, worm_sink: AuditWormSink | None = None
-    ) -> None:
+    def __init__(self, engine: SqliteEngine, *, worm_sink: AuditWormSink | None = None) -> None:
         self._engine = engine
         self._worm_sink = worm_sink
         self._ensure_integrity_columns()
 
     def record(self, event: AuditEvent) -> AuditEvent:
+        with self._engine.transaction():
+            if getattr(self._engine, "dialect", "") == "postgresql":
+                # Acquire the database-wide chain lock before the per-engine
+                # process lock. Waiting for another transaction while holding
+                # that process lock can prevent its receipt from committing.
+                self._engine.query_one(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                    ("durable-audit-chain",),
+                )
+            elif not self._engine._conn.in_transaction:
+                self._engine.execute("BEGIN IMMEDIATE")
+            return self._append(event)
+
+    def _append(self, event: AuditEvent) -> AuditEvent:
+        override = _TRANSACTIONAL_WORM.get()
+        worm_sink = override[1] if override is not None and override[0] is self else self._worm_sink
         with self._engine.lock:
             existing = self._engine.query_one(
                 "SELECT * FROM durable_audit_events WHERE event_id = ?",
@@ -57,23 +78,29 @@ class DurableAuditLog:
             if existing is not None:
                 return self._row_to_event(existing)
 
+            delivery_job_type = getattr(worm_sink, "delivery_job_type", None)
+            if delivery_job_type:
+                # Bind required asynchronous delivery into the immutable hash.
+                # A missing intent/job must remain observable after deletion.
+                event = replace(event, metadata={
+                    **event.metadata, "audit_delivery_job_type": delivery_job_type,
+                })
+
             last = self._engine.query_one(
                 "SELECT sequence, event_hash FROM durable_audit_events "
                 "WHERE sequence IS NOT NULL ORDER BY sequence DESC LIMIT 1"
             )
             sequence = int(last["sequence"]) + 1 if last is not None else 1
-            previous_hash = (
-                str(last["event_hash"]) if last is not None else CHAIN_GENESIS_HASH
-            )
-            sink_id = _event_sink_id(event, self._worm_sink)
+            previous_hash = str(last["event_hash"]) if last is not None else CHAIN_GENESIS_HASH
+            sink_id = _event_sink_id(event, worm_sink)
             attach_audit_event_integrity(
                 event,
                 sequence=sequence,
                 previous_hash=previous_hash,
                 sink_id=sink_id,
             )
-            if self._worm_sink is not None:
-                self._worm_sink.write_audit_event(event)
+            if worm_sink is not None:
+                worm_sink.write_audit_event(event)
             self._engine.execute(
                 "INSERT INTO durable_audit_events("
                 "  event_id, event_type, actor, action, resource, outcome, "
@@ -102,6 +129,27 @@ class DurableAuditLog:
                 ),
             )
             return event
+
+    @contextmanager
+    def transactional_worm_sink(self, sink: Any):
+        """Redirect this request's WORM write to a same-engine durable outbox.
+
+        The configured external sink is unchanged. An override is permitted
+        only while its SQL transaction is active, so a rollback also
+        removes the queued audit delivery. Other requests retain their sink.
+        """
+        active = (
+            getattr(getattr(self._engine, "_local", None), "connection", None) is not None
+            or (getattr(self._engine, "_tx_depth", 0) > 0
+                and getattr(getattr(self._engine, "_conn", None), "in_transaction", False))
+        )
+        if getattr(sink, "engine", None) is not self._engine or not active:
+            raise RuntimeError("transactional WORM requires the active audit SQL engine")
+        token = _TRANSACTIONAL_WORM.set((self, sink))
+        try:
+            yield
+        finally:
+            _TRANSACTIONAL_WORM.reset(token)
 
     def list_events(
         self,
@@ -153,14 +201,10 @@ class DurableAuditLog:
         return replayed
 
     def delete_event(self, event_id: str) -> None:
-        raise AuditImmutabilityError(
-            f"audit sink is append-only; delete denied for {event_id}"
-        )
+        raise AuditImmutabilityError(f"audit sink is append-only; delete denied for {event_id}")
 
     def update_event_metadata(self, event_id: str, metadata: dict[str, Any]) -> None:
-        raise AuditImmutabilityError(
-            f"audit sink is append-only; update denied for {event_id}"
-        )
+        raise AuditImmutabilityError(f"audit sink is append-only; update denied for {event_id}")
 
     def _ensure_integrity_columns(self) -> None:
         existing = {

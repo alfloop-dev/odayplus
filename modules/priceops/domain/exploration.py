@@ -220,6 +220,7 @@ class ExplorationDecision:
     budget_consumed: float
     algorithm: str
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_by: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -233,6 +234,7 @@ class ExplorationDecision:
             "budget_consumed": self.budget_consumed,
             "algorithm": self.algorithm,
             "created_at": self.created_at.isoformat(),
+            "created_by": getattr(self, "created_by", None),
         }
 
 

@@ -213,6 +213,8 @@ else:
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
+            if production_runtime_required or production_model_required:
+                raise HTTPException(status_code=503, detail={"code": "SITESCORE_EXECUTION_CONTEXT_REQUIRED", "message": "Use the candidate execution request endpoint with its exact committed report context"})
             effective_key = body.idempotency_key or idempotency_key
             active_tenant_id = tenant_id(request)
             active_receipts = receipt_store(request)
