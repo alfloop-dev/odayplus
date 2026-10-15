@@ -234,7 +234,10 @@ def create_operator_router(
         create_network_scoring_sub_router,
     )
     from apps.api.app.routes.operator_modules.seed import create_seed_sub_router
-    from apps.api.app.routes.operator_modules.shell import create_shell_sub_router
+    from apps.api.app.routes.operator_modules.shell import (
+        create_shell_sub_router,
+        project_operator_navigation,
+    )
     from modules.opsboard.application.comments import CommentsService
     from modules.opsboard.application.network_listings import NetworkListingService
     from modules.opsboard.application.network_rebalance import NetworkRebalanceService
@@ -385,7 +388,7 @@ def create_operator_router(
             x_roles: str | None = Header(default=None, alias="X-Roles"),
             x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
         ) -> dict[str, Any]:
-            return _live_read(
+            envelope = _live_read(
                 "operator.envelope",
                 svc.get_today,
                 **_context(
@@ -396,6 +399,8 @@ def create_operator_router(
                     x_correlation_id=x_correlation_id,
                 ),
             )
+
+            return project_operator_navigation(envelope, request)
 
         @router.get("/search", dependencies=[Depends(operator_view_guard)])
         def live_search(

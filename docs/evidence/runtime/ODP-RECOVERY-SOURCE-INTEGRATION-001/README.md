@@ -9,7 +9,56 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi batch007 F3 owning checkpoint — source repair, NOT final proof
+## Pi admitted810 base composition / new immutable measurement candidate
+
+Actual Manager run `pi-20261015T162717Z-ad0baa9f` renewed the running isolated
+workspace/lease at admitted `81072d0ae396c772b39e53db0761a7522524e8fd`.
+Canonical361 entries/18 source documents, materialized hashes and COMPLETE
+original blocked-six-reopen object equality were verified before composition.
+This resolves the prior finite base-admission request, NOT any author gate or
+Human/Ops admission. No incoming path authoring lease is inferred.
+
+The commit introducing THIS section preserves BOTH task parent
+`77dde3131df7beb5dd65febe6e063ab4c90546bf` and admitted810 as merge parents.
+Normal three-way composition is conflict-free. Seventeen of the eighteen incoming
+PR1482 paths remain byte-identical to810, including its historical E2E receipts
+(which are NOT recovery-task proof). The shared security dependencies module
+retains task live-mode/password-rotation/correlation protections while importing
+the base's Operator navigation permission helper and owning dependency refactor.
+No manual incoming-body edit, reset, rebase, amendment or discarded history occurs.
+Human-decision files remain unchanged. No global/abstract descriptor migration,
+auth/tenant/CSRF/role waiver or production consumer reclassification is introduced.
+
+THIS merge/documentation commit, not77dde/7306/13c, is the new measurement
+candidate: resolve its exact head/tree from Git. All previous measurements remain
+historical, including F1/F2/F3 incremental author passes and rejected assessment
+packet1; the sixteen remaining old packets were prepared but NOT inspected.
+Record new outcomes externally/canonically without moving this head merely to
+append evidence. If a real repair is needed, preserve its actual failure and
+request finite unleased scope before editing; freeze a successor and remeasure.
+
+Required at this ONE new immutable identity: ALL14 canonical commands, ALL17
+unchanged supplemental selections (original2178 serial-n0/1200, others420), all
+applicable/new owning controls including F1/F2/F3, StoreOps and incoming Operator
+composition; normal terminal hosted CI/all129E2E/strict3x150/P95<3s; then ONE
+configured sequential non-contributing Codex2 supplied-text full-body/test/import/
+README/final-terminal/cross-file assessment. Regenerate the corpus to include
+incoming18 complete bodies and merged dependencies; keep1048576 cap, configured
+ultra/read-only/ephemeral/no tools/network/fallback and explicit coverage/late-
+record/account-independence UNKNOWN. Do not transfer old receipts or call this
+static composition check security acceptance. Actual-PG/frozenNode/Argon64MiB-
+time3/Web300kB/Vitest5000/native480/cleanup540 and all assertions remain unchanged.
+Use genuine bounded foreground native evidence, actual waits/ECHILD/owned-writer
+closure before fixture cleanup/sealing; external/inaccessible visibility stays
+UNKNOWN. Verify sustained real Manager observations before either1200 command.
+
+NOT review-ready: no task_finalize/review submission before complete author proof.
+Human/Ops FINAL/PENDING, original blocked6/failedPi/a129PR1459/pinnedroots/human
+files, quarantine/bindingNULL/cleanupUNKNOWN/HOLD/goalfalse remain unchanged.
+No approval, auto-merge arming, merge/done/promotion/deployment/recovery or live
+credential/account/session/cloud/IAM/business/data/model/F11 effect is authorized.
+
+## Pi batch007 F3 owning checkpoint — historical source repair, NOT final proof
 
 Actual renewed Manager run `pi-20261015T160454Z-adf4a1d3` verified running isolated
 workspace/lease,361 entries/18 source documents and materialized/canonical hashes
