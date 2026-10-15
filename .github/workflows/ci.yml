@@ -278,6 +278,43 @@ jobs:
           uv run pytest -m "requires_live_env and not requires_postgis" \
             tests/contract tests/ops tests/integration
 
+      # These offline PostgreSQL controls live under unit/ and apps/, so
+      # both the non-live selection and the database paths above omit them.
+      - name: Test model admission and delete propagation against PostgreSQL
+        run: |
+          uv run pytest -m "requires_live_env and not requires_postgis" \
+            tests/unit/test_current_model_admission.py \
+            --junitxml=.odp_data/ci/current-model-admission.xml
+          uv run pytest -m "requires_live_env and not requires_postgis" \
+            apps/data_platform/tests/test_delete_propagation.py \
+            --junitxml=.odp_data/ci/delete-propagation.xml
+          uv run python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          for path in (
+              ".odp_data/ci/current-model-admission.xml",
+              ".odp_data/ci/delete-propagation.xml",
+          ):
+              root = ET.parse(path).getroot()
+              cases = list(root.iter("testcase"))
+              if not cases:
+                  raise SystemExit(f"Required native SQL controls did not execute: {path}")
+              for outcome in ("skipped", "failure", "error"):
+                  if next(root.iter(outcome), None) is not None:
+                      raise SystemExit(f"Required native SQL controls contain {outcome}: {path}")
+              print(f"Verified {len(cases)} native SQL controls; zero skips: {path}")
+          PY
+
+      - name: Retain model and deletion PostgreSQL evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: required-native-sql-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .odp_data/ci/current-model-admission.xml
+            .odp_data/ci/delete-propagation.xml
+          if-no-files-found: error
+
   product-api-contract:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
