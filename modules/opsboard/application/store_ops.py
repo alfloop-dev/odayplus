@@ -528,6 +528,28 @@ class DurableStoreOpsRepository:
             )
         return _clone(state)
 
+    def read_materialized_state(self) -> dict[str, Any] | None:
+        """Return the persisted state, or ``None`` when it was never written.
+
+        Used only by the Store Ops materializer, which is the one writer allowed
+        to create the production document. Unlike :meth:`get_state` it neither
+        seeds nor rejects; a read failure still raises.
+        """
+        try:
+            state = self._store.get(
+                _STORE_OPS_STATE_COLLECTION,
+                _STORE_OPS_STATE_DOC_ID,
+            )
+        except Exception as exc:
+            raise StoreOpsLiveDataUnavailable(
+                f"Store Ops repository read failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        return None if state is None else _clone(state)
+
+    @staticmethod
+    def contains_fixture_signature(state: Mapping[str, Any]) -> bool:
+        return _contains_fixture_signature(state)
+
     def save_state(self, state: Mapping[str, Any]) -> None:
         if self.is_live and _contains_fixture_signature(state):
             raise StoreOpsLiveDataUnavailable(
