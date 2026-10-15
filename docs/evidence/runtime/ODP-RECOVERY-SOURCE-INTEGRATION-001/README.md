@@ -9,7 +9,41 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi batch005 SAST successor / current measurement freeze
+## Pi base-advance composition / current measurement freeze
+
+Manager run `pi-20261015T122146Z-d2046e81` received an explicit base-advance
+requirement. The commit introducing this section preserves BOTH the prior task
+head `1ac806841ffce14014df81a89970bb59a4474342` and admitted
+`origin/dev` `19562ad2a8773099db26366446b3488b446e630c` as merge parents.
+No reset, rebase, amendment, discarded task history or force push is used.
+
+Incoming PR1481 adds Store Ops materialization, tenant/CAS state handling,
+scheduler/worker wiring, document-store support and owning regressions. Git's
+three-way merge is conflict-free. Its eight changed paths are imported from the
+admitted base, not a new grant to author unrelated Store Ops changes. All seven
+non-inventory incoming paths must remain byte-identical to that base. The shared
+boundary inventory retains BOTH the recovery entries and the two incoming Store
+Ops entries. Human-decision evidence remains unchanged.
+
+This composition invalidates transfer of ALL prior exact-head successes,
+including the13 canonical/21 native/hosted CI successes at1ac. They remain
+historical evidence only. At THIS new immutable head, fresh canonical14, all17
+supplemental selections, owning/base-composition controls, normal terminal hosted
+CI and configured non-contributing Codex2 assessment are required. The old frozen
+1ac corpus also needs regeneration, including incoming full bodies/imports and
+actual new terminal records; account-provenance and coverage gaps remain explicit.
+No test membership,1200/420 caps, fixture infrastructure or authority is weakened.
+
+This is an intermediate anchor, NOT review-ready. Results and immutable receipts
+are stored in this run's canonical scratch/archive and canonical task notes,
+without moving the measurement head to append outcomes. Normal task-branch push
+may update existing PR1478/CI; governed review submission waits for complete owned
+proof. Human/Ops remains final/PENDING; no approval, auto-merge arming, merge,
+done/finalization or live effect. Original blocked6/failed-Pi epoch/PR1459@a129,
+quarantine/bindingNULL/cleanupUNKNOWN/HOLD/goalfalse and all earlier failures,
+interruptions and custody gaps remain preserved.
+
+## Pi batch005 SAST successor / historical measurement freeze
 
 Run `pi-20261015T093946Z-24adc955`, same Manager356-path source lease, base and
 Human/Ops/PENDING boundary. This section's introducing commit is the CURRENT
