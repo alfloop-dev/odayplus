@@ -489,7 +489,7 @@ export function OperatorConsole({
   };
 
   const rolesForShell = useMemo(() => {
-    return shellEnvelope.navigation.roles.length
+    const roles = shellEnvelope.navigation.roles.length
       ? shellEnvelope.navigation.roles.map((role) => ({
           allowedWorkspaces: role.allowedWorkspaces,
           id: isOperatorRoleId(role.id) ? role.id : DEFAULT_OPERATOR_ROLE_ID,
@@ -497,12 +497,17 @@ export function OperatorConsole({
           subtitle: role.subtitle,
         }))
       : OPERATOR_ROLES;
-  }, [shellEnvelope.navigation.roles]);
+    return !fixturesAllowed && shellDataStatus === "ready"
+      ? roles.map((role) => ({ ...role, allowedWorkspaces: shellEnvelope.navigation.allowedWorkspaces }))
+      : roles;
+  }, [fixturesAllowed, shellDataStatus, shellEnvelope.navigation]);
 
   const activeRole = useMemo(() => {
-    return rolesForShell.find((role) => role.id === activeRoleId) ??
-      getOperatorRole(activeRoleId);
-  }, [activeRoleId, rolesForShell]);
+    const role = rolesForShell.find((role) => role.id === activeRoleId) ?? getOperatorRole(activeRoleId);
+    return !fixturesAllowed && shellDataStatus === "ready"
+      ? { ...role, allowedWorkspaces: shellEnvelope.navigation.allowedWorkspaces }
+      : role;
+  }, [activeRoleId, fixturesAllowed, rolesForShell, shellDataStatus, shellEnvelope.navigation.allowedWorkspaces]);
 
   const workspaceNavItems = useMemo(() => {
     return shellEnvelope.navigation.workspaces.length
@@ -511,10 +516,15 @@ export function OperatorConsole({
   }, [shellEnvelope.navigation.workspaces]);
 
   useEffect(() => {
-    if (shellDataStatus === "ready" && !isWorkspaceAllowed(activeRole, activeWorkspaceId)) {
-      setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
-    }
-  }, [activeRole, activeWorkspaceId, shellDataStatus]);
+    // Preferences express intent, not authority. Wait for bootstrap before
+    // validating them: principal grants can differ from the static persona.
+    if (!hasHydratedPreferences || (!fixturesAllowed && shellDataStatus !== "ready")) return;
+    const workspaceId = isWorkspaceAllowed(activeRole, activeWorkspaceId)
+      ? activeWorkspaceId
+      : DEFAULT_WORKSPACE_ID;
+    setActiveWorkspaceId(workspaceId);
+    window.sessionStorage.setItem(workspaceStorageKey, workspaceId);
+  }, [activeRole, activeWorkspaceId, fixturesAllowed, hasHydratedPreferences, shellDataStatus]);
 
   const activeWorkspace = getWorkspace(activeWorkspaceId);
   const liveWorkQueue = shellEnvelope.workQueue;
@@ -545,13 +555,9 @@ export function OperatorConsole({
     const entity = searchParams && typeof searchParams.entity === "string" ? searchParams.entity : null;
     const tab = searchParams && typeof searchParams.tab === "string" ? searchParams.tab : "overview";
 
-    if (isWorkspaceAllowed(storedRole, targetWorkspaceId)) {
-      setActiveWorkspaceId(targetWorkspaceId);
-      window.sessionStorage.setItem(workspaceStorageKey, targetWorkspaceId);
-    } else {
-      setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
-      window.sessionStorage.setItem(workspaceStorageKey, DEFAULT_WORKSPACE_ID);
-    }
+    // Do not erase a permitted deep link or stored workspace using the
+    // persona's fixture grants while the verified bootstrap is still loading.
+    setActiveWorkspaceId(targetWorkspaceId);
     setSelectedEntityId(entity);
     setActiveTabId(tab);
     setHasHydratedPreferences(true);
@@ -1013,7 +1019,9 @@ export function OperatorConsole({
   }
 
   function handleRoleSelect(roleId: OperatorRoleId) {
-    const nextRole = getOperatorRole(roleId);
+    const nextRole = rolesForShell.find((role) => role.id === roleId);
+    if (!nextRole) return;
+    if (!fixturesAllowed) setShellDataStatus("loading");
     setActiveRoleId(nextRole.id);
     window.sessionStorage.setItem(roleStorageKey, nextRole.id);
     setIsRoleMenuOpen(false);

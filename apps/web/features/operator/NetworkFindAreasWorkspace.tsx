@@ -849,6 +849,9 @@ export function NetworkFindAreasWorkspace({
   useEffect(() => {
     if (!canReadListings) {
       setNetworkSnapshot(null);
+      setNetworkLoadState("empty");
+      setNetworkLoadFailure(null);
+      setNetworkApiError(null);
       return;
     }
     let cancelled = false;
@@ -902,6 +905,8 @@ export function NetworkFindAreasWorkspace({
   useEffect(() => {
     if (!canReadScoring) {
       setScoringSnapshot(null);
+      setScoringLoadState("empty");
+      setScoringLoadFailure(null);
       return;
     }
     let cancelled = false;
@@ -937,6 +942,9 @@ export function NetworkFindAreasWorkspace({
   useEffect(() => {
     if (!canReadRebalance) {
       setRebalanceSnapshot(null);
+      setRebalanceLoadState("empty");
+      setRebalanceLoadFailure(null);
+      setRebalanceApiError(null);
       return;
     }
     let cancelled = false;
@@ -993,6 +1001,8 @@ export function NetworkFindAreasWorkspace({
   useEffect(() => {
     if (!canReadReviews) {
       setReviewsSnapshot(null);
+      setReviewsLoadState("empty");
+      setReviewsLoadFailure(null);
       return;
     }
     let cancelled = false;
@@ -1542,14 +1552,14 @@ export function NetworkFindAreasWorkspace({
   // binding), so a refused listings read is handed to the panel instead.
   const listingsReadFailure =
     !fixturesAllowed && networkLoadState === "error" ? networkLoadFailure : null;
-  const snapshotCountState = resolveNetworkCountState(networkLoadState, networkLoadFailure, fixturesAllowed);
+  const snapshotCountState = resolveNetworkCountState(networkLoadState, networkLoadFailure, fixturesAllowed, !canReadListings);
   // Package10 uses four workflow KPIs, not unauthorized HeatZone aggregates.
   // Match the count to its actual source: a refused dedicated reviews read
   // cannot erase known authorized reviews in the scoped network snapshot.
-  const reviewCountState = reviewsSnapshot !== null
-    ? resolveNetworkCountState(reviewsLoadState, reviewsLoadFailure, fixturesAllowed)
+  const reviewCountState = !canReadReviews || reviewsSnapshot !== null
+    ? resolveNetworkCountState(reviewsLoadState, reviewsLoadFailure, fixturesAllowed, !canReadReviews)
     : snapshotCountState;
-  const rebalanceCountState = resolveNetworkCountState(rebalanceLoadState, rebalanceLoadFailure, fixturesAllowed);
+  const rebalanceCountState = resolveNetworkCountState(rebalanceLoadState, rebalanceLoadFailure, fixturesAllowed, !canReadRebalance);
 
   const listingRadarPanel = (
     <ListingRadarPanel

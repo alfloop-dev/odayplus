@@ -166,14 +166,14 @@ function forbiddenResponse(correlationId: string, resource: string) {
 
 const DENIED = Symbol("denied");
 
-function stubProductionFetch(snapshot: unknown, denyScoring = false, reviews?: unknown, allowedTabs: readonly string[] = NETWORK_TAB_IDS) {
+function stubProductionFetch(snapshot: unknown, denyScoring = false, reviews?: unknown, allowedTabs: readonly string[] = NETWORK_TAB_IDS, persona = "platform-admin") {
   const networkListingUrls: URL[] = [];
   const legacyDomainPaths: string[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input instanceof Request ? input.url : input), "http://localhost");
     if (url.pathname === "/api/v1/operator/bootstrap") {
       const allowedWorkspaces = allowedTabs.length ? ["today", "network"] : ["today"];
-      const projectedRole = { ...role, allowedWorkspaces };
+      const projectedRole = { ...role, id: persona, allowedWorkspaces };
       return jsonResponse({ ...liveEnvelope, meta: { ...liveEnvelope.meta, role: projectedRole },
         navigation: { ...liveEnvelope.navigation, roles: [projectedRole], allowedWorkspaces,
           allowedTabs: { network: allowedTabs } } });
@@ -224,6 +224,31 @@ describe("Network Find Areas in the production Operator Console composition", ()
     const networkReads = fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/network-"));
     expect(networkReads).toEqual(["/api/v1/operator/network-rebalance"]);
     expect(legacyDomainPaths).toEqual([]);
+    const summary = screen.getByLabelText("展店與店網摘要");
+    await waitFor(() => expect(summary).toHaveTextContent("0 重配候選"));
+    for (const label of ["今日新物件", "進行中候選", "待審 Review"]) {
+      expect(within(summary).getByText(label, { exact: false })).toHaveAttribute("data-count-state", "withheld");
+      expect(summary).toHaveTextContent(`— ${label}（未授權）`);
+    }
+    expect(summary.querySelector('[data-count-state="pending"]')).toBeNull();
+  });
+
+  it("settles viewer summary chips and never requests withheld Rebalance or composition", async () => {
+    window.sessionStorage.setItem("oday.operator.role", "pm-audit");
+    const tabs = ["areas", "radar", "candidates", "score", "compare", "review"];
+    const { fetchMock, legacyDomainPaths } = stubProductionFetch(scopedSnapshot, false,
+      { source: "api", reviews: [] }, tabs, "pm-audit");
+    render(<OperatorConsole searchParams={{ ws: "network", tab: "rebalance" }} />);
+    const summary = await screen.findByLabelText("展店與店網摘要");
+    await waitFor(() => expect(summary).toHaveTextContent("1 今日新物件"));
+    await waitFor(() => expect(summary).toHaveTextContent("0 待審 Review"));
+    expect(within(summary).getByText("重配候選", { exact: false })).toHaveAttribute("data-count-state", "withheld");
+    expect(summary).toHaveTextContent("— 重配候選（未授權）");
+    expect(summary.querySelector('[data-count-state="pending"]')).toBeNull();
+    expect(fetchMock.mock.calls.map(([url]) => String(url)).filter((url) =>
+      /network-rebalance|merge-split/.test(url))).toEqual([]);
+    expect(legacyDomainPaths).toEqual([]);
+    expect(screen.getAllByRole("tab")).toHaveLength(6);
   });
 
   it("hides a workspace with no readable tabs even when a stored deep link requests it", async () => {
