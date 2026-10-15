@@ -36,6 +36,34 @@ TENANT = "10000000-0000-4000-8000-000000000001"
 OTHER = "20000000-0000-4000-8000-000000000002"
 
 
+@pytest.mark.parametrize("field_key", ["contactPhone", "brokerEmail", "privateNotes"])
+def test_masked_intake_preserves_only_server_defined_field_identity(field_key: str) -> None:
+    from copy import deepcopy
+
+    from modules.listing.application.intake_authorization import mask_intake
+
+    principal = deps.principal_from_headers(
+        {"x-subject-id": "synthetic-viewer", "x-roles": "expansion_user", "x-tenant-id": TENANT}
+    )
+    marker = "PRIVATE-FIELD-CONTENT"
+    field = {
+        "key": {"nested": marker}, "label": marker,
+        "sourceValue": marker, "normalizedValue": marker, "correctedValue": marker,
+        "correctionReason": marker, "unsupported": {"nested": marker},
+    }
+    source = {"parsedFields": {field_key: field}}
+    before = deepcopy(source)
+    masked = mask_intake(principal, source)["parsedFields"][field_key]
+    # The real evidence panel groups by field.key.toLowerCase(). Masking must
+    # supply a safe schema identity, never copy untrusted metadata or values.
+    assert masked == {
+        "key": field_key, "label": field_key,
+        "sourceValue": None, "normalizedValue": None, "correctedValue": None,
+        "masked": True, "mask_reason_code": "FIELD_MASKED",
+    }
+    assert source == before
+
+
 @pytest.fixture(autouse=True)
 def isolation(monkeypatch: Any) -> Any:
     import os

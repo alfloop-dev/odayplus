@@ -579,8 +579,10 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
                 field_class = DataClassification.RESTRICTED
 
             if clearance < field_class:
-                # Unsupported legacy attributes are not public metadata.
-                field_info_copy = {}
+                # Keep only the server-defined schema identity needed by the
+                # evidence panel. Never copy client key/label or other metadata:
+                # they may contain the very values this projection must hide.
+                field_info_copy = {"key": key, "label": key}
                 field_info_copy["sourceValue"] = None
                 field_info_copy["normalizedValue"] = None
                 field_info_copy["correctedValue"] = None
