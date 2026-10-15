@@ -698,12 +698,7 @@ function PromotionReviewPanelForIntake({
         <div className={styles.sectionBox} data-testid="promotion-review-section" style={{ marginTop: "10px" }}>
           <div className={styles.sectionHead}>
             第二人審查 SECOND-ACTOR REVIEW
-            {!persistedFormatValid ? (
-            <div className={styles.noteBox} data-testid="promotion-target-unavailable" role="status">
-              尚未取得伺服器保存的目標店型，請重新載入後再核准。
-            </div>
-          ) : null}
-          {isSelfReview ? (
+            {isSelfReview ? (
               <span className={styles.chip} data-testid="promotion-self-review-denied" data-tone="risk">
                 ✕ SELF_REVIEW_DENIED
               </span>

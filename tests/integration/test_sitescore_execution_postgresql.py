@@ -226,8 +226,26 @@ def test_current_recorded_hard_rule_withdrawal_denies_before_new_job(successful)
     from shared.infrastructure.persistence.operator_network_listings import (
         DurableAssistedIntakeRepository,
     )
+    metadata = deepcopy(documents.store.get(DurableAssistedIntakeRepository._LISTING_META, listing_id) or {})
     documents.store.put(DurableAssistedIntakeRepository._LISTING_META, listing_id, {"hardRuleFailures": None})
     with pytest.raises(ScoreDeliveryDenied, match="CURRENT_HARD_RULE"):
+        delivery.create_execution(expected, principal=principal)
+    assert len(runtime.calls) == 1
+    assert documents.store.list_all(ScoreExecutionDocuments.REQUESTS) == []
+
+    # The completed original job is historical. A fresh request must reject a
+    # current domain/metadata conflict before pinning its own new fingerprint.
+    candidate = repo.list_candidates()[0]
+    recorded = getattr(candidate.listing, "prior_90d_cell_net_revenue", None)
+    assert recorded is not None and recorded == candidate.prior_90d_cell_net_revenue
+    metadata["prior90dCellNetRevenue"] = recorded
+    documents.store.put(DurableAssistedIntakeRepository._LISTING_META, listing_id, metadata)
+    delivery._current_inputs(TENANT, candidate)
+    current = repo.get_listing(listing_id)
+    object.__setattr__(current, "prior_90d_cell_net_revenue", recorded + 1)
+    # Replace only the existing recorded row; identity/address/dedup stay intact.
+    repo._store.put(repo._LISTINGS, listing_id, current)
+    with pytest.raises(ScoreDeliveryDenied, match="CURRENT_INPUT_EVIDENCE_CONFLICT"):
         delivery.create_execution(expected, principal=principal)
     assert len(runtime.calls) == 1
     assert documents.store.list_all(ScoreExecutionDocuments.REQUESTS) == []

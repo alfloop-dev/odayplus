@@ -212,6 +212,7 @@ describe("PromotionReviewPanel — saga states are never compressed (acceptance 
       const badge = screen.getByTestId("promotion-status-badge");
       expect(badge.textContent).toContain(status);
       expect(badge.textContent).toContain(PROMOTION_STATUS_LABEL[status]);
+      expect(screen.queryByTestId("promotion-target-unavailable")).toBeNull();
       // The current state is a real stepper node, not a spinner.
       const step = screen.getByTestId(`promo-step-${status}`);
       expect(step.getAttribute("data-state")).not.toBe("upcoming");
@@ -458,7 +459,10 @@ describe("PromotionReviewPanel — independent second-actor review", () => {
     renderPanel({ promotion: promo("PENDING_REVIEW", { target_format_code: target }), onReviewPromotion });
     fireEvent.change(screen.getByTestId("promotion-review-reason"), { target: { value: "此收據未保存目標店型，駁回重送。" } });
     fireEvent.click(screen.getByTestId("promotion-review-ack"));
-    expect(screen.getByTestId("promotion-target-unavailable").textContent).toContain("尚未取得");
+    const notices = document.body.querySelectorAll('[data-testid="promotion-target-unavailable"]');
+    expect(notices).toHaveLength(1);
+    expect(notices[0].getAttribute("role")).toBe("status");
+    expect(notices[0].textContent).toContain("尚未取得");
     expect((screen.getByTestId("promotion-approve-btn") as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByTestId("promotion-reject-btn"));
     await flush();
