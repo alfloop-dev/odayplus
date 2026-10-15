@@ -2245,6 +2245,9 @@ export function NetworkFindAreasWorkspace({
     <ListingRadarPanel
       activeRoleId={activeRoleId}
       busyListingId={busyListingId}
+      canonicalIntakeReadContext={!fixturesAllowed && canReadListings ? {
+        fetchImpl, contextKey: navigationContextKey, headers: NETWORK_OPERATOR_HEADERS,
+      } : undefined}
       intakeDetailOpen={intakeDetailOpen}
       listings={listingsEffective}
       listingsReadFailure={listingsReadFailure}
