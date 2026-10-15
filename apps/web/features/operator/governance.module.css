@@ -1569,7 +1569,14 @@
   border: 0;
 }
 
-.approvalGrid .queueItem { display: block; }
+.approvalGrid .queueList { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.approvalGrid .queueItem { display: block; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.approvalGrid .queueTopline,
+.approvalGrid .queueFooter { flex-wrap: wrap; }
+.approvalGrid .queueTopline .approvalId,
+.approvalGrid .queueFooter > span,
+.approvalGrid .queueItem strong { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.approvalGrid .queueTopline .approvalId { overflow: visible; text-overflow: clip; white-space: normal; }
 .approvalGrid .queueItem strong { display: block; margin-top: 6px; }
 .approvalGrid .queueFooter { gap: 8px; margin-top: 4px; }
 .approvalGrid .badge,

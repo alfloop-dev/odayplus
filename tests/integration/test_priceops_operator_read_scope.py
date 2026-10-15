@@ -110,7 +110,31 @@ def test_derived_plan_reads_match_native_scope_before_rows_and_counts(context, h
         assert body["count"] == 1
     else:
         assert [row["id"] for row in body["approvals"] if row["module"] == "PriceOps"] == ["visible-plan"]
+        assert {row["status"] for row in body["approvals"]} == {"not_submitted"}
+        assert body["counts"]["pendingApprovals"] == 0
+
+        # Optimizing does not submit a plan. Use the real owner command to
+        # prove nonzero pending counts also retain the original object scope.
+        for plan_id in ("visible-plan", "excluded-plan"):
+            submitted = client.post(
+                BASE + "/priceops/plans/" + plan_id + "/submit",
+                headers={"Idempotency-Key": "scope-submit-" + plan_id},
+                json={"reason": "Explicit synthetic pending scope control"},
+            )
+            assert submitted.status_code == 200, submitted.text
+            assert submitted.json()["status"] == "pending_approval"
+        unrestricted = client.get(BASE + "/operator/governance/snapshot")
+        assert unrestricted.status_code == 200, unrestricted.text
+        assert {row["id"] for row in unrestricted.json()["approvals"]
+                if row["status"] == "pending"} == {"visible-plan", "excluded-plan"}
+        assert unrestricted.json()["counts"]["pendingApprovals"] == 2
+        pending_response = client.get(BASE + "/operator/governance/snapshot", headers=scoped)
+        assert pending_response.status_code == 200, pending_response.text
+        body = pending_response.json()
+        assert [(row["id"], row["status"]) for row in body["approvals"]
+                if row["module"] == "PriceOps"] == [("visible-plan", "pending")]
         assert body["counts"]["pendingApprovals"] == 1
+        assert "excluded-plan" not in pending_response.text
     assert "excluded-plan" not in response.text
 
 
