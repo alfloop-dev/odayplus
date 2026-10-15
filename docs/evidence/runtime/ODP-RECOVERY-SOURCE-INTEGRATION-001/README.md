@@ -9,6 +9,101 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
+## Pi batch002 continuation — run pi-20261015T050836Z-858dccaf
+
+**Incremental source only, NOT review-ready.** Live Manager lease, correct branch,
+clean checkout and canonical328-entry scope (including three batch002 paths)
+were verified before editing. Admitted `origin/dev` was fetched and remains
+`c0c8c8226acaab3cbe8bb76e79f01e5e6694abb3`, already contained. Human/Ops/PENDING
+and all source-only exclusions remain; no policy/provider/credential change.
+
+Source anchor **2bb63a309cde18b520b3b93f19d9b95e3fc5f975**, tree
+**43be8e70b998942a50bd53aa012ce98a633234ec**, is pushed to PR1478:
+
+- HTTP audit export obtains a mandatory verified server tenant independently of
+  body/export_scope/correlation/card fields. The service's HTTP selection uses
+  existing validated tenant history BEFORE client correlation/time selectors.
+  Future successful/denied export events carry that tenant. Explicit direct
+  offline service callers retain their separate surface, not proof of HTTP
+  isolation. No audit read guards or historical records were weakened/rewritten.
+- Future SiteScore decision audit events use the actual stored decision tenant,
+  preserved through transitions. The unchanged full expansion persistence flow
+  now passes locally. This event fix does NOT solve the newly discovered
+  foreign-tenant approval in the nonpartitioned local workflow fallback.
+- Actual production-mode assisted-listing PG/restart fixture uses ephemeral
+  signed synthetic service tokens and server declarations through the REAL
+  config_from_env/default_boundary, not dev header trust or dependency override.
+  Forged headers401 and foreign-tenant refusal are added; every original mode,
+  schema/SQL/restart/review/version assertion remains. Formatting changed only
+  neighboring layout in these five leased files.
+- Mounted JWT controls cover both aliases, own export-source positive, foreign/
+  tenantless selection exclusion, tenantless principal/header-spoof refusal,
+  denied-sensitive-export attribution and unchanged historical events. New
+  SiteScore foreign-denial assertions genuinely FAIL200 in both aliases and
+  remain committed. The owning HTTP route is unleased: no scope bypass or
+  assertion deletion to manufacture a green security result.
+
+### Measurements and newly explicit remaining scope
+
+All raw logs, runner sources and terminal records are retained under
+`$PANTHEON_STATUS_ROOT/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/`.
+The [diagnostic index](pi-batch002-diagnostics.json), SHA256
+`427e9f20249a3ee2d3ee563c529f92f584451d06d88df032f7a53734e6229df5`, binds
+head/tree, exact command, dirty flags, unchanged420s cap, sanitized environment,
+real exit/duration/log hash and all original32/orchestrator66/latest-terminal25
+failure node IDs. It is NOT canonical receipts or reviewer execution.
+
+| Selection | Measured state | Actual result |
+|---|---|---|
+| `batch002-owning-initial` | 886c plus explicit five-path working diff | exit1,128.695s: two new foreign SiteScore approvals200 + separate privacy producer missing tenant; expansion flow and export-isolation controls pass |
+| `batch002-actual-postgis` | clean2bb | exit0,43.959s: full FIVE-test leased production PG module, no skips; PostgreSQL16.9 with real PostGIS, owned throwaway container removed |
+| `batch002-audit-owning` | clean2bb | exit1,58.299s: four HTTP export tests and one retained-export test have tenantless fixture principal; expansion persistence passes |
+| `batch002-source-lint` | clean2bb | exit0,0.167s, all five edited Python paths |
+| `batch002-boundaries` | clean2bb | exit0,13.375s, owning boundary control |
+| `batch002-diff` | clean2bb | exit0,0.034s |
+
+The initial raw GitHub log downloads were refused for terminal escape sequences;
+separate download2 files retain actual raw bytes and inert views. No failed
+attempt was replaced with a success. An initial original-record diagnostic
+compared the full record to its predecessor's wrapper and asserted falsely;
+corrected comparison against wrapper.record proves the COMPLETE original record
+equal, with no original-task mutation. Both facts are retained in the index.
+
+The original complete32 product-unit failure bodies and complete66 orchestrator
+failure inventory were inspected. Latest terminal b2c unit job116250091591 is
+**25fail/9012pass/23skip**, a subset of original32, not universal common-cause
+proof. Old886 normal CI38684815661 has actual successful orchestrator/security/
+performance/Node/API-contract leaves, failed DB and E2E, unit still running at
+readback. Its E2E now runs129 cases:13fail/65pass/51notrun, with full failed bodies
+including browser403 and missing mutations; only performance artifacts were
+uploaded. No uninspected response-body/tail root cause is invented.
+
+[Finite batch003 Manager request](MANAGER-SCOPE-BATCH003-REQUEST.md) names exactly
+25 previously unleased source/fixture paths, with owning evidence and preserved
+controls, including the real SiteScore foreign-approval finding, other future
+audit producers, supported auth/API/actual-OSS fixtures and throwaway E2E external
+origin configuration. No edit to those25 paths has been made; no blanket helper,
+workflow/CI-trigger/approval/provider/control-plane scope is requested. Do not
+silently broaden scope or globally grant auditors/tenantless access.
+
+At2bb PR readback1478 is OPEN at that exact SHA, autoMergeRequest=null. Normal CI
+[38685781844](https://github.com/alfloop-dev/odayplus/actions/runs/38685781844)
+actually has terminal SUCCESS for product-db, API-contract, Node and performance,
+while other leaves are still pending/running. This is NOT terminal CI acceptance
+and does not transfer to this documentation successor. Original PR1459 remains
+OPEN@a129; seven human-decision files remain Git-equal to admitted dev. Original
+blocked/six-reopen task, failed epochs/quota/refusals, absent-original UNKNOWN,
+HOLD/quarantine/bindingNULL/cleanupUNKNOWN and goalfalse remain preserved.
+
+Read-only canonical check at2bb exits1 with ALL14 receipts missing; author logs
+are not copied into canonical storage. Final immutable-head14/all17, terminal
+normal CI, configured independent Codex2 assessment (with supplied-body/late-
+measurement/whole-composition/account-provenance gaps) and Human/Ops acceptance
+remain owed. Retained-export listing/download/governance coverage is not claimed
+by the export-selection repair. No submission, approval, merge arming, merge,
+done or live credentials/accounts/sessions/recovery/deployment/cloud/IAM/business/
+data/model/F11 effect. Finish all author repairs before governed submission.
+
 ## Pi batch001 continuation — run pi-20261015T044152Z-8b7b4813
 
 **Incremental source only, NOT review-ready.** Worker Manager allocated the
