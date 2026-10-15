@@ -2654,7 +2654,7 @@ def test_standalone_all_early_exits_release_observed_cookies(failure: str) -> No
     assert "do not disclose raw exception" not in json.dumps(report)
 
 
-@pytest.mark.parametrize("failure", ["lost_login", "partial_login", "partial_rotation", "duplicate_cookies", "lost_logout", "invalid_logout", "live_replay", "cleanup_issuance"])
+@pytest.mark.parametrize("failure", ["lost_login", "partial_login", "partial_rotation", "duplicate_cookies", "contradictory_cookies", "lost_logout", "invalid_logout", "live_replay", "cleanup_issuance"])
 def test_standalone_partial_lost_custody_remains_unknown_without_retry(failure: str) -> None:
     from tests.e2e import test_live_e2e_gate_dev_admin as admin
 
@@ -2666,6 +2666,9 @@ def test_standalone_partial_lost_custody_remains_unknown_without_retry(failure: 
                     return response(0, error="lost reply", custody_uncertain=True)
                 if failure == "partial_login":
                     return response(0, error="lost body", cookies=result.cookies)
+                if failure == "contradictory_cookies":
+                    return response(200, result.payload, cookies=result.cookies,
+                                    set_cookie_pairs=((admin.SESSION_COOKIE, "sealed-rotation-session-reference"),))
                 if failure == "duplicate_cookies":
                     return response(200, result.payload, cookies=result.cookies,
                                     set_cookie_pairs=((admin.SESSION_COOKIE, admin.SESSION_VALUE),
@@ -2690,7 +2693,7 @@ def test_standalone_partial_lost_custody_remains_unknown_without_retry(failure: 
     assert report["dev_admin"]["session_cleanup"]["outcome"] == "unknown"
     logouts = [h["cookie"] for c, h in web.headers_seen if c == "POST /auth/logout"]
     assert len(logouts) == len(set(logouts))
-    assert len(logouts) == (0 if failure == "lost_login" else 2 if failure in {"duplicate_cookies", "partial_rotation", "cleanup_issuance"} else 1)
+    assert len(logouts) == (0 if failure == "lost_login" else 2 if failure in {"duplicate_cookies", "contradictory_cookies", "partial_rotation", "cleanup_issuance"} else 1)
     assert not any("sealed-form-session-reference" in h.get("cookie", "") for _, h in web.headers_seen)
 
 

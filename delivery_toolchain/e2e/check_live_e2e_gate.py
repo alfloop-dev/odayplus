@@ -1825,6 +1825,11 @@ class _OwnedGateSessions:
             self.unknown = True
         if len(pairs) > 1 or any(not name for name, _ in pairs):
             self.unknown = True
+        if {name: value for name, value in pairs if name} != result.cookies:
+            self.unknown = True
+            # Contradictory raw/collapsed evidence is UNKNOWN. Retain both
+            # safely known values, never pick a last-wins cookie for more work.
+            pairs = (*pairs, *(item for item in result.cookies.items() if item not in pairs))
         for name, value in pairs:
             if not value:
                 continue
@@ -1877,6 +1882,9 @@ class _OwnedGateSessions:
         raw_cookie = headers.get("cookie", "")
         value = raw_cookie.removeprefix(self._cookie_name + "=")
         owned = self.sessions.get(value) if raw_cookie == self._cookie_name + "=" + value else None
+        if raw_cookie and owned is None:
+            self.unknown = True
+            raise _SessionCustodyStopped
         if (self.unknown and not self.cleaning
                 and not (method == "GET" and owned is not None and owned["attempted"]
                          and path in {"/auth/session", "/api/v1/operator/users"})):
