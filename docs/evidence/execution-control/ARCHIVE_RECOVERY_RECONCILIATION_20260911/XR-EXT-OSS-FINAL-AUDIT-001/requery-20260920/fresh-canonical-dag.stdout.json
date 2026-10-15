@@ -1,0 +1,180 @@
+{
+  "captured_at": "2026-09-21T01:07:27.000000Z",
+  "source": "$PANTHEON_STATUS_ROOT/ai-status.json",
+  "active_records": 23,
+  "adjacency_sha256": "8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af",
+  "adjacency": {
+    "HUMAN-OSS-LEGAL-APPROVAL-001": {
+      "depends_on": [
+        "XR-EXT-OSS-FINAL-AUDIT-001"
+      ],
+      "status": "todo"
+    },
+    "XR-SOURCE-APPROVAL-ACTIVATION-001": {
+      "depends_on": [
+        "HUMAN-OSS-LEGAL-APPROVAL-001"
+      ],
+      "status": "todo"
+    },
+    "ODP-EPHEMERAL-STAGING-ROLLOUT-001": {
+      "depends_on": [
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "ODP-DEV-ROLLOUT-001",
+        "ODP-EPHEMERAL-STAGING-IAC-001",
+        "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+        "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+        "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001"
+      ],
+      "status": "in_progress"
+    },
+    "ODP-PROD-BLUEGREEN-ROLLOUT-001": {
+      "depends_on": [
+        "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+        "ODP-PROD-RUNTIME-RELEASE-PATH-001"
+      ],
+      "status": "todo"
+    },
+    "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001": {
+      "depends_on": [
+        "ODP-PROD-BLUEGREEN-ROLLOUT-001"
+      ],
+      "status": "todo"
+    },
+    "HUMAN-GCP-WEB-OAUTH-CLIENTS-001": {
+      "depends_on": [],
+      "status": "todo"
+    },
+    "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+      "depends_on": [
+        "DPF-EMGI-LIVE-ROLLOUT-001",
+        "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+        "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+        "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+        "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+        "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+        "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+        "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+        "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+        "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
+      ],
+      "status": "in_progress"
+    },
+    "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001": {
+      "depends_on": [
+        "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001",
+        "DPF-EMGI-LIVE-ROLLOUT-001",
+        "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
+      ],
+      "status": "todo"
+    },
+    "ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001": {
+      "depends_on": [],
+      "status": "todo"
+    },
+    "ODP-NFR-RUNTIME-EVIDENCE-001": {
+      "depends_on": [
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+      ],
+      "status": "todo"
+    },
+    "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": {
+      "depends_on": [
+        "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+        "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+        "ODP-INT001-CDC-DISPOSITION-001",
+        "ODP-INTV006-ADJUST-WORKFLOW-001",
+        "ODP-JOB-PARTIAL-DISPOSITION-001",
+        "ODP-LH-PREDICTION-DRIFT-001",
+        "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+        "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+        "ODP-NET002-LEASE-DISPOSITION-001",
+        "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+        "ODP-NFR-RUNTIME-EVIDENCE-001",
+        "ODP-OPS002-DECISION-COMMENTS-001",
+        "ODP-PRICE006-BANDIT-GATED-001",
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+        "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+        "ODP-SPEC-SOURCE-PROVENANCE-001",
+        "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001"
+      ],
+      "status": "todo"
+    },
+    "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001": {
+      "depends_on": [],
+      "status": "todo"
+    },
+    "XR-EXT-OSS-FINAL-AUDIT-001": {
+      "depends_on": [],
+      "status": "in_progress"
+    },
+    "ODP-BRAND-TRANSFER-IMPLEMENTATION-001": {
+      "depends_on": [
+        "ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001",
+        "ODP-BRAND-TRANSFER-CONTRACT-PREP-001"
+      ],
+      "status": "blocked"
+    },
+    "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001": {
+      "depends_on": [
+        "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001"
+      ],
+      "status": "blocked"
+    },
+    "ODP-NET002-LEASE-IMPLEMENTATION-001": {
+      "depends_on": [
+        "ODP-NET002-LEASE-CONTRACT-PREP-001"
+      ],
+      "status": "blocked"
+    },
+    "DPF-CAPTURE-RETENTION-RUNNER-001": {
+      "depends_on": [
+        "DPF-ACQUISITION-RETENTION-BRIDGE-001",
+        "DPF-SITE-CONTEXT-REAL-COMPONENTS-001"
+      ],
+      "status": "in_progress"
+    },
+    "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001": {
+      "depends_on": [
+        "DPF-CAPTURE-RETENTION-RUNNER-001"
+      ],
+      "status": "todo"
+    },
+    "ODP-DEV-RELEASE-GATE-RECONCILIATION-004": {
+      "depends_on": [
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+        "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001"
+      ],
+      "status": "review"
+    },
+    "DPF-NLSC-OFFICIAL-ZIP-PREPROCESSOR-001": {
+      "depends_on": [
+        "DPF-CAPTURE-RETENTION-RUNNER-001",
+        "DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001"
+      ],
+      "status": "todo"
+    },
+    "DPF-OVERTURE-BOUNDED-RECORD-READER-001": {
+      "depends_on": [
+        "DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001"
+      ],
+      "status": "in_progress"
+    },
+    "DPF-TDX-OAUTH-ACQUISITION-INTEGRATION-001": {
+      "depends_on": [
+        "DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001"
+      ],
+      "status": "in_progress"
+    },
+    "DPF-EIGHT-DOMAIN-CAPTURE-WIRING-001": {
+      "depends_on": [
+        "DPF-CAPTURE-RETENTION-RUNNER-001",
+        "DPF-NLSC-OFFICIAL-ZIP-PREPROCESSOR-001",
+        "DPF-OVERTURE-BOUNDED-RECORD-READER-001",
+        "DPF-TDX-OAUTH-ACQUISITION-INTEGRATION-001"
+      ],
+      "status": "todo"
+    }
+  }
+}
