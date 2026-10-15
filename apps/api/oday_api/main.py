@@ -138,6 +138,7 @@ else:
         operator_live_repository: Any = None,
         address_location_repository: Any = None,
         manual_correction_repository: Any = None,
+        assisted_intake_workflow_policy: Any = None,
         persistence: Any = None,
         external_provider_validation: Any = None,
         external_provider_connectivity_probe: Any = None,
@@ -1940,6 +1941,11 @@ else:
             create_assisted_intake_router(
                 store=assisted_intake_store,
                 audit_log=audit_log,
+                workflow_policy=(
+                    assisted_intake_workflow_policy
+                    if assisted_intake_workflow_policy is not None
+                    else getattr(bundle, "assisted_intake_workflow_policy", None)
+                ),
             ),
             exact_responses=True,
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -14,6 +15,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from apps.api.app.routes.listings import AssistedIntakeStore
 from apps.api.oday_api.main import create_app
 from delivery_toolchain.openapi.generate_assisted_listing_intake_client import ARTIFACT
+from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 TENANT_B = "00000000-0000-0000-0000-000000000002"
@@ -23,6 +25,196 @@ ACTOR_C = "00000000-0000-0000-0000-000000000103"
 ACTOR_B = "00000000-0000-0000-0000-000000000104"
 OWNER_STEWARD = "00000000-0000-0000-0000-000000000105"
 BRAND_X = "00000000-0000-0000-0000-000000000201"
+
+
+@pytest.fixture(scope="module")
+def workflow_scope_client():
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+    client = ContractTestClient(app)
+    client.workflow_scope_store = AssistedIntakeStore._instances[-1]
+    return client
+
+
+RESOURCE_SCOPE_ACTIONS = ["claim", "transfer", "complete", "pause", "resume"]
+RESOURCE_SCOPE_AXES = [
+    ("brand_id", "x-brand-ids"),
+    ("region_id", "x-region-ids"),
+    ("store_id", "x-store-ids"),
+    ("assigned_area_id", "x-assigned-area-ids"),
+    ("heat_zone_id", "x-heat-zone-ids"),
+]
+
+
+def _workflow_scope_case(client, action, *, scope, linked=True):
+    store = client.workflow_scope_store
+    resource_id, intake_id = str(uuid4()), str(uuid4())
+    intake = {
+        "intake_id": intake_id,
+        "scope": scope,
+        "version": 1,
+        "state": "NEEDS_REVIEW",
+        "processing_history": [],
+        "submitted_by": ACTOR_A,
+        "assigned_to": ACTOR_A,
+    }
+    if linked:
+        store.intakes[intake_id] = intake
+    common = {
+        "tenant_id": TENANT_A,
+        "intake_id": intake_id,
+        "version": 1,
+        "due_at": "2026-10-12T12:00:00Z",
+        "audit_event_id": str(uuid4()),
+        "correlation_id": str(uuid4()),
+        "scope": {"tenant_id": TENANT_A},
+    }
+    body = {"reason": "Scoped workflow verification"}
+    if action in {"pause", "resume"}:
+        resource = {
+            **common,
+            "sla_instance_id": resource_id,
+            "state": "PAUSED" if action == "resume" else "ON_TRACK",
+            "paused_duration_seconds": 0,
+        }
+        store.slas[resource_id] = resource
+        path = f"/api/v1/sla-instances/{resource_id}/actions/{action}"
+        if action == "pause":
+            body["expected_resume_at"] = "2026-10-13T12:00:00Z"
+    else:
+        resource = {
+            **common,
+            "assignment_id": resource_id,
+            "status": "CLAIMED" if action == "complete" else "ASSIGNED",
+            "owner_subject_id": ACTOR_A,
+        }
+        store.assignments[resource_id] = resource
+        path = f"/api/v1/assignments/{resource_id}/actions/{action}"
+        if action == "transfer":
+            body.update(
+                {
+                    "target_owner_subject_id": ACTOR_C,
+                    "target_owner_role": "expansion_user",
+                    "handoff_note": "Transfer to scoped colleague",
+                }
+            )
+    return store, resource, intake, path, body
+
+
+@pytest.mark.parametrize("action", RESOURCE_SCOPE_ACTIONS)
+@pytest.mark.parametrize("axis,header", RESOURCE_SCOPE_AXES)
+def test_workflow_children_deny_other_scope_without_state_or_replay_writes(
+    workflow_scope_client, action, axis, header
+):
+    client = workflow_scope_client
+    permitted, other = str(uuid4()), str(uuid4())
+    store, resource, intake, path, body = _workflow_scope_case(
+        client, action, scope={"tenant_id": TENANT_A, axis: other}
+    )
+    before = copy.deepcopy((resource, intake, store.replays))
+    response = client.post(
+        path,
+        json=body,
+        headers={
+            **HEADERS_A,
+            header: permitted,
+            "Idempotency-Key": f"scope-denial-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert response.status_code == 403
+    assert (resource, intake, store.replays) == before
+
+
+@pytest.mark.parametrize("action", RESOURCE_SCOPE_ACTIONS)
+@pytest.mark.parametrize("kind", ["dangling", "foreign_tenant"])
+def test_workflow_children_cannot_authorize_from_less_specific_child_metadata(
+    workflow_scope_client, action, kind
+):
+    client = workflow_scope_client
+    store, resource, intake, path, body = _workflow_scope_case(
+        client,
+        action,
+        scope={"tenant_id": TENANT_B if kind == "foreign_tenant" else TENANT_A},
+        linked=kind != "dangling",
+    )
+    before = copy.deepcopy((resource, intake, store.replays))
+    response = client.post(
+        path,
+        json=body,
+        headers={**HEADERS_A, "Idempotency-Key": f"link-denial-{uuid4()}", "If-Match": 'W/"1"'},
+    )
+    assert response.status_code == 403
+    assert (resource, intake, store.replays) == before
+
+
+@pytest.mark.parametrize("action", RESOURCE_SCOPE_ACTIONS)
+def test_workflow_children_keep_authorized_same_scope_actions(workflow_scope_client, action):
+    client = workflow_scope_client
+    region = str(uuid4())
+    _, _, _, path, body = _workflow_scope_case(
+        client, action, scope={"tenant_id": TENANT_A, "region_id": region}
+    )
+    response = client.post(
+        path,
+        json=body,
+        headers={
+            **HEADERS_A,
+            "x-region-ids": region,
+            "Idempotency-Key": f"scope-success-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("action", ["pause", "resume"])
+def test_sla_replays_recheck_current_parent_scope(workflow_scope_client, action):
+    client = workflow_scope_client
+    region = str(uuid4())
+    store, resource, intake, path, body = _workflow_scope_case(
+        client, action, scope={"tenant_id": TENANT_A, "region_id": region}
+    )
+    headers = {
+        **HEADERS_A,
+        "x-region-ids": region,
+        "Idempotency-Key": f"recheck-scope-{uuid4()}",
+        "If-Match": 'W/"1"',
+    }
+    assert client.post(path, json=body, headers=headers).status_code == 200
+    # A cached success is not authority after another manager changes routing.
+    intake["scope"]["region_id"] = str(uuid4())
+    before = copy.deepcopy((resource, intake, store.replays))
+    response = client.post(path, json=body, headers=headers)
+    assert response.status_code == 403
+    assert (resource, intake, store.replays) == before
+
+
+@pytest.mark.parametrize("action", RESOURCE_SCOPE_ACTIONS)
+@pytest.mark.parametrize("kind", ["matching", "missing", "different"])
+def test_standalone_workflow_resources_use_their_own_scope(workflow_scope_client, action, kind):
+    client = workflow_scope_client
+    region = str(uuid4())
+    store, resource, intake, path, body = _workflow_scope_case(
+        client, action, scope={"tenant_id": TENANT_A}, linked=False
+    )
+    resource.pop("intake_id")
+    if kind != "missing":
+        resource["scope"]["region_id"] = region if kind == "matching" else str(uuid4())
+    before = copy.deepcopy((resource, intake, store.replays))
+    response = client.post(
+        path,
+        json=body,
+        headers={
+            **HEADERS_A,
+            "x-region-ids": region,
+            "Idempotency-Key": f"standalone-scope-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert response.status_code == (200 if kind == "matching" else 403)
+    if kind != "matching":
+        assert (resource, intake, store.replays) == before
+
 
 EFFECTIVE_OPENAPI = json.loads(ARTIFACT.read_text())
 RUNTIME_SUCCESS_OPERATIONS: set[str] = set()
@@ -123,7 +315,7 @@ HEADERS_B = {
 
 @pytest.fixture
 def client() -> TestClient:
-    app = create_app()
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     return ContractTestClient(app)
 
 
@@ -1756,7 +1948,7 @@ def test_cursor_uses_configured_signing_and_keyset_snapshot_pagination(
 ) -> None:
     signing_key = "cursor-signing-key-for-contract-tests-0001"
     monkeypatch.setenv("ODP_INTAKE_CURSOR_SIGNING_KEY", signing_key)
-    client = ContractTestClient(create_app())
+    client = ContractTestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy()))
 
     submitted_ids = []
     for index in range(3):
