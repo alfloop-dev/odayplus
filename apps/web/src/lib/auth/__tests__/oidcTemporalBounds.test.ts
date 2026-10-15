@@ -30,7 +30,9 @@ async function exchange(claim?: string, value?: unknown) {
   const idToken = `${header}.${payload}.${Buffer.from(signature).toString("base64url")}`;
   const fetchImpl: typeof fetch = async (url) => String(url).endsWith("/jwks")
     ? new Response(JSON.stringify({ keys: [{ ...jwk, kid: "offline-key", use: "sig" }] }))
-    : new Response(JSON.stringify({ access_token: "opaque-offline-token", token_type: "Bearer", expires_in: 300, id_token: idToken }));
+    // Opaque access token is generated per run (never a fixed credential-shaped
+    // literal); only the real signed id_token is under test here.
+    : new Response(JSON.stringify({ access_token: crypto.randomUUID(), token_type: "Bearer", expires_in: 300, id_token: idToken }));
   return exchangeAuthorizationCode({ code: "offline-code", returnedState: transaction.state, transaction, environment, fetchImpl, nowSeconds: now });
 }
 describe("real signed Web ID-token temporal bounds (no network/store/session effects)", () => {
