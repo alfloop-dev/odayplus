@@ -201,18 +201,32 @@ def test_self_review_prohibition() -> None:
 
 
 def test_second_actor_segregation() -> None:
-    client = TestClient(create_app())
+    from fastapi import FastAPI
 
-    # Submit a listing merge action
-    # prospoer/submitter is user-a
-    # If user-a tries to call merge with first_actor_id set as user-a in headers -> expect SECOND_ACTOR_REQUIRED
+    from apps.api.app.routes.operator_modules.network_listings import (
+        create_network_listings_sub_router,
+    )
+    from apps.api.oday_api.security.dependencies import require_operator_permission
+    from modules.opsboard.application.network_listings import NetworkListingService
+    from shared.auth import Action
+
+    # The first actor is persisted server-side; a request header cannot attest
+    # who proposed the merge or replace that actor with somebody else.
+    service = NetworkListingService()
+    service._listing("L-2029")["proposer"] = "user-a"
+    app = FastAPI()
+    app.include_router(create_network_listings_sub_router(
+        service, require_view_permission_fn=require_operator_permission("listing",Action.VIEW),
+        require_write_permission_fn=require_operator_permission("listing",Action.UPDATE),
+    ),prefix="/api/v1/operator")
+    client = TestClient(app)
     headers_user_a = _write_headers(
         "second-actor-segregation",
         {
             "x-subject-id": "user-a",
             "x-roles": "expansion_user,site_reviewer",
             "x-operator-role": "expansion-manager",
-            "x-first-actor-id": "user-a",
+            "x-first-actor-id": "different-forged-first-actor",
         },
     )
     merge_resp = client.post(

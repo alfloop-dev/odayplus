@@ -68,9 +68,9 @@ def _use_production_event_loop_policy() -> Any:
         asyncio.set_event_loop_policy(previous)
 
 
-def _headers(tenant_id: str, *, idempotency_key: str | None = None) -> dict[str, str]:
+def _headers(tenant_id: str, *, idempotency_key: str | None = None, subject: str | None = None) -> dict[str, str]:
     headers = {
-        "x-subject-id": f"operator-{tenant_id}",
+        "x-subject-id": subject or f"operator-{tenant_id}",
         "x-roles": "operations_manager,site_reviewer,expansion_user",
         "x-operator-role": "siteReviewer",
         "x-tenant-id": tenant_id,
@@ -1274,12 +1274,12 @@ def test_operator_convert_carries_point_in_time_contract_into_scoring(
 
     runtime = RecordingSiteScoreRuntime()
     harness = CanonicalHarness(tmp_path / "operator-convert-roundtrip.sqlite3", runtime)
-    _seed_convertible_listing(harness, "tenant-a")
+    _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
             converted = client.post(
                 f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("tenant-a", idempotency_key="convert-live-1"),
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="convert-live-1"),
                 json={"actorRoleId": "expansionManager", "actorName": "Expansion A"},
             )
             assert converted.status_code == 200, converted.text
@@ -1287,7 +1287,7 @@ def test_operator_convert_carries_point_in_time_contract_into_scoring(
 
             scored = client.post(
                 f"{BASE}/network-scoring/candidates/{candidate_id}/score",
-                headers=_headers("tenant-a", idempotency_key="score-convert-1"),
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="score-convert-1"),
                 json={"actorRoleId": "siteReviewer"},
             )
 
@@ -1304,7 +1304,7 @@ def test_operator_convert_carries_point_in_time_contract_into_scoring(
 
         # The persisted draft must still carry the contract, so the next
         # operator write does not silently wipe it.
-        draft = harness.listing("tenant-a").list_candidates()[0]
+        draft = harness.listing("00000000-0000-0000-0000-000000000001").list_candidates()[0]
         assert draft.prior_90d_cell_net_revenue == 180_000.0
         assert draft.prior_90d_cell_transaction_count == 30
         assert draft.prior_90d_cell_store_count == 1
@@ -1325,19 +1325,19 @@ def test_operator_listing_write_does_not_wipe_candidate_features(
 
     runtime = RecordingSiteScoreRuntime()
     harness = CanonicalHarness(tmp_path / "operator-convert-nowipe.sqlite3", runtime)
-    _seed_convertible_listing(harness, "tenant-a")
+    _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
             first = client.post(
                 f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("tenant-a", idempotency_key="convert-nowipe-1"),
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="convert-nowipe-1"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert first.status_code == 200, first.text
             # A second convert re-runs the writer over the existing candidate.
             second = client.post(
                 f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("tenant-a", idempotency_key="convert-nowipe-2"),
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="convert-nowipe-2"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert second.status_code == 200, second.text
@@ -1345,12 +1345,12 @@ def test_operator_listing_write_does_not_wipe_candidate_features(
 
             scored = client.post(
                 f"{BASE}/network-scoring/candidates/{candidate_id}/score",
-                headers=_headers("tenant-a", idempotency_key="score-nowipe-1"),
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="score-nowipe-1"),
                 json={"actorRoleId": "siteReviewer"},
             )
 
         assert scored.status_code == 200, scored.text
-        draft = harness.listing("tenant-a").list_candidates()[0]
+        draft = harness.listing("00000000-0000-0000-0000-000000000001").list_candidates()[0]
         assert draft.prior_90d_cell_net_revenue == 180_000.0
         assert draft.feature_snapshot_time is not None
         # M7: the recorded hard-rule verdict must not be silently recomputed.
@@ -1369,12 +1369,12 @@ def test_operator_convert_without_cell_aggregates_still_fails_closed(
     """
 
     harness = CanonicalHarness(tmp_path / "operator-convert-gap.sqlite3")
-    _seed_convertible_listing(harness, "tenant-a", prior_revenue=None)
+    _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001", prior_revenue=None)
     try:
         with TestClient(harness.app()) as client:
             converted = client.post(
                 f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("tenant-a", idempotency_key="convert-gap-1"),
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="convert-gap-1"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert converted.status_code == 200, converted.text
@@ -1382,7 +1382,7 @@ def test_operator_convert_without_cell_aggregates_still_fails_closed(
 
             scored = client.post(
                 f"{BASE}/network-scoring/candidates/{candidate_id}/score",
-                headers=_headers("tenant-a", idempotency_key="score-gap-1"),
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="score-gap-1"),
                 json={"actorRoleId": "siteReviewer"},
             )
 
@@ -1420,18 +1420,18 @@ def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
     """
 
     harness = CanonicalHarness(tmp_path / f"operator-heatzone-{label}.sqlite3")
-    _seed_convertible_listing(harness, "tenant-a")
+    _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
             converted = client.post(
                 f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("tenant-a", idempotency_key=f"convert-hz-{label}"),
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key=f"convert-hz-{label}"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert converted.status_code == 200, converted.text
             candidate_id = converted.json()["candidate"]["id"]
 
-        repository = harness.listing("tenant-a")
+        repository = harness.listing("00000000-0000-0000-0000-000000000001")
         before = repository.list_candidates()
         assert len(before) == 1
         good_heat_zone_id = before[0].heat_zone_id
@@ -1440,7 +1440,7 @@ def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
         service = NetworkListingService(
             listing_repository=repository,
             intake_repository=DurableAssistedIntakeRepository(
-                harness.scoped("tenant-a")
+                harness.scoped("00000000-0000-0000-0000-000000000001")
             ),
             seed_fixtures=False,
         )
@@ -1453,7 +1453,7 @@ def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
 
         # Nothing partial was written: the stored candidate still carries the
         # original heat zone and the point-in-time contract.
-        after = harness.listing("tenant-a").list_candidates()
+        after = harness.listing("00000000-0000-0000-0000-000000000001").list_candidates()
         assert len(after) == 1
         assert after[0].heat_zone_id == good_heat_zone_id
         assert after[0].prior_90d_cell_net_revenue == 180_000.0
@@ -1468,22 +1468,22 @@ def test_operator_candidate_write_rejects_missing_heat_zone_key(
     """M7 (absent key): the original gap must stay closed too."""
 
     harness = CanonicalHarness(tmp_path / "operator-heatzone-missing.sqlite3")
-    _seed_convertible_listing(harness, "tenant-a")
+    _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
             converted = client.post(
                 f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("tenant-a", idempotency_key="convert-hz-missing"),
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject="00000000-0000-0000-0000-000000000101", idempotency_key="convert-hz-missing"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert converted.status_code == 200, converted.text
             candidate_id = converted.json()["candidate"]["id"]
 
-        repository = harness.listing("tenant-a")
+        repository = harness.listing("00000000-0000-0000-0000-000000000001")
         service = NetworkListingService(
             listing_repository=repository,
             intake_repository=DurableAssistedIntakeRepository(
-                harness.scoped("tenant-a")
+                harness.scoped("00000000-0000-0000-0000-000000000001")
             ),
             seed_fixtures=False,
         )
@@ -1494,7 +1494,7 @@ def test_operator_candidate_write_rejects_missing_heat_zone_key(
         with pytest.raises(ValueError, match="no usable heatZoneId"):
             service.save_candidate(candidate)
 
-        after = harness.listing("tenant-a").list_candidates()
+        after = harness.listing("00000000-0000-0000-0000-000000000001").list_candidates()
         assert len(after) == 1
         assert after[0].heat_zone_id.strip()
     finally:

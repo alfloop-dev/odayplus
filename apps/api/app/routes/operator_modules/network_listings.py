@@ -38,6 +38,7 @@ from modules.opsboard.application.network_read_scope import (
     project_intake_record,
     project_listing_snapshot,
 )
+from modules.opsboard.application.operator_actor import operator_actor
 from shared.audit import InMemoryAuditLog
 from shared.auth import Principal, Role
 
@@ -234,7 +235,7 @@ def create_network_listings_sub_router(
             listing = active_service(request)._listing(listing_id)
             has_legal_hold = listing.get("hasLegalHold") or listing.get("legalHold") or False
             first_actor_id = listing.get("submitter") or listing.get("owner")
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
             authorize_intake_action(
                 principal,
@@ -253,8 +254,8 @@ def create_network_listings_sub_router(
 
             result = active_service(request).convert_listing(
                 listing_id=listing_id,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
             )
@@ -264,6 +265,8 @@ def create_network_listings_sub_router(
             if "candidate" in result:
                 result["candidate"] = mask_listing(principal, result["candidate"])
             return result
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:
@@ -296,11 +299,10 @@ def create_network_listings_sub_router(
                 or False
             )
             first_actor_id = (
-                request.headers.get("x-first-actor-id")
-                or source.get("proposer")
+                source.get("proposer")
                 or source.get("submitter")
             )
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
             authorize_intake_action(
                 principal,
@@ -333,8 +335,8 @@ def create_network_listings_sub_router(
                 reason=body.reason or "",
                 risk_summary=body.riskSummary,
                 risk_acknowledged=body.riskAcknowledged,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
             )
@@ -344,6 +346,8 @@ def create_network_listings_sub_router(
             if "target" in result:
                 result["target"] = mask_listing(principal, result["target"])
             return result
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:
@@ -367,7 +371,7 @@ def create_network_listings_sub_router(
             operator_role_id = get_operator_role_id(request)
             listing = active_service(request)._listing(listing_id)
             has_legal_hold = listing.get("hasLegalHold") or listing.get("legalHold") or False
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
             authorize_intake_action(
                 principal,
@@ -382,8 +386,8 @@ def create_network_listings_sub_router(
             result = active_service(request).archive_listing(
                 listing_id=listing_id,
                 reason=body.reason or "",
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
             )
@@ -391,6 +395,8 @@ def create_network_listings_sub_router(
             if "listing" in result:
                 result["listing"] = mask_listing(principal, result["listing"])
             return result
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:
@@ -426,7 +432,7 @@ def create_network_listings_sub_router(
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
             # Submitting a URL creates a new intake inside the caller's scope;
             # there is no existing object to read a tenant from, so the heat
@@ -447,17 +453,24 @@ def create_network_listings_sub_router(
             result = active_service(request).submit_intake(
                 url=body.url,
                 heat_zone_id=body.heatZoneId,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
                 job_queue=job_queue,
                 async_intake=is_async,
-                tenant_id=principal.scope.tenant_id if (principal and principal.scope) else None,
+                tenant_id=actor.tenant_id,
+                authorize_existing=lambda intake: authorize_intake_action(
+                    principal, "view", resource=intake,
+                    operator_role_id=operator_role_id, audit_log=audit_log,
+                    correlation_id=x_correlation_id,
+                ),
             )
             return mask_intake(principal, result)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:
@@ -634,6 +647,8 @@ def create_network_listings_sub_router(
             if principal.has_role(Role.OPERATOR_VIEWER):
                 intake = project_intake_record(intake)
             return mask_intake(principal, intake)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -658,7 +673,7 @@ def create_network_listings_sub_router(
             )
             first_actor_id = intake.get("submitter")
             has_legal_hold = intake.get("hasLegalHold") or intake.get("legalHold") or False
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
             authorize_intake_action(
                 principal,
@@ -680,12 +695,14 @@ def create_network_listings_sub_router(
                 reason=body.reason,
                 risk_summary=body.riskSummary,
                 risk_acknowledged=body.riskAcknowledged,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
             )
             return mask_intake(principal, result)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:
@@ -710,7 +727,7 @@ def create_network_listings_sub_router(
             intake = active_service(request).get_intake(intake_id)
             first_actor_id = intake.get("submitter")
             has_legal_hold = intake.get("hasLegalHold") or intake.get("legalHold") or False
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
             authorize_intake_action(
                 principal,
@@ -731,13 +748,15 @@ def create_network_listings_sub_router(
                 reason=body.reason,
                 risk_summary=body.riskSummary,
                 risk_acknowledged=body.riskAcknowledged,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
                 target_listing_id=getattr(body, "targetListingId", None),
             )
             return mask_intake(principal, result)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:
@@ -753,13 +772,14 @@ def create_network_listings_sub_router(
         request: Request,
         intake_id: str,
         body: NetworkListingActorPayload,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             intake = active_service(request).get_intake(intake_id)
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
             if intake.get("stage") == "QUARANTINED":
                 action = "reopen_quarantine"
@@ -778,13 +798,16 @@ def create_network_listings_sub_router(
             job_queue = getattr(request.app.state, "job_queue", None)
             result = active_service(request).retry_intake(
                 intake_id=intake_id,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 correlation_id=x_correlation_id,
                 job_queue=job_queue,
-                tenant_id=principal.scope.tenant_id if (principal and principal.scope) else None,
+                tenant_id=actor.tenant_id,
+                idempotency_key=idempotency_key,
             )
             return mask_intake(principal, result)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:
@@ -809,7 +832,7 @@ def create_network_listings_sub_router(
             intake = active_service(request).get_intake(intake_id)
             first_actor_id = intake.get("submitter")
             has_legal_hold = intake.get("hasLegalHold") or intake.get("legalHold") or False
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
             authorize_intake_action(
                 principal,
@@ -829,8 +852,8 @@ def create_network_listings_sub_router(
                 reason=body.reason,
                 risk_summary=body.riskSummary,
                 risk_acknowledged=body.riskAcknowledged,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
             )
@@ -840,6 +863,8 @@ def create_network_listings_sub_router(
             if "candidate" in result:
                 result["candidate"] = mask_listing(principal, result["candidate"])
             return result
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.app.routes.listings import AssistedIntakeStore
 from apps.api.oday_api.main import create_app
+from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 ACTOR_A = "00000000-0000-0000-0000-000000000101"
@@ -29,7 +31,7 @@ HEADERS_A_REVIEWER = {
 
 
 def test_promotion_api_contract_flow() -> None:
-    app = create_app()
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     client = TestClient(app)
 
     # 1. Submit an intake to /api/v1/intakes/url (resolves to READY)
@@ -164,8 +166,10 @@ def test_promotion_api_contract_flow() -> None:
     assert job["checkpoint"] == "SCORE_QUEUED"
 
 
-def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> None:
-    app = create_app()
+@pytest.mark.parametrize("score_failure", [False, True])
+def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt(monkeypatch, score_failure) -> None:
+    monkeypatch.setenv("CI", "1")
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     client = TestClient(app)
 
     submitted = client.post(
@@ -287,10 +291,23 @@ def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> No
             "x-operator-role": "expansion-manager",
             "Idempotency-Key": f"operator-review-{uuid4()}",
             "If-Match": f'W/"{decision["version"]}"',
+            **({"X-ODP-Test-Fault": "score-failure"} if score_failure else {}),
         },
     )
-    assert reviewed.status_code == 200, reviewed.text
-    job_id = reviewed.json()["site_score_job_id"]
+    assert reviewed.status_code == (422 if score_failure else 200), reviewed.text
+    if score_failure:
+        assert "ODP_TEST_SCORE_FAILURE" in reviewed.text
+        retained = client.get(
+            f"/api/v1/intakes/{intake['id']}/promotion-decision",
+            headers={"x-subject-id": ACTOR_A_REVIEWER, "x-tenant-id": OPERATOR_TENANT,
+                     "x-roles": "site_reviewer,data_owner,expansion_user"},
+        )
+        assert retained.status_code == 200, retained.text
+        assert retained.json()["status"] == "SCORE_FAILED"
+        assert retained.json()["candidate_site_id"] is not None
+        job_id = retained.json()["site_score_job_id"]
+    else:
+        job_id = reviewed.json()["site_score_job_id"]
     receipt = client.get(
         f"/api/v1/jobs/{job_id}/receipt",
         headers={
@@ -303,6 +320,8 @@ def test_operator_intake_uses_v1_promotion_and_authoritative_job_receipt() -> No
     assert receipt.status_code == 200, receipt.text
     assert receipt.json()["job_id"] == job_id
     assert receipt.json()["version"] == 1
+    if score_failure:
+        assert receipt.json()["status"] == "FAILED"
 
     # The retry route must resolve the linked operator intake too; otherwise
     # SCORE_FAILED UI replay would fail with DEPENDENCY_CONFLICT.

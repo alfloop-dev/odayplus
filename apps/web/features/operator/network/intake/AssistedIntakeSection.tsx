@@ -407,8 +407,6 @@ export function AssistedIntakeSection({
       {
         url,
         heatZoneId: heatZoneId || null,
-        actorRoleId: activeRoleId,
-        actorName: role.label,
       },
       { idempotencyKey: submitKeyRef.current },
     );
@@ -454,8 +452,6 @@ export function AssistedIntakeSection({
         reason: reason || null,
         riskSummary,
         riskAcknowledged,
-        actorRoleId: activeRoleId,
-        actorName: role.label,
       },
       { idempotencyKey: correctionKeyRef.current },
     );
@@ -494,8 +490,6 @@ export function AssistedIntakeSection({
         reason: "人工補錄：此來源未經核准擷取，依來源頁內容補錄必要欄位",
         riskSummary,
         riskAcknowledged,
-        actorRoleId: activeRoleId,
-        actorName: role.label,
       },
       { idempotencyKey: assistedEntryKeyRef.current },
     );
@@ -534,8 +528,6 @@ export function AssistedIntakeSection({
         reason,
         riskSummary,
         riskAcknowledged,
-        actorRoleId: activeRoleId,
-        actorName: role.label,
       },
       { idempotencyKey: decisionKeyRef.current },
     );
