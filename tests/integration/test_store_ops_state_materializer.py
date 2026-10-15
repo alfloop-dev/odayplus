@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import copy
 import hashlib
-from collections.abc import Callable
+import json
+import os
+import secrets
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +31,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from apps.api.app.routes.operator_modules import create_operator_store_ops_router
+from apps.api.oday_api.security.dependencies import reset_bound_persistence
 from apps.scheduler.oday_scheduler.main import (
     EXTERNAL_FETCH_JOB_TYPE,
     STORE_OPS_MATERIALIZE_JOB_TYPE,
@@ -55,6 +59,7 @@ from modules.opsboard.application.store_ops_materializer import (
     empty_store_ops_state,
     materialize_store_ops_state,
 )
+from modules.opsboard.auth import SigningKey, encode_compact_jwt
 from shared.audit import InMemoryAuditLog
 from shared.domain.models import Store
 from shared.infrastructure.persistence.engine import SqliteEngine
@@ -539,8 +544,51 @@ def _production_client(
     return TestClient(app)
 
 
+@pytest.fixture
+def production_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Callable[..., dict[str, str]]]:
+    """Real env-configured service boundary; only server declarations grant scope."""
+    for name in tuple(os.environ):
+        if name.startswith("ODP_AUTH_"):
+            monkeypatch.delenv(name)
+    issuer = "https://store-ops.offline.invalid"
+    secret = secrets.token_urlsafe(48)
+    key = SigningKey(kid="store-ops-fixture", algorithm="HS256", secret=secret.encode())
+    monkeypatch.setenv("ODP_AUTH_MODE", "local")
+    monkeypatch.setenv("ODP_AUTH_SERVICE_ISSUER", issuer)
+    monkeypatch.setenv("ODP_AUTH_SERVICE_AUDIENCES", "oday-api")
+    monkeypatch.setenv("ODP_AUTH_HS256_KEYS", "store-ops-fixture:" + secret)
+    monkeypatch.setenv(
+        "ODP_AUTH_PRINCIPAL_MAP",
+        json.dumps({
+            f"operator-{tenant}": {
+                "roles": ["operations_manager", "site_reviewer", "expansion_user"],
+                "scope": {"tenant_id": tenant},
+            }
+            for tenant in (TENANT_ID, OTHER_TENANT_ID)
+        }),
+    )
+    reset_bound_persistence()
+
+    def headers(tenant_id: str = TENANT_ID) -> dict[str, str]:
+        now = datetime.now(UTC).timestamp()
+        token = encode_compact_jwt(
+            {"iss": issuer, "sub": f"operator-{tenant_id}", "aud": "oday-api",
+             "iat": now, "exp": now + 300},
+            key,
+        )
+        return {**_headers(tenant_id), "authorization": "Bearer " + token}
+
+    try:
+        yield headers
+    finally:
+        reset_bound_persistence()
+
+
 def test_tenants_never_see_or_overwrite_each_others_state(
-    document_store: LivePostgresDocumentStore, monkeypatch: pytest.MonkeyPatch
+    document_store: LivePostgresDocumentStore, monkeypatch: pytest.MonkeyPatch,
+    production_headers: Callable[..., dict[str, str]],
 ) -> None:
     stores = [
         _store("store-a", "信義 A 店"),
@@ -554,25 +602,25 @@ def test_tenants_never_see_or_overwrite_each_others_state(
 
     with _production_client(document_store, monkeypatch) as client:
         other_before = client.get(
-            f"{BASE}/store-ops/summary", headers=_headers(OTHER_TENANT_ID)
+            f"{BASE}/store-ops/summary", headers=production_headers(OTHER_TENANT_ID)
         )
         other_issue = client.get(
-            f"{BASE}/store-ops/issues/ISS-FC-alert-a", headers=_headers(OTHER_TENANT_ID)
+            f"{BASE}/store-ops/issues/ISS-FC-alert-a", headers=production_headers(OTHER_TENANT_ID)
         )
         # Tenant B's own (empty) materialization must not touch tenant A.
         assert _materialize(document_store, alerts=alerts, tenant_id=OTHER_TENANT_ID).status == (
             "written"
         )
-        own = client.get(f"{BASE}/store-ops/issues", headers=_headers())
-        other = client.get(f"{BASE}/store-ops/issues", headers=_headers(OTHER_TENANT_ID))
+        own = client.get(f"{BASE}/store-ops/issues", headers=production_headers())
+        other = client.get(f"{BASE}/store-ops/issues", headers=production_headers(OTHER_TENANT_ID))
         cross_write = client.post(
             f"{BASE}/store-ops/issues/ISS-FC-alert-a/triage",
-            headers=_headers(OTHER_TENANT_ID),
+            headers=production_headers(OTHER_TENANT_ID),
             json={"payload": {"severity": "low"}},
         )
         own_write = client.post(
             f"{BASE}/store-ops/issues/ISS-FC-alert-a/triage",
-            headers={**_headers(), "Idempotency-Key": "shared-key"},
+            headers={**production_headers(), "Idempotency-Key": "shared-key"},
             json={"payload": {"severity": "high"}},
         )
 
@@ -614,7 +662,8 @@ def test_tenants_never_see_or_overwrite_each_others_state(
 
 
 def test_production_never_reads_or_writes_an_unscoped_document(
-    document_store: LivePostgresDocumentStore, monkeypatch: pytest.MonkeyPatch
+    document_store: LivePostgresDocumentStore, monkeypatch: pytest.MonkeyPatch,
+    production_headers: Callable[..., dict[str, str]],
 ) -> None:
     # A legacy global document must neither be served nor overwritten.
     document_store.put(STATE_COLLECTION, STATE_DOC_ID, empty_store_ops_state())
@@ -625,13 +674,80 @@ def test_production_never_reads_or_writes_an_unscoped_document(
     with pytest.raises(StoreOpsLiveDataUnavailable, match="authenticated tenant scope"):
         unscoped.save_state(empty_store_ops_state())
     with _production_client(document_store, monkeypatch) as client:
-        response = client.get(f"{BASE}/store-ops/summary", headers=_headers())
+        response = client.get(f"{BASE}/store-ops/summary", headers=production_headers())
 
     assert response.status_code == 503
     assert response.json()["detail"]["message"] == (
         "Store Ops production state has not been materialized"
     )
     assert document_store.put_calls == []
+
+
+@pytest.mark.parametrize("credentials", ["anonymous", "forged-headers", "invalid-token"])
+def test_live_requests_require_verified_credentials_without_leak_or_mutation(
+    document_store: LivePostgresDocumentStore, monkeypatch: pytest.MonkeyPatch,
+    production_headers: Callable[..., dict[str, str]], credentials: str,
+) -> None:
+    _materialize(
+        document_store, stores=[_store("store-private", "private-store-name")],
+        alerts={"store-private": [_alert("private-alert", "store-private", "red")]},
+    )
+    _materialize(document_store, tenant_id=OTHER_TENANT_ID)
+    document_store.put(STATE_COLLECTION, STATE_DOC_ID, empty_store_ops_state())
+    before = {tenant: copy.deepcopy(document_store.state(tenant))
+              for tenant in (TENANT_ID, OTHER_TENANT_ID)}
+    legacy = copy.deepcopy(document_store.get(STATE_COLLECTION, STATE_DOC_ID))
+    document_store.put_calls.clear()
+    headers = {} if credentials == "anonymous" else _headers()
+    if credentials == "invalid-token":
+        headers["authorization"] = "Bearer invalid.offline.signature"
+    with _production_client(document_store, monkeypatch) as client:
+        responses = [
+            client.get(f"{BASE}/store-ops/summary", headers=headers),
+            client.post(
+                f"{BASE}/store-ops/issues/ISS-FC-private-alert/triage",
+                headers={**headers, "Idempotency-Key": "denied-key"},
+                json={"payload": {"severity": "low"}},
+            ),
+        ]
+    for response in responses:
+        assert response.status_code == 401
+        assert "private-store-name" not in response.text
+        assert "private-alert" not in response.text
+        assert "store-private" not in response.text
+    assert document_store.put_calls == []
+    for tenant, state in before.items():
+        assert document_store.state(tenant) == state
+    assert document_store.get(STATE_COLLECTION, STATE_DOC_ID) == legacy
+
+
+def test_signed_service_cannot_override_server_tenant_with_forged_headers(
+    document_store: LivePostgresDocumentStore, monkeypatch: pytest.MonkeyPatch,
+    production_headers: Callable[..., dict[str, str]],
+) -> None:
+    _materialize(
+        document_store, stores=[_store("store-private", "private-store-name")],
+        alerts={"store-private": [_alert("private-alert", "store-private", "red")]},
+    )
+    _materialize(document_store, tenant_id=OTHER_TENANT_ID)
+    before = {tenant: copy.deepcopy(document_store.state(tenant))
+              for tenant in (TENANT_ID, OTHER_TENANT_ID)}
+    document_store.put_calls.clear()
+    # Valid tenant B credential, but tenant A identity/roles/scope headers.
+    headers = {**production_headers(OTHER_TENANT_ID), **_headers(TENANT_ID)}
+    with _production_client(document_store, monkeypatch) as client:
+        summary = client.get(f"{BASE}/store-ops/summary", headers=headers)
+        denied = client.post(
+            f"{BASE}/store-ops/issues/ISS-FC-private-alert/triage", headers=headers,
+            json={"payload": {"severity": "low"}},
+        )
+    assert summary.status_code == 200
+    assert summary.json()["stores"] == []
+    assert "private-store-name" not in summary.text
+    assert denied.status_code == 404
+    assert document_store.put_calls == []
+    for tenant, state in before.items():
+        assert document_store.state(tenant) == state
 
 
 # ---------------------------------------------------------------------------
