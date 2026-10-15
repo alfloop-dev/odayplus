@@ -196,6 +196,7 @@ def authorize_intake_action(
         mapping = {
             "view": Action.VIEW,
             "submit_url": Action.CREATE,
+            "submit_manual": Action.CREATE,
             "submit_csv": Action.CREATE,
             "cancel": Action.UPDATE,
             "archive": Action.UPDATE,
@@ -356,7 +357,7 @@ def authorize_intake_action(
         if not (is_staff or is_manager or is_steward or is_governance or is_privacy or is_operator_viewer):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
-    elif action in ("submit_url", "submit_csv"):
+    elif action in ("submit_url", "submit_manual", "submit_csv"):
         if not (is_staff or is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 

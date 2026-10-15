@@ -2021,6 +2021,135 @@
         "title": "CanonicalIdentitySummary",
         "type": "object"
       },
+      "CanonicalIntakeReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_method": {
+            "enum": [
+              "URL",
+              "MANUAL"
+            ],
+            "title": "Intake Method",
+            "type": "string"
+          },
+          "outbox_event_id": {
+            "format": "uuid",
+            "title": "Outbox Event Id",
+            "type": "string"
+          },
+          "processing_state": {
+            "const": "SUBMITTED",
+            "title": "Processing State",
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "transition_id": {
+            "format": "uuid",
+            "title": "Transition Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "processing_state",
+          "version",
+          "intake_method",
+          "submitted_at",
+          "correlation_id",
+          "transition_id",
+          "audit_event_id",
+          "outbox_event_id"
+        ],
+        "title": "CanonicalIntakeReceipt",
+        "type": "object"
+      },
+      "CanonicalIntakeSummary": {
+        "properties": {
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_method": {
+            "enum": [
+              "URL",
+              "MANUAL",
+              "CSV",
+              "APPROVED_FEED",
+              "OPERATOR_SNAPSHOT"
+            ],
+            "title": "Intake Method",
+            "type": "string"
+          },
+          "processing_state": {
+            "$ref": "#/components/schemas/IntakeStage"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NativeIntakeScope"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "submitter_subject_id": {
+            "format": "uuid",
+            "title": "Submitter Subject Id",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "tenant_id",
+          "submitter_subject_id",
+          "intake_method",
+          "processing_state",
+          "version",
+          "submitted_at",
+          "correlation_id",
+          "scope"
+        ],
+        "title": "CanonicalIntakeSummary",
+        "type": "object"
+      },
       "ClosePayload": {
         "properties": {
           "actor": {
@@ -5042,6 +5171,24 @@
         "title": "IntakeSort",
         "type": "string"
       },
+      "IntakeStage": {
+        "enum": [
+          "SUBMITTED",
+          "CHECKING_IDENTITY",
+          "READY",
+          "CHECKING_SOURCE_POLICY",
+          "RETRIEVING",
+          "AWAITING_ASSISTED_ENTRY",
+          "PARSING",
+          "MATCHING",
+          "NEEDS_REVIEW",
+          "QUARANTINED",
+          "FAILED",
+          "CANCELLED"
+        ],
+        "title": "IntakeStage",
+        "type": "string"
+      },
       "IntakeState": {
         "enum": [
           "SUBMITTED",
@@ -6535,6 +6682,61 @@
           "metric_name"
         ],
         "title": "MonitorGuardrailPayload",
+        "type": "object"
+      },
+      "NativeIntakeScope": {
+        "additionalProperties": false,
+        "properties": {
+          "assigned_area_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Area Id"
+          },
+          "brand_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Id"
+          },
+          "heat_zone_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heat Zone Id"
+          },
+          "region_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Id"
+          }
+        },
+        "title": "NativeIntakeScope",
         "type": "object"
       },
       "NetPlanActorPayload": {
@@ -11529,6 +11731,48 @@
           }
         },
         "title": "StoreOpsTransitionPayload",
+        "type": "object"
+      },
+      "SubmitCanonicalIntakeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "intake_method": {
+            "enum": [
+              "URL",
+              "MANUAL"
+            ],
+            "title": "Intake Method",
+            "type": "string"
+          },
+          "original_url": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Url"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NativeIntakeScope"
+          }
+        },
+        "required": [
+          "intake_method",
+          "scope",
+          "reason"
+        ],
+        "title": "SubmitCanonicalIntakeRequest",
         "type": "object"
       },
       "TaskAssignRequest": {
@@ -17290,6 +17534,122 @@
         },
         "summary": "Read Job",
         "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes": {
+      "post": {
+        "operationId": "submitCanonicalIntake",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitCanonicalIntakeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Submit",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}": {
+      "get": {
+        "operationId": "getCanonicalIntake",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Get",
+        "tags": [
+          "assisted-listing-intake",
           "assisted-listing-intake"
         ]
       }

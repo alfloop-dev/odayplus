@@ -115,6 +115,7 @@ apps/api/app/routes/adlift.py,product_system,product_required,true,,engineering;
 apps/api/app/routes/audit.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/avm.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/canonical_identity_decisions.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+apps/api/app/routes/canonical_intakes.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/canonical_match_cases.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/external_data.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/forecastops.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -884,6 +885,7 @@ shared/infrastructure/object_store/client.py,product_system,product_required,tru
 shared/infrastructure/persistence/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/assisted_listing_intake.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/audit_log.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+shared/infrastructure/persistence/canonical_intakes_sql.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/command_receipts.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/decision_policy.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/document_store.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -1091,6 +1093,7 @@ tests/integration/test_canonical_identity_http_postgresql.py,verification,verifi
 tests/integration/test_canonical_identity_job_controls_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_canonical_identity_proposals_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_canonical_intake_audit.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_canonical_intakes_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_canonical_measurement_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_canonical_measurement_production_paths.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_data_platform_deployment_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

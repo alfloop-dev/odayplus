@@ -132,6 +132,13 @@ class PersistenceBundle:
             delivery_authenticator=IdentityDeliveryAuthenticator(self.engine),
         )
 
+    def canonical_intakes(self) -> Any:
+        from shared.infrastructure.persistence.canonical_intakes_sql import (
+            CanonicalIntakeRepository,
+        )
+
+        return CanonicalIntakeRepository(self.canonical_identity_graph())
+
     def canonical_match_cases(self) -> Any:
         from shared.infrastructure.persistence.identity_cases_sql import (
             CanonicalMatchCaseRepository,

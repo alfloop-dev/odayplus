@@ -373,6 +373,32 @@ export type CanonicalIdentitySummary = {
   version: number;
 };
 
+/** CanonicalIntakeReceipt */
+export type CanonicalIntakeReceipt = {
+  audit_event_id: string;
+  correlation_id: string;
+  intake_id: string;
+  intake_method: "URL" | "MANUAL";
+  outbox_event_id: string;
+  processing_state: "SUBMITTED";
+  submitted_at: string;
+  transition_id: string;
+  version: number;
+};
+
+/** CanonicalIntakeSummary */
+export type CanonicalIntakeSummary = {
+  correlation_id: string;
+  intake_id: string;
+  intake_method: "URL" | "MANUAL" | "CSV" | "APPROVED_FEED" | "OPERATOR_SNAPSHOT";
+  processing_state: IntakeStage;
+  scope: NativeIntakeScope;
+  submitted_at: string;
+  submitter_subject_id: string;
+  tenant_id: string;
+  version: number;
+};
+
 /** ClosePayload */
 export type ClosePayload = {
   actor: string;
@@ -996,6 +1022,9 @@ export type IntakePromotePayload = {
 /** IntakeSort */
 export type IntakeSort = "submitted_at_desc" | "updated_at_desc" | "due_at_asc" | "status_asc";
 
+/** IntakeStage */
+export type IntakeStage = "SUBMITTED" | "CHECKING_IDENTITY" | "READY" | "CHECKING_SOURCE_POLICY" | "RETRIEVING" | "AWAITING_ASSISTED_ENTRY" | "PARSING" | "MATCHING" | "NEEDS_REVIEW" | "QUARANTINED" | "FAILED" | "CANCELLED";
+
 /** IntakeState */
 export type IntakeState = "SUBMITTED" | "CHECKING_IDENTITY" | "CHECKING_SOURCE_POLICY" | "AWAITING_ASSISTED_ENTRY" | "RETRIEVING" | "PARSING" | "MATCHING" | "NEEDS_REVIEW" | "READY" | "QUARANTINED" | "FAILED" | "CANCELLED";
 
@@ -1281,6 +1310,14 @@ export type MonitorGuardrailPayload = {
   warning_max_relative_degradation?: number | null;
   warning_max_value?: number | null;
   warning_min_value?: number | null;
+};
+
+/** NativeIntakeScope */
+export type NativeIntakeScope = {
+  assigned_area_id?: string | null;
+  brand_id?: string | null;
+  heat_zone_id?: string | null;
+  region_id?: string | null;
 };
 
 /** NetPlanActorPayload */
@@ -2117,6 +2154,14 @@ export type StoreOpsTransitionPayload = {
   storeName?: string | null;
 };
 
+/** SubmitCanonicalIntakeRequest */
+export type SubmitCanonicalIntakeRequest = {
+  intake_method: "URL" | "MANUAL";
+  original_url?: string | null;
+  reason: string;
+  scope: NativeIntakeScope;
+};
+
 /** Assign a Task Center task to a role/subject. */
 export type TaskAssignRequest = {
   assigneeId: string;
@@ -2381,6 +2426,8 @@ export const API_PATHS = {
   "/api/v1/canonical-identity-decisions/{decision_id}/actions/cancel-job": ["POST"],
   "/api/v1/canonical-identity-decisions/{decision_id}/actions/review": ["POST"],
   "/api/v1/canonical-identity-decisions/{decision_id}/job": ["GET"],
+  "/api/v1/canonical-intakes": ["POST"],
+  "/api/v1/canonical-intakes/{intake_id}": ["GET"],
   "/api/v1/external-data/freshness": ["GET"],
   "/api/v1/external-data/ingestion-runs": ["GET", "POST"],
   "/api/v1/external-data/ingestion-runs/{run_id}": ["GET"],
