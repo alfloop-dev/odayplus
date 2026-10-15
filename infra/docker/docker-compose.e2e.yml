@@ -38,6 +38,9 @@ services:
       PORT: 3000
       HOSTNAME: 0.0.0.0
       ODP_API_BASE_URL: http://api:8000
+      # Browser origin from playwright.config.ts, not Next's internal bind host.
+      # Keep strict mutation CSRF checks; this is throwaway E2E wiring only.
+      ODP_WEB_BASE_URL: http://localhost:${ODP_E2E_WEB_PORT:-3100}
       ODP_DATA_BINDING_MODE: fixture
       ODP_PRODUCT_MODE: poc
       ODP_DEPLOY_ENV: e2e
