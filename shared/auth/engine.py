@@ -86,9 +86,14 @@ class AuthorizationEngine:
             return abac
 
         if is_high_risk(request.action):
-            return self._check_high_risk(request, on=on)
+            high_risk = self._check_high_risk(request, on=on)
+            if not high_risk.allowed:
+                return high_risk
+            return Decision.allow(
+                high_risk.reason, obligations=abac.obligations | high_risk.obligations
+            )
 
-        return Decision.allow("authorized")
+        return Decision.allow("authorized", obligations=abac.obligations)
 
     def _check_high_risk(self, request: AccessRequest, *, on: date) -> Decision:
         """High-risk policy hook: feature flag + separation of duties."""
@@ -124,8 +129,10 @@ class AuthorizationEngine:
     def _record(self, request: AccessRequest, decision: Decision) -> None:
         from shared.audit.policy import build_security_event, requires_audit
 
-        should_audit = not decision.allowed or requires_audit(
-            request.action, request.resource.data_classification
+        should_audit = (
+            not decision.allowed
+            or "audit" in decision.obligations
+            or requires_audit(request.action, request.resource.data_classification)
         )
         if not should_audit:
             return
