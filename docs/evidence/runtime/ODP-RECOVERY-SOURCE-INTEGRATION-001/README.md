@@ -9,7 +9,74 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi continuation checkpoint — 2026-10-15 (incremental, NOT acceptance)
+## Pi continuation — run pi-20261015T042723Z-64b2f81a (NOT review-ready)
+
+Current admitted `origin/dev` was fetched and remains `c0c8c8226acaab3cbe8bb76e79f01e5e6694abb3`,
+already an ancestor of this task. Manager allocated the expected task branch to Pi;
+Human/Ops remains final reviewer. No additional source path was leased or edited.
+
+- Anchor **8010e6570c806b1a99fb38e67683b04271be7911** installs the existing,
+  authoritative `000008_postgresql_runtime_persistence.sql` before 0025's outbox
+  FK, in the same transaction, restoring the caller's search_path. The migration
+  manifest now hashes BOTH executed SQL files. FK/state constraints and
+  no-delivery-backfill semantics are unchanged. This adopts the inspected prior
+  Antigravity DB helper's prerequisite strategy, not its patch wholesale.
+  Real throwaway-PG regressions live in the ALREADY allocated migration-backfill
+  module: fresh/legacy upgrades, unchanged historical hash/no publication intent,
+  missing-event FK refusal, rerun/runtime idempotence, incompatible-target refusal
+  and atomic rollback/version preservation. They isolate0024->0025; they do NOT
+  claim full fresh production-chain coverage. The existing unmodified official
+  real-estate PG module (stamped baseline) also exits0 at8010.
+- Anchor **a83c6d674342e1bbcea5b98288649db498e3cd5b** attributes future accepted
+  enqueue/replay/retry audit events to the verified server tenant AFTER the actual
+  queue record is authorized. No audit read filter, role/module/object authority,
+  mutation allowlist, historical event or signature is relaxed/rewritten. Mounted
+  signed-JWT tests exercise both aliases, own-tenant visibility, foreign/anonymous
+  denial, spoofed-payload refusal, replay and hidden unchanged tenantless history;
+  retry assertions retain every existing complete-object denial case.
+- The initial new PG regression exposed a test-expectation defect: raw psycopg
+  `InvalidForeignKey`, not SQLAlchemy `ProgrammingError`, is the actual cursor
+  exception. The first failed run is retained; the test now requires that exact
+  exception and unchanged atomicity assertions. The first fresh-case failure was
+  genuinely missing runtime schema, and the legacy case passed before the fix.
+- New job-audit assertions genuinely failed in all four enqueue/retry alias cases
+  before the metadata fix. All original assertions remain. Five owning security
+  modules exit0 afterward. Other audit producers and CI fixtures remain unfinished.
+
+Distinct author diagnostic directories under this run's canonical scratch root
+`$PANTHEON_STATUS_ROOT/.orchestrator/worker-runtime/scratch/pi-20261015T042723Z-64b2f81a/`
+retain exact commands/selections, real exits/durations, head/tree, dirty flags,
+420s caps, environment sanitation, NODE_ENV=test and raw-log SHA256. They are
+**not canonical receipts**. Before-fix runs include declared test-only working
+diffs; after-fix runs below are clean exact-head measurements.
+
+| Directory | Measured head | Exit | Raw-log SHA256 |
+|---|---|---:|---|
+| `audit-prerequisite-before` | 1c19 + new tests | 1 | `bcabd121e87912590ba497deb7c8b87d7828607e5d3afef28e4fb2cfebb1ccc0` |
+| `audit-prerequisite-after` | 8010e6570c80 | 0 | `adab773e983d60f1ca201825d128934cd2bf175b8a9bea22491308017eaf2a48` |
+| `official-pg-composition` | 8010e6570c80 | 0 | `17a9d0ea7d37b8dfe21a5a011c072c8baba3779fbaf74aa52a1d6af3622dea9f` |
+| `migration-source-lint` | 8010e6570c80 | 0 | `82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18` |
+| `job-audit-tenant-before` | 8010 + new tests | 1 | `10d10287411f610bff82328376e7961401bc2b1993352a73ad45dd104e1dfc0e` |
+| `job-audit-tenant-after` | a83c6d674342 | 0 | `7ede3989d553500dac25c6a0c83a6c9fb4a3088a73e940319bce0b8e16caa828` |
+| `job-audit-source-lint` | a83c6d674342 | 0 | `82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18` |
+| `source-boundaries` | a83c6d674342 | 0 | `eb0ae805dc18817f00a3e391583c44cb64fe5dc5fa58829e974507df4cf56d2d` |
+
+**Manager scope/lease action needed:** [exact proposed batch and preserved controls](MANAGER-SCOPE-REQUEST.md).
+The named remaining producer/fixture paths are absent from canonical allocated
+`files`; no self-granted expansion was performed. Full failed-job logs have NOT
+all been inspected, and not every CI cause is diagnosed. At old1c19, PR1478 is OPEN,
+autoMergeRequest=null; CI38681182077 already has four failed leaves while
+product-lint-unit was still IN_PROGRESS at readback. This is not new-head evidence.
+Original FULL blocked-task record still equals the preceding Pi allocation snapshot.
+
+Final-head canonical14/all17/normal CI/configured independent Codex2 assessment
+remain owed. Finish author repairs before governed submission; no final-head proof
+is transferred from these incremental measurements, even to a documentation-only
+successor. Human/Ops/PENDING, all original failed epochs/history, operational HOLD
+and goalfalse persist. No submission, approval, merge arming, merge/done or live
+credential/account/session/recovery/deployment/cloud/data/model/F11 effect.
+
+## Previous Pi checkpoint — run pi-20261015T041654Z-d24c3830 (historical)
 
 Worker Manager allocated Pi run `pi-20261015T041654Z-d24c3830` to the existing
 successor workspace; canonical owner is Pi, final reviewer remains **Human/Ops**.
