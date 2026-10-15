@@ -141,16 +141,15 @@ class ODayScheduler:
         way: health and metrics still report, and a future recurring job
         registers here.
         """
+        store_ops = (STORE_OPS_MATERIALIZE_JOB_TYPE,) if self._store_ops_live() else ()
+        return store_ops + self._external_fetch_job_types()
+
+    def _external_fetch_job_types(self) -> tuple[str, ...]:
         from modules.external_data.application.market_data_facade import (
             legacy_external_fetch_enabled,
         )
 
-        job_types: list[str] = []
-        if self._store_ops_live():
-            job_types.append(STORE_OPS_MATERIALIZE_JOB_TYPE)
-        if legacy_external_fetch_enabled(self.env):
-            job_types.append(EXTERNAL_FETCH_JOB_TYPE)
-        return tuple(job_types)
+        return (EXTERNAL_FETCH_JOB_TYPE,) if legacy_external_fetch_enabled(self.env) else ()
 
     def _enqueue_store_ops_materialize(self, tenant_id: str, correlation_id: str) -> None:
         try:
