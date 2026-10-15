@@ -2335,6 +2335,7 @@ else:
             create_operator_store_ops_router(
                 repository=store_ops_repo,
                 store_repository=bundle.store_repository,
+                machine_repository=bundle.machine_repository,
                 delivery_job_queue=bundle.job_queue,
                 audit_log=audit_log,
                 require_live_data=require_live_data,
@@ -2344,6 +2345,9 @@ else:
             api,
             create_interventions_router(
                 workflow=interventions_workflow,
+                store_repository=bundle.store_repository,
+                brand_repository=bundle.brand_repository,
+                require_object_scope=require_live_data,
                 label_registry=label_registry,
                 job_queue=job_queue,
                 require_durable_commands=require_live_data,

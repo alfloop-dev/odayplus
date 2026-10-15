@@ -73,6 +73,10 @@ from modules.heatzone.domain.composition import (
     validate_composition_record,
 )
 from modules.heatzone.workers import HeatZoneBatchScoreResult
+from modules.intervention.application.approval_contract import (
+    InterventionOwnerIntegrityError,
+    require_positive_intervention_version,
+)
 from modules.intervention.domain.lifecycle import (
     ACTIVE_INTERVENTION_STATUSES,
     Intervention,
@@ -803,6 +807,78 @@ _INTERVENTION_EXISTS_SQL: dict[str, str] = {
 }
 
 
+_INTERVENTION_APPROVAL_PREDICATE_SQL = {
+    "interventions": " AND interventions.status = ? AND interventions.store_id = excluded.store_id",
+    "operations.interventions": " AND operations.interventions.status = ? AND operations.interventions.store_id = excluded.store_id",
+}
+_INTERVENTION_APPROVAL_READ_SQL = {
+    "interventions": "SELECT store_id, status FROM interventions WHERE intervention_id = ?",
+    "operations.interventions": "SELECT store_id, status FROM operations.interventions WHERE intervention_id = ? FOR UPDATE",
+}
+
+
+_INTERVENTION_OWNER_READ_SQL = {
+    ("interventions", False): "SELECT store_id FROM interventions WHERE intervention_id = ?",
+    ("interventions", True): "SELECT store_id FROM interventions WHERE intervention_id = ?",
+    ("operations.interventions", False): "SELECT store_id FROM operations.interventions WHERE intervention_id = ?",
+    ("operations.interventions", True): "SELECT store_id FROM operations.interventions WHERE intervention_id = ? FOR UPDATE",
+}
+
+
+# Ownership checks project metadata only; no business pickle is selected here.
+_INTERVENTION_GROUP_OWNER_METADATA_SQL = {
+    "interventions": (
+        "SELECT document.doc_id, document.group_key, native.intervention_id AS canonical_id, native.store_id "
+        "FROM durable_documents AS document LEFT JOIN interventions AS native "
+        "ON native.intervention_id = document.doc_id "
+        "WHERE document.collection = ? AND document.group_key = ? ORDER BY document.ordinal"
+    ),
+    "operations.interventions": (
+        "SELECT document.doc_id, document.group_key, native.intervention_id AS canonical_id, native.store_id "
+        "FROM durable_documents AS document LEFT JOIN operations.interventions AS native "
+        "ON (document.doc_id = CAST(native.intervention_id AS TEXT) "
+        "OR document.doc_id = 'intervention-' || CAST(native.intervention_id AS TEXT)) "
+        "WHERE document.collection = ? AND document.group_key = ? ORDER BY document.ordinal"
+    ),
+}
+_INTERVENTION_STORE_DOCUMENT_METADATA_SQL = {
+    "interventions": (
+        "SELECT document.doc_id, document.group_key, native.intervention_id AS canonical_id, native.store_id "
+        "FROM interventions AS native LEFT JOIN durable_documents AS document "
+        "ON document.doc_id = native.intervention_id AND document.collection = ? "
+        "WHERE native.store_id = ? ORDER BY document.ordinal"
+    ),
+    "operations.interventions": (
+        "SELECT document.doc_id, document.group_key, native.intervention_id AS canonical_id, native.store_id "
+        "FROM operations.interventions AS native LEFT JOIN durable_documents AS document "
+        "ON (document.doc_id = CAST(native.intervention_id AS TEXT) "
+        "OR document.doc_id = 'intervention-' || CAST(native.intervention_id AS TEXT)) "
+        "AND document.collection = ? WHERE native.store_id = ? ORDER BY document.ordinal"
+    ),
+}
+
+# A related payload is selected only through its current relational owner and
+# document index together. A metadata preflight must never be followed by a raw
+# group query that could decode a newly rotated, unauthorized record.
+_INTERVENTION_SCOPED_PAYLOAD_SQL = {
+    "interventions": (
+        "SELECT document.doc_id, document.group_key, native.intervention_id AS canonical_id, native.store_id, document.data "
+        "FROM durable_documents AS document JOIN interventions AS native "
+        "ON native.intervention_id = document.doc_id "
+        "WHERE document.collection = ? AND document.doc_id = ? "
+        "AND document.group_key = ? AND native.store_id = ?"
+    ),
+    "operations.interventions": (
+        "SELECT document.doc_id, document.group_key, native.intervention_id AS canonical_id, native.store_id, document.data "
+        "FROM durable_documents AS document JOIN operations.interventions AS native "
+        "ON (document.doc_id = CAST(native.intervention_id AS TEXT) "
+        "OR document.doc_id = 'intervention-' || CAST(native.intervention_id AS TEXT)) "
+        "WHERE document.collection = ? AND document.doc_id = ? "
+        "AND document.group_key = ? AND native.store_id = ?"
+    ),
+}
+
+
 def _to_uuid_if_prefixed(val: str | None) -> str | None:
     if val is None:
         return None
@@ -881,7 +957,7 @@ class DurableInterventionRepository:
                     if not existing:
                         self._sync_sql(doc)
 
-    def _sync_sql(self, intervention: Intervention) -> None:
+    def _sync_sql(self, intervention: Intervention, *, expected_status: InterventionStatus | None = None) -> None:
         engine = self._store.engine
         table = self.table
         statement = _INTERVENTION_UPSERT_SQL.get(table)
@@ -936,26 +1012,27 @@ class DurableInterventionRepository:
         pred_id = _to_uuid_if_prefixed(intervention.predecessor_id) if is_pg else intervention.predecessor_id
         repl_id = _to_uuid_if_prefixed(intervention.replacement_id) if is_pg else intervention.replacement_id
 
-        cursor = engine.execute(
-            statement,
-            (
-                iid,
-                intervention.store_id,
-                intervention.kind.value if hasattr(intervention.kind, "value") else str(intervention.kind),
-                eligibility_status,
-                action_set_json,
-                approved_action_json,
-                intervention.planned_start.isoformat(),
-                intervention.planned_end.isoformat(),
-                obs_start,
-                obs_end,
-                intervention.status.value.lower() if hasattr(intervention.status, "value") else str(intervention.status).lower(),
-                pred_id,
-                repl_id,
-                adjustment_json,
-                intervention.created_at.isoformat() if hasattr(intervention, "created_at") else datetime.now(UTC).isoformat(),
-            ),
+        params = (
+            iid,
+            intervention.store_id,
+            intervention.kind.value if hasattr(intervention.kind, "value") else str(intervention.kind),
+            eligibility_status,
+            action_set_json,
+            approved_action_json,
+            intervention.planned_start.isoformat(),
+            intervention.planned_end.isoformat(),
+            obs_start,
+            obs_end,
+            intervention.status.value.lower() if hasattr(intervention.status, "value") else str(intervention.status).lower(),
+            pred_id,
+            repl_id,
+            adjustment_json,
+            intervention.created_at.isoformat() if hasattr(intervention, "created_at") else datetime.now(UTC).isoformat(),
         )
+        if expected_status is not None:
+            statement += _INTERVENTION_APPROVAL_PREDICATE_SQL[table]
+            params += (expected_status.value.lower(),)
+        cursor = engine.execute(statement, params)
         if cursor.rowcount == 0:
             # SQLite / PG earlier guard read does not reserve the writer lock.
             # Check the lineage and active status in the actual UPSERT, before writing
@@ -1044,6 +1121,122 @@ class DurableInterventionRepository:
             )
         return intervention
 
+    def save_expected(
+        self, intervention: Intervention, *, expected_version: int, expected_status: InterventionStatus
+    ) -> Intervention:
+        """CAS the exact locked approval snapshot and relational mirror together."""
+        if type(expected_version) is not int or expected_version < 1:
+            raise InterventionError("stale update: expected version must be a positive integer")
+        with self.command_atomic():
+            current = self.get(intervention.intervention_id, for_update=True)
+            if current is not None:
+                require_positive_intervention_version(current.version)
+            require_positive_intervention_version(intervention.version)
+            if (current is None or current.version != expected_version
+                    or current.status != expected_status
+                    or intervention.version != expected_version + 1
+                    or intervention.store_id != current.store_id
+                    or intervention.created_by != current.created_by):
+                raise InterventionError("stale update: approval snapshot changed")
+            lookup_id = (_to_uuid_if_prefixed(intervention.intervention_id)
+                if self.table == "operations.interventions" else intervention.intervention_id)
+            mirror = self._store.engine.query_one(_INTERVENTION_APPROVAL_READ_SQL[self.table], (lookup_id,))
+            if (mirror is None or mirror["status"] != expected_status.value.lower()
+                    or mirror["store_id"] != current.store_id):
+                raise InterventionError("stale update: canonical approval status or store changed")
+            if not self._store.replace_version(
+                self._C, intervention.intervention_id, intervention, expected_version=expected_version
+            ):
+                raise InterventionError("stale update: approval compare-and-save lost")
+            self._sync_sql(intervention, expected_status=expected_status)
+        return intervention
+
+    def lifecycle_snapshot(self, intervention_id: str, *, store_id: str) -> tuple[Intervention, bytes]:
+        """Metadata-first locked read retaining the exact document CAS bytes."""
+        if self.store_id_for_scope(intervention_id, for_update=True) != store_id:
+            raise InterventionError("stale update: lifecycle canonical owner changed")
+        current = self.get(intervention_id, for_update=True)
+        if (not isinstance(current, Intervention) or current.intervention_id != intervention_id
+                or current.store_id != store_id):
+            raise InterventionError("stale update: lifecycle decoded owner changed")
+        require_positive_intervention_version(current.version)
+        row = self._store.engine.query_one(
+            "SELECT data, group_key FROM durable_documents WHERE collection = ? AND doc_id = ?",
+            (self._C, intervention_id))
+        if row is None or row["group_key"] != store_id:
+            raise InterventionError("stale update: lifecycle document owner changed")
+        return current, bytes(row["data"])
+
+    def save_transition(self, intervention: Intervention, *, transition) -> Intervention:
+        from modules.intervention.application.lifecycle_command_contract import (
+            validate_native_transition,
+        )
+        from shared.api.idempotency import request_fingerprint
+        engine = self._store.engine
+        if transition.engine is not engine:
+            raise InterventionError("stale update: lifecycle engine changed")
+        with self.command_atomic():
+            current, raw = self.lifecycle_snapshot(intervention.intervention_id, store_id=transition.original.store_id)
+            if raw != transition.raw or request_fingerprint(current.to_dict()) != request_fingerprint(transition.original.to_dict()):
+                raise InterventionError("stale update: lifecycle raw snapshot changed")
+            validate_native_transition(transition.original, intervention, command=transition.command,
+                actor=transition.actor_subject_id, correlation_id=transition.correlation_id)
+            lookup_id = _to_uuid_if_prefixed(intervention.intervention_id) if self.table == "operations.interventions" else intervention.intervention_id
+            mirror = engine.query_one(_INTERVENTION_APPROVAL_READ_SQL[self.table], (lookup_id,))
+            if mirror is None or mirror["status"] != current.status.value.lower() or mirror["store_id"] != current.store_id:
+                raise InterventionError("stale update: lifecycle relational snapshot changed")
+            cursor = engine.execute(
+                "UPDATE durable_documents SET data = ? WHERE collection = ? AND doc_id = ? AND group_key = ? AND data = ?",
+                (pickle.dumps(intervention, protocol=pickle.HIGHEST_PROTOCOL), self._C,
+                 intervention.intervention_id, current.store_id, transition.raw))
+            if cursor.rowcount != 1:
+                raise InterventionError("stale update: lifecycle compare-and-save lost")
+            self._sync_sql(intervention, expected_status=current.status)
+        return intervention
+
+    def create_if_absent(self, intervention: Intervention) -> Intervention:
+        with self.command_atomic():
+            # A orphan relational row also blocks a new linked creation.
+            if self.store_id_for_scope(intervention.intervention_id, for_update=True) is not None:
+                raise InterventionError("stale update: linked canonical intervention already exists")
+            if not self._store.put_if_absent(self._C, intervention.intervention_id, intervention,
+                                            group_key=intervention.store_id):
+                raise InterventionError("stale update: linked intervention already exists")
+            self._sync_sql(intervention)
+        return intervention
+
+    def lifecycle_cohort_preflight(self, store_id: str) -> tuple[str, ...]:
+        from modules.intervention.application.lifecycle_command_contract import COHORT_LIMIT
+        ids = self.list_scope_ids_by_store(store_id)
+        if len(ids) > COHORT_LIMIT:
+            raise InterventionOwnerIntegrityError("canonical intervention cohort exceeds finite bound")
+        return ids
+
+    def lifecycle_cohort(self, store_id: str, *, exclude_id: str) -> str:
+        """Bounded full peer snapshots, with integrity checked before stale proof."""
+        from shared.api.idempotency import request_fingerprint
+        ids = self.lifecycle_cohort_preflight(store_id)
+        snapshots = []
+        for iid in sorted(ids):
+            item = self._read_scoped_aggregate(iid, store_id)
+            if iid != exclude_id:
+                snapshots.append(item.to_dict())
+        return request_fingerprint(snapshots)
+
+    def save_conflict_proof(self, intervention: Intervention, *, tenant_id: str, cohort_sha256: str) -> None:
+        from shared.api.idempotency import request_fingerprint
+        self._store.put("intervention.lifecycle_conflict_proofs.v1", intervention.intervention_id,
+            dict(tenant_id=tenant_id, store_id=intervention.store_id, version=intervention.version,
+                 snapshot_sha256=request_fingerprint(intervention.to_dict()), cohort_sha256=cohort_sha256),
+            group_key=intervention.store_id)
+
+    def require_conflict_proof(self, intervention: Intervention, *, tenant_id: str, cohort_sha256: str) -> None:
+        from shared.api.idempotency import request_fingerprint
+        expected = dict(tenant_id=tenant_id, store_id=intervention.store_id, version=intervention.version,
+            snapshot_sha256=request_fingerprint(intervention.to_dict()), cohort_sha256=cohort_sha256)
+        if self._store.get("intervention.lifecycle_conflict_proofs.v1", intervention.intervention_id) != expected:
+            raise InterventionError("stale update: conflict cohort changed; run conflict-check again")
+
     @contextmanager
     def atomic(self) -> Iterator[None]:
         """Commit every ``save`` made inside the block together, or none.
@@ -1055,6 +1248,52 @@ class DurableInterventionRepository:
         """
         with _atomic_write(self._store.engine):
             yield
+
+    @contextmanager
+    def command_atomic(self) -> Iterator[None]:
+        """Reserve the owned SQLite writer before strict command read/CAS."""
+        engine = self._store.engine
+        with _atomic_write(engine):
+            if str(getattr(engine, "dialect", "")).lower() != "postgresql" and not engine._conn.in_transaction:
+                engine.execute("BEGIN IMMEDIATE")
+            yield
+
+    def store_id_for_scope(self, intervention_id: str, *, for_update: bool = False) -> str | None:
+        """Resolve canonical owner metadata before reading the business aggregate."""
+        engine = self._store.engine
+        lookup_id = intervention_id
+        if self.table == "operations.interventions":
+            try:
+                lookup_id = str(UUID(_to_uuid_if_prefixed(intervention_id)))
+            except (ValueError, TypeError, AttributeError):
+                return None
+        if for_update and self.table == "operations.interventions":
+            # Keep the repository's document-then-relational lock order; this
+            # reads only the document id, never an unauthorized data payload.
+            engine.query_one(
+                "SELECT doc_id FROM durable_documents WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                (self._C, intervention_id),
+            )
+        row = engine.query_one(_INTERVENTION_OWNER_READ_SQL[(self.table, for_update)], (lookup_id,))
+        return str(row["store_id"]) if row is not None else None
+
+    def list_scope_ids_by_store(self, store_id: str) -> tuple[str, ...]:
+        """Reconcile both index directions before any business aggregate read."""
+        engine = self._store.engine
+        group_rows = engine.query(_INTERVENTION_GROUP_OWNER_METADATA_SQL[self.table], (self._C, store_id))
+        owner_rows = engine.query(_INTERVENTION_STORE_DOCUMENT_METADATA_SQL[self.table], (self._C, store_id))
+        for row in [*group_rows, *owner_rows]:
+            if (type(row["doc_id"]) is not str or not row["doc_id"]
+                    or type(row["canonical_id"]) is not str or not row["canonical_id"]
+                    or row["store_id"] != store_id or row["group_key"] != store_id):
+                raise InterventionOwnerIntegrityError("canonical intervention owner/index conflict")
+        group_ids = {row["doc_id"] for row in group_rows}
+        owner_ids = {row["doc_id"] for row in owner_rows}
+        canonical_ids = {row["canonical_id"] for row in owner_rows}
+        if (group_ids != owner_ids or len(group_ids) != len(group_rows)
+                or len(owner_ids) != len(owner_rows) or len(canonical_ids) != len(owner_rows)):
+            raise InterventionOwnerIntegrityError("canonical intervention owner/index conflict")
+        return tuple(row["doc_id"] for row in owner_rows)
 
     def get(self, intervention_id: str, *, for_update: bool = False) -> Intervention | None:
         if for_update:
@@ -1081,7 +1320,33 @@ class DurableInterventionRepository:
         return self._store.list_all(self._C)
 
     def list_by_store(self, store_id: str) -> list[Intervention]:
-        return self._store.list_by_group(self._C, store_id)
+        """Read related cases with canonical ownership before every decode.
+
+        Conflict checks and the native Today producer share this entry point.
+        Missing or inconsistent native ownership is a storage failure, never a
+        reason to fall back to document grouping or repair records on a read.
+        """
+        with _atomic_write(self._store.engine):
+            scoped_ids = self.list_scope_ids_by_store(store_id)
+            return [self._read_scoped_aggregate(iid, store_id) for iid in scoped_ids]
+
+    def _read_scoped_aggregate(self, intervention_id: str, store_id: str) -> Intervention:
+        row = self._store.engine.query_one(
+            _INTERVENTION_SCOPED_PAYLOAD_SQL[self.table],
+            (self._C, intervention_id, store_id, store_id),
+        )
+        if (row is None or row["doc_id"] != intervention_id
+                or row["store_id"] != store_id or row["group_key"] != store_id):
+            raise InterventionOwnerIntegrityError("canonical intervention owner/index changed before payload read")
+        item = pickle.loads(row["data"])
+        if (not isinstance(item, Intervention) or item.intervention_id != intervention_id
+                or item.store_id != store_id):
+            raise InterventionOwnerIntegrityError("canonical intervention aggregate owner/identity conflict")
+        try:
+            require_positive_intervention_version(item.version)
+        except InterventionError as exc:
+            raise InterventionOwnerIntegrityError("canonical intervention aggregate version conflict") from exc
+        return item
 
 
 
@@ -3634,6 +3899,81 @@ class DurableMachineRepository:
             )
             for row in rows
         ]
+
+
+    def get_store_machine_snapshot(
+        self, *, tenant_id: str, store_id: str,
+        as_of: datetime,
+        brand_ids: tuple[str, ...] = (), region_codes: tuple[str, ...] = (),
+    ) -> dict[str, Any] | None:
+        from datetime import date, datetime
+
+        tenant_id = _require_tenant_scope(self._engine, tenant_id)
+        if not tenant_id or not store_id.strip():
+            raise TenantScopeRequiredError("Explicit tenant and store scope required for machine facts")
+        if as_of.tzinfo is None or as_of.utcoffset() is None:
+            raise ValueError("An explicit native store observation instant is required")
+        instant = as_of.astimezone(UTC).isoformat()
+        clauses = [
+            "store_row.tenant_id = ?", "store_row.is_current = ?",
+            "store_row.effective_from <= ?", "store_row.effective_to > ?",
+        ]
+        params: list[Any] = [tenant_id, True, instant, instant]
+        _append_in_filter(clauses, params, "store_row.store_id", (store_id,))
+        _append_in_filter(clauses, params, "store_row.brand_id", brand_ids)
+        _append_in_filter(clauses, params, "store_row.region_code", region_codes)
+        where_clause = " AND ".join(clauses)
+        rows = self._engine.query(
+            "SELECT store_row.store_id AS native_store_id, "
+            "store_row.tenant_id AS native_tenant_id, store_row.brand_id AS native_brand_id, "
+            "store_row.region_code AS native_region_code, "
+            "store_row.store_format_code AS native_store_format_code, "
+            "store_row.is_current AS native_is_current, "
+            "store_row.effective_from AS native_effective_from, "
+            "store_row.effective_to AS native_effective_to, machine_row.* "
+            "FROM stores AS store_row "
+            "LEFT JOIN machines AS machine_row ON store_row.store_id = machine_row.store_id "
+            f"WHERE {where_clause} ORDER BY machine_row.machine_id",  # nosec B608
+            tuple(params),
+        )
+        if not rows:
+            return None
+        # One statement binds both parent metadata and child rows to the same
+        # authorized native snapshot. LEFT JOIN distinguishes an empty register
+        # from a parent which no longer satisfies the principal's current scope.
+        parent = rows[0]
+        native_store = {
+            "store_id": parent["native_store_id"],
+            "tenant_id": parent["native_tenant_id"],
+            "brand_id": parent["native_brand_id"],
+            "region_code": parent["native_region_code"],
+            "store_format_code": parent["native_store_format_code"],
+            "is_current": bool(parent["native_is_current"]),
+            "effective_from": datetime.fromisoformat(parent["native_effective_from"]),
+            "effective_to": datetime.fromisoformat(parent["native_effective_to"]),
+        }
+        machines = [
+            Machine(
+                machine_id=row["machine_id"],
+                store_id=row["store_id"],
+                source_machine_id=row["source_machine_id"] or "",
+                machine_serial_no=row["machine_serial_no"] or "",
+                equipment_brand_id=row["equipment_brand_id"] or "",
+                machine_family=row["machine_family"],
+                machine_type=row["machine_type"] or "",
+                capacity_kg=row["capacity_kg"] or 0.0,
+                capacity_band=row["capacity_band"],
+                installed_on=date.fromisoformat(row["installed_on"])
+                if row["installed_on"]
+                else None,
+                removed_on=date.fromisoformat(row["removed_on"]) if row["removed_on"] else None,
+                machine_status=row["machine_status"],
+                effective_from=datetime.fromisoformat(row["effective_from"]),
+                effective_to=datetime.fromisoformat(row["effective_to"]),
+            )
+            for row in rows if row["machine_id"] is not None
+        ]
+        return {"store": native_store, "machines": machines}
 
 
 @dataclass

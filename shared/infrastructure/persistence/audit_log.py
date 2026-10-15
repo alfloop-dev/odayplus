@@ -56,9 +56,10 @@ class DurableAuditLog:
     def record(self, event: AuditEvent) -> AuditEvent:
         with self._engine.transaction():
             if getattr(self._engine, "dialect", "") == "postgresql":
-                # Acquire the database-wide chain lock before the per-engine
-                # process lock. Waiting for another transaction while holding
-                # that process lock can prevent its receipt from committing.
+                # PostgresEngine reserves its process lock for the entire
+                # outer transaction, before any database lock. The chain lock
+                # still serializes audits across independent engines/processes;
+                # nested appends reuse this transaction and process reservation.
                 self._engine.query_one(
                     "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
                     ("durable-audit-chain",),

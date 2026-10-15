@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -16,6 +17,7 @@ from modules.opsboard.application.store_ops import (
     StoreOpsService,
 )
 from modules.opsboard.application.store_ops_audit_delivery import StoreOpsAuditDelivery
+from modules.opsboard.application.store_ops_native_summary import native_store_summary
 from modules.opsboard.application.store_ops_scope import ScopedStoreOpsRepository, binding_hash
 from modules.opsboard.domain.r4_dtos import AttachmentUploadRequest
 from shared.audit import AuditEvent, InMemoryAuditLog
@@ -35,7 +37,7 @@ class StoreOpsTransitionPayload(BaseModel):
 
 
 class StoreOpsCameraPurposePayload(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", strict=True)
 
     issueId: str | None = None
     issueTitle: str | None = None
@@ -61,6 +63,7 @@ def create_operator_store_ops_router(
     *,
     repository: Any = None,
     store_repository: Any = None,
+    machine_repository: Any = None,
     delivery_job_queue: Any = None,
     audit_log: InMemoryAuditLog | None = None,
     require_live_data: bool | None = None,
@@ -191,7 +194,8 @@ def create_operator_store_ops_router(
                     operation=operation,
                 )
                 scoped_service = StoreOpsService(
-                    repository=scoped_repository, audit_log=audit, require_live_data=True
+                    repository=scoped_repository, audit_log=audit, require_live_data=True,
+                    actor_subject_id=subject_id,
                 )
                 issue_id = kwargs.get("issue_id") or (args[0] if args else None)
                 if issue_id is not None:
@@ -203,6 +207,21 @@ def create_operator_store_ops_router(
                     result.update(scoped_service.snapshot())
                     if issue_id is not None:
                         result["issue"] = scoped_service.get_issue(str(issue_id))
+                if operation in {"store_ops.issues", "store_ops.summary"} and isinstance(result, dict):
+                    # Enrich this authorized read only. Never persist native facts
+                    # into the workflow aggregate or trust its copied store metadata.
+                    native_stores = {store.store_id: store for store in stores}
+                    observed_at = datetime.now(UTC)
+                    for card in result.get("stores", []):
+                        card["nativeSummary"] = native_store_summary(
+                            native_stores.get(card["id"]),
+                            store_id=card["id"], tenant_id=tenant_id,
+                            brand_ids=tuple(scope.brand_ids),
+                            region_codes=tuple(scope.region_ids),
+                            store_ids=tuple(scope.store_ids),
+                            engine=engine, store_repository=store_repository,
+                            machine_repository=machine_repository, as_of=observed_at,
+                        )
                 if not audit.recorded:
                     for event in scoped_repository.new_audits:
                         audit.record(
@@ -217,14 +236,20 @@ def create_operator_store_ops_router(
                             )
                         )
             if delivery is not None:
+                # Delivery metadata belongs to response envelopes, not raw
+                # issue or attachment dictionaries returned by the service.
+                attach_delivery_status = operation in {
+                    "store_ops.summary", "store_ops.issues", "store_ops.issue_evidence",
+                    "store_ops.delete_attachment", "store_ops.transition", "store_ops.camera_purpose",
+                }
                 try:
                     delivery_status = delivery.deliver_pending()
-                    if isinstance(result, dict):
+                    if attach_delivery_status and isinstance(result, dict):
                         result["auditDelivery"] = delivery_status
                 except Exception:
                     # The business transaction has committed. Delivery status
                     # loss cannot turn it into a fictitious write rejection.
-                    if isinstance(result, dict):
+                    if attach_delivery_status and isinstance(result, dict):
                         result["auditDelivery"] = {"status": "pending", "pending": None, "retryable": True}
             return result
         except StoreOpsLiveDataUnavailable as exc:

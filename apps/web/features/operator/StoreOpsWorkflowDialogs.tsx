@@ -7,6 +7,8 @@ import { operatorFixturesAllowed } from "./operatorDataMode";
 import { OPERATOR_ROLE_IDS, type OperatorRoleId, type Severity } from "./types";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 import styles from "./storeOpsWorkflows.module.css";
+import { latestWorkflowRecord, confirmsWorkflowRecord, workflowActionForDialog, hasExplicitWorkflowOffset, type WorkflowRecord } from "./storeOpsWorkflowRecords";
+import { latestOutcomeReview, latestReplyReview, confirmsSavedReview, type ReviewHistory, type StoredReviewSource } from "./storeOpsPersistedReviews";
 import type {
   StoreOpsActionPayload,
   StoreOpsActionType,
@@ -140,13 +142,14 @@ async function submitStoreOpsWorkflow(
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 20_000);
   try {
+    const correlationId = `corr-store-ops-${crypto.randomUUID()}`;
     const response = await fetch(`/api/v1/operator/store-ops/issues/${encodeURIComponent(payload.issueId)}/${endpoint}`, {
       method: "POST",
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
         "Idempotency-Key": idempotencyKey,
-        "X-Correlation-ID": `corr-store-ops-${crypto.randomUUID()}`,
+        "X-Correlation-ID": correlationId,
         ...operatorSecurityHeaders(roleId),
       },
       body: JSON.stringify({ ...payload, actorRoleId: roleId, actorName: roleLabels[roleId] }),
@@ -154,6 +157,13 @@ async function submitStoreOpsWorkflow(
     if (!response.ok) throw new Error(`送出失敗（HTTP ${response.status}）。輸入已保留，請重試。`);
     const body = await response.json();
     if (body?.issue?.id !== payload.issueId) throw new Error("回應未確認此事件的處置結果。輸入已保留，請重試。");
+    if ((type === "outcome" || type === "replyReview") && !await confirmsSavedReview(body, type, payload, correlationId, idempotencyKey)) {
+      throw new Error("回應未確認已保存的審查紀錄。輸入已保留，請重試相同內容。");
+    }
+    const workflowAction = workflowActionForDialog(type);
+    if (workflowAction && !await confirmsWorkflowRecord(body, workflowAction, payload, correlationId, idempotencyKey)) {
+      throw new Error("回應未確認已保存的工作流程紀錄。輸入已保留，請重試相同內容。");
+    }
     return { body, status: response.status };
   } catch (error) {
     if (error instanceof Error && (error.message.startsWith("送出失敗") || error.message.startsWith("回應未確認"))) throw error;
@@ -227,13 +237,15 @@ export function StoreOpsWorkflowDialogs({
   }
 
   const effectiveIssue = issue ?? fallbackIssue;
-  return <WorkflowPanel key={`${activeDialog}-${effectiveIssue.id}`} activeDialog={activeDialog} callbacks={callbacks} issue={effectiveIssue} onClose={onClose} />;
+  return <WorkflowPanel key={`${activeDialog}-${effectiveIssue.storeId}-${effectiveIssue.id}`} activeDialog={activeDialog} callbacks={callbacks} issue={effectiveIssue} onClose={onClose} />;
 }
 
 function WorkflowPanel({ activeDialog, callbacks, issue, onClose }: WorkflowFormProps & { activeDialog: StoreOpsWorkflowDialogType }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busyRef = useRef(false);
+  const ownerEpochRef = useRef(0);
+  useEffect(() => { ownerEpochRef.current += 1; return () => { ownerEpochRef.current += 1; }; }, [issue.id, issue.storeId]);
   const intentRef = useRef<{ signature: string; key: string } | null>(null);
   const statusRef = useRef<HTMLParagraphElement | null>(null);
   const close = () => { if (!busyRef.current) onClose(); };
@@ -248,6 +260,8 @@ function WorkflowPanel({ activeDialog, callbacks, issue, onClose }: WorkflowForm
 
   async function submit(event: StoreOpsWorkflowSubmitEvent) {
     if (busyRef.current) return;
+    const reviewEpoch = ownerEpochRef.current;
+    const stillOwnedReview = () => ownerEpochRef.current === reviewEpoch;
     busyRef.current = true;
     setPending(true);
     setError(null);
@@ -261,11 +275,13 @@ function WorkflowPanel({ activeDialog, callbacks, issue, onClose }: WorkflowForm
     try {
       result = await submitStoreOpsWorkflow(event, roleId, intentRef.current.key);
     } catch (failure) {
+      if (!stillOwnedReview()) return;
       setError(failure instanceof Error ? failure.message : "送出失敗，請重試。");
       busyRef.current = false;
       setPending(false);
       return;
     }
+    if (!stillOwnedReview()) return;
     // Only acknowledged writes notify consumers or dismiss the form.
     try {
       notifyWorkflowCallbacks(callbacks, event);
@@ -349,20 +365,48 @@ type WorkflowFormProps = {
   onClose: () => void;
 };
 
+function manualRoleOptions(value: string): Array<{ label: string; value: string }> {
+  return OPERATOR_ROLE_IDS.includes(value as OperatorRoleId) ? roleOptions : [...roleOptions, { label: `${value}（原紀錄人工標籤）`, value }];
+}
+
+function SavedWorkflowNotice({ history }: { history: ReviewHistory<WorkflowRecord> }) {
+  if (history.status === "unavailable") return <div className={styles.notice} role="status">已保存紀錄來源無法核對；未套用紀錄內容。</div>;
+  if (history.status !== "available") return null;
+  const record = history.latest;
+  const meaning = {
+    triage: "已保存人工研判；未快轉實際觀察計時。",
+    assign: "已保存指派標籤；尚未驗證受派人的實際身分。",
+    actions: "已保存處置方案；未執行設備命令，也未建立核准案件。",
+    "field-report": "已保存回報文字與宣告檔名；回報人身分及附件實體尚未核驗。",
+    escalate: "已保存升級與通知意圖；尚未送出通知或分派至其他工作台。",
+    transfer: "已保存轉交標籤；未驗證受派人身分，也未建立訂閱。",
+    "camera-purpose": "已保存調閱目的與稽核備註；不代表影片已下載或實際保留。",
+  }[record.action];
+  return <div className={styles.notice} aria-label="已保存工作流程紀錄">
+    <strong>已保存工作流程紀錄</strong><br />{record.recordedAt} · {record.actorName || "名稱未提供"} · {record.actorEvidence === "authenticated_principal" ? "經登入身分保存" : "人工填報名稱（未驗證身分）"}<br />{meaning}
+    {Object.values(record.submission).some(value => value === null) ? <><br />來源尚有未填欄位；請逐項確認本次輸入，表單建議值不代表既有紀錄。</> : null}
+  </div>;
+}
+
 function TriageForm({ issue, onClose }: WorkflowFormProps) {
+  const saved = latestWorkflowRecord(issue, "triage");
+  const initial = saved.latest?.submission;
   const submitWorkflow = useContext(WorkflowSubmissionContext);
   const fixturesAllowed = operatorFixturesAllowed();
-  const [severity, setSeverity] = useState<Severity>(issue.severity);
-  const [category, setCategory] = useState<StoreOpsTriageCategory>("multiSignal");
-  const [evidenceStrength, setEvidenceStrength] = useState<StoreOpsEvidenceStrength>("usable");
-  const [decision, setDecision] = useState<StoreOpsTriageDecision>("accept");
-  const [observationWindow, setObservationWindow] = useState("2 hours");
-  const [needEvidence, setNeedEvidence] = useState(false);
-  const [demoFastForward, setDemoFastForward] = useState(false);
-  const [notes, setNotes] = useState(issue.summary);
+  const [severity, setSeverity] = useState<Severity>(initial?.severity ?? issue.severity);
+  const [category, setCategory] = useState<StoreOpsTriageCategory>(initial?.category ?? "multiSignal");
+  const [evidenceStrength, setEvidenceStrength] = useState<StoreOpsEvidenceStrength>(initial?.evidenceStrength ?? "usable");
+  const [decision, setDecision] = useState<StoreOpsTriageDecision>(initial?.decision ?? "accept");
+  const [observationWindow, setObservationWindow] = useState(initial?.observationWindow ?? "");
+  const [needEvidence, setNeedEvidence] = useState(initial?.needEvidence ?? false);
+  const [demoFastForward, setDemoFastForward] = useState(initial?.demoFastForward ?? false);
+  const [notes, setNotes] = useState(initial?.notes ?? issue.summary);
+
+  const [error, setError] = useState("");
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saved.status === "unavailable") { setError("已保存紀錄來源無法核對，請重新載入事件。"); return; }
     const payload: StoreOpsTriagePayload = {
       ...basePayload(issue),
       severity,
@@ -379,6 +423,7 @@ function TriageForm({ issue, onClose }: WorkflowFormProps) {
 
   return (
     <form className={styles.form} onSubmit={submit}>
+      <SavedWorkflowNotice history={saved} />
       <div className={styles.grid}>
         <SelectField<StoreOpsTriageCategory>
           label="Category"
@@ -416,7 +461,7 @@ function TriageForm({ issue, onClose }: WorkflowFormProps) {
           options={[
             { label: "Accept triage", value: "accept" },
             { label: "Need evidence", value: "needEvidence" },
-            ...(fixturesAllowed
+            ...((fixturesAllowed || initial?.decision === "fastForward")
               ? [{ label: "Demo fast-forward", value: "fastForward" as const }]
               : []),
           ]}
@@ -441,20 +486,27 @@ function TriageForm({ issue, onClose }: WorkflowFormProps) {
         ) : null}
       </div>
       </details>
+      {error ? <div role="alert" className={styles.error}>{error}</div> : null}
       <DialogActions onCancel={onClose} primaryLabel="完成 Triage" />
     </form>
   );
 }
 
 function AssignForm({ issue, onClose }: WorkflowFormProps) {
+  const saved = latestWorkflowRecord(issue, "assign");
+  const initial = saved.latest?.submission;
   const submitWorkflow = useContext(WorkflowSubmissionContext);
-  const [ownerRoleId, setOwnerRoleId] = useState<OperatorRoleId>(issue.ownerRoleId);
-  const [ownerName, setOwnerName] = useState(issue.ownerName);
-  const [slaDueAt, setSlaDueAt] = useState(issue.slaDueAt);
-  const [handoffNote, setHandoffNote] = useState(`接手 ${issue.id} 並確認下一步處置。`);
+  const [ownerRoleId, setOwnerRoleId] = useState(initial?.ownerRoleId ?? issue.ownerRoleId);
+  const [ownerName, setOwnerName] = useState(initial?.ownerName ?? issue.ownerName);
+  const [slaDueAt, setSlaDueAt] = useState(initial?.slaDueAt ?? issue.slaDueAt);
+  const [handoffNote, setHandoffNote] = useState(initial?.handoffNote ?? "");
+
+  const [error, setError] = useState("");
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saved.status === "unavailable") { setError("已保存紀錄來源無法核對，請重新載入事件。"); return; }
+    if (!hasExplicitWorkflowOffset(slaDueAt)) { setError("處理期限必須填寫含時區偏移的完整時間；不會自動推定時區。"); return; }
     const payload: StoreOpsAssignPayload = {
       ...basePayload(issue),
       ownerRoleId,
@@ -467,31 +519,36 @@ function AssignForm({ issue, onClose }: WorkflowFormProps) {
 
   return (
     <form className={styles.form} onSubmit={submit}>
+      <SavedWorkflowNotice history={saved} />
       <div className={styles.grid}>
-        <SelectField<OperatorRoleId> label="Owner role" onChange={setOwnerRoleId} options={roleOptions} value={ownerRoleId} />
+        <SelectField<string> label="Owner role" onChange={setOwnerRoleId} options={manualRoleOptions(ownerRoleId)} value={ownerRoleId} />
         <TextField label="Owner name" onChange={setOwnerName} required value={ownerName} />
         <TextField label="SLA due" onChange={setSlaDueAt} required value={slaDueAt} />
         <TextAreaField className={styles.fullWidth} label="Handoff note" onChange={setHandoffNote} value={handoffNote} />
       </div>
+      {error ? <div role="alert" className={styles.error}>{error}</div> : null}
       <DialogActions onCancel={onClose} primaryLabel="Assign Owner" />
     </form>
   );
 }
 
 function ActionForm({ issue, onClose }: WorkflowFormProps) {
+  const saved = latestWorkflowRecord(issue, "actions");
+  const initial = saved.latest?.submission;
   const submitWorkflow = useContext(WorkflowSubmissionContext);
-  const [actionType, setActionType] = useState<StoreOpsActionType>("cleaningCheck");
-  const [title, setTitle] = useState(`處理 ${issue.title}`);
-  const [instructions, setInstructions] = useState("完成現場處置並附上可用證據。");
-  const [checklistItems, setChecklistItems] = useState("確認負責人\n完成處置\n附上證據");
-  const [needEvidence, setNeedEvidence] = useState(true);
-  const [requiresApproval, setRequiresApproval] = useState(false);
-  const [observationWindow, setObservationWindow] = useState("4 hours");
-  const [remoteRestartAuditNote, setRemoteRestartAuditNote] = useState("");
+  const [actionType, setActionType] = useState<StoreOpsActionType>(initial?.actionType ?? "cleaningCheck");
+  const [title, setTitle] = useState(initial?.title ?? `處理 ${issue.title}`);
+  const [instructions, setInstructions] = useState(initial?.instructions ?? "");
+  const [checklistItems, setChecklistItems] = useState(initial?.checklistItems?.join("\n") ?? "");
+  const [needEvidence, setNeedEvidence] = useState(initial?.needEvidence ?? true);
+  const [requiresApproval, setRequiresApproval] = useState(initial?.requiresApproval ?? false);
+  const [observationWindow, setObservationWindow] = useState(initial?.observationWindow ?? "");
+  const [remoteRestartAuditNote, setRemoteRestartAuditNote] = useState(initial?.remoteRestartAuditNote ?? "");
   const [error, setError] = useState("");
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saved.status === "unavailable") { setError("已保存紀錄來源無法核對，請重新載入事件。"); return; }
     const auditNote = remoteRestartAuditNote.trim();
     if (actionType === "remoteRestart" && !auditNote) {
       setError("遠端重啟必須填寫稽核備註。");
@@ -514,6 +571,7 @@ function ActionForm({ issue, onClose }: WorkflowFormProps) {
 
   return (
     <form className={styles.form} onSubmit={submit}>
+      <SavedWorkflowNotice history={saved} />
       <div className={styles.grid}>
         <SelectField
           label="Action type"
@@ -578,17 +636,21 @@ function ActionForm({ issue, onClose }: WorkflowFormProps) {
 }
 
 function FieldReportForm({ issue, onClose }: WorkflowFormProps) {
+  const saved = latestWorkflowRecord(issue, "field-report");
+  const initial = saved.latest?.submission;
   const submitWorkflow = useContext(WorkflowSubmissionContext);
-  const [reportedBy, setReportedBy] = useState(issue.ownerName);
-  const [observedAt, setObservedAt] = useState(issue.updatedAt);
-  const [summary, setSummary] = useState("");
-  const [checklistStatus, setChecklistStatus] = useState<StoreOpsChecklistStatus>("complete");
-  const [attachmentNames, setAttachmentNames] = useState("field-photo-placeholder.jpg");
-  const [blocker, setBlocker] = useState("");
+  const [reportedBy, setReportedBy] = useState(initial?.reportedBy ?? issue.ownerName);
+  const [observedAt, setObservedAt] = useState(initial?.observedAt ?? issue.updatedAt);
+  const [summary, setSummary] = useState(initial?.summary ?? "");
+  const [checklistStatus, setChecklistStatus] = useState<StoreOpsChecklistStatus>(initial?.checklistStatus ?? "complete");
+  const [attachmentNames, setAttachmentNames] = useState(initial?.attachmentNames?.join("\n") ?? "");
+  const [blocker, setBlocker] = useState(initial?.blocker ?? "");
   const [error, setError] = useState("");
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saved.status === "unavailable") { setError("已保存紀錄來源無法核對，請重新載入事件。"); return; }
+    if (!hasExplicitWorkflowOffset(observedAt)) { setError("觀察時間必須填寫含時區偏移的完整時間；不會自動推定時區。"); return; }
     const trimmedBlocker = blocker.trim();
     if (checklistStatus === "blocked" && !trimmedBlocker) {
       setError("受阻回報必須填寫阻礙說明。");
@@ -609,6 +671,7 @@ function FieldReportForm({ issue, onClose }: WorkflowFormProps) {
 
   return (
     <form className={styles.form} onSubmit={submit}>
+      <SavedWorkflowNotice history={saved} />
       <div className={styles.grid}>
         <TextField label="Reported by" onChange={setReportedBy} required value={reportedBy} />
         <TextField label="Observed at" onChange={setObservedAt} required value={observedAt} />
@@ -644,25 +707,42 @@ function FieldReportForm({ issue, onClose }: WorkflowFormProps) {
           value={blocker}
         />
       </div>
-      {error ? <div className={styles.error}>{error}</div> : null}
+      {error ? <div role="alert" className={styles.error}>{error}</div> : null}
       <DialogActions onCancel={onClose} primaryLabel="Submit Report" />
     </form>
   );
 }
 
+function SavedReviewNotice({ kind, history }: { kind: "outcome" | "reply"; history: ReviewHistory<StoredReviewSource> }) {
+  if (history.status === "unavailable") return <div className={styles.notice} role="status">已保存紀錄來源無法核對；未套用紀錄內容。</div>;
+  if (history.status === "absent") return kind === "reply"
+    ? <div className={styles.notice}>尚無已保存回覆；請核對客戶原文後自行撰寫。此流程只保存審查，不會發送回覆。</div>
+    : null;
+  const record = history.latest;
+  return <div className={styles.notice} aria-label={kind === "reply" ? "已保存回覆審查" : "已保存成效判斷"}>
+    <strong>{kind === "reply" ? "已保存回覆審查" : "已保存成效判斷"}</strong><br />
+    {record.recordedAt} · {record.actorName || "名稱未提供"} · {record.actorEvidence === "authenticated_principal" ? "經登入身分保存" : "人工填報名稱（未驗證身分）"}<br />
+    {kind === "reply" ? "尚未發送。發布勾選僅為意圖；此紀錄不是客戶原文或寄送證明。" : "此紀錄為人工判斷；不代表已取得量測數據或因果成效證據。"}
+  </div>;
+}
+
 function OutcomeForm({ issue, onClose }: WorkflowFormProps) {
+  const saved = latestOutcomeReview(issue);
+  const initial = saved.latest?.submission;
   const submitWorkflow = useContext(WorkflowSubmissionContext);
-  const [outcome, setOutcome] = useState<StoreOpsOutcomeStatus>("effective");
-  const [impactSummary, setImpactSummary] = useState("");
-  const [evidenceSummary, setEvidenceSummary] = useState("");
-  const [followUpTarget, setFollowUpTarget] = useState<StoreOpsFollowUpTarget>("storeOps");
-  const [followUpAction, setFollowUpAction] = useState("");
-  const [closeIssue, setCloseIssue] = useState(true);
+  const [outcome, setOutcome] = useState<StoreOpsOutcomeStatus>(initial?.outcome ?? "effective");
+  const [impactSummary, setImpactSummary] = useState(initial?.impactSummary ?? "");
+  const [evidenceSummary, setEvidenceSummary] = useState(initial?.evidenceSummary ?? "");
+  const [followUpTarget, setFollowUpTarget] = useState<StoreOpsFollowUpTarget>(initial?.followUpTarget ?? "storeOps");
+  const [followUpAction, setFollowUpAction] = useState(initial?.followUpAction ?? "");
+  const [closeIssue, setCloseIssue] = useState(initial?.closeIssue ?? true);
   const [error, setError] = useState("");
   const needsFollowUp = outcome === "ineffective" || outcome === "inconclusive";
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saved.status === "unavailable") { setError("已保存紀錄來源無法核對，請重新載入事件。"); return; }
+    if (!impactSummary.trim()) { setError("請填寫判斷理由。"); return; }
     const trimmedFollowUp = followUpAction.trim();
     if (needsFollowUp && !trimmedFollowUp) {
       setError("無效或無法判定時必須填寫後續行動。");
@@ -683,6 +763,7 @@ function OutcomeForm({ issue, onClose }: WorkflowFormProps) {
 
   return (
     <form className={styles.form} onSubmit={submit}>
+      <SavedReviewNotice kind="outcome" history={saved} />
       <div className={styles.grid}>
         <table className={`${styles.comparison} ${styles.fullWidth}`}>
           <caption>處置前後指標</caption>
@@ -737,15 +818,20 @@ function OutcomeForm({ issue, onClose }: WorkflowFormProps) {
 }
 
 function EscalateForm({ issue, onClose }: WorkflowFormProps) {
+  const saved = latestWorkflowRecord(issue, "escalate");
+  const initial = saved.latest?.submission;
   const submitWorkflow = useContext(WorkflowSubmissionContext);
-  const [target, setTarget] = useState<StoreOpsEscalationTarget>("growth");
-  const [urgency, setUrgency] = useState<StoreOpsUrgency>("high");
-  const [reason, setReason] = useState("");
-  const [requestedOutcome, setRequestedOutcome] = useState("建立後續審查並回覆建議。");
-  const [notifyOwner, setNotifyOwner] = useState(true);
+  const [target, setTarget] = useState<StoreOpsEscalationTarget>(initial?.target ?? "growth");
+  const [urgency, setUrgency] = useState<StoreOpsUrgency>(initial?.urgency ?? "high");
+  const [reason, setReason] = useState(initial?.reason ?? "");
+  const [requestedOutcome, setRequestedOutcome] = useState(initial?.requestedOutcome ?? "");
+  const [notifyOwner, setNotifyOwner] = useState(initial?.notifyOwner ?? true);
+
+  const [error, setError] = useState("");
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saved.status === "unavailable") { setError("已保存紀錄來源無法核對，請重新載入事件。"); return; }
     const payload: StoreOpsEscalatePayload = {
       ...basePayload(issue),
       target,
@@ -759,6 +845,7 @@ function EscalateForm({ issue, onClose }: WorkflowFormProps) {
 
   return (
     <form className={styles.form} onSubmit={submit}>
+      <SavedWorkflowNotice history={saved} />
       <div className={styles.grid}>
         <ChoiceField<StoreOpsEscalationTarget>
           label="升級目標" onChange={setTarget} value={target}
@@ -798,23 +885,27 @@ function EscalateForm({ issue, onClose }: WorkflowFormProps) {
         onChange={setNotifyOwner}
       />
       </details>
+      {error ? <div role="alert" className={styles.error}>{error}</div> : null}
       <DialogActions onCancel={onClose} primaryLabel="Escalate" />
     </form>
   );
 }
 
 function CameraPurposeForm({ issue, onClose }: WorkflowFormProps) {
+  const saved = latestWorkflowRecord(issue, "camera-purpose");
+  const initial = saved.latest?.submission;
   const submitWorkflow = useContext(WorkflowSubmissionContext);
-  const [purpose, setPurpose] = useState("");
-  const [cameraLocation, setCameraLocation] = useState(`${issue.storeName} 櫃檯攝影機`);
-  const [timeWindow, setTimeWindow] = useState("最近 30 分鐘");
-  const [retentionHours, setRetentionHours] = useState(24);
+  const [purpose, setPurpose] = useState(initial?.purpose ?? "");
+  const [cameraLocation, setCameraLocation] = useState(initial?.cameraLocation ?? "");
+  const [timeWindow, setTimeWindow] = useState(initial?.timeWindow ?? "");
+  const [retentionHours, setRetentionHours] = useState(initial?.retentionHours ?? 24);
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
-  const [auditNote, setAuditNote] = useState(`${issue.id} 調閱目的審查`);
+  const [auditNote, setAuditNote] = useState(initial?.auditNote ?? "");
   const [error, setError] = useState("");
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saved.status === "unavailable") { setError("已保存紀錄來源無法核對，請重新載入事件。"); return; }
     const trimmedPurpose = purpose.trim();
     if (!trimmedPurpose) {
       setError("必須填寫影像調閱目的。");
@@ -839,6 +930,7 @@ function CameraPurposeForm({ issue, onClose }: WorkflowFormProps) {
 
   return (
     <form className={styles.form} onSubmit={submit}>
+      <SavedWorkflowNotice history={saved} />
       <div className={styles.warning}>
         此調閱僅限場域事件確認，不含人臉辨識與身份追蹤。調閱者、目的、時段與保留時數將寫入稽核紀錄。
       </div>
@@ -880,22 +972,28 @@ function CameraPurposeForm({ issue, onClose }: WorkflowFormProps) {
 }
 
 function ReplyReviewForm({ issue, onClose }: WorkflowFormProps) {
+  const saved = latestReplyReview(issue);
+  const initial = saved.latest?.submission;
   const submitWorkflow = useContext(WorkflowSubmissionContext);
-  const [channel, setChannel] = useState<StoreOpsReplyChannel>("google");
-  const [decision, setDecision] = useState<StoreOpsReplyDecision>("approve");
-  const [draftReply, setDraftReply] = useState("感謝您的反映，門市團隊已確認問題並採取處置。");
-  const [reviewerNote, setReviewerNote] = useState("");
-  const [publishAfterApproval, setPublishAfterApproval] = useState(false);
+  const [channel, setChannel] = useState<StoreOpsReplyChannel>(initial?.channel ?? "google");
+  const [decision, setDecision] = useState<StoreOpsReplyDecision>(initial?.decision ?? "approve");
+  const [draftReply, setDraftReply] = useState(initial?.draftReply ?? "");
+  const [reviewerNote, setReviewerNote] = useState(initial?.reviewerNote ?? "");
+  const [publishAfterApproval, setPublishAfterApproval] = useState(initial?.publishAfterApproval ?? false);
   const [error, setError] = useState("");
   const needsReason = decision === "return" || decision === "reject";
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saved.status === "unavailable") { setError("已保存紀錄來源無法核對，請重新載入事件。"); return; }
     const trimmedNote = reviewerNote.trim();
     if (needsReason && !trimmedNote) {
       setError("退回或拒絕必須填寫審查備註。");
       return;
     }
+
+    if (!draftReply.trim()) { setError("請填寫回覆內容。"); return; }
+    if (publishAfterApproval && decision !== "approve") { setError("只有核准回覆可記錄核准後發布意圖。"); return; }
 
     const payload: StoreOpsReplyReviewPayload = {
       ...basePayload(issue),
@@ -911,6 +1009,7 @@ function ReplyReviewForm({ issue, onClose }: WorkflowFormProps) {
   return (
     <form className={styles.form} onSubmit={submit}>
       <div className={styles.notice}><strong>事件摘要</strong><br />{issue.summary}</div>
+      <SavedReviewNotice kind="reply" history={saved} />
       <TextAreaField label="Draft reply" onChange={setDraftReply} required value={draftReply} />
       <details className={styles.advanced} open={needsReason || undefined}>
         <summary>回覆管道與審查設定</summary>
@@ -950,7 +1049,7 @@ function ReplyReviewForm({ issue, onClose }: WorkflowFormProps) {
       </div>
       <CheckboxField
         checked={publishAfterApproval}
-        description="Callback payload marks this as ready for Google reply publish."
+        description="僅保存核准後發布意圖；此流程不會發送回覆。"
         label="Publish after approval"
         onChange={setPublishAfterApproval}
       />
@@ -962,15 +1061,20 @@ function ReplyReviewForm({ issue, onClose }: WorkflowFormProps) {
 }
 
 function TransferForm({ issue, onClose }: WorkflowFormProps) {
+  const saved = latestWorkflowRecord(issue, "transfer");
+  const initial = saved.latest?.submission;
   const submitWorkflow = useContext(WorkflowSubmissionContext);
-  const [targetRoleId, setTargetRoleId] = useState<OperatorRoleId>("supportLead");
-  const [targetOwnerName, setTargetOwnerName] = useState("");
-  const [reason, setReason] = useState("");
-  const [handoffNote, setHandoffNote] = useState(issue.summary);
-  const [keepWatching, setKeepWatching] = useState(true);
+  const [targetRoleId, setTargetRoleId] = useState(initial?.targetRoleId ?? "supportLead");
+  const [targetOwnerName, setTargetOwnerName] = useState(initial?.targetOwnerName ?? "");
+  const [reason, setReason] = useState(initial?.reason ?? "");
+  const [handoffNote, setHandoffNote] = useState(initial?.handoffNote ?? "");
+  const [keepWatching, setKeepWatching] = useState(initial?.keepWatching ?? true);
+
+  const [error, setError] = useState("");
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saved.status === "unavailable") { setError("已保存紀錄來源無法核對，請重新載入事件。"); return; }
     const payload: StoreOpsTransferPayload = {
       ...basePayload(issue),
       targetRoleId,
@@ -984,8 +1088,9 @@ function TransferForm({ issue, onClose }: WorkflowFormProps) {
 
   return (
     <form className={styles.form} onSubmit={submit}>
+      <SavedWorkflowNotice history={saved} />
       <div className={styles.grid}>
-        <SelectField<OperatorRoleId> label="Target role" onChange={setTargetRoleId} options={roleOptions} value={targetRoleId} />
+        <SelectField<string> label="Target role" onChange={setTargetRoleId} options={manualRoleOptions(targetRoleId)} value={targetRoleId} />
         <TextField label="Target owner" onChange={setTargetOwnerName} required value={targetOwnerName} />
         <TextAreaField className={styles.fullWidth} label="Transfer reason" onChange={setReason} required value={reason} />
         <TextAreaField className={styles.fullWidth} label="Handoff note" onChange={setHandoffNote} value={handoffNote} />
@@ -996,6 +1101,7 @@ function TransferForm({ issue, onClose }: WorkflowFormProps) {
         label="Keep watching"
         onChange={setKeepWatching}
       />
+      {error ? <div role="alert" className={styles.error}>{error}</div> : null}
       <DialogActions onCancel={onClose} primaryLabel="Transfer" />
     </form>
   );

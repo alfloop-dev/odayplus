@@ -204,18 +204,24 @@ class PostgresEngine:
                 self._local.depth -= 1
             return
 
-        with self._pool.connection() as connection:
-            with connection.transaction():
-                self._local.connection = connection
-                self._local.depth = 1
-                try:
-                    connection.execute(
-                        "SET LOCAL search_path TO odp_runtime, core, public"
-                    )
-                    yield self
-                finally:
-                    self._local.connection = None
-                    self._local.depth = 0
+        # Reserve the same process lock used by repository ``engine.lock``
+        # before borrowing a connection or acquiring any database locks. Keep
+        # it through the actual outer commit/rollback and pool return. A short
+        # audit-only reservation is insufficient: an earlier row lock or a
+        # later document/queue write can otherwise invert the two lock orders.
+        with self._lock._lock:
+            with self._pool.connection() as connection:
+                with connection.transaction():
+                    self._local.connection = connection
+                    self._local.depth = 1
+                    try:
+                        connection.execute(
+                            "SET LOCAL search_path TO odp_runtime, core, public"
+                        )
+                        yield self
+                    finally:
+                        self._local.connection = None
+                        self._local.depth = 0
 
     def execute(
         self,

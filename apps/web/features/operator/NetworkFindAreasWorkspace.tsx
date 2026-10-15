@@ -44,6 +44,9 @@ import {
   type ListingApiError,
 } from "./network/listingsClient";
 import { canMergeListing } from "./network/listingPermissions";
+import { boundReviewDecisionBody, hasReviewDecisionContext, reviewDecisionContextMatches, reviewDecisionReceiptMatches, reviewDecisionReadbackMatches, type BoundReviewDecisionBody, type ReviewDecisionContext } from "./network/networkReviewDecision";
+import { reviewDecisionFreshGraphMatches } from "./network/networkReviewDecisionRefresh";
+import { readReviewDecisionIdentity } from "./network/reviewDecisionAuthContext";
 import { ReviewSubmissionDialog } from "./network/ReviewSubmissionDialog";
 import { canOfferReviewSubmission, hasReviewSubmissionContext, reviewSubmissionTargetsMatch, reviewSubmissionReceiptMatches, reviewSubmissionReadbackMatches, reviewSubmissionOffers } from "./network/networkReviewSubmission";
 import type { ReviewSubmissionContext, ReviewSubmissionBody, ReviewSubmissionForm, ReviewSubmissionOffer, ReviewSubmissionReceipt } from "./network/networkReviewSubmissionTypes";
@@ -161,6 +164,7 @@ export type NetworkFindAreasWorkspaceProps = {
    */
   activeRoleId?: OperatorRoleId;
   callbacks?: NetworkFindAreasWorkspaceCallbacks;
+  onReviewDecisionConfirmed?: () => Promise<void> | void;
   /**
    * Live API binding for heatzone scores. When `source === "api"` the
    * workspace renders live items; local/POC may otherwise use bundled
@@ -609,6 +613,7 @@ export function NetworkFindAreasWorkspace({
   candidates: candidatesInput,
   heatZones: heatZonesInput,
   initialTabId,
+  onReviewDecisionConfirmed,
   listings: listingsInput,
   listingSources: listingSourcesInput,
   rebalanceStores: rebalanceStoresInput,
@@ -799,6 +804,58 @@ export function NetworkFindAreasWorkspace({
   const reviewsLoadFailure = reviewsNavigationGeneration === navigationContext.current.generation ? reviewsLoadFailureValue : null;
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewIntentEpoch, setReviewIntentEpoch] = useState(0);
+  const reviewDecisionInFlight = useRef<symbol | null>(null);
+  const reviewDecisionAttempt = useRef<{ reviewId: string; generation: number; contextKey: string; locationVersion: number;
+    observedTenant: string | null; actor: string | null; tenant: string | null; context: ReviewDecisionContext | null;
+    frames: { network: number; scoring: number; reviews: number }; requestToken: symbol | null;
+    body: BoundReviewDecisionBody | null; payload: string | null; key: string; correlation: string; unknownOutcome: boolean } | null>(null);
+  useEffect(() => {
+    reviewDecisionAttempt.current = null; reviewDecisionInFlight.current = null;
+    setReviewSubmitting(false); setReviewError(null);
+    setReviewIntentEpoch((epoch) => epoch + 1);
+  },
+    [navigationContextKey, navigationLocationKey]);
+
+  const invalidateReviewScope = useCallback((session: NonNullable<typeof reviewDecisionAttempt.current>) => {
+    if (reviewDecisionAttempt.current !== session || !navigationLocation.current.mounted) return;
+    // A request owns each frame separately. Newer authenticated reads retain
+    // their exact bytes even if an old request discovers a changed cookie.
+    if (networkReadSequence.current === session.frames.network) {
+      ++networkReadSequence.current; setNetworkSnapshot(null); setNetworkLoadState("error");
+    }
+    if (scoringReadSequence.current === session.frames.scoring) {
+      ++scoringReadSequence.current; setScoringSnapshot(null); setScoringLoadState("error");
+    }
+    if (reviewsReadSequence.current === session.frames.reviews) {
+      ++reviewsReadSequence.current; setReviewsSnapshot(null);
+      setReviewsNavigationGeneration(session.generation); setReviewsLoadState("error");
+    }
+    reviewDecisionAttempt.current = null;
+    if (reviewDecisionInFlight.current === session.requestToken) {
+      reviewDecisionInFlight.current = null; setReviewSubmitting(false);
+    }
+    setReviewError(null); setReviewIntentEpoch((epoch) => epoch + 1);
+  }, []);
+
+  useEffect(() => {
+    const session = reviewDecisionAttempt.current;
+    if (!session || session.actor === null || session.tenant === null
+      || networkReadSequence.current === session.frames.network
+        && scoringReadSequence.current === session.frames.scoring && reviewsReadSequence.current === session.frames.reviews) return;
+    let cancelled = false;
+    const sequences = [networkReadSequence.current, scoringReadSequence.current, reviewsReadSequence.current];
+    const isCurrent = () => !cancelled && navigationLocation.current.mounted && reviewDecisionAttempt.current === session
+      && sequences[0] === networkReadSequence.current && sequences[1] === scoringReadSequence.current
+      && sequences[2] === reviewsReadSequence.current;
+    void readReviewDecisionIdentity(isCurrent).then((identity) => {
+      if (isCurrent() && (!identity || identity.actorSubjectId !== session.actor || identity.tenantId !== session.tenant)) {
+        invalidateReviewScope(session);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [networkSnapshotValue, scoringSnapshotValue, reviewsSnapshotValue, invalidateReviewScope]);
+
 
   const [submissionOffer, setSubmissionOffer] = useState<ReviewSubmissionOffer | null>(null);
   const [submissionContext, setSubmissionContext] = useState<ReviewSubmissionContext | null>(null);
@@ -1190,6 +1247,8 @@ export function NetworkFindAreasWorkspace({
     action: ReviewDecisionAction,
     form: ReviewDecisionForm,
   ): Promise<boolean> {
+    if (reviewsSnapshot?.source === "canonical") return submitBoundReviewDecision(reviewId, action, form);
+    if (!fixturesAllowed) return false; // Production never enters the fixture decision transport.
     const generation = navigationContext.current.generation;
     if (!navigationLocation.current.mounted || reviewIdentity.observedContextKey !== navigationContext.current.key) return false;
     if (!reviewIdentity.canDecide) return false;
@@ -1242,6 +1301,139 @@ export function NetworkFindAreasWorkspace({
       return false;
     } finally {
       if (isCurrent()) setReviewSubmitting(false);
+    }
+  }
+
+  async function submitBoundReviewDecision(reviewId: string, action: ReviewDecisionAction, form: ReviewDecisionForm | null): Promise<boolean> {
+    if (reviewDecisionInFlight.current || !navigationLocation.current.mounted || !reviewIdentity.canDecide) return false;
+    const capturedScoringSequence = scoringReadSequence.current;
+    const snapshot = reviewsSnapshot;
+    const rows = snapshot?.reviews.filter((row) => row.id === reviewId) ?? [];
+    const row = rows[0];
+    if (!snapshot || rows.length !== 1 || !row || !isReviewPending(row) || !hasRecordedReviewReport(row)) return false;
+    let attempt = reviewDecisionAttempt.current;
+    if (attempt?.body && attempt.reviewId === reviewId && attempt.unknownOutcome && form !== null
+      && JSON.stringify(boundReviewDecisionBody(attempt.context!, action, form)) !== attempt.payload) {
+      setReviewError(`原核決結果尚未確認；請保留原原因、動作與風險確認，以同一請求核對。${attempt.correlation}`);
+      return false;
+    }
+    const sameForm = attempt?.context && attempt.reviewId === reviewId && (!attempt.body || form === null || form !== null
+      && JSON.stringify(boundReviewDecisionBody(attempt.context, action, form)) === attempt.payload);
+    if (!sameForm) {
+      attempt = { reviewId, generation: navigationContext.current.generation, contextKey: navigationContext.current.key,
+        locationVersion: navigationLocation.current.version, observedTenant: window.sessionStorage.getItem("oday.operator.tenant"),
+        actor: attempt?.reviewId === reviewId ? attempt.actor : null,
+        tenant: attempt?.reviewId === reviewId ? attempt.tenant : null, context: null, body: null, payload: null,
+        frames: { network: networkReadSequence.current, scoring: capturedScoringSequence, reviews: reviewsReadSequence.current }, requestToken: null,
+        key: crypto.randomUUID(), correlation: crypto.randomUUID(), unknownOutcome: false };
+      reviewDecisionAttempt.current = attempt;
+    }
+    const session = attempt!;
+    const requestToken = Symbol("native-review-request");
+    session.frames = { network: networkReadSequence.current, scoring: capturedScoringSequence, reviews: reviewsReadSequence.current };
+    session.requestToken = requestToken;
+    const ownsAttempt = () => reviewDecisionAttempt.current === session && navigationLocation.current.mounted;
+    const scopeError = "登入身分或審核範圍已變更；未確認核決結果，請重新讀取。";
+    const invalidateOwnedScope = () => {
+      invalidateReviewScope(session);
+    };
+    const current = () => reviewDecisionAttempt.current === session && navigationLocation.current.mounted
+      && session.generation === navigationContext.current.generation && session.contextKey === navigationContext.current.key
+      && session.locationVersion === navigationLocation.current.version
+      && session.observedTenant === window.sessionStorage.getItem("oday.operator.tenant");
+    const subject = async () => {
+      const identity = await readReviewDecisionIdentity(current);
+      if (!identity || !current() || session.actor !== null && session.actor !== identity.actorSubjectId
+        || session.tenant !== null && session.tenant !== identity.tenantId
+        || session.context && (session.context.actorSubjectId !== identity.actorSubjectId || session.context.tenantId !== identity.tenantId)
+        || session.body && (session.body.expectedActorSubjectId !== identity.actorSubjectId || session.body.expectedTenantId !== identity.tenantId)) {
+        invalidateOwnedScope();
+        throw new Error(scopeError);
+      }
+      session.actor = identity.actorSubjectId; session.tenant = identity.tenantId; return identity.actorSubjectId;
+    };
+    const read = async (path: string, init?: RequestInit, ownsRead: () => boolean = current): Promise<unknown> => {
+      await subject();
+      if (!ownsRead()) throw new Error(`正式資料讀取已被新的讀取取代；${session.correlation}`);
+      const response = await fetch(path, { cache: "no-store", signal: AbortSignal.timeout(20_000), ...init });
+      await subject();
+      if (!ownsRead()) throw new Error(`正式資料讀取已被新的讀取取代；${session.correlation}`);
+      const value: unknown = await response.json();
+      await subject();
+      if (!ownsRead()) throw new Error(`正式資料讀取已被新的讀取取代；${session.correlation}`);
+      if (init?.method === "POST" && response.status >= 400 && response.status < 500) session.unknownOutcome = false;
+      if (!response.ok) throw new Error(`審核服務拒絕或未完成讀取（HTTP ${response.status}）；${session.correlation}`);
+      return value;
+    };
+    reviewDecisionInFlight.current = requestToken; setReviewSubmitting(true); setReviewError(null);
+    try {
+      await subject();
+      if (!session.body) {
+        const context = await read(`/api/v1/operator/network-reviews/${encodeURIComponent(reviewId)}/decision-context?${new URLSearchParams({ candidateId: row.candidateId })}`);
+        if (hasReviewDecisionContext(context) && (context.actorSubjectId !== session.actor
+          || context.tenantId !== session.tenant || session.observedTenant && context.tenantId !== session.observedTenant)) {
+          invalidateOwnedScope();
+          throw new Error(scopeError);
+        }
+        if (!hasReviewDecisionContext(context) || !reviewDecisionContextMatches(context, snapshot, row)) {
+          throw new Error("目前登入者、候選點、凍結報告或審核版本尚未唯一核對；未送出決策。");
+        }
+        if (session.context && JSON.stringify(session.context.target) !== JSON.stringify(context.target)) {
+          throw new Error("審核內容已變更；保留表單，請重新讀取並確認原核決結果。");
+        }
+        session.context = context;
+        if (form === null) return true;
+        session.body = boundReviewDecisionBody(context, action, form); session.payload = JSON.stringify(session.body);
+      }
+      if (form === null) return session.context !== null;
+      const body = session.body;
+      // Unknown outcomes retain the original request/version/key for an authorized replay.
+      session.unknownOutcome = true;
+      const receipt = await read(`/api/v1/operator/network-reviews/${encodeURIComponent(reviewId)}/decision`, {
+        method: "POST", headers: { ...reviewIdentity.decideHeaders, "Content-Type": "application/json",
+          "If-Match": `W/"${body.expectedDecisionVersion}"`, "If-Actor-Match": body.expectedActorSubjectId,
+          "Idempotency-Key": session.key, "X-Correlation-Id": session.correlation }, body: session.payload!,
+      });
+      if (!reviewDecisionReceiptMatches(receipt, reviewId, body, session.key, session.correlation)) {
+        throw new Error(`核決回覆未核對同一份 Decision、Approval 與處理人員；${session.correlation}`);
+      }
+      const networkSequence = ++networkReadSequence.current;
+      const reviewsSequence = ++reviewsReadSequence.current;
+      session.frames.network = networkSequence; session.frames.reviews = reviewsSequence;
+      const scoringSequence = capturedScoringSequence;
+      const freshCurrent = () => current() && networkSequence === networkReadSequence.current
+        && reviewsSequence === reviewsReadSequence.current && scoringSequence === scoringReadSequence.current;
+      const params = new URLSearchParams({ lens: effectiveLens });
+      if (effectiveSelectedId) params.set("selectedHeatZoneId", effectiveSelectedId);
+      const network = await read(`/api/v1/operator/network-listings?${params}`, { headers: NETWORK_OPERATOR_HEADERS }, freshCurrent);
+      if (!freshCurrent()) throw new Error(`候選點讀取已被新的範圍或資料讀取取代；${session.correlation}`);
+      const confirmed = await read("/api/v1/operator/network-reviews", { headers: reviewIdentity.readHeaders }, freshCurrent);
+      if (!freshCurrent() || scoringNavigationGeneration !== session.generation || scoringLoadState !== "ready"
+        || !reviewDecisionFreshGraphMatches(network, scoringSnapshot, confirmed, reviewId, body, session.generation)
+        || inspectNetworkListingsSnapshot(network as NetworkListingsSnapshot) !== "ready") {
+        throw new Error(`正式 Decision、Approval、凍結報告與決策內容尚未吻合；${session.correlation}`);
+      }
+      await subject();
+      if (!freshCurrent()) return false;
+      // Publish the two coherent, authorized reads in one synchronous batch.
+      setNetworkSnapshot(network as NetworkListingsSnapshot); setNetworkNavigationGeneration(session.generation);
+      setNetworkLoadState("ready"); setNetworkLoadFailure(null); setNetworkApiError(null);
+      if (!applyReviewsSnapshot(confirmed as NetworkReviewsSnapshot, session.generation, reviewsSequence)) return false;
+      session.unknownOutcome = false;
+      await onReviewDecisionConfirmed?.();
+      await subject();
+      if (!current()) return false;
+      reviewDecisionAttempt.current = null;
+      return true;
+    } catch (error) {
+      if (current()) setReviewError(error instanceof Error ? error.message : `核決結果尚未確認；${session.correlation}`);
+      else invalidateOwnedScope();
+      return false;
+    } finally {
+      if (reviewDecisionInFlight.current === requestToken) {
+        reviewDecisionInFlight.current = null;
+        if (ownsAttempt() || reviewDecisionAttempt.current === null) setReviewSubmitting(false);
+      }
     }
   }
 
@@ -2338,15 +2530,29 @@ export function NetworkFindAreasWorkspace({
           />
         ) : activeTab === 5 ? (
           <ReviewPanel
+            key={reviewIntentEpoch}
             reviews={dedicatedReviews}
             fallbackRows={reviewFallbackRows}
-            canDecide={reviewIdentity.canDecide}
+            // Role eligibility and admission to the native transport are
+            // separate. Production legacy reads remain readable without
+            // presenting controls that their preflight would refuse.
+            canDecide={reviewIdentity.canDecide && (reviewsSnapshot?.source === "canonical" || fixturesAllowed)}
+            decisionUnavailableReason={reviewIdentity.canDecide && !fixturesAllowed && reviewsSnapshot?.source !== "canonical"
+              ? "這筆審核資料尚未與正式審核流程核對，目前僅供查閱。請從 Today 開啟對應的候選點審核。"
+              : undefined}
             submitting={reviewSubmitting}
             decideError={reviewError}
             onDecide={submitReviewDecision}
+            onRequestDecision={(id, action) => reviewsSnapshot?.source === "canonical"
+              ? submitBoundReviewDecision(id, action, null) : fixturesAllowed}
             workflowCandidateId={workflowCandidateId}
             expectedReport={workflowProjection.report}
             explicitReadTarget={explicitReview.target}
+            canonicalCurrentReviewTarget={workflowCandidateId
+              && nativeWorkflow?.[workflowCandidateId]?.availability === "recorded"
+              && nativeWorkflow[workflowCandidateId].stage === "pendingreview"
+              && nativeWorkflow[workflowCandidateId].review?.generation === navigationContext.current.generation
+              ? nativeWorkflow[workflowCandidateId].review : null}
             explicitSelectionError={explicitReview.error}
             fixtureCandidateContext={fixturesAllowed}
             onSelectCandidate={(id) => changeActiveTab(5, { [CANDIDATE_SELECTION_PARAM]: id })}

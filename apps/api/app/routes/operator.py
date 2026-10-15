@@ -743,6 +743,11 @@ def create_operator_router(
                         getattr(score_execution_service, "repository", None), "model_admission", None,
                     ),
                     execution_service=score_execution_service,
+                    # The resolver creates a new service for every invocation.
+                    # snapshot observes current authority itself; defer the
+                    # otherwise duplicate constructor observation. Non-read
+                    # methods/export still load canonical data before using it.
+                    defer_canonical_refresh=True,
                     require_canonical=True,
                     tenant_id=tenant_id,
                 )

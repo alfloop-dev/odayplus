@@ -16,12 +16,15 @@ maintenance, cleaning). It enforces the ODP-MOD-05 / ODP-ML-05 guardrails:
 from __future__ import annotations
 
 from collections.abc import Iterable
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
 
+from modules.intervention.application.approval_contract import require_positive_intervention_version
+from modules.intervention.application.lifecycle_command_contract import _VerifiedLifecycleTransition
 from modules.intervention.domain.lifecycle import (
     ACTIVE_INTERVENTION_STATUSES,
     POLICY_VERSION,
@@ -135,6 +138,55 @@ class InterventionWorkflow:
         self.audit_log = audit_log or InMemoryAuditLog()
         self.label_hooks: list[LabelRegistryHook] = list(label_hooks or ())
         self.policy_version = policy_version
+        self._lifecycle_transition: ContextVar[_VerifiedLifecycleTransition | None] = ContextVar(
+            "intervention_lifecycle_transition", default=None
+        )
+        self._verified_command_context: ContextVar[tuple[str, str] | None] = ContextVar(
+            "intervention_verified_command", default=None
+        )
+
+    @contextmanager
+    def verified_command_context(self, *, tenant_id: str, actor_subject_id: str):
+        token = self._verified_command_context.set((tenant_id, actor_subject_id))
+        try:
+            yield
+        finally:
+            self._verified_command_context.reset(token)
+
+    @contextmanager
+    def verified_lifecycle_transition(self, transition: _VerifiedLifecycleTransition):
+        verified = self._verified_command_context.get()
+        engine = getattr(getattr(self.repository, "_store", None), "engine", None)
+        if (verified != (transition.tenant_id, transition.actor_subject_id)
+                or engine is not transition.engine or engine is None):
+            raise InterventionError("stale update: lifecycle transaction binding changed")
+        if transition.command == "evaluate":
+            from shared.infrastructure.persistence.repositories import DurableLabelRegistry
+            if not self.label_hooks or any(not isinstance(hook, DurableLabelRegistry)
+                    or getattr(getattr(hook, "_store", None), "engine", None) is not engine
+                    for hook in self.label_hooks):
+                raise InterventionError("lifecycle evaluation requires same-engine durable label hooks")
+        token = self._lifecycle_transition.set(transition)
+        try:
+            yield
+            transition.require_complete()
+        finally:
+            self._lifecycle_transition.reset(token)
+
+    def _save_lifecycle(self, intervention: Intervention) -> Intervention:
+        transition = self._lifecycle_transition.get()
+        if transition is None:
+            return self.repository.save(intervention)
+        if intervention.intervention_id == transition.original.intervention_id:
+            if transition.saved is not None:
+                raise InterventionError("stale update: duplicate lifecycle target save")
+            result = self.repository.save_transition(intervention, transition=transition)
+            transition.saved = result
+            return result
+        transition.validate_linked(intervention)
+        result = self.repository.create_if_absent(intervention)
+        transition.linked.append(result)
+        return result
 
     def register_label_hook(self, hook: LabelRegistryHook) -> None:
         self.label_hooks.append(hook)
@@ -170,7 +222,7 @@ class InterventionWorkflow:
             policy_version=self.policy_version,
             intervention_id=intervention_id,
         )
-        self.repository.save(intervention)
+        self._save_lifecycle(intervention)
         self._audit(
             intervention,
             action="create",
@@ -211,7 +263,7 @@ class InterventionWorkflow:
             assigned_by=actor,
             assignment_role=role,
         )
-        self.repository.save(updated)
+        self._save_lifecycle(updated)
         self._audit(
             updated,
             action="assign",
@@ -253,7 +305,7 @@ class InterventionWorkflow:
             assigned_by=None,
             assignment_role=None,
         )
-        self.repository.save(updated)
+        self._save_lifecycle(updated)
         self._audit(
             updated,
             action="unassign",
@@ -298,7 +350,7 @@ class InterventionWorkflow:
             correlation_id=correlation_id,
             eligibility=result,
         )
-        self.repository.save(updated)
+        self._save_lifecycle(updated)
         self._audit(
             updated,
             action="check_eligibility",
@@ -330,7 +382,7 @@ class InterventionWorkflow:
             correlation_id=correlation_id,
             action_spec=merged,
         )
-        self.repository.save(updated)
+        self._save_lifecycle(updated)
         self._audit(
             updated,
             action="propose_action",
@@ -381,7 +433,7 @@ class InterventionWorkflow:
             correlation_id=correlation_id,
             conflict=result,
         )
-        self.repository.save(updated)
+        self._save_lifecycle(updated)
         self._audit(
             updated,
             action="check_conflict",
@@ -422,7 +474,7 @@ class InterventionWorkflow:
             reason="submitted for approval",
             correlation_id=correlation_id,
         )
-        self.repository.save(updated)
+        self._save_lifecycle(updated)
         self._audit(
             updated,
             action="submit_for_approval",
@@ -440,6 +492,7 @@ class InterventionWorkflow:
         actor: str,
         reason: str,
         correlation_id: str = "",
+        expected_version: int | None = None,
     ) -> Intervention:
         return self._decide(
             intervention_id,
@@ -447,6 +500,7 @@ class InterventionWorkflow:
             actor=actor,
             reason=reason,
             correlation_id=correlation_id,
+            expected_version=expected_version,
         )
 
     def reject(
@@ -456,6 +510,7 @@ class InterventionWorkflow:
         actor: str,
         reason: str,
         correlation_id: str = "",
+        expected_version: int | None = None,
     ) -> Intervention:
         return self._decide(
             intervention_id,
@@ -463,6 +518,7 @@ class InterventionWorkflow:
             actor=actor,
             reason=reason,
             correlation_id=correlation_id,
+            expected_version=expected_version,
         )
 
     def _decide(
@@ -473,41 +529,63 @@ class InterventionWorkflow:
         actor: str,
         reason: str,
         correlation_id: str,
+        expected_version: int | None,
     ) -> Intervention:
-        intervention = self._require(intervention_id)
-        self._require_status(
-            intervention, {InterventionStatus.PENDING_APPROVAL}, "decide"
-        )
-        if not reason.strip():
-            raise InterventionError(
-                "approval and rejection are high-risk and require a reason"
+        if expected_version is not None:
+            command_atomic = getattr(self.repository, "command_atomic", None)
+            transaction = command_atomic() if callable(command_atomic) else self._atomic_lineage_write()
+        else:
+            atomic = getattr(self.repository, "atomic", None)
+            transaction = atomic() if callable(atomic) else nullcontext()
+        with transaction:
+            intervention = self._require(intervention_id, for_update=True)
+            self._check_version(intervention, expected_version)
+            if expected_version is not None and intervention.intervention_id != intervention_id:
+                raise InterventionError("stale update: approval aggregate identity changed")
+            if approved and actor == intervention.created_by:
+                raise InterventionError("creator cannot approve their own intervention")
+            if approved and intervention.conflict is not None and intervention.conflict.blocks_approval:
+                raise InterventionError("an unresolved conflict blocks approval")
+            self._require_status(
+                intervention, {InterventionStatus.PENDING_APPROVAL}, "decide"
             )
-        record = ApprovalRecord(
-            approved=approved,
-            actor_id=actor,
-            decision_reason=reason,
-            approved_at=datetime.now(UTC),
-            policy_version=self.policy_version,
-        )
-        target = InterventionStatus.APPROVED if approved else InterventionStatus.REJECTED
-        updated = intervention.with_transition(
-            to_status=target,
-            actor=actor,
-            action="approve" if approved else "reject",
-            reason=reason,
-            correlation_id=correlation_id,
-            approval=record,
-        )
-        self.repository.save(updated)
-        self._audit(
-            updated,
-            action="approve" if approved else "reject",
-            outcome=target.value.lower(),
-            actor=actor,
-            correlation_id=correlation_id,
-            reason=reason,
-        )
-        return updated
+            if not reason.strip():
+                raise InterventionError(
+                    "approval and rejection are high-risk and require a reason"
+                )
+            record = ApprovalRecord(
+                approved=approved,
+                actor_id=actor,
+                decision_reason=reason,
+                approved_at=datetime.now(UTC),
+                policy_version=self.policy_version,
+            )
+            target = InterventionStatus.APPROVED if approved else InterventionStatus.REJECTED
+            updated = intervention.with_transition(
+                to_status=target,
+                actor=actor,
+                action="approve" if approved else "reject",
+                reason=reason,
+                correlation_id=correlation_id,
+                approval=record,
+            )
+            if expected_version is not None:
+                require_positive_intervention_version(updated.version)
+                save_expected = getattr(self.repository, "save_expected", None)
+                if not callable(save_expected):
+                    raise InterventionError("approval requires exact version compare-and-save")
+                save_expected(updated, expected_version=expected_version, expected_status=InterventionStatus.PENDING_APPROVAL)
+            else:
+                self.repository.save(updated)
+            self._audit(
+                updated,
+                action="approve" if approved else "reject",
+                outcome=target.value.lower(),
+                actor=actor,
+                correlation_id=correlation_id,
+                reason=reason,
+            )
+            return updated
 
     # -- execution + observation window -----------------------------------
 
@@ -552,7 +630,7 @@ class InterventionWorkflow:
             correlation_id=correlation_id,
             observation_window=window,
         )
-        self.repository.save(observing)
+        self._save_lifecycle(observing)
         self._audit(
             observing,
             action="execute",
@@ -609,7 +687,7 @@ class InterventionWorkflow:
             correlation_id=correlation_id,
             outcome=outcome,
         )
-        self.repository.save(updated)
+        self._save_lifecycle(updated)
         self._audit(
             updated,
             action="collect_outcome",
@@ -716,7 +794,7 @@ class InterventionWorkflow:
             # NOT advance to COMPLETED — the operator must not be able to close a
             # case whose outcome window has not settled (ODP-MOD-05 §7, ODP-ML-05 §6).
             saved = evaluating
-        self.repository.save(saved)
+        self._save_lifecycle(saved)
 
         label = LabelRecord(
             intervention_id=saved.intervention_id,
@@ -829,7 +907,7 @@ class InterventionWorkflow:
             correlation_id=correlation_id,
             close=record,
         )
-        self.repository.save(updated)
+        self._save_lifecycle(updated)
         self._audit(
             updated,
             action="close",
@@ -1003,8 +1081,8 @@ class InterventionWorkflow:
             # would be live while the original stayed active -- two running
             # cases for one store, and a lineage that only points one way.
             # Either both land or neither does.
-            self.repository.save(replacement)
-            self.repository.save(stopped_original)
+            self._save_lifecycle(replacement)
+            self._save_lifecycle(stopped_original)
 
         # Audit is appended only after the lineage it describes is durable, and
         # is never rolled back with it: the log is append-only, so a failed
@@ -1129,7 +1207,7 @@ class InterventionWorkflow:
             reason=reason,
             correlation_id=correlation_id,
         )
-        self.repository.save(updated)
+        self._save_lifecycle(updated)
         self._audit(
             updated,
             action=action,
@@ -1174,6 +1252,10 @@ class InterventionWorkflow:
 
     @staticmethod
     def _check_version(intervention: Intervention, expected_version: int | None) -> None:
+        if expected_version is not None and (type(expected_version) is not int or expected_version < 1):
+            raise InterventionError("stale update: expected version must be a positive integer")
+        if expected_version is not None:
+            require_positive_intervention_version(intervention.version)
         if expected_version is not None and intervention.version != expected_version:
             raise InterventionError(
                 f"stale update: expected version {expected_version}, current is {intervention.version}"
@@ -1226,6 +1308,13 @@ class InterventionWorkflow:
         }
         if extra:
             metadata.update(extra)
+        verified = self._verified_command_context.get()
+        if verified is not None:
+            require_positive_intervention_version(intervention.version)
+            if actor != verified[1]:
+                raise InterventionError("command actor differs from authenticated Principal")
+            metadata.update(tenant_id=verified[0], actor_subject_id=verified[1],
+                actor_evidence="authenticated_principal.v1")
         return self.audit_log.record(
             AuditEvent(
                 event_type="intervention.lifecycle.v1",

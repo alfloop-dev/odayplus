@@ -151,7 +151,7 @@ describe("Package 10 R7 Today workspace", () => {
     expect(screen.queryByText("Operational signals")).not.toBeInTheDocument();
   });
 
-  it("keeps queue routing and approval mutations connected to the existing callbacks", () => {
+  it("keeps queue routing and opens the full approval owner without a Home mutation", () => {
     const onApprovalDecision = vi.fn();
     const onTargetSelect = vi.fn();
     const envelope = buildEnvelope();
@@ -175,13 +175,9 @@ describe("Package 10 R7 Today workspace", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "核准" }));
-    expect(onApprovalDecision).toHaveBeenCalledWith(
-      "APR-501",
-      "approved",
-      expect.objectContaining({
-        actorName: "林承翰",
-        actorRoleId: "ops-lead",
-      }),
+    expect(onApprovalDecision).not.toHaveBeenCalled();
+    expect(onTargetSelect).toHaveBeenLastCalledWith(
+      { workspace: "govern", entityId: "APR-501", tab: "approvals" }, "APR-501",
     );
   });
 

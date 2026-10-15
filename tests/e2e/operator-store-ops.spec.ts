@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import nativeCameraPurpose from "../fixtures/operator-store-camera-purpose-native.json";
 
 type StoreLightStatus = "green" | "yellow" | "red";
 type StoreOpsIssue = {
@@ -322,6 +323,7 @@ async function mockStoreOpsApi(page: Page) {
       const issue = issues.find((item) =>
         url.pathname.includes(`/issues/${item.id}/`),
       );
+      let cameraPurposeReceipt;
       if (issue) {
         if (url.pathname.endsWith("/triage")) issue.status = "triaged";
         else if (url.pathname.endsWith("/assign")) issue.status = "assigned";
@@ -332,12 +334,19 @@ async function mockStoreOpsApi(page: Page) {
         else if (url.pathname.endsWith("/camera-purpose")) {
           const camera = evidence.find((item) => item.id === "EV-1024-CAM");
           if (camera) {
+            // This declared mock copies a real owned-memory native producer
+            // receipt; missing lockedReason by itself is not unlock evidence.
+            expect(issue.id).toBe(nativeCameraPurpose.evidenceItem.issueId);
+            expect(request.postDataJSON()).toMatchObject(nativeCameraPurpose.requestPayload);
             delete (camera as { lockedReason?: string }).lockedReason;
-            camera.summary =
-              "Camera evidence unlocked for a recorded, audit-scoped purpose.";
+            Object.assign(camera, structuredClone(nativeCameraPurpose.evidenceItem));
+            const auditEvent = structuredClone(nativeCameraPurpose.auditEvent);
+            auditEvent.metadata.idempotencyKey = request.headers()["idempotency-key"];
+            auditEvents.push(auditEvent);
+            cameraPurposeReceipt = { evidenceItem: camera, auditEvent };
           }
         }
-        issue.updatedAt = new Date().toISOString();
+        if (!url.pathname.endsWith("/camera-purpose")) issue.updatedAt = new Date().toISOString();
       }
       await route.fulfill({
         contentType: "application/json",
@@ -349,6 +358,7 @@ async function mockStoreOpsApi(page: Page) {
           fourLightSummary: summarizeLights(issues),
           count: issues.length,
           issue,
+          ...cameraPurposeReceipt,
           idempotentReplay: false,
         }),
       });

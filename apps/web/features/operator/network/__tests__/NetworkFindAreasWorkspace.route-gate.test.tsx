@@ -21,6 +21,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const radarProps = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>> }));
+const reviewPanelControl = vi.hoisted(() => ({ latest: null as unknown }));
 
 vi.mock("../ListingRadarPanel", () => ({
   ListingRadarPanel: (props: Record<string, unknown>) => {
@@ -32,15 +33,17 @@ vi.mock("../ListingRadarPanel", () => ({
 vi.mock("../ReviewPanel", async (importOriginal) => ({
   // The workspace counts through the real queue selector; only the panel is stubbed.
   resolveEffectiveReviews: (await importOriginal<typeof import("../ReviewPanel")>()).resolveEffectiveReviews,
-  ReviewPanel: ({ canDecide, reviews, onDecide }: ComponentProps<typeof import("../ReviewPanel").ReviewPanel>) => (
-    <div data-testid="review-authority" data-can-decide={String(canDecide)}>
+  ReviewPanel: (props: ComponentProps<typeof import("../ReviewPanel").ReviewPanel>) => {
+    reviewPanelControl.latest = props;
+    const { canDecide, reviews, onDecide } = props;
+    return <div data-testid="review-authority" data-can-decide={String(canDecide)}>
       {canDecide && reviews[0] ? (
         <button onClick={() => onDecide?.(reviews[0].id, "GO", {
           reason: "Reviewed", conditions: "", requiredData: "", overrideAck: false,
         })} type="button">Submit test review decision</button>
       ) : null}
-    </div>
-  ),
+    </div>;
+  },
 }));
 
 function unavailableBinding<T>(): ApiBinding<T> {
@@ -152,6 +155,7 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     navigation.search = "ws=network&tab=radar";
     navigation.push.mockReset();
     radarProps.calls.length = 0;
+    reviewPanelControl.latest = null;
     window.history.replaceState(null, "", "/operator?ws=network&tab=radar");
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     vi.stubGlobal(
@@ -199,7 +203,7 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     ["ops-lead", "false"],
     ["pm-audit", "false"],
     ["platform-admin", "false"],
-  ] as const)("presents review authority for %s without impersonation", (roleId, canDecide) => {
+  ] as const)("presents fixture-compatible role eligibility for %s without impersonation", (roleId, canDecide) => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
     navigation.search = "ws=network&tab=review";
     render(<NetworkFindAreasWorkspace activeRoleId={roleId} initialTabId="review" />);
@@ -272,21 +276,19 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     expect(fetchMock.mock.calls.every(([url]) => !/\/(users|roles)\b/.test(String(url)))).toBe(true);
   });
 
-  it.each(["empty", "denied"])("uses the %s dedicated Review reload's source for count and gate", async (result) => {
+  // Dedicated READ/count/gate controls. A fresh mount models a page reload;
+  // production legacy /decide success is no longer a prerequisite or claim.
+  it.each(["empty", "denied"])("READ_ONLY: uses the %s dedicated Review reread's source for count and gate", async (result) => {
     navigation.search = "ws=network&tab=review";
-    let decided = false;
+    let reread = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
       const respond = (body: unknown) => new Response(JSON.stringify(body), {
         status: 200, headers: { "Content-Type": "application/json" },
       });
-      if (url.endsWith("/decide")) {
-        decided = true;
-        return respond({});
-      }
       if (url.endsWith("/network-reviews")) {
-        if (decided && result === "denied") return forbiddenResponse("corr-reviews-reload-403", "sitescore");
-        return respond({ source: "api", reviews: decided ? [] : [{ ...legacyReviewPrerequisites, id: "REV-LIVE-1", status: "pending" }] });
+        if (reread && result === "denied") return forbiddenResponse("corr-reviews-reload-403", "sitescore");
+        return respond({ source: "api", reviews: reread ? [] : [{ ...legacyReviewPrerequisites, id: "REV-LIVE-1", status: "pending" }] });
       }
       if (url.includes("/network-listings")) return respond({
         source: "api", heatZones: [], listingSources: [], candidates: [],
@@ -302,14 +304,18 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
       return new Response("{}", { status: 404 });
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager"
-      liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />);
+    const workspace = <NetworkFindAreasWorkspace activeRoleId="expansion-manager"
+      liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />;
+    const first = render(workspace);
 
-    const state = screen.getByLabelText("展店與店網摘要");
+    let state = screen.getByLabelText("展店與店網摘要");
     await waitFor(() => expect(state).toHaveTextContent("1 今日新物件"));
     await waitFor(() => expect(state).toHaveTextContent("1 待審 Review"));
     expect(screen.getByTestId("network-tab-count-5")).toHaveTextContent("1");
-    fireEvent.click(screen.getByRole("button", { name: "Submit test review decision" }));
+    first.unmount();
+    reread = true;
+    render(workspace);
+    state = screen.getByLabelText("展店與店網摘要");
     await waitFor(() => expect(state).toHaveTextContent(`${result === "empty" ? 0 : 2} 待審 Review`));
     const gate = screen.getByTestId("operator-data-unavailable");
     if (result === "empty") {
@@ -323,7 +329,33 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     }
     expect(within(state).getByText("待審 Review", { exact: false })).toHaveAttribute("data-count-state", "known");
     expect(screen.queryByTestId("review-authority")).toBeNull();
-    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  });
+
+  it("production noncanonical review refuses a direct legacy callback without a business POST", async () => {
+    navigation.search = "ws=network&tab=review";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      const response = (body: unknown) => new Response(JSON.stringify(body), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+      if (url.endsWith("/network-reviews")) return response({ source: "api", reviews: [legacyReviewPrerequisites] });
+      if (url.includes("network-listings")) return response({ source: "api", listings: [], candidates: [], siteReviews: [] });
+      if (url.endsWith("/network-scoring")) return response({ source: "api", candidates: [] });
+      if (url.endsWith("/network-rebalance")) return response({ source: "api", stores: [] });
+      return new Response("{}", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager"
+      liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />);
+    await waitFor(() => expect(screen.getByTestId("review-authority")).toHaveAttribute("data-can-decide", "false"));
+    const props = reviewPanelControl.latest as ComponentProps<typeof import("../ReviewPanel").ReviewPanel>;
+    expect(props.onRequestDecision?.(legacyReviewPrerequisites.id, "GO")).toBe(false);
+    expect(await props.onDecide?.(legacyReviewPrerequisites.id, "GO", {
+      reason: "Direct callback cannot grant production native authority", conditions: "", requiredData: "", overrideAck: false,
+    })).toBe(false);
+    expect(screen.queryByRole("button", { name: "Submit test review decision" })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   });
 
   it("cold-opens Radar even when every unrelated Network snapshot is unavailable", async () => {

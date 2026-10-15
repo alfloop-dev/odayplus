@@ -3,6 +3,7 @@
 import { CSSProperties, useState, useMemo, useEffect } from "react";
 import { ISSUE_FIXTURES, EVIDENCE_FIXTURES, AUDIT_EVENT_FIXTURES, STORE_FIXTURES } from "./fixtures";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
+import { nativeStoreLabels } from "./storeOpsNativeSummary";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
@@ -75,6 +76,56 @@ type StoreOpsApiState = {
   count: number;
   source?: string;
 };
+
+function cameraPurposeTimestamp(value: unknown): { milliseconds: number; fraction: string } | null {
+  if (typeof value !== "string") return null;
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!parts) return null;
+  const [, year, month, day, hour, minute, second] = parts.map(Number);
+  if (year < 1 || month < 1 || month > 12 || day < 1
+    || day > new Date(Date.UTC(year, month, 0)).getUTCDate()
+    || hour > 23 || minute > 59 || second > 59) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? { milliseconds: timestamp, fraction: parts[7] ?? "" } : null;
+}
+
+export function hasRecordedCameraPurpose(
+  evidence: EvidenceItem | undefined,
+  issue: Issue,
+  auditEvents: AuditEvent[],
+): boolean {
+  const nonempty = (value: unknown): value is string =>
+    typeof value === "string" && value.trim().length > 0;
+  if (!evidence || !issue || evidence.kind !== "camera" || evidence.lockedReason
+    || !nonempty(issue.id) || !nonempty(evidence.id) || !nonempty(evidence.issueId)
+    || evidence.issueId !== issue.id || !Array.isArray(issue.evidenceIds)
+    || !issue.evidenceIds.includes(evidence.id)) return false;
+  if (!nonempty(evidence.purpose) || !nonempty(evidence.cameraLocation)
+    || !nonempty(evidence.timeWindow) || !Number.isInteger(evidence.retentionHours)
+    || evidence.retentionHours! < 1 || evidence.retentionHours! > 72) return false;
+  const unlockedAt = cameraPurposeTimestamp(evidence.unlockedAt);
+  if (unlockedAt === null) return false;
+
+  return auditEvents.some((event) => {
+    const metadata = event.metadata;
+    const occurredAt = cameraPurposeTimestamp(event.occurredAt);
+    const precision = Math.max(occurredAt?.fraction.length ?? 0, unlockedAt.fraction.length);
+    const recordedAfterUnlock = occurredAt !== null
+      && (occurredAt.milliseconds > unlockedAt.milliseconds
+        || occurredAt.milliseconds === unlockedAt.milliseconds
+          && occurredAt.fraction.padEnd(precision, "0") >= unlockedAt.fraction.padEnd(precision, "0"));
+    return nonempty(event.id) && event.category === "evidence"
+      && event.action === "evidence.camera_purpose.recorded"
+      && event.targetType === "issue" && event.targetId === issue.id
+      && recordedAfterUnlock
+      && metadata !== null && typeof metadata === "object" && !Array.isArray(metadata)
+      && metadata.issueId === issue.id && metadata.evidenceId === evidence.id
+      && metadata.purpose === evidence.purpose
+      && metadata.cameraLocation === evidence.cameraLocation
+      && metadata.timeWindow === evidence.timeWindow
+      && metadata.retentionHours === evidence.retentionHours;
+  });
+}
 
 const EMPTY_STORE_OPS_ISSUE: Issue = {
   id: "",
@@ -807,6 +858,7 @@ export function DesignStoreOpsWorkspace({
   const evGoogleReview = issueEvidence.find((e) => e.kind === "googleReview");
   const evCsCase = issueEvidence.find((e) => e.kind === "csCase");
   const evCamera = issueEvidence.find((e) => e.kind === "camera");
+  const cameraPurposeRecorded = hasRecordedCameraPurpose(evCamera, issue, activeAuditEvents);
   const evPayment = issueEvidence.find((e) => e.kind === "payment");
   const evIot = issueEvidence.find((e) => e.kind === "iot");
   const evForecastOps = issueEvidence.find((e) => e.kind === "forecastOps");
@@ -835,6 +887,7 @@ export function DesignStoreOpsWorkspace({
   const storeObj = useMemo(() => {
     return activeStores.find((s) => s.id === issue.storeId);
   }, [activeStores, issue.storeId]);
+  const nativeLabels = nativeStoreLabels(storeObj?.nativeSummary, issue.storeId);
 
   const storesByFullLight = useMemo(() => {
     const grouped: Record<StoreOpsFullLightStatus, Store[]> = {
@@ -1246,11 +1299,13 @@ export function DesignStoreOpsWorkspace({
             </span>
             <span>
               <small>型態</small>
-              <strong>{fixturePresentation ? "自助洗衣" : "不可用"}</strong>
+              <strong>{fixturePresentation ? "自助洗衣" : nativeLabels.format}</strong>
             </span>
             <span>
               <small>機台</small>
-              <strong>{fixturePresentation ? "14 台" : "不可用"}</strong>
+              <strong title={fixturePresentation ? undefined : nativeLabels.machineDescription}>
+                {fixturePresentation ? "14 台" : nativeLabels.machines}
+              </strong>
             </span>
             <span>
               <small>今日營收</small>
@@ -1327,7 +1382,7 @@ export function DesignStoreOpsWorkspace({
                     </>
                   ) : (
                     <>
-                      <strong style={fixturePresentation ? { color: "#087a47" } : undefined}>{fixturePresentation ? "影像已解鎖" : sourceEvidenceText(evCamera, "title")}</strong>
+                      <strong style={cameraPurposeRecorded ? { color: "#087a47" } : undefined}>{cameraPurposeRecorded ? "影像已解鎖" : sourceEvidenceText(evCamera, "title")}</strong>
                       <p>{sourceEvidenceText(evCamera, "summary")}</p>
                     </>
                   )

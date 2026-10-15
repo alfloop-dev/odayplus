@@ -166,6 +166,7 @@ def _payload_fingerprint(
     required_data: list[str],
     override_ack: bool,
     actor_role_id: str,
+    expected_target: dict[str, Any] | None = None,
 ) -> str:
     """Stable hash of the decision payload.
 
@@ -183,6 +184,7 @@ def _payload_fingerprint(
             "requiredData": required_data,
             "overrideAck": bool(override_ack),
             "actorRoleId": actor_role_id,
+            **({"expectedTarget": expected_target} if expected_target is not None else {}),
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -514,6 +516,47 @@ class NetworkReviewService:
             idempotency_key=idempotency_key, correlation_id=correlation_id,
             submission_summary=submission_summary, reviewer_group_id=reviewer_group_id, module=module)
 
+    @staticmethod
+    def _has_recorded_decision_identity(decision: Any) -> bool:
+        return (not isinstance(decision.version, bool) and isinstance(decision.version, int) and decision.version > 0
+                and isinstance(decision.candidate_site_id, str) and bool(decision.candidate_site_id.strip())
+                and isinstance(decision.report_id, str) and bool(decision.report_id.strip())
+                and not isinstance(decision.report_version, bool) and isinstance(decision.report_version, int)
+                and decision.report_version > 0
+                and isinstance(decision.model_version, str) and bool(decision.model_version.strip()))
+
+    def decision_context(self, *, review_id: str, candidate_id: str, principal: Any) -> dict[str, Any]:
+        """Read this actor's exact pending owner; never grant authority from a rail row."""
+        from shared.auth import Action
+
+        from .network_review_submission import NetworkReviewSubmissionOwner, candidate_digest
+
+        self._require_canonical_dependencies()
+        owner = NetworkReviewSubmissionOwner(self)
+        candidate = owner._candidate(candidate_id, principal, action=Action.VIEW)
+        with self._sitescore_repository.report_guard(candidate_id), owner.service._candidate_workflow_service._listing_repository.candidate_guard(candidate_id):
+            candidate = owner._candidate(candidate_id, principal, action=Action.VIEW)
+            decision = self._decision_repository.get_decision(review_id)
+            if (decision is None or decision.candidate_site_id != candidate_id
+                    or decision.tenant_id != principal.tenant_id or candidate.review_id != review_id):
+                raise NetworkReviewConflict("CURRENT_REVIEW_OWNER_REQUIRED")
+            _, availability = self._retained_decision_report(decision)
+            approval = self._decision_workflow._approval_store.get(decision.approval_id) if decision.approval_id else None
+            if (not self._has_recorded_decision_identity(decision) or availability != "available"
+                    or approval is None or approval.decision_id != review_id):
+                raise NetworkReviewConflict("RECORDED_REVIEW_CONTEXT_REQUIRED")
+            refusal = None
+            try:
+                self.authorize_review_actor(decision, principal)
+            except NetworkReviewRoleError as exc:
+                refusal = str(exc)
+            pending = decision.status is DecisionStatus.PENDING_REVIEW and approval.approval_status == "pending"
+            return {"source": "canonical", "actorSubjectId": principal.subject_id, "tenantId": principal.tenant_id,
+                    "canDecide": pending and refusal is None, "refusalReason": refusal,
+                    "target": {"expectedCandidateId": candidate_id, "expectedCandidateDigest": candidate_digest(candidate),
+                               "expectedDecisionVersion": decision.version, "expectedReportId": decision.report_id,
+                               "expectedReportVersion": decision.report_version, "expectedApprovalId": approval.approval_id}}
+
     def decide_review(
         self,
         *,
@@ -528,6 +571,7 @@ class NetworkReviewService:
         idempotency_key: str | None,
         correlation_id: str | None,
         principal: Any | None = None,
+        expected_target: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Atomically apply a review decision across all five governance records.
 
@@ -559,6 +603,7 @@ class NetworkReviewService:
                 required_data=required_list,
                 override_ack=override_ack,
                 actor_role_id=actor_role_id,
+                expected_target=expected_target,
             ),
         )
         if not self._require_canonical and idempotency_key and cache_key in self._idempotency_cache:
@@ -578,6 +623,7 @@ class NetworkReviewService:
                 cache_key=cache_key,
                 correlation_id=correlation_id,
                 principal=principal,
+                expected_target=expected_target,
             )
 
         if action not in DECISION_ACTIONS:
@@ -1057,6 +1103,7 @@ class NetworkReviewService:
         idempotency_key: str | None,
         cache_key: tuple[str, ...],
         correlation_id: str | None,
+        expected_target: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._require_canonical_dependencies()
         if not isinstance(actor_name, str) or not actor_name.strip():
@@ -1101,20 +1148,23 @@ class NetworkReviewService:
         # Matching unknown values do not establish a usable frozen identity.
         # Keep historical reads and authenticated receipt replay available;
         # this check applies before any fresh submit/decision transition.
-        if (
-            not isinstance(existing.candidate_site_id, str)
-            or not existing.candidate_site_id.strip()
-            or not isinstance(existing.report_id, str)
-            or not existing.report_id.strip()
-            or isinstance(existing.report_version, bool)
-            or not isinstance(existing.report_version, int)
-            or existing.report_version < 1
-            or not isinstance(existing.model_version, str)
-            or not existing.model_version.strip()
-        ):
+        if not self._has_recorded_decision_identity(existing):
             raise NetworkReviewConflict(
                 f"review {review_id} retained report identity is unavailable; decision was not changed"
             )
+        # The replay fingerprint above includes the original read context. A fresh
+        # transition additionally compares it under the report/candidate locks.
+        if expected_target is not None:
+            from .network_review_submission import candidate_digest
+            candidate = self._candidate_workflow_service._listing_repository._store.get(
+                self._candidate_workflow_service._listing_repository._CANDIDATES, existing.candidate_site_id)
+            current_target = {"expectedCandidateId": existing.candidate_site_id,
+                "expectedCandidateDigest": candidate_digest(candidate) if candidate is not None else None,
+                "expectedDecisionVersion": existing.version, "expectedReportId": existing.report_id,
+                "expectedReportVersion": existing.report_version, "expectedApprovalId": existing.approval_id}
+            if (candidate is None or candidate.review_id != review_id or current_target != expected_target
+                    or existing.status is not DecisionStatus.PENDING_REVIEW):
+                raise NetworkReviewConflict("DECISION_CONTEXT_CONFLICT")
         _, report_availability = self._retained_decision_report(existing)
         if report_availability != "available":
             raise NetworkReviewConflict(
@@ -1185,6 +1235,12 @@ class NetworkReviewService:
             "correlationId": correlation_id,
             "idempotentReplay": False,
         }
+        if expected_target is not None:
+            result["commandContext"] = {"actorSubjectId": actor, "tenantId": existing.tenant_id,
+                "idempotencyKey": idempotency_key, "correlationId": correlation_id,
+                "request": {**expected_target, "expectedActorSubjectId": actor, "expectedTenantId": existing.tenant_id,
+                    "decision": action, "reason": reason, "conditions": conditions,
+                    "requiredData": required_data, "overrideAck": override_ack}}
         if idempotency_key:
             self._idempotency_cache[canonical_key] = {"requestFingerprint": cache_key[-1], "response": _copy(result)}
         return result

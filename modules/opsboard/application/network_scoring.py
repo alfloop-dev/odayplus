@@ -364,7 +364,9 @@ class NetworkScoringService:
         current_context_reader: CandidateScoreContextReader | None = None,
         current_model_admission: Any | None = None,
         execution_service: Any | None = None,
+        defer_canonical_refresh: bool = False,
     ) -> None:
+        self._canonical_refresh_pending = require_canonical
         self._execution_service = execution_service
         self._seed_fixtures = seed_fixtures
         self._listing_repository = listing_repository
@@ -378,6 +380,10 @@ class NetworkScoringService:
             or getattr(listing_repository, "tenant_id", "")
             or getattr(sitescore_repository, "tenant_id", "")
         )
+        if self._require_canonical:
+            # Lazy observation cannot let a command run with missing canonical
+            # wiring and discover that failure only after its owner commits.
+            self._require_canonical_dependencies()
         if initial_state is not None:
             self._candidates = _copy(initial_state.get("candidates", []))
             self._scores = _copy(initial_state.get("scores", {}))
@@ -386,7 +392,7 @@ class NetworkScoringService:
                 initial_state.get("idempotencyCache", {})
             )
             self._compare_set = list(initial_state.get("compareSet", []))
-            if self._require_canonical:
+            if self._require_canonical and not defer_canonical_refresh:
                 self._refresh_canonical()
             return
 
@@ -403,7 +409,7 @@ class NetworkScoringService:
                     self._scores[candidate["id"]] = self._build_scorecard(
                         candidate
                     )
-        elif self._require_canonical:
+        elif self._require_canonical and not defer_canonical_refresh:
             self._refresh_canonical()
 
     # -- public API ----------------------------------------------------
@@ -413,12 +419,12 @@ class NetworkScoringService:
             self._audit_events = []
             self._idempotency_cache = {}
             self._compare_set = []
-            self._refresh_canonical()
             return self.snapshot(read_principal=read_principal)
         self.__init__(seed_fixtures=self._seed_fixtures)
         return self.snapshot(read_principal=read_principal)
 
     def export_state(self) -> dict[str, Any]:
+        self._refresh_canonical_if_pending()
         return {
             "candidates": _copy(self._candidates),
             "scores": _copy(self._scores),
@@ -486,6 +492,7 @@ class NetworkScoringService:
         execution_command: Any = None,
         principal: Principal | None = None,
     ) -> dict[str, Any]:
+        self._refresh_canonical_if_pending()
         if self._require_canonical and self._execution_service is not None:
             if execution_command is None or principal is None:
                 raise NetworkScoringRuntimeUnavailable("SITESCORE_EXECUTION_COMMAND_REQUIRED")
@@ -540,6 +547,7 @@ class NetworkScoringService:
         idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        self._refresh_canonical_if_pending()
         if self._require_canonical:
             raise NetworkScoringRuntimeUnavailable("SITESCORE_EXECUTION_BATCH_CONTEXT_REQUIRED")
         cache_key = ("batch", idempotency_key or "")
@@ -590,6 +598,7 @@ class NetworkScoringService:
         actor_name: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        self._refresh_canonical_if_pending()
         ordered: list[str] = []
         for candidate_id in candidate_ids:
             candidate = self._candidate(candidate_id)
@@ -639,6 +648,16 @@ class NetworkScoringService:
             self._candidate_from_draft(draft)
             for draft in drafts
         ]
+        # Model authority is service/tenant scoped, independent of a candidate.
+        # Observe it once after the candidate-specific current-input/source/PIT
+        # reads. This is a fresh observation for this refresh, never a cached
+        # permission or a substitute for the execution owner's publication guard.
+        model_observation = self._observe_current_model() if drafts else None
+        if model_observation is not None:
+            model_state, checked_at = model_observation
+            for candidate in self._candidates:
+                candidate["currentAdmission"]["model"] = _copy(model_state)
+                candidate["currentAdmission"]["checkedAt"] = checked_at
         known = {candidate["id"] for candidate in self._candidates}
         scores: dict[str, dict[str, Any]] = {}
         report_ids: set[str] = set()
@@ -668,6 +687,11 @@ class NetworkScoringService:
         self._compare_set = [
             candidate_id for candidate_id in self._compare_set if candidate_id in known
         ]
+        self._canonical_refresh_pending = False
+
+    def _refresh_canonical_if_pending(self) -> None:
+        if self._require_canonical and self._canonical_refresh_pending:
+            self._refresh_canonical()
 
     @staticmethod
     def _candidate_read_evidence(draft: Any) -> dict[str, Any]:
@@ -781,28 +805,6 @@ class NetworkScoringService:
             current_admission = unverified_current_admission(
                 draft, "SITESCORE_CURRENT_CONTEXT_UNAVAILABLE",
             )
-        if self._require_canonical:
-            from models.shared_ml.current_model_admission import CurrentModelAdmissionPort
-            from modules.sitescore.domain.scoring import SITESCORE_FEATURE_VERSION
-
-            observer = self._current_model_admission
-            context_reader = self._current_context_reader
-            if (isinstance(observer, CurrentModelAdmissionPort) and context_reader is not None
-                    and observer.engine is context_reader.engine
-                    and getattr(context_reader, "tenant_id", None) == self._tenant_id
-                    and observer.tenant_id in (None, self._tenant_id)
-                    and getattr(getattr(observer.registry_repository, "_store", None), "tenant_id", None)
-                    in (None, self._tenant_id)):
-                try:
-                    observer.read(service="sitescore", expected_feature_schema_version=SITESCORE_FEATURE_VERSION)
-                    current_admission["model"] = {"state": "verified", "reasonCode": None}
-                except (ProductionModelApprovalError, ProductionModelLineageError) as exc:
-                    current_admission["model"] = {"state": "blocked", "reasonCode": exc.code}
-                except ProductionModelRuntimeError as exc:
-                    current_admission["model"] = {"state": "unverified", "reasonCode": exc.code}
-                except Exception:
-                    current_admission["model"] = {"state": "unverified", "reasonCode": "SITESCORE_CURRENT_MODEL_ADMISSION_UNVERIFIED"}
-                current_admission["checkedAt"] = datetime.now(UTC).isoformat()
         listing = draft.listing if hasattr(draft, "listing") else draft["listing"]
         address = draft.address if hasattr(draft, "address") else draft["address"]
         candidate = draft.candidate_site if hasattr(draft, "candidate_site") else draft["candidate_site"]
@@ -868,6 +870,30 @@ class NetworkScoringService:
             "currentAdmission": current_admission,
             "canonicalTenantId": tenant_id,
         }
+
+    def _observe_current_model(self) -> tuple[dict[str, Any], str] | None:
+        from models.shared_ml.current_model_admission import CurrentModelAdmissionPort
+        from modules.sitescore.domain.scoring import SITESCORE_FEATURE_VERSION
+
+        observer = self._current_model_admission
+        context_reader = self._current_context_reader
+        if not (isinstance(observer, CurrentModelAdmissionPort) and context_reader is not None
+                and observer.engine is context_reader.engine
+                and getattr(context_reader, "tenant_id", None) == self._tenant_id
+                and observer.tenant_id in (None, self._tenant_id)
+                and getattr(getattr(observer.registry_repository, "_store", None), "tenant_id", None)
+                in (None, self._tenant_id)):
+            return None
+        try:
+            observer.read(service="sitescore", expected_feature_schema_version=SITESCORE_FEATURE_VERSION)
+            model_state = {"state": "verified", "reasonCode": None}
+        except (ProductionModelApprovalError, ProductionModelLineageError) as exc:
+            model_state = {"state": "blocked", "reasonCode": exc.code}
+        except ProductionModelRuntimeError as exc:
+            model_state = {"state": "unverified", "reasonCode": exc.code}
+        except Exception:
+            model_state = {"state": "unverified", "reasonCode": "SITESCORE_CURRENT_MODEL_ADMISSION_UNVERIFIED"}
+        return model_state, datetime.now(UTC).isoformat()
 
     def _validate_canonical_input(self, candidate: dict[str, Any]) -> None:
         # A read-only input error remains specific. Validation cannot enqueue,
@@ -936,6 +962,7 @@ class NetworkScoringService:
         }
 
     def _candidate(self, candidate_id: str) -> dict[str, Any]:
+        self._refresh_canonical_if_pending()
         for candidate in self._candidates:
             if candidate["id"] == candidate_id:
                 return candidate

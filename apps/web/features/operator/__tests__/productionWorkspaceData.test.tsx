@@ -5,7 +5,10 @@ import {
   DesignStoreOpsWorkspace,
   DesignTodayWorkspace,
   inspectStoreOpsApiPayload,
+  hasRecordedCameraPurpose,
 } from "../DesignAlignedWorkspaces";
+import type { AuditEvent, EvidenceItem, Issue } from "../types";
+import nativeCameraPurpose from "../../../../../tests/fixtures/operator-store-camera-purpose-native.json";
 import {
   inspectNetworkListingsSnapshot,
   inspectNetworkRebalanceSnapshot,
@@ -28,6 +31,143 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+});
+
+describe("recorded CameraPurpose native producer contract", () => {
+  function proof() {
+    return {
+      camera: structuredClone(nativeCameraPurpose.evidenceItem) as EvidenceItem,
+      issue: structuredClone(nativeCameraPurpose.snapshot.issues.find((row) => row.id === "ISS-1024")) as Issue,
+      audits: [structuredClone(nativeCameraPurpose.auditEvent) as AuditEvent],
+    };
+  }
+  type Proof = ReturnType<typeof proof>;
+  const blankIdentityCases: Array<[string, (record: Proof) => void]> = [
+    ...["", " \t\n"].map((id): [string, (record: Proof) => void] => [
+      id === "" ? "empty current issue identity" : "whitespace current issue identity",
+      ({ camera, issue, audits }) => {
+        issue.id = id;
+        camera.issueId = id;
+        audits[0].targetId = id;
+        audits[0].metadata!.issueId = id;
+      },
+    ]),
+    ...["", " \t\n"].map((id): [string, (record: Proof) => void] => [
+      id === "" ? "empty current evidence identity" : "whitespace current evidence identity",
+      ({ camera, issue, audits }) => {
+        camera.id = id;
+        issue.evidenceIds = [id];
+        audits[0].metadata!.evidenceId = id;
+      },
+    ]),
+  ];
+  const rejected: Array<[string, (record: Proof) => void]> = [
+    ...blankIdentityCases,
+    ["empty evidence issue identity", ({ camera }) => { camera.issueId = ""; }],
+    ["whitespace evidence issue identity", ({ camera }) => { camera.issueId = " \t\n"; }],
+    ["missing purpose", ({ camera }) => { delete camera.purpose; }],
+    ["blank purpose", ({ camera }) => { camera.purpose = " "; }],
+    ["missing camera location", ({ camera }) => { delete camera.cameraLocation; }],
+    ["missing time window", ({ camera }) => { delete camera.timeWindow; }],
+    ["missing unlocked timestamp", ({ camera }) => { delete camera.unlockedAt; }],
+    ["invalid unlocked timestamp", ({ camera }) => { camera.unlockedAt = "not a timestamp"; }],
+    ["invalid normalized calendar date", ({ camera }) => { camera.unlockedAt = "2026-02-30T00:00:00Z"; }],
+    ["invalid normalized hour", ({ camera, audits }) => {
+      camera.unlockedAt = "2026-10-14T24:00:00Z";
+      audits[0].occurredAt = "2026-10-16T00:00:00Z";
+    }],
+    ["zero retention", ({ camera }) => { camera.retentionHours = 0; }],
+    ["excess retention", ({ camera }) => { camera.retentionHours = 73; }],
+    ["fractional retention", ({ camera }) => { camera.retentionHours = 24.5; }],
+    ["missing audit", (record) => { record.audits = []; }],
+    ["wrong audit action", ({ audits }) => { audits[0].action = "issue.triaged"; }],
+    ["wrong audit category", ({ audits }) => { audits[0].category = "workflow"; }],
+    ["wrong audit target", ({ audits }) => { audits[0].targetId = "OTHER-ISSUE"; }],
+    ["wrong audit target type", ({ audits }) => { audits[0].targetType = "listing"; }],
+    ["wrong audit issue", ({ audits }) => { audits[0].metadata!.issueId = "OTHER-ISSUE"; }],
+    ["wrong audit evidence", ({ audits }) => { audits[0].metadata!.evidenceId = "OTHER-EVIDENCE"; }],
+    ["wrong audit purpose", ({ audits }) => { audits[0].metadata!.purpose = "different purpose"; }],
+    ["wrong audit location", ({ audits }) => { audits[0].metadata!.cameraLocation = "different camera"; }],
+    ["wrong audit window", ({ audits }) => { audits[0].metadata!.timeWindow = "different time window"; }],
+    ["wrong audit retention", ({ audits }) => { audits[0].metadata!.retentionHours = 48; }],
+    ["older audit", ({ audits }) => { audits[0].occurredAt = "2001-01-01T00:00:00Z"; }],
+    ["older audit within the native microsecond timestamp's same millisecond", ({ camera, audits }) => {
+      camera.unlockedAt = "2026-10-14T04:00:00.000200+00:00";
+      audits[0].occurredAt = "2026-10-14T04:00:00.000100+00:00";
+    }],
+    ["invalid audit timestamp", ({ audits }) => { audits[0].occurredAt = "not a timestamp"; }],
+    ["another issue's camera", ({ camera }) => { camera.issueId = "OTHER-ISSUE"; }],
+    ["non-camera evidence", ({ camera }) => { camera.kind = "payment"; }],
+    ["camera absent from issue evidence", ({ issue }) => { issue.evidenceIds = []; }],
+    ["current source still locked", ({ camera }) => { camera.lockedReason = "Current source refuses access"; }],
+  ];
+
+  it("recognizes the complete actual native memory producer receipt", () => {
+    const { camera, issue, audits } = proof();
+    expect(hasRecordedCameraPurpose(camera, issue, audits)).toBe(true);
+  });
+
+  it.each([
+    "2026-10-14T04:00:00.000300+00:00",
+    "2026-10-14T04:00:00.000200000Z",
+    "2026-10-14T12:00:00.000200+08:00",
+  ])("retains exact or later native purpose audit precision for %s", (occurredAt) => {
+    const { camera, issue, audits } = proof();
+    camera.unlockedAt = "2026-10-14T04:00:00.000200+00:00";
+    audits[0].occurredAt = occurredAt;
+    expect(hasRecordedCameraPurpose(camera, issue, audits)).toBe(true);
+  });
+
+  it.each(rejected)("does not infer unlock from %s", (_name, mutate) => {
+    const record = proof();
+    mutate(record);
+    expect(hasRecordedCameraPurpose(record.camera, record.issue, record.audits)).toBe(false);
+  });
+
+  it.each(blankIdentityCases)("does not render an unlock from matching invalid API %s", async (_name, mutate) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const record = proof();
+    mutate(record);
+    const snapshot = { ...structuredClone(nativeCameraPurpose.snapshot),
+      issues: [record.issue], evidence: [record.camera], auditEvents: record.audits,
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(snapshot), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+    // The existing general DTO shape guard accepts these string identities.
+    // The camera proof must still fail closed while source facts stay visible.
+    expect((await screen.findAllByText(nativeCameraPurpose.evidenceItem.title)).length).toBeGreaterThan(0);
+    expect(screen.queryByText("影像已解鎖")).not.toBeInTheDocument();
+  });
+
+  it.each(["true", "false"])("renders recorded unlock from native receipt without reviving demo health when production=%s", async (productionMode) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", productionMode);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(nativeCameraPurpose.snapshot), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+    render(<DesignStoreOpsWorkspace initialIssueId="ISS-1024" onOpenWorkflow={vi.fn()} />);
+    expect(await screen.findByText("影像已解鎖")).toBeInTheDocument();
+    expect(screen.queryByText("14 台")).not.toBeInTheDocument();
+    expect(screen.queryByText("交易正常")).not.toBeInTheDocument();
+  });
+
+  it.each(["true", "false"])("keeps missing-lock-only source facts when production=%s", async (productionMode) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", productionMode);
+    const snapshot = structuredClone(nativeCameraPurpose.snapshot);
+    const camera = snapshot.evidence.find((row) => row.id === nativeCameraPurpose.evidenceItem.id)!;
+    // Remove all purpose proof while retaining the actual source title/summary.
+    for (const key of ["purpose", "cameraLocation", "timeWindow", "retentionHours", "unlockedAt"])
+      delete (camera as Record<string, unknown>)[key];
+    snapshot.auditEvents = snapshot.auditEvents.filter((row) => row.action !== "evidence.camera_purpose.recorded");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(snapshot), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+    render(<DesignStoreOpsWorkspace initialIssueId="ISS-1024" onOpenWorkflow={vi.fn()} />);
+    await screen.findByLabelText("ISS-1024 detail");
+    expect(screen.getAllByText(nativeCameraPurpose.evidenceItem.title).length).toBeGreaterThan(0);
+    expect(screen.queryByText("影像已解鎖")).not.toBeInTheDocument();
+  });
 });
 
 describe("production workspace data contracts", () => {

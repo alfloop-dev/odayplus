@@ -1,0 +1,1058 @@
+{
+  "GO": {
+    "source": "api",
+    "heatZones": [],
+    "listingSources": [],
+    "listings": [
+      {
+        "id": "listing-live-1",
+        "addressId": "address-live-1",
+        "sourceId": "approved-feed",
+        "sourceListingId": "source-live-1",
+        "status": "active",
+        "rentPerMonth": 120000,
+        "areaPing": 35,
+        "floor": "1F",
+        "frontageMeters": 5.5,
+        "listingConfidence": 0.94,
+        "listingConfidenceProvenance": "measured",
+        "geocodeConfidence": 0.96,
+        "sourceUrl": "snapshot-live-1",
+        "snapshotId": "snapshot-live-1",
+        "hardRuleFailures": [],
+        "tenantId": "tenant-a",
+        "address": "台北市信義區測試路1號",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "h3Index": "892000000000001"
+      }
+    ],
+    "candidates": [
+      {
+        "id": "candidate-live-1",
+        "listingId": "listing-live-1",
+        "targetFormatCode": "ODAY_G2",
+        "heatZoneId": "892000000000001",
+        "title": "listing-live-1 候選點",
+        "address": "台北市信義區測試路 1 號",
+        "status": "approved",
+        "score": null,
+        "recommendation": null,
+        "modelVersion": "",
+        "datasetSnapshotId": "snapshot-live-1",
+        "reviewId": "sitescore-decision-65485598-4fae-4557-af3e-5c09e00f7750",
+        "missingData": [],
+        "feasibilityFlags": [],
+        "prior90dCellNetRevenue": 180000.0,
+        "prior90dCellTransactionCount": 30,
+        "prior90dCellStoreCount": 1,
+        "featureSnapshotTime": "2026-10-14T03:19:51.296994+00:00",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "geocodeConfidence": 0.96,
+        "h3Index": "892000000000001",
+        "canonicalSiteStatus": "approved",
+        "reviewWorkflow": {
+          "decisionId": "sitescore-decision-65485598-4fae-4557-af3e-5c09e00f7750",
+          "approvalId": "330f04c4-9286-443a-9bcd-fb471bb338d3",
+          "reportId": "sitescore-report-7b6a33e8-515d-406e-8cae-f405e1de667b",
+          "reportVersion": 1,
+          "decisionVersion": 3,
+          "tenantId": "tenant-a",
+          "networkAction": "GO",
+          "status": "approved",
+          "conditions": "",
+          "requiredData": []
+        }
+      }
+    ],
+    "siteReviews": [],
+    "assistedIntakes": [],
+    "expansionSteps": [
+      {
+        "id": "find",
+        "label": "Find Area",
+        "tabIndex": 0,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "radar",
+        "label": "Listing Radar",
+        "tabIndex": 1,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "candidate",
+        "label": "Candidate",
+        "tabIndex": 2,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "sitescore",
+        "label": "SiteScore",
+        "tabIndex": 3,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "compare",
+        "label": "Compare",
+        "tabIndex": 4,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "review",
+        "label": "Review",
+        "tabIndex": 5,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      }
+    ],
+    "selectedHeatZoneId": null,
+    "selectedLens": "demand",
+    "auditEvents": [],
+    "correlationId": null,
+    "counts": {
+      "heatZones": 0,
+      "listings": 1,
+      "candidates": 1,
+      "siteReviews": 0,
+      "assistedIntakes": 0
+    }
+  },
+  "WAIT": {
+    "source": "api",
+    "heatZones": [],
+    "listingSources": [],
+    "listings": [
+      {
+        "id": "listing-live-1",
+        "addressId": "address-live-1",
+        "sourceId": "approved-feed",
+        "sourceListingId": "source-live-1",
+        "status": "active",
+        "rentPerMonth": 120000,
+        "areaPing": 35,
+        "floor": "1F",
+        "frontageMeters": 5.5,
+        "listingConfidence": 0.94,
+        "listingConfidenceProvenance": "measured",
+        "geocodeConfidence": 0.96,
+        "sourceUrl": "snapshot-live-1",
+        "snapshotId": "snapshot-live-1",
+        "hardRuleFailures": [],
+        "tenantId": "tenant-a",
+        "address": "台北市信義區測試路1號",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "h3Index": "892000000000001"
+      }
+    ],
+    "candidates": [
+      {
+        "id": "candidate-live-1",
+        "listingId": "listing-live-1",
+        "targetFormatCode": "ODAY_G2",
+        "heatZoneId": "892000000000001",
+        "title": "listing-live-1 候選點",
+        "address": "台北市信義區測試路 1 號",
+        "status": "onhold",
+        "score": null,
+        "recommendation": null,
+        "modelVersion": "",
+        "datasetSnapshotId": "snapshot-live-1",
+        "reviewId": "sitescore-decision-3e8703e7-7e1f-4aab-8b84-e719f46684d8",
+        "missingData": [],
+        "feasibilityFlags": [],
+        "prior90dCellNetRevenue": 180000.0,
+        "prior90dCellTransactionCount": 30,
+        "prior90dCellStoreCount": 1,
+        "featureSnapshotTime": "2026-10-14T03:19:53.034095+00:00",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "geocodeConfidence": 0.96,
+        "h3Index": "892000000000001",
+        "canonicalSiteStatus": "new",
+        "reviewWorkflow": {
+          "decisionId": "sitescore-decision-3e8703e7-7e1f-4aab-8b84-e719f46684d8",
+          "approvalId": "a689312c-4dde-4493-8c4b-68618b38dda6",
+          "reportId": "sitescore-report-a971b567-fac7-44d8-8eee-a9e75d95c388",
+          "reportVersion": 1,
+          "decisionVersion": 3,
+          "tenantId": "tenant-a",
+          "networkAction": "WAIT",
+          "status": "onhold",
+          "conditions": "Lease and construction conditions must be confirmed",
+          "requiredData": []
+        }
+      }
+    ],
+    "siteReviews": [],
+    "assistedIntakes": [],
+    "expansionSteps": [
+      {
+        "id": "find",
+        "label": "Find Area",
+        "tabIndex": 0,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "radar",
+        "label": "Listing Radar",
+        "tabIndex": 1,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "candidate",
+        "label": "Candidate",
+        "tabIndex": 2,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "sitescore",
+        "label": "SiteScore",
+        "tabIndex": 3,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "compare",
+        "label": "Compare",
+        "tabIndex": 4,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "review",
+        "label": "Review",
+        "tabIndex": 5,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      }
+    ],
+    "selectedHeatZoneId": null,
+    "selectedLens": "demand",
+    "auditEvents": [],
+    "correlationId": null,
+    "counts": {
+      "heatZones": 0,
+      "listings": 1,
+      "candidates": 1,
+      "siteReviews": 0,
+      "assistedIntakes": 0
+    }
+  },
+  "RETURN": {
+    "source": "api",
+    "heatZones": [],
+    "listingSources": [],
+    "listings": [
+      {
+        "id": "listing-live-1",
+        "addressId": "address-live-1",
+        "sourceId": "approved-feed",
+        "sourceListingId": "source-live-1",
+        "status": "active",
+        "rentPerMonth": 120000,
+        "areaPing": 35,
+        "floor": "1F",
+        "frontageMeters": 5.5,
+        "listingConfidence": 0.94,
+        "listingConfidenceProvenance": "measured",
+        "geocodeConfidence": 0.96,
+        "sourceUrl": "snapshot-live-1",
+        "snapshotId": "snapshot-live-1",
+        "hardRuleFailures": [],
+        "tenantId": "tenant-a",
+        "address": "台北市信義區測試路1號",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "h3Index": "892000000000001"
+      }
+    ],
+    "candidates": [
+      {
+        "id": "candidate-live-1",
+        "listingId": "listing-live-1",
+        "targetFormatCode": "ODAY_G2",
+        "heatZoneId": "892000000000001",
+        "title": "listing-live-1 候選點",
+        "address": "台北市信義區測試路 1 號",
+        "status": "needdata",
+        "score": null,
+        "recommendation": null,
+        "modelVersion": "",
+        "datasetSnapshotId": "snapshot-live-1",
+        "reviewId": "sitescore-decision-1927001f-a057-47db-99e2-6451fbf31198",
+        "missingData": [
+          "inspection"
+        ],
+        "feasibilityFlags": [],
+        "prior90dCellNetRevenue": 180000.0,
+        "prior90dCellTransactionCount": 30,
+        "prior90dCellStoreCount": 1,
+        "featureSnapshotTime": "2026-10-14T03:19:54.057212+00:00",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "geocodeConfidence": 0.96,
+        "h3Index": "892000000000001",
+        "canonicalSiteStatus": "new",
+        "reviewWorkflow": {
+          "decisionId": "sitescore-decision-1927001f-a057-47db-99e2-6451fbf31198",
+          "approvalId": "fc9273a3-4236-46e7-99cc-8cc3bbcc131e",
+          "reportId": "sitescore-report-254866d6-3661-41ef-acfc-3b4a75bbb3f8",
+          "reportVersion": 1,
+          "decisionVersion": 3,
+          "tenantId": "tenant-a",
+          "networkAction": "RETURN",
+          "status": "needdata",
+          "conditions": "",
+          "requiredData": [
+            "inspection"
+          ]
+        }
+      }
+    ],
+    "siteReviews": [],
+    "assistedIntakes": [],
+    "expansionSteps": [
+      {
+        "id": "find",
+        "label": "Find Area",
+        "tabIndex": 0,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "radar",
+        "label": "Listing Radar",
+        "tabIndex": 1,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "candidate",
+        "label": "Candidate",
+        "tabIndex": 2,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "sitescore",
+        "label": "SiteScore",
+        "tabIndex": 3,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "compare",
+        "label": "Compare",
+        "tabIndex": 4,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "review",
+        "label": "Review",
+        "tabIndex": 5,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      }
+    ],
+    "selectedHeatZoneId": null,
+    "selectedLens": "demand",
+    "auditEvents": [],
+    "correlationId": null,
+    "counts": {
+      "heatZones": 0,
+      "listings": 1,
+      "candidates": 1,
+      "siteReviews": 0,
+      "assistedIntakes": 0
+    }
+  },
+  "REJECT": {
+    "source": "api",
+    "heatZones": [],
+    "listingSources": [],
+    "listings": [
+      {
+        "id": "listing-live-1",
+        "addressId": "address-live-1",
+        "sourceId": "approved-feed",
+        "sourceListingId": "source-live-1",
+        "status": "active",
+        "rentPerMonth": 120000,
+        "areaPing": 35,
+        "floor": "1F",
+        "frontageMeters": 5.5,
+        "listingConfidence": 0.94,
+        "listingConfidenceProvenance": "measured",
+        "geocodeConfidence": 0.96,
+        "sourceUrl": "snapshot-live-1",
+        "snapshotId": "snapshot-live-1",
+        "hardRuleFailures": [],
+        "tenantId": "tenant-a",
+        "address": "台北市信義區測試路1號",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "h3Index": "892000000000001"
+      }
+    ],
+    "candidates": [
+      {
+        "id": "candidate-live-1",
+        "listingId": "listing-live-1",
+        "targetFormatCode": "ODAY_G2",
+        "heatZoneId": "892000000000001",
+        "title": "listing-live-1 候選點",
+        "address": "台北市信義區測試路 1 號",
+        "status": "rejected",
+        "score": null,
+        "recommendation": null,
+        "modelVersion": "",
+        "datasetSnapshotId": "snapshot-live-1",
+        "reviewId": "sitescore-decision-758fd830-4ade-4fd7-8842-90b8e5532420",
+        "missingData": [],
+        "feasibilityFlags": [],
+        "prior90dCellNetRevenue": 180000.0,
+        "prior90dCellTransactionCount": 30,
+        "prior90dCellStoreCount": 1,
+        "featureSnapshotTime": "2026-10-14T03:19:55.464265+00:00",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "geocodeConfidence": 0.96,
+        "h3Index": "892000000000001",
+        "canonicalSiteStatus": "rejected",
+        "reviewWorkflow": {
+          "decisionId": "sitescore-decision-758fd830-4ade-4fd7-8842-90b8e5532420",
+          "approvalId": "24e22776-ac1c-4146-95fa-85f2f0283fd7",
+          "reportId": "sitescore-report-5c3abaff-e8b2-4fc0-abc4-ebf71fb2b317",
+          "reportVersion": 1,
+          "decisionVersion": 3,
+          "tenantId": "tenant-a",
+          "networkAction": "REJECT",
+          "status": "rejected",
+          "conditions": "",
+          "requiredData": []
+        }
+      }
+    ],
+    "siteReviews": [],
+    "assistedIntakes": [],
+    "expansionSteps": [
+      {
+        "id": "find",
+        "label": "Find Area",
+        "tabIndex": 0,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "radar",
+        "label": "Listing Radar",
+        "tabIndex": 1,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "candidate",
+        "label": "Candidate",
+        "tabIndex": 2,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "sitescore",
+        "label": "SiteScore",
+        "tabIndex": 3,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "compare",
+        "label": "Compare",
+        "tabIndex": 4,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "review",
+        "label": "Review",
+        "tabIndex": 5,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      }
+    ],
+    "selectedHeatZoneId": null,
+    "selectedLens": "demand",
+    "auditEvents": [],
+    "correlationId": null,
+    "counts": {
+      "heatZones": 0,
+      "listings": 1,
+      "candidates": 1,
+      "siteReviews": 0,
+      "assistedIntakes": 0
+    }
+  },
+  "RETURN_RESUBMITTED_GO": {
+    "source": "api",
+    "heatZones": [],
+    "listingSources": [],
+    "listings": [
+      {
+        "id": "listing-live-1",
+        "addressId": "address-live-1",
+        "sourceId": "approved-feed",
+        "sourceListingId": "source-live-1",
+        "status": "active",
+        "rentPerMonth": 120000,
+        "areaPing": 35,
+        "floor": "1F",
+        "frontageMeters": 5.5,
+        "listingConfidence": 0.94,
+        "listingConfidenceProvenance": "measured",
+        "geocodeConfidence": 0.96,
+        "sourceUrl": "snapshot-live-1",
+        "snapshotId": "snapshot-live-1",
+        "hardRuleFailures": [],
+        "tenantId": "tenant-a",
+        "address": "台北市信義區測試路1號",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "h3Index": "892000000000001"
+      }
+    ],
+    "candidates": [
+      {
+        "id": "candidate-live-1",
+        "listingId": "listing-live-1",
+        "targetFormatCode": "ODAY_G2",
+        "heatZoneId": "892000000000001",
+        "title": "listing-live-1 候選點",
+        "address": "台北市信義區測試路 1 號",
+        "status": "approved",
+        "score": null,
+        "recommendation": null,
+        "modelVersion": "",
+        "datasetSnapshotId": "snapshot-live-1",
+        "reviewId": "sitescore-decision-4b4c620f-8ca5-4a9b-97ba-4775e1bf0cad",
+        "missingData": [],
+        "feasibilityFlags": [],
+        "prior90dCellNetRevenue": 180000.0,
+        "prior90dCellTransactionCount": 30,
+        "prior90dCellStoreCount": 1,
+        "featureSnapshotTime": "2026-10-14T04:01:41.101510+00:00",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "geocodeConfidence": 0.96,
+        "h3Index": "892000000000001",
+        "canonicalSiteStatus": "approved",
+        "reviewWorkflow": {
+          "decisionId": "sitescore-decision-4b4c620f-8ca5-4a9b-97ba-4775e1bf0cad",
+          "approvalId": "b9ab9695-52ca-4e54-a0ef-b3b03704bd86",
+          "reportId": "sitescore-report-5a5cc220-1b87-4c5e-8b49-d061667d7cb6",
+          "reportVersion": 1,
+          "decisionVersion": 5,
+          "tenantId": "tenant-a",
+          "networkAction": "GO",
+          "status": "approved",
+          "conditions": "",
+          "requiredData": []
+        }
+      }
+    ],
+    "siteReviews": [],
+    "assistedIntakes": [],
+    "expansionSteps": [
+      {
+        "id": "find",
+        "label": "Find Area",
+        "tabIndex": 0,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "radar",
+        "label": "Listing Radar",
+        "tabIndex": 1,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "candidate",
+        "label": "Candidate",
+        "tabIndex": 2,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "sitescore",
+        "label": "SiteScore",
+        "tabIndex": 3,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "compare",
+        "label": "Compare",
+        "tabIndex": 4,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "review",
+        "label": "Review",
+        "tabIndex": 5,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      }
+    ],
+    "selectedHeatZoneId": null,
+    "selectedLens": "demand",
+    "auditEvents": [],
+    "correlationId": null,
+    "counts": {
+      "heatZones": 0,
+      "listings": 1,
+      "candidates": 1,
+      "siteReviews": 0,
+      "assistedIntakes": 0
+    }
+  },
+  "RETURN_RESUBMITTED_WAIT": {
+    "source": "api",
+    "heatZones": [],
+    "listingSources": [],
+    "listings": [
+      {
+        "id": "listing-live-1",
+        "addressId": "address-live-1",
+        "sourceId": "approved-feed",
+        "sourceListingId": "source-live-1",
+        "status": "active",
+        "rentPerMonth": 120000,
+        "areaPing": 35,
+        "floor": "1F",
+        "frontageMeters": 5.5,
+        "listingConfidence": 0.94,
+        "listingConfidenceProvenance": "measured",
+        "geocodeConfidence": 0.96,
+        "sourceUrl": "snapshot-live-1",
+        "snapshotId": "snapshot-live-1",
+        "hardRuleFailures": [],
+        "tenantId": "tenant-a",
+        "address": "台北市信義區測試路1號",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "h3Index": "892000000000001"
+      }
+    ],
+    "candidates": [
+      {
+        "id": "candidate-live-1",
+        "listingId": "listing-live-1",
+        "targetFormatCode": "ODAY_G2",
+        "heatZoneId": "892000000000001",
+        "title": "listing-live-1 候選點",
+        "address": "台北市信義區測試路 1 號",
+        "status": "onhold",
+        "score": null,
+        "recommendation": null,
+        "modelVersion": "",
+        "datasetSnapshotId": "snapshot-live-1",
+        "reviewId": "sitescore-decision-157df4cf-b08c-4da7-a02c-0e6f9c40b36e",
+        "missingData": [],
+        "feasibilityFlags": [],
+        "prior90dCellNetRevenue": 180000.0,
+        "prior90dCellTransactionCount": 30,
+        "prior90dCellStoreCount": 1,
+        "featureSnapshotTime": "2026-10-14T04:01:46.135797+00:00",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "geocodeConfidence": 0.96,
+        "h3Index": "892000000000001",
+        "canonicalSiteStatus": "new",
+        "reviewWorkflow": {
+          "decisionId": "sitescore-decision-157df4cf-b08c-4da7-a02c-0e6f9c40b36e",
+          "approvalId": "011120ff-55c8-4664-a0c9-2f6cb152b619",
+          "reportId": "sitescore-report-578a52a0-fc28-4b37-bd98-9895566eb98b",
+          "reportVersion": 1,
+          "decisionVersion": 5,
+          "tenantId": "tenant-a",
+          "networkAction": "WAIT",
+          "status": "onhold",
+          "conditions": "Lease and construction conditions must be confirmed",
+          "requiredData": []
+        }
+      }
+    ],
+    "siteReviews": [],
+    "assistedIntakes": [],
+    "expansionSteps": [
+      {
+        "id": "find",
+        "label": "Find Area",
+        "tabIndex": 0,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "radar",
+        "label": "Listing Radar",
+        "tabIndex": 1,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "candidate",
+        "label": "Candidate",
+        "tabIndex": 2,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "sitescore",
+        "label": "SiteScore",
+        "tabIndex": 3,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "compare",
+        "label": "Compare",
+        "tabIndex": 4,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "review",
+        "label": "Review",
+        "tabIndex": 5,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      }
+    ],
+    "selectedHeatZoneId": null,
+    "selectedLens": "demand",
+    "auditEvents": [],
+    "correlationId": null,
+    "counts": {
+      "heatZones": 0,
+      "listings": 1,
+      "candidates": 1,
+      "siteReviews": 0,
+      "assistedIntakes": 0
+    }
+  },
+  "RETURN_RESUBMITTED_RETURN": {
+    "source": "api",
+    "heatZones": [],
+    "listingSources": [],
+    "listings": [
+      {
+        "id": "listing-live-1",
+        "addressId": "address-live-1",
+        "sourceId": "approved-feed",
+        "sourceListingId": "source-live-1",
+        "status": "active",
+        "rentPerMonth": 120000,
+        "areaPing": 35,
+        "floor": "1F",
+        "frontageMeters": 5.5,
+        "listingConfidence": 0.94,
+        "listingConfidenceProvenance": "measured",
+        "geocodeConfidence": 0.96,
+        "sourceUrl": "snapshot-live-1",
+        "snapshotId": "snapshot-live-1",
+        "hardRuleFailures": [],
+        "tenantId": "tenant-a",
+        "address": "台北市信義區測試路1號",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "h3Index": "892000000000001"
+      }
+    ],
+    "candidates": [
+      {
+        "id": "candidate-live-1",
+        "listingId": "listing-live-1",
+        "targetFormatCode": "ODAY_G2",
+        "heatZoneId": "892000000000001",
+        "title": "listing-live-1 候選點",
+        "address": "台北市信義區測試路 1 號",
+        "status": "needdata",
+        "score": null,
+        "recommendation": null,
+        "modelVersion": "",
+        "datasetSnapshotId": "snapshot-live-1",
+        "reviewId": "sitescore-decision-4df15e01-afae-4e09-93dc-0fb6cc01ff55",
+        "missingData": [
+          "inspection"
+        ],
+        "feasibilityFlags": [],
+        "prior90dCellNetRevenue": 180000.0,
+        "prior90dCellTransactionCount": 30,
+        "prior90dCellStoreCount": 1,
+        "featureSnapshotTime": "2026-10-14T04:01:47.865498+00:00",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "geocodeConfidence": 0.96,
+        "h3Index": "892000000000001",
+        "canonicalSiteStatus": "new",
+        "reviewWorkflow": {
+          "decisionId": "sitescore-decision-4df15e01-afae-4e09-93dc-0fb6cc01ff55",
+          "approvalId": "8bd9aa94-6407-4156-9cae-a4f951c811f9",
+          "reportId": "sitescore-report-e9bcff7b-6310-4ca4-97e2-b61e4377fab1",
+          "reportVersion": 1,
+          "decisionVersion": 5,
+          "tenantId": "tenant-a",
+          "networkAction": "RETURN",
+          "status": "needdata",
+          "conditions": "",
+          "requiredData": [
+            "inspection"
+          ]
+        }
+      }
+    ],
+    "siteReviews": [],
+    "assistedIntakes": [],
+    "expansionSteps": [
+      {
+        "id": "find",
+        "label": "Find Area",
+        "tabIndex": 0,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "radar",
+        "label": "Listing Radar",
+        "tabIndex": 1,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "candidate",
+        "label": "Candidate",
+        "tabIndex": 2,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "sitescore",
+        "label": "SiteScore",
+        "tabIndex": 3,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "compare",
+        "label": "Compare",
+        "tabIndex": 4,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "review",
+        "label": "Review",
+        "tabIndex": 5,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      }
+    ],
+    "selectedHeatZoneId": null,
+    "selectedLens": "demand",
+    "auditEvents": [],
+    "correlationId": null,
+    "counts": {
+      "heatZones": 0,
+      "listings": 1,
+      "candidates": 1,
+      "siteReviews": 0,
+      "assistedIntakes": 0
+    }
+  },
+  "RETURN_RESUBMITTED_REJECT": {
+    "source": "api",
+    "heatZones": [],
+    "listingSources": [],
+    "listings": [
+      {
+        "id": "listing-live-1",
+        "addressId": "address-live-1",
+        "sourceId": "approved-feed",
+        "sourceListingId": "source-live-1",
+        "status": "active",
+        "rentPerMonth": 120000,
+        "areaPing": 35,
+        "floor": "1F",
+        "frontageMeters": 5.5,
+        "listingConfidence": 0.94,
+        "listingConfidenceProvenance": "measured",
+        "geocodeConfidence": 0.96,
+        "sourceUrl": "snapshot-live-1",
+        "snapshotId": "snapshot-live-1",
+        "hardRuleFailures": [],
+        "tenantId": "tenant-a",
+        "address": "台北市信義區測試路1號",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "h3Index": "892000000000001"
+      }
+    ],
+    "candidates": [
+      {
+        "id": "candidate-live-1",
+        "listingId": "listing-live-1",
+        "targetFormatCode": "ODAY_G2",
+        "heatZoneId": "892000000000001",
+        "title": "listing-live-1 候選點",
+        "address": "台北市信義區測試路 1 號",
+        "status": "rejected",
+        "score": null,
+        "recommendation": null,
+        "modelVersion": "",
+        "datasetSnapshotId": "snapshot-live-1",
+        "reviewId": "sitescore-decision-17a51d18-3190-4e32-b085-34f550ccf640",
+        "missingData": [],
+        "feasibilityFlags": [],
+        "prior90dCellNetRevenue": 180000.0,
+        "prior90dCellTransactionCount": 30,
+        "prior90dCellStoreCount": 1,
+        "featureSnapshotTime": "2026-10-14T04:01:51.584534+00:00",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "geocodeConfidence": 0.96,
+        "h3Index": "892000000000001",
+        "canonicalSiteStatus": "rejected",
+        "reviewWorkflow": {
+          "decisionId": "sitescore-decision-17a51d18-3190-4e32-b085-34f550ccf640",
+          "approvalId": "9ecce19f-20bd-4c6b-86c5-5944cf58782a",
+          "reportId": "sitescore-report-ba81e395-cff0-4000-a097-adf29f4a6360",
+          "reportVersion": 1,
+          "decisionVersion": 5,
+          "tenantId": "tenant-a",
+          "networkAction": "REJECT",
+          "status": "rejected",
+          "conditions": "",
+          "requiredData": []
+        }
+      }
+    ],
+    "siteReviews": [],
+    "assistedIntakes": [],
+    "expansionSteps": [
+      {
+        "id": "find",
+        "label": "Find Area",
+        "tabIndex": 0,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "radar",
+        "label": "Listing Radar",
+        "tabIndex": 1,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "candidate",
+        "label": "Candidate",
+        "tabIndex": 2,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "sitescore",
+        "label": "SiteScore",
+        "tabIndex": 3,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "compare",
+        "label": "Compare",
+        "tabIndex": 4,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      },
+      {
+        "id": "review",
+        "label": "Review",
+        "tabIndex": 5,
+        "state": "blocked",
+        "entityId": null,
+        "summary": "Select an exact candidate context; progress requires current authorized listing, report and review reads."
+      }
+    ],
+    "selectedHeatZoneId": null,
+    "selectedLens": "demand",
+    "auditEvents": [],
+    "correlationId": null,
+    "counts": {
+      "heatZones": 0,
+      "listings": 1,
+      "candidates": 1,
+      "siteReviews": 0,
+      "assistedIntakes": 0
+    }
+  }
+}

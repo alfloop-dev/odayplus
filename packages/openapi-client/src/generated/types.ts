@@ -68,6 +68,10 @@ export type AcquisitionGapPayload = {
 export type ActionPayload = {
   action_spec?: Record<string, unknown>;
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
 };
 
 /** ActorPayload */
@@ -115,6 +119,9 @@ export type AddressRollbackPayload = {
 export type AdjustPayload = {
   action_spec?: Record<string, unknown> | null;
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
   expected_outcome?: string | null;
   expected_version?: number | null;
   planned_end?: string | null;
@@ -165,6 +172,18 @@ export type ApprovalDecisionResponse = {
   newStatus: string;
 };
 
+/** ApprovalReadContext */
+export type ApprovalReadContext = {
+  actor_subject_id: string;
+  intervention_id: string;
+  policy_version: string;
+  schema_version: number;
+  snapshot_sha256: string;
+  store_id: string;
+  tenant_id: string;
+  version: number;
+};
+
 /** ApproveFlagPayload */
 export type ApproveFlagPayload = {
   approver: string;
@@ -174,6 +193,9 @@ export type ApproveFlagPayload = {
 export type AssignPayload = {
   actor: string;
   assignee: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
   expected_version?: number | null;
   role?: string | null;
 };
@@ -290,6 +312,23 @@ export type BatchSiteContextPayload = {
   site_ids: string[];
 };
 
+/** BoundReviewDecisionPayload */
+export type BoundReviewDecisionPayload = {
+  conditions?: string;
+  decision: string;
+  expectedActorSubjectId: string;
+  expectedApprovalId: string;
+  expectedCandidateDigest: string;
+  expectedCandidateId: string;
+  expectedDecisionVersion: number;
+  expectedReportId: string;
+  expectedReportVersion: number;
+  expectedTenantId: string;
+  overrideAck?: boolean;
+  reason: string;
+  requiredData?: string[];
+};
+
 /** CandidateDisposition */
 export type CandidateDisposition = "KEEP_HISTORICAL" | "REASSIGN" | "REQUIRE_REVIEW";
 
@@ -303,7 +342,11 @@ export type CandidateReassignment = {
 /** ClosePayload */
 export type ClosePayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
   disposition: string;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   follow_up?: boolean;
   follow_up_kind?: string | null;
   reason?: string;
@@ -483,7 +526,11 @@ export type DqTriagePayload = {
 /** EligibilityPayload */
 export type EligibilityPayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
   eligible: boolean;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   reasons?: string[];
 };
 
@@ -521,6 +568,10 @@ export type ErrorResponse = {
 /** EvaluatePayload */
 export type EvaluatePayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   now?: string | null;
   replicated?: boolean;
 };
@@ -613,8 +664,12 @@ export type EvidenceRetentionPurgePayload = {
 
 /** ExecutePayload */
 export type ExecutePayload = {
+  command_context?: LifecycleCommandContext | null;
   executed_at?: string | null;
   executor: string;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
 };
 
 /** ExportPayload */
@@ -1016,6 +1071,20 @@ export type JobRetryPayload = {
 
 /** JobStatus */
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "PARTIAL";
+
+/** LifecycleCommandContext */
+export type LifecycleCommandContext = {
+  actor_subject_id: string;
+  cohort_sha256?: string | null;
+  command: string;
+  intervention_id: string;
+  policy_version: string;
+  schema_version: number;
+  snapshot_sha256: string;
+  store_id: string;
+  tenant_id: string;
+  version: number;
+};
 
 /** ListingImportPayload */
 export type ListingImportPayload = {
@@ -1760,6 +1829,10 @@ export type RoleWorkspacesRequest = {
 /** RollbackPayload */
 export type RollbackPayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   reason: string;
 };
 
@@ -1905,6 +1978,10 @@ export type SplitRequest = {
 /** StopPayload */
 export type StopPayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   reason: string;
 };
 
@@ -1980,6 +2057,9 @@ export type TransitionReceipt = {
 /** UnassignPayload */
 export type UnassignPayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
   expected_version?: number | null;
 };
 
@@ -2079,22 +2159,34 @@ export type XlsxPreviewResponse = {
 export type apps__api__app__routes__interventions__ConflictCheckPayload = {
   actor: string;
   allow_overlap?: boolean;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   reason?: string;
 };
 
 /** DecisionPayload */
 export type apps__api__app__routes__interventions__DecisionPayload = {
   action: string;
-  actor: string;
+  actor?: string | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: number | null;
   reason?: string;
+  review_context?: ApprovalReadContext | null;
 };
 
 /** OutcomePayload */
 export type apps__api__app__routes__interventions__OutcomePayload = {
   actor: string;
   ad_spend?: number;
+  command_context?: LifecycleCommandContext | null;
   control_store_count?: number;
   evaluation_method?: string;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   has_control_group?: boolean;
   incremental_gross_margin?: number;
   incremental_revenue?: number;
@@ -2107,6 +2199,10 @@ export type apps__api__app__routes__interventions__OutcomePayload = {
 /** SubmitPayload */
 export type apps__api__app__routes__interventions__SubmitPayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
 };
 
 /** POST /operator/governance/decisions — approve / return / reject. */
@@ -2260,6 +2356,7 @@ export const API_PATHS = {
   "/api/v1/interventions/{intervention_id}/approve": ["POST"],
   "/api/v1/interventions/{intervention_id}/assign": ["POST"],
   "/api/v1/interventions/{intervention_id}/close": ["POST"],
+  "/api/v1/interventions/{intervention_id}/command-context": ["GET"],
   "/api/v1/interventions/{intervention_id}/conflict-check": ["POST"],
   "/api/v1/interventions/{intervention_id}/eligibility": ["POST"],
   "/api/v1/interventions/{intervention_id}/evaluate": ["POST"],
@@ -2366,6 +2463,8 @@ export const API_PATHS = {
   "/api/v1/operator/network-reviews/candidates/{candidate_id}/submit": ["POST"],
   "/api/v1/operator/network-reviews/reset": ["POST"],
   "/api/v1/operator/network-reviews/{review_id}/decide": ["POST"],
+  "/api/v1/operator/network-reviews/{review_id}/decision": ["POST"],
+  "/api/v1/operator/network-reviews/{review_id}/decision-context": ["GET"],
   "/api/v1/operator/network-scoring": ["GET"],
   "/api/v1/operator/network-scoring/": ["GET"],
   "/api/v1/operator/network-scoring/candidates/{candidate_id}/execution-context": ["GET"],

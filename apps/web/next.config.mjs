@@ -57,6 +57,16 @@ const nextConfig = {
       { source: "/search", destination: "/operator", permanent: true },
       { source: "/settings", destination: "/operator", permanent: true },
       { source: "/tasks", destination: "/operator", permanent: true },
+      {
+        source: "/w/operations/interventions",
+        destination: "/operator?ws=today&tab=interventions",
+        permanent: true,
+      },
+      {
+        source: "/w/operations/interventions/:interventionId",
+        destination: "/operator?ws=today&tab=interventions&entity=:interventionId",
+        permanent: true,
+      },
       { source: "/w/:path*", destination: "/operator", permanent: true },
     ];
   },

@@ -10,10 +10,29 @@ restart when durable persistence is enabled.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from collections.abc import Iterable, Mapping, MutableMapping
 from datetime import UTC, datetime
 from typing import Any, NoReturn, Protocol
 
+from pydantic import ValidationError
+
+from modules.opsboard.domain.store_ops_reviews import (
+    WORKFLOW_RECORD_TYPES,
+    ActionSubmission,
+    AssignSubmission,
+    CameraPurposeSubmission,
+    EscalationSubmission,
+    FieldReportSubmission,
+    OutcomeReviewRecord,
+    OutcomeSubmission,
+    ReplyReviewRecord,
+    ReplyReviewSubmission,
+    TransferSubmission,
+    TriageSubmission,
+    record_contract,
+)
 from shared.audit.events import AuditEvent, InMemoryAuditLog
 
 IssueStatus = str
@@ -573,6 +592,7 @@ class StoreOpsService:
         *,
         audit_log: InMemoryAuditLog | None = None,
         require_live_data: bool = False,
+        actor_subject_id: str | None = None,
     ) -> None:
         if require_live_data and (
             repository is None or not bool(getattr(repository, "is_live", False))
@@ -581,6 +601,7 @@ class StoreOpsService:
         else:
             self._repository = repository or InMemoryStoreOpsRepository()
         self._audit_log = audit_log or InMemoryAuditLog()
+        self._actor_subject_id = actor_subject_id
 
     def snapshot(
         self,
@@ -826,23 +847,26 @@ class StoreOpsService:
         issue = _find_issue(state, issue_id)
         previous_status = issue["status"]
         normalized_action = _normalize_action(action_type)
+        source_updated_at = issue["updatedAt"]
+        review_submission = None
+        workflow_submission = None
 
         if normalized_action == "triage":
-            self._apply_triage(issue, payload)
+            workflow_submission = self._apply_triage(issue, payload)
         elif normalized_action == "assign":
-            self._apply_assign(issue, payload)
+            workflow_submission = self._apply_assign(issue, payload)
         elif normalized_action == "actions":
-            self._apply_action(issue, payload)
+            workflow_submission = self._apply_action(issue, payload)
         elif normalized_action == "field-report":
-            self._apply_field_report(issue, payload)
+            workflow_submission = self._apply_field_report(issue, payload)
         elif normalized_action == "outcome":
-            self._apply_outcome(issue, payload)
+            review_submission = self._apply_outcome(issue, payload)
         elif normalized_action == "escalate":
-            self._apply_escalation(issue, payload)
+            workflow_submission = self._apply_escalation(issue, payload)
         elif normalized_action == "reply-review":
-            self._apply_reply_review(issue, payload)
+            review_submission = self._apply_reply_review(issue, payload)
         elif normalized_action == "transfer":
-            self._apply_transfer(issue, payload)
+            workflow_submission = self._apply_transfer(issue, payload)
         else:
             raise StoreOpsNotFound(f"unknown Store Ops action: {action_type}")
 
@@ -862,15 +886,31 @@ class StoreOpsService:
                 "idempotencyKey": idempotency_key,
             },
         )
-        self._record_shared_audit(
+        shared_audit = AuditEvent(
             event_type="operator.store_ops.issue_transition",
-            actor=actor_name,
+            actor=self._actor_subject_id or actor_name,
             action=normalized_action,
             resource=f"operator/store-ops/issues/{issue_id}",
             outcome="accepted",
             correlation_id=correlation_id,
             metadata=audit["metadata"],
         )
+        if review_submission is not None:
+            self._append_submission_record(
+                state, issue, audit, shared_audit,
+                record_type=OutcomeReviewRecord if normalized_action == "outcome" else ReplyReviewRecord,
+                history_key="outcomeReviews" if normalized_action == "outcome" else "replyReviews",
+                submission=review_submission, source_updated_at=source_updated_at,
+                actor_name=actor_name, actor_role_id=actor_role_id, correlation_id=correlation_id,
+            )
+        elif workflow_submission is not None:
+            self._append_submission_record(
+                state, issue, audit, shared_audit,
+                record_type=WORKFLOW_RECORD_TYPES[normalized_action], history_key="workflowRecords",
+                submission=workflow_submission, source_updated_at=source_updated_at,
+                actor_name=actor_name, actor_role_id=actor_role_id, correlation_id=correlation_id,
+            )
+        self._audit_log.record(shared_audit)
         self._repository.save_state(state)
 
         result = self.snapshot()
@@ -884,6 +924,44 @@ class StoreOpsService:
         if idempotency_key:
             self._repository.save_idempotency_result(idempotency_key, result)
         return result
+
+    def _append_submission_record(
+        self, state: Mapping[str, Any], issue: MutableMapping[str, Any],
+        audit: dict[str, Any], shared_audit: AuditEvent, *, record_type: Any,
+        history_key: str, submission: Any, source_updated_at: str,
+        actor_name: str, actor_role_id: str, correlation_id: str,
+    ) -> None:
+        history = issue.get(history_key, [])
+        if not isinstance(history, list):
+            raise StoreOpsLiveDataUnavailable("Store Ops review history is invalid")
+        evidence_ids = issue.get("evidenceIds")
+        if (
+            not isinstance(evidence_ids, list)
+            or not all(isinstance(key, str) for key in evidence_ids)
+            or not set(evidence_ids).issubset({row["id"] for row in state["evidence"]})
+            or not isinstance(source_updated_at, str)
+        ):
+            raise StoreOpsLiveDataUnavailable("Store Ops review source is unavailable")
+        try:
+            record = record_type(
+                id=audit["id"], issueId=issue["id"], storeId=issue["storeId"],
+                actorSubjectId=self._actor_subject_id, actorName=actor_name,
+                actorRoleId=actor_role_id,
+                actorEvidence="authenticated_principal" if self._actor_subject_id else "caller_supplied",
+                recordedAt=issue["updatedAt"], correlationId=correlation_id,
+                workflowAuditId=audit["id"], auditEventId=shared_audit.event_id,
+                sourceIssueUpdatedAt=source_updated_at, evidenceIds=evidence_ids,
+                submission=submission,
+            ).model_dump(mode="json")
+        except ValidationError as exc:
+            raise StoreOpsLiveDataUnavailable("Store Ops review source is invalid") from exc
+        issue[history_key] = [*history, record]
+        audit["metadata"].update({
+            "workflowAuditId": audit["id"],
+            "reviewRecordHash": hashlib.sha256(
+                json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+            ).hexdigest(),
+        })
 
     def record_camera_purpose(
         self,
@@ -904,6 +982,9 @@ class StoreOpsService:
         state = self._repository.get_state()
         issue = _find_issue(state, issue_id)
         camera_evidence = _find_camera_evidence(state, issue)
+        source_updated_at = issue["updatedAt"]
+        submission = _review_submission(CameraPurposeSubmission, issue, payload)
+        payload = submission.model_dump(exclude_none=True)
         _validate_camera_purpose(payload)
 
         camera_evidence.pop("lockedReason", None)
@@ -915,6 +996,7 @@ class StoreOpsService:
         camera_evidence["summary"] = (
             "Camera evidence unlocked for a recorded, audit-scoped purpose."
         )
+        issue["updatedAt"] = _now_iso()
 
         audit = _append_audit_event(
             state,
@@ -930,18 +1012,26 @@ class StoreOpsService:
                 "cameraLocation": camera_evidence["cameraLocation"],
                 "timeWindow": camera_evidence["timeWindow"],
                 "retentionHours": camera_evidence["retentionHours"],
+                "auditNote": submission.auditNote,
                 "idempotencyKey": idempotency_key,
             },
         )
-        self._record_shared_audit(
+        shared_audit = AuditEvent(
             event_type="operator.store_ops.camera_purpose",
-            actor=actor_name,
+            actor=self._actor_subject_id or actor_name,
             action="record_camera_purpose",
             resource=f"operator/store-ops/issues/{issue_id}/evidence/{camera_evidence['id']}",
             outcome="accepted",
             correlation_id=correlation_id,
             metadata=audit["metadata"],
         )
+        self._append_submission_record(
+            state, issue, audit, shared_audit,
+            record_type=WORKFLOW_RECORD_TYPES["camera-purpose"], history_key="workflowRecords",
+            submission=submission, source_updated_at=source_updated_at,
+            actor_name=actor_name, actor_role_id=actor_role_id, correlation_id=correlation_id,
+        )
+        self._audit_log.record(shared_audit)
         self._repository.save_state(state)
 
         result = self.snapshot()
@@ -957,17 +1047,22 @@ class StoreOpsService:
             self._repository.save_idempotency_result(idempotency_key, result)
         return result
 
-    def _apply_triage(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_triage(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> TriageSubmission:
         _require_status(issue, {"new", "waitingevidence"}, "triage")
+        submission = _review_submission(TriageSubmission, issue, payload)
+        payload = submission.model_dump(exclude_none=True)
         severity = payload.get("severity")
         if isinstance(severity, str) and severity in _ISSUE_SEVERITIES:
             issue["severity"] = severity
         decision = payload.get("decision")
         need_evidence = bool(payload.get("needEvidence")) or decision == "needEvidence"
         issue["status"] = "waitingevidence" if need_evidence else "triaged"
+        return submission
 
-    def _apply_assign(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_assign(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> AssignSubmission:
         _require_status(issue, {"triaged"}, "assign")
+        submission = _review_submission(AssignSubmission, issue, payload)
+        payload = submission.model_dump(exclude_none=True)
         owner_role_id = str(payload.get("ownerRoleId") or issue["ownerRoleId"])
         owner_name = str(payload.get("ownerName") or issue["ownerName"]).strip()
         sla_due_at = str(payload.get("slaDueAt") or issue["slaDueAt"]).strip()
@@ -975,58 +1070,73 @@ class StoreOpsService:
         issue["ownerName"] = owner_name or issue["ownerName"]
         issue["slaDueAt"] = sla_due_at or issue["slaDueAt"]
         issue["status"] = "assigned"
+        return submission
 
-    def _apply_action(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_action(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> ActionSubmission:
         _require_status(issue, {"assigned"}, "actions")
+        submission = _review_submission(ActionSubmission, issue, payload)
+        payload = submission.model_dump(exclude_none=True)
         issue["status"] = (
             "waitingapproval" if bool(payload.get("requiresApproval")) else "inprogress"
         )
+        return submission
 
     def _apply_field_report(
         self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]
-    ) -> None:
+    ) -> FieldReportSubmission:
         _require_status(issue, {"inprogress", "executed"}, "field-report")
+        submission = _review_submission(FieldReportSubmission, issue, payload)
+        payload = submission.model_dump(exclude_none=True)
         checklist_status = payload.get("checklistStatus")
         issue["status"] = "waitingevidence" if checklist_status == "blocked" else "observing"
+        return submission
 
-    def _apply_outcome(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_outcome(
+        self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]
+    ) -> OutcomeSubmission:
         _require_status(issue, {"observing", "outcomeready"}, "outcome")
-        outcome = payload.get("outcome")
-        close_issue = bool(payload.get("closeIssue"))
+        submission = _review_submission(OutcomeSubmission, issue, payload)
+        outcome = submission.outcome
+        close_issue = submission.closeIssue
         if outcome == "effective" and close_issue:
             issue["status"] = "closed"
         elif outcome in {"ineffective", "inconclusive"}:
             issue["status"] = "escalated"
         else:
             issue["status"] = "outcomeready"
+        return submission
 
     def _apply_escalation(
         self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]
-    ) -> None:
+    ) -> EscalationSubmission:
         if issue["status"] == "closed":
             raise StoreOpsConflict("closed issues cannot be escalated")
+        submission = _review_submission(EscalationSubmission, issue, payload)
         issue["status"] = "escalated"
-        issue["relatedGrowthId"] = (
-            payload.get("target")
-            if payload.get("target") == "growth"
-            else issue.get("relatedGrowthId")
-        )
+        # A routing intent is not an actual Growth entity identifier. Preserve
+        # any previously recorded relationship until a real producer changes it.
+        if issue.get("relatedGrowthId") == "growth":
+            issue.pop("relatedGrowthId")  # Remove the old handler's known fabricated sentinel.
+        return submission
 
     def _apply_reply_review(
         self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]
-    ) -> None:
+    ) -> ReplyReviewSubmission:
         if issue["status"] == "closed":
             raise StoreOpsConflict("closed issues cannot accept reply review")
-        issue["updatedAt"] = _now_iso()
+        return _review_submission(ReplyReviewSubmission, issue, payload)
 
-    def _apply_transfer(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_transfer(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> TransferSubmission:
         if issue["status"] == "closed":
             raise StoreOpsConflict("closed issues cannot be transferred")
+        submission = _review_submission(TransferSubmission, issue, payload)
+        payload = submission.model_dump(exclude_none=True)
         target_role = str(payload.get("targetRoleId") or issue["ownerRoleId"])
         target_owner = str(payload.get("targetOwnerName") or "").strip()
         issue["ownerRoleId"] = target_role
         if target_owner:
             issue["ownerName"] = target_owner
+        return submission
 
     def _filter_issues(
         self,
@@ -1051,6 +1161,7 @@ class StoreOpsService:
 
         filtered: list[dict[str, Any]] = []
         for issue in state["issues"]:
+            _validate_review_history(state, issue)
             store = stores_by_id.get(issue["storeId"], {})
             if mine_only and issue["ownerRoleId"] != role_id:
                 continue
@@ -1108,6 +1219,22 @@ class StoreOpsService:
                 metadata=dict(metadata),
             )
         )
+
+
+def _review_submission(model: Any, issue: Mapping[str, Any], payload: Mapping[str, Any]) -> Any:
+    for key in ("issueId", "storeId"):
+        expected = issue["id"] if key == "issueId" else issue["storeId"]
+        if key in payload and payload[key] != expected:
+            raise StoreOpsConflict("Store Ops review does not match its issue and store")
+    if payload.get("payload") not in (None, {}):
+        raise StoreOpsPolicyError("Store Ops review fields must be submitted at the top level")
+    envelope = {"issueId", "issueTitle", "storeId", "storeName", "actorRoleId", "actorName", "payload"}
+    try:
+        return model.model_validate({key: value for key, value in payload.items() if key not in envelope})
+    except ValidationError as exc:
+        # Error responses identify fields without echoing customer text or draft contents.
+        fields = sorted({".".join(map(str, error["loc"])) or "submission" for error in exc.errors()})
+        raise StoreOpsPolicyError("Invalid Store Ops review fields: " + ", ".join(fields)) from exc
 
 
 def _normalize_action(action_type: str) -> str:
@@ -1177,8 +1304,36 @@ def mask_attachment(
 def _find_issue(state: Mapping[str, Any], issue_id: str) -> MutableMapping[str, Any]:
     for issue in state["issues"]:
         if issue["id"] == issue_id:
+            _validate_review_history(state, issue)
             return issue
     raise StoreOpsNotFound(f"issue not found: {issue_id}")
+
+
+def _validate_review_history(state: Mapping[str, Any], issue: Mapping[str, Any]) -> None:
+    audits = {row["id"]: row for row in state["auditEvents"]}
+    for key in ("outcomeReviews", "replyReviews", "workflowRecords"):
+        history = issue.get(key, [])
+        if not isinstance(history, list):
+            raise StoreOpsLiveDataUnavailable("Store Ops review history is invalid")
+        seen = set()
+        for record in history:
+            try:
+                record_type, action = record_contract(key, record)
+                record_type.model_validate(record)
+            except (ValueError, TypeError) as exc:
+                raise StoreOpsLiveDataUnavailable("Store Ops review record is invalid") from exc
+            audit = audits.get(record["workflowAuditId"])
+            digest = hashlib.sha256(
+                json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+            ).hexdigest()
+            if (
+                record["id"] in seen or record["id"] != record["workflowAuditId"]
+                or record["issueId"] != issue["id"] or record["storeId"] != issue["storeId"]
+                or audit is None or audit["targetId"] != issue["id"] or audit["action"] != action
+                or audit["metadata"].get("reviewRecordHash") != digest
+            ):
+                raise StoreOpsLiveDataUnavailable("Store Ops review source or audit binding is invalid")
+            seen.add(record["id"])
 
 
 def _find_camera_evidence(

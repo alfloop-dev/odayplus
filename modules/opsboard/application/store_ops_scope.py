@@ -13,6 +13,7 @@ from modules.opsboard.application.store_ops import (
     StoreOpsConflict,
     StoreOpsLiveDataUnavailable,
 )
+from modules.opsboard.domain.store_ops_reviews import record_contract
 
 
 def binding_hash(value: Any) -> str:
@@ -120,6 +121,17 @@ class ScopedStoreOpsRepository:
             raise StoreOpsConflict(
                 "Store Ops evidence references cannot change through a transition"
             )
+        for key, row in incoming_issues.items():
+            for history_key in ("outcomeReviews", "replyReviews", "workflowRecords"):
+                previous = original_issues[key].get(history_key, [])
+                incoming = row.get(history_key, [])
+                if (
+                    not isinstance(previous, list)
+                    or not isinstance(incoming, list)
+                    or incoming[:len(previous)] != previous
+                    or len(incoming) < len(previous)
+                ):
+                    raise StoreOpsConflict("Store Ops review history cannot be rewritten")
         if state["stores"] != before["stores"]:
             raise StoreOpsConflict("Store Ops transitions cannot rewrite the store master")
         full["issues"] = [incoming_issues.get(row["id"], row) for row in full["issues"]]
@@ -161,6 +173,28 @@ class ScopedStoreOpsRepository:
             row["actorSubjectId"] = self._subject_id
             new_audits.append(row)
         full["auditEvents"].extend(new_audits)
+        new_audits_by_id = {row["id"]: row for row in new_audits}
+        for key, issue in incoming_issues.items():
+            original = original_issues[key]
+            for history_key in ("outcomeReviews", "replyReviews", "workflowRecords"):
+                for record in issue.get(history_key, [])[len(original.get(history_key, [])):]:
+                    try:
+                        record_type, action = record_contract(history_key, record)
+                        record_type.model_validate(record)
+                    except (ValueError, TypeError) as exc:
+                        raise StoreOpsConflict("Store Ops review record is invalid") from exc
+                    audit = new_audits_by_id.get(record["workflowAuditId"])
+                    if (
+                        record["id"] != record["workflowAuditId"]
+                        or record["issueId"] != key or record["storeId"] != original["storeId"]
+                        or record["actorSubjectId"] != self._subject_id
+                        or record["actorEvidence"] != "authenticated_principal"
+                        or record["sourceIssueUpdatedAt"] != original["updatedAt"]
+                        or record["evidenceIds"] != original.get("evidenceIds", [])
+                        or audit is None or audit["action"] != action or audit["targetId"] != key
+                        or audit["metadata"].get("reviewRecordHash") != binding_hash(record)
+                    ):
+                        raise StoreOpsConflict("Store Ops review does not match its authorized source and audit")
         expected_ordinal = int(full.get("nextAuditOrdinal") or 1) + len(new_audits)
         if int(state.get("nextAuditOrdinal") or 1) != expected_ordinal:
             raise StoreOpsConflict("Store Ops audit ordinal does not match the appended events")

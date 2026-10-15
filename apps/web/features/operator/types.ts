@@ -1,3 +1,7 @@
+import type { WorkflowRecord } from "./storeOpsWorkflowRecords";
+import type { OutcomeReviewRecord, ReplyReviewRecord } from "./storeOpsPersistedReviews";
+import type { NativeStoreSummary } from "./storeOpsNativeSummary";
+
 import type { NetworkListingReadResponse } from "@oday-plus/openapi-client";
 
 export const OPERATOR_ROLE_IDS = [
@@ -176,6 +180,7 @@ export type NavWorkspace = {
 export type StoreLightStatus = "green" | "yellow" | "red";
 
 export type Store = {
+  nativeSummary?: NativeStoreSummary;
   id: string;
   name: string;
   district: string;
@@ -208,6 +213,10 @@ export type Issue = {
   relatedGrowthId?: string;
   /** Optional source-provided before/after comparison; absence is not success. */
   outcomeMetrics?: Array<{ label: string; before: string; after: string }>;
+  /** Native append-only saved manual reviews; not measured effect or delivery proof. */
+  workflowRecords?: WorkflowRecord[];
+  outcomeReviews?: OutcomeReviewRecord[];
+  replyReviews?: ReplyReviewRecord[];
   summary: string;
 };
 
@@ -222,6 +231,12 @@ export type EvidenceItem = {
   confidence: number;
   occurredAt: string;
   lockedReason?: string;
+  /** Saved CameraPurpose fields; a missing lock reason is not an access receipt. */
+  purpose?: string;
+  cameraLocation?: string;
+  timeWindow?: string;
+  retentionHours?: number;
+  unlockedAt?: string;
   /** Optional source-provided payment metric; never derived from confidence. */
   paymentTrend?: {
     failureRate: number;

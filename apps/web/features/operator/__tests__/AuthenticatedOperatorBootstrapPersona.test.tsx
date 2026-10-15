@@ -1,7 +1,23 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
+import type { NetworkFindAreasWorkspaceProps } from "../NetworkFindAreasWorkspace";
+
+const confirmedRefreshControl = vi.hoisted(() => ({ enabled: false, invoked: 0 }));
+vi.mock("../NetworkFindAreasWorkspace", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../NetworkFindAreasWorkspace")>();
+  return { ...actual, NetworkFindAreasWorkspace: (props: NetworkFindAreasWorkspaceProps) => {
+    if (!confirmedRefreshControl.enabled) return <actual.NetworkFindAreasWorkspace {...props} />;
+    // Only the nine declared shell refresh controls use this leaf adapter.
+    // Real Today navigates to the permitted Network owner; its actual console
+    // callback is invoked as a unit premise, without a native approval claim.
+    return <button type="button" data-testid="unit-confirmed-network-refresh" onClick={() => {
+      confirmedRefreshControl.invoked += 1;
+      void props.onReviewDecisionConfirmed?.();
+    }}>Invoke declared Network confirmation callback</button>;
+  } };
+});
 
 // Fully mounted lazy Network reads need the same Next navigation premise as
 // existing workspace renderer tests. This supplies routing, never authority.
@@ -32,15 +48,24 @@ function envelope(role: "expansion-manager" | "ops-lead", name: string, decision
       { id: "expansion-manager", label: "展店經理", subtitle: "Catalog, not a grant", allowedWorkspaces: ["today", "network"] }],
       workspaces: [{ id: "today", label: "Today", shortLabel: "Today", description: "Current scope", allowed: true }], allowedWorkspaces: workspaces },
     header: { counts: { approvals: 0, critical: 0, notifications: 0, search: 0, taskCenter: 1 } },
-    today: { hero: { name, roleLabel: label, scope: "Unit current account", dateLabel: "2026-10-13" }, kpis: [{ label: `${name} current row`, value: "1" }], queue: [], decisions: decision ? [{ id: "SYNTHETIC-APR", title: "Unit refresh trigger", meta: "Synthetic UI transport premise, not approval authority", status: "pending", cta: "Unit refresh", tone: "info", target: { workspace: "govern", entityId: "SYNTHETIC-APR", tab: "approvals" } }] : [], riskRows: [], auditFeed: [] },
+    today: { hero: { name, roleLabel: label, scope: "Unit current account", dateLabel: "2026-10-13" }, kpis: [{ label: `${name} current row`, value: "1" }], queue: [], decisions: decision ? [{ id: "SYNTHETIC-APR", title: "Unit refresh callback navigation", meta: "Declared UI callback premise, not approval authority", status: "pending", cta: "Unit refresh", tone: "info", target: { workspace: "network", entityId: "SYNTHETIC-APR", tab: "review" } }] : [], riskRows: [], auditFeed: [] },
     notifications: [], search: { count: 0, items: [] } };
 }
 const delays = [...operatorBootstrapRetryPolicy.delaysMs];
-beforeEach(() => { window.sessionStorage.clear(); operatorBootstrapRetryPolicy.delaysMs = delays.map(() => 0); vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true"); });
-afterEach(() => { cleanup(); operatorBootstrapRetryPolicy.delaysMs = [...delays]; vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+// Resolve the conditional lazy module as a fixture prerequisite, within the
+// original default hook deadline; no read/assertion timeout is increased.
+beforeAll(async () => { await import("../NetworkFindAreasWorkspace"); });
+beforeEach(() => { window.sessionStorage.clear(); confirmedRefreshControl.enabled = false; confirmedRefreshControl.invoked = 0; operatorBootstrapRetryPolicy.delaysMs = delays.map(() => 0); vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true"); });
+afterEach(() => {
+  if (confirmedRefreshControl.enabled) {
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  }
+  cleanup(); operatorBootstrapRetryPolicy.delaysMs = [...delays]; vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks();
+});
 type Config = { actor?: string; role?: "expansion-manager" | "ops-lead"; storedRole?: string; session?: unknown;
   firstBootstrap?: Response | Promise<Response>; refresh?: Response | Promise<Response>; decision?: boolean; tasks?: (actor: string) => Response | Promise<Response>; legacy?: (path: string, actor: string) => Response | Promise<Response>; workspace?: string; issues?: boolean; sessionStatus?: number; invalidRole?: string; denied?: number };
 function mount(config: Config = {}) {
+  confirmedRefreshControl.enabled = config.decision === true;
   let actor = config.actor ?? A;
   let role = config.role ?? "expansion-manager";
   let boots = 0;
@@ -61,7 +86,6 @@ function mount(config: Config = {}) {
       if (config.issues) Object.assign(body, { issues: [{ id: "UNIT-ISSUE", title: "Prior API issue marker", storeName: "Unit store", summary: "Prior API record", severity: "high" }] });
       return json(body);
     }
-    if (url === "/api/v1/operator/approvals/SYNTHETIC-APR/decision" && config.decision) return json({ protocolPremiseOnly: true });
     if (url === "/api/v1/operator/shell/tasks" && config.tasks) return config.tasks(actor);
     if (config.legacy && ["/api/v1/heatzones", "/api/v1/listings/candidates", "/api/v1/sitescore/reports"].includes(new URL(url, window.location.origin).pathname)) return config.legacy(new URL(url, window.location.origin).pathname, actor);
     return json({ detail: "unrelated read unavailable" }, 403);
@@ -71,6 +95,18 @@ function mount(config: Config = {}) {
   return { fetch, view, setAccount: (next: string, nextRole = role) => { actor = next; role = nextRole; }, setSession: (value: unknown, status = 200) => { sessionOverride = value; sessionStatus = status; }, boots: () => boots };
 }
 function bootstrapCalls(fetch: ReturnType<typeof vi.fn>) { return fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/operator/bootstrap"); }
+
+async function invokeConfirmedNetworkRefreshControl() {
+  const invoked = confirmedRefreshControl.invoked;
+  fireEvent.click(screen.getByRole("button", { name: "核准" }));
+  const callback = await screen.findByTestId("unit-confirmed-network-refresh");
+  expect(window.location.search).toContain("ws=network");
+  fireEvent.click(callback);
+  expect(confirmedRefreshControl.invoked).toBe(invoked + 1);
+  // Keep the real Today rows visible while the original deferred read runs.
+  fireEvent.click(screen.getByRole("button", { name: /^Today/ }));
+  expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+}
 
 describe("authenticated bootstrap persona ownership", () => {
   it.each([undefined, "ops-lead", "pm-audit"])("cold open ignores unverified %s preference and adopts actual server persona", async (storedRole) => {
@@ -228,13 +264,13 @@ describe("authenticated bootstrap persona ownership", () => {
     expect(screen.queryByText("Old invalid binding")).not.toBeInTheDocument();
   });
 
-  // A synthetic successful POST is only the premise that invokes the existing
-  // refresh callback. These controls do not establish business approval/auth.
+  // Explicit Network callback controls preserve shell read ownership checks.
+  // They issue no business POST and do not establish native approval/auth.
   it.each(["HTTP", "JSON"])("cookie-only rotation rejects late A post-decision refresh %s without UI reload", async (boundary) => {
     const pending = deferred<Response>(); const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
     const { setAccount, fetch } = mount({ decision: true, refresh: boundary === "HTTP" ? pending.promise : late });
-    await screen.findByText("Account A current row"); fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await screen.findByText("Account A current row"); await invokeConfirmedNetworkRefreshControl();
     if (boundary === "JSON") await reading.promise;
     else await waitFor(() => expect(bootstrapCalls(fetch)).toHaveLength(2));
     setAccount(B);
@@ -248,7 +284,7 @@ describe("authenticated bootstrap persona ownership", () => {
 
   it("a current same-account post-decision refresh still applies validated API data", async () => {
     mount({ decision: true, refresh: json(envelope("expansion-manager", "Refreshed current A")) });
-    await screen.findByText("Account A current row"); fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await screen.findByText("Account A current row"); await invokeConfirmedNetworkRefreshControl();
     await screen.findByText("Refreshed current A current row");
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
     expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
@@ -258,7 +294,7 @@ describe("authenticated bootstrap persona ownership", () => {
     if (kind === "unknown") response.meta.role.id = "unknown-profile" as typeof response.meta.role.id;
     if (kind === "fixture source") response.meta.source = "fixture";
     mount({ decision: true, refresh: json(response) });
-    await screen.findByText("Account A current row"); fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await screen.findByText("Account A current row"); await invokeConfirmedNetworkRefreshControl();
     await screen.findByTestId("operator-data-unavailable");
     expect(screen.queryByText("Invalid refreshed A current row")).not.toBeInTheDocument();
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
@@ -281,7 +317,7 @@ describe("authenticated bootstrap persona ownership", () => {
     fireEvent.change(screen.getByLabelText("Command palette search Global search"), { target: { value: "UNIT-ISSUE" } });
     expect(await screen.findByText("Prior API issue marker")).toBeVisible();
     fireEvent.keyDown(window, { key: "Escape" });
-    fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await invokeConfirmedNetworkRefreshControl();
     await screen.findByText("Refreshed empty A current row");
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     expect(screen.getByTestId("operator-command-palette")).toBeVisible();
@@ -399,7 +435,9 @@ describe("owned reads from explicit no-session POC", () => {
       vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false"); vi.stubEnv("NEXT_PUBLIC_ODP_PRODUCT_MODE", "poc");
       const pending = deferred<Response>(); const body = deferred<unknown>(); const reading = deferred<boolean>();
       const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
-      const initialRole = surface === "Network" ? "expansion-manager" : "ops-lead";
+      // The two null refresh callback controls need the existing permitted
+      // Network persona; operations has no Network grant. Task is unchanged.
+      const initialRole = surface === "Task" ? "ops-lead" : "expansion-manager";
       const fixture = envelope(initialRole, "Explicit fixture", surface === "refresh"); fixture.meta.source = "fixture";
       const state = mount({ role: initialRole, storedRole: initialRole, sessionStatus: 401, session: { detail: "No session" }, firstBootstrap: json(fixture),
         workspace: surface === "Network" ? "network" : "today", decision: surface === "refresh",
@@ -407,7 +445,7 @@ describe("owned reads from explicit no-session POC", () => {
         tasks: (actor) => actor === B ? json({ items: [] }) : boundary === "HTTP" ? pending.promise : late,
         legacy: (path, actor) => path === "/api/v1/heatzones" && actor !== B ? boundary === "HTTP" ? pending.promise : late : json(path === "/api/v1/listings/candidates" ? { candidates: [] } : { items: [] }) });
       if (surface === "Task") { await screen.findByText("Explicit fixture current row"); fireEvent.click(screen.getByTestId("operator-task-center-button")); }
-      if (surface === "refresh") { await screen.findByText("Explicit fixture current row"); fireEvent.click(screen.getByRole("button", { name: "核准" })); }
+      if (surface === "refresh") { await screen.findByText("Explicit fixture current row"); await invokeConfirmedNetworkRefreshControl(); }
       if (boundary === "JSON") await reading.promise;
       else await waitFor(() => expect(state.fetch.mock.calls.some(([url]) => surface === "Task" ? String(url) === "/api/v1/operator/shell/tasks"
         : surface === "Network" ? new URL(String(url), window.location.origin).pathname === "/api/v1/heatzones" : bootstrapCalls(state.fetch).length === 2)).toBe(true));

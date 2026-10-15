@@ -3221,11 +3221,19 @@
   gap: 10px;
 }
 
-.scoreNumber {
+.scoreNumber,
+.scoreLabel {
   color: #1c2333;
-  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 34px;
   font-weight: 650;
+}
+
+.scoreNumber {
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+}
+
+.scoreLabel {
+  font-family: var(--operator-font-family, sans-serif);
 }
 
 .scoreNumber small {

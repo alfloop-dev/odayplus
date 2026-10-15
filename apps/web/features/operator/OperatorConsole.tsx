@@ -31,6 +31,7 @@ import { GrowthWorkspace } from "./GrowthWorkspace";
 import { readGovernanceViewState, serializeGovernanceViewState, type GovernanceViewState } from "./governance/governanceUrlState";
 import type { NetworkFindAreasWorkspaceProps } from "./NetworkFindAreasWorkspace";
 import type { ColdIntakeDetailProps } from "./network/intake/ColdIntakeDetail";
+import type { InterventionWorkspaceProps } from "./interventions/InterventionWorkspace";
 import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
 import { ISSUE_FIXTURES } from "./fixtures";
 import {
@@ -99,6 +100,11 @@ const NetworkFindAreasWorkspace = dynamic<NetworkFindAreasWorkspaceProps>(
 const ColdIntakeDetail = dynamic<ColdIntakeDetailProps>(
   () => import("./network/intake/ColdIntakeDetail").then((mod) => mod.ColdIntakeDetail),
   { ssr: false, loading: () => <div role="status">收件詳情載入中…</div> },
+);
+
+const InterventionWorkspace = dynamic<InterventionWorkspaceProps>(
+  () => import("./interventions/InterventionWorkspace").then((mod) => mod.InterventionWorkspace),
+  { ssr: false, loading: () => <div role="status">干預生命週期載入中…</div> },
 );
 
 const roleStorageKey = "oday.operator.role";
@@ -543,8 +549,6 @@ export function OperatorConsole({
   const liveWorkQueue = shellEnvelope.workQueue;
   const liveDecisions = shellEnvelope.decisions;
   const canRenderWorkspace = shellDataStatus === "ready" || fixturesAllowed && bootstrapAuthMode === "fixture";
-  const canRenderDirectIntake =
-    intakeDetailOpen && activeWorkspaceId === "network";
   const canReadColdIntake = intakeDetailOpen && bootstrapAuthMode === "authenticated" && !canRenderWorkspace;
   const isTodayContent = canRenderWorkspace && activeWorkspaceId === "today";
   const isGovernContent = canRenderWorkspace && activeWorkspaceId === "govern";
@@ -1196,6 +1200,13 @@ export function OperatorConsole({
     nextUrl.searchParams.set("ws", target.workspace);
     nextUrl.searchParams.delete("evidence");
     nextUrl.searchParams.delete("auditCategory");
+    if (target.workspace === "network" && target.tab === "review" && target.candidateId && target.reviewId) {
+      nextUrl.searchParams.set("candidate", target.candidateId);
+      nextUrl.searchParams.set("review", target.reviewId);
+    } else {
+      nextUrl.searchParams.delete("candidate");
+      nextUrl.searchParams.delete("review");
+    }
     if (target.entityId) {
       nextUrl.searchParams.set("entity", target.entityId);
     } else {
@@ -1423,38 +1434,6 @@ export function OperatorConsole({
     }
   }
 
-  async function handleApprovalDecision(approvalId: string, status: string, payload: any) {
-    const correlationId = "corr-" + Math.random().toString(36).substring(2, 11);
-    const idempotencyKey = "idem-" + Math.random().toString(36).substring(2, 11);
-    try {
-      const body = {
-        actorName: shellEnvelope.today.hero.name,
-        actorRoleId: activeRoleId,
-        reason: payload?.reason ?? `Decision from Operator Console for ${approvalId}`,
-        ...payload,
-        status,
-      };
-      const res = await fetch(`/api/v1/operator/approvals/${approvalId}/decision`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": idempotencyKey,
-          "X-Correlation-Id": correlationId,
-          ...getSecurityHeaders(activeRoleId),
-        },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        showToast("決策已送出");
-        await refreshOperatorEnvelope();
-      } else {
-        showToast(`決策未送出（HTTP ${res.status}）`);
-      }
-    } catch (err) {
-      console.error("Error submitting approval decision:", err);
-      showToast("決策未送出，請重新整理後再試");
-    }
-  }
 
   return (
     <div
@@ -1790,17 +1769,23 @@ export function OperatorConsole({
         {canReadColdIntake ? (
           <ColdIntakeDetail intakeId={typeof searchParams.selected === "string" ? searchParams.selected : ""}
             onClose={() => window.location.assign("/operator?ws=network&tab=radar")} />
-        ) : !canRenderWorkspace && !canRenderDirectIntake ? (
+        ) : !canRenderWorkspace ? (
           <OperatorDataUnavailableGate
             failure={shellLoadFailure}
             loadingDetail={shellWarmingUp ? operatorBootstrapWarmingUpDetail : undefined}
             onRetry={() => setShellReloadToken((token) => token + 1)}
             status={toUnavailableOperatorStatus(shellDataStatus)}
           />
+        ) : activeWorkspaceId === "today" && activeTabId === "interventions" ? (
+          <InterventionWorkspace selectedId={selectedEntityId ?? (typeof searchParams.selected === "string" ? searchParams.selected : undefined)}
+            onSelect={(entityId) => handleTargetSelect({ workspace: "today", tab: "interventions", entityId }, "干預工作台")}
+            onDecisionConfirmed={async () => {
+              try { await refreshOperatorEnvelope(); }
+              catch { showToast("核決已保存；Today 資料尚未重新核對，請重新整理。"); }
+            }} />
         ) : activeWorkspaceId === "today" ? (
           <ApiTodayWorkspace
             envelope={shellEnvelope}
-            onApprovalDecision={(approvalId, status, payload) => handleApprovalDecision(approvalId, status, payload)}
             onTargetSelect={handleTargetSelect}
           />
         ) : activeWorkspaceId === "store" ? (
@@ -1813,6 +1798,10 @@ export function OperatorConsole({
         ) : activeWorkspaceId === "network" ? (
           <NetworkFindAreasWorkspace
             activeRoleId={activeRoleId}
+            onReviewDecisionConfirmed={async () => {
+              try { await refreshOperatorEnvelope(); }
+              catch { showToast("核決已保存；Today 資料尚未重新核對，請重新整理。"); }
+            }}
             initialTabId={activeTabId}
             liveCandidates={liveNetworkBindings?.candidates}
             liveHeatZones={liveNetworkBindings?.heatZones}

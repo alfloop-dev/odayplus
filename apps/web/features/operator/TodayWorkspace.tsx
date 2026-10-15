@@ -7,6 +7,8 @@ import styles from "./operator.module.css";
 
 export type ShellTarget = {
   entityId?: string;
+  candidateId?: string;
+  reviewId?: string;
   tab?: string;
   workspace: WorkspaceId;
 };
@@ -273,6 +275,8 @@ function normalizeTarget(value: unknown, fallbackWorkspace: WorkspaceId = "today
   if (!isObject(value)) return { workspace: fallbackWorkspace };
   const workspace = typeof value.workspace === "string" ? (value.workspace as WorkspaceId) : fallbackWorkspace;
   return {
+    ...(workspace === "network" && value.tab === "review" && typeof value.candidateId === "string" && typeof value.reviewId === "string"
+      ? { candidateId: value.candidateId, reviewId: value.reviewId } : {}),
     entityId: typeof value.entityId === "string" ? value.entityId : undefined,
     tab: typeof value.tab === "string" ? value.tab : undefined,
     workspace,
@@ -474,11 +478,11 @@ export function normalizeShellEnvelope(
 
 export function TodayWorkspace({
   envelope,
-  onApprovalDecision,
   onTargetSelect,
 }: {
   envelope: OperatorShellEnvelope;
-  onApprovalDecision: (approvalId: string, status: "approved" | "rejected" | "returned", payload: Record<string, string>) => void;
+  /** Compatibility for callers; Home decisions always enter the full owner review. */
+  onApprovalDecision?: (approvalId: string, status: "approved" | "rejected" | "returned", payload: Record<string, string>) => void;
   onTargetSelect: (target: ShellTarget, label: string) => void;
 }) {
   const today = envelope.today;
@@ -618,13 +622,7 @@ export function TodayWorkspace({
                     <button
                       aria-label="核准"
                       className={styles.todayDecisionAction}
-                      onClick={() =>
-                        onApprovalDecision(decision.id, "approved", {
-                          actorName: today.hero.name,
-                          actorRoleId: envelope.meta.role.id,
-                          reason: `Approved from Today rail for ${decision.id}`,
-                        })
-                      }
+                      onClick={() => onTargetSelect(decision.target, decision.id)}
                       type="button"
                     >
                       {decision.cta || "進行核准"} →

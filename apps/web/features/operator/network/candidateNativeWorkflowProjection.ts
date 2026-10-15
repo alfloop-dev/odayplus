@@ -133,7 +133,9 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
           && (metadata.previousDecisionId != null || decision.previous_decision_id != null)
         || metadata.networkAction !== decision.network_action || metadata.status !== row.status
         || raw.status !== (operational ? raw.canonicalSiteStatus : row.status)
-        || metadata.conditions !== decision.conditions || !same(metadata.requiredData, decision.required_data)) {
+        || metadata.conditions !== decision.conditions || !Array.isArray(metadata.requiredData)
+        || !metadata.requiredData.every((item) => typeof item === "string" && item.trim().length > 0)
+        || !same(metadata.requiredData, decision.required_data === null ? [] : decision.required_data)) {
         Object.assign(result, { availability: "conflict", reason: messages.conflict }); continue;
       }
       Object.assign(result, { availability: "recorded", stage, review: target(row),

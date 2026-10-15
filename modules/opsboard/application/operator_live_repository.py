@@ -982,13 +982,7 @@ class OperatorLiveRepository:
             intervention_id = str(_value(intervention, "intervention_id"))
             kind = _status(_value(intervention, "kind"))
             store_id = str(_value(intervention, "store_id"))
-            workspace = "growth" if kind in {
-                "PRICE_CHANGE",
-                "AD_CAMPAIGN",
-                "PROMOTION",
-                "CRM_RECALL",
-                "OPENING_CAMPAIGN",
-            } else "store"
+            workspace = "today"
             rows.append(
                 {
                     "id": intervention_id,
@@ -1003,17 +997,12 @@ class OperatorLiveRepository:
                     "time": _iso(_value(intervention, "created_at")),
                     "tone": "warning" if status == "PENDING_APPROVAL" else "info",
                     "workspace": workspace,
-                    "roles": _roles(
-                        "ops-lead",
-                        "marketing-manager",
-                        "field-lead",
-                        "pm-audit",
-                    ),
+                    "roles": _roles("ops-lead"),
                     "tags": ["Intervention", kind],
                     "target": {
                         "workspace": workspace,
                         "entityId": intervention_id,
-                        "tab": "overview",
+                        "tab": "interventions",
                     },
                 }
             )
@@ -1132,7 +1121,7 @@ class OperatorLiveRepository:
                     "title": "SiteScore decision",
                     "meta": candidate_id,
                     "status": status,
-                    "cta": "Open Govern",
+                    "cta": "進行審核",
                     "tone": "warning",
                     "roles": _roles(
                         "ops-lead",
@@ -1140,9 +1129,11 @@ class OperatorLiveRepository:
                         "pm-audit",
                     ),
                     "target": {
-                        "workspace": "govern",
-                        "entityId": decision_id,
-                        "tab": "approvals",
+                        "workspace": "network",
+                        "entityId": candidate_id,
+                        "tab": "review",
+                        "candidateId": candidate_id,
+                        "reviewId": decision_id,
                     },
                 }
             )
@@ -1161,17 +1152,13 @@ class OperatorLiveRepository:
                     "title": "Intervention approval",
                     "meta": _status(_value(intervention, "kind")),
                     "status": status,
-                    "cta": "Open Govern",
+                    "cta": "開啟完整干預審查",
                     "tone": "warning",
-                    "roles": _roles(
-                        "ops-lead",
-                        "marketing-manager",
-                        "pm-audit",
-                    ),
+                    "roles": _roles("ops-lead"),
                     "target": {
-                        "workspace": "govern",
+                        "workspace": "today",
                         "entityId": intervention_id,
-                        "tab": "approvals",
+                        "tab": "interventions",
                     },
                 }
             )
