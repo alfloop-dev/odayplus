@@ -16,6 +16,12 @@ load-bearing: enumerating the interpreter's site-packages instead sweeps in the
 operating system's own GPL packages, which this project does not depend on and
 must not be attributed as if it did.
 
+The locked libvips native variants are also retained, using their explicit
+lockfile licences. npm may omit a musl or other-platform variant from a glibc
+installation; that must not remove its LGPL attribution from a distribution
+notice covering the locked native targets. An absent licence is an error, not
+an inferred licence or an approval of the legal policy.
+
 Reading the installed trees means the output is only as complete as the install
 it was run against, so regenerate from the full tree CI installs:
 
@@ -161,7 +167,7 @@ def _normalise_license(raw: object) -> str:
 
 
 def collect_npm(base: Path | None = None) -> list[Component]:
-    """Walk node_modules, including nested trees, reading each package.json."""
+    """Read installed manifests and explicitly licensed locked libvips targets."""
     base = NODE_MODULES if base is None else base
     found: dict[tuple[str, str], Component] = {}
 
@@ -218,6 +224,18 @@ def collect_npm(base: Path | None = None) -> list[Component]:
                 if not is_first_party(pkg_name):
                     if pkg_name not in found_names and not is_optional:
                         missing.add(pkg_name)
+                    if (
+                        is_optional
+                        and pkg_name.startswith("@img/sharp-libvips-")
+                        and (pkg_name, str(info.get("version") or "")) not in found
+                    ):
+                        licence = _normalise_license(info.get("license"))
+                        version = str(info.get("version") or "")
+                        if not licence or not version:
+                            raise RuntimeError(
+                                f"Locked native attribution lacks licence or version: {pkg_name}"
+                            )
+                        found[(pkg_name, version)] = Component("npm", pkg_name, version, licence)
         if missing:
             raise RuntimeError(
                 "Partial install detected. Missing npm packages declared in lockfile: "

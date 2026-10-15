@@ -65,10 +65,10 @@ class CandidateSiteDraft:
     heat_zone_id: str = ""
     listing_source: str = ""
     status: ListingPipelineStatus = ListingPipelineStatus.CANDIDATE
-    score: int = 68
-    recommendation: str = "WAIT"
-    model_version: str = "SiteScore v2.3"
-    dataset_snapshot_id: str = "FS-20260704-0600"
+    score: int | None = None
+    recommendation: str | None = None
+    model_version: str | None = None
+    dataset_snapshot_id: str | None = None
     review_id: str | None = None
     prior_90d_cell_net_revenue: float | None = None
     prior_90d_cell_transaction_count: int | None = None
@@ -87,8 +87,12 @@ class CandidateSiteDraft:
     def to_card_dict(self) -> dict[str, object]:
         card: dict[str, object] = {
             "candidateSiteId": self.candidate_site.candidate_site_id,
+            "listingId": self.candidate_site.listing_id,
             "address": self.address.normalized_address or self.address.raw_address,
             "geocodeConfidence": self.address.geocode_confidence,
+            "latitude": self.address.latitude,
+            "longitude": self.address.longitude,
+            "h3Index": self.address.h3_res_9 or None,
             "rent": self.listing.rent_amount,
             "area": self.listing.area_ping,
             "frontage": self.listing.frontage_m,
@@ -98,6 +102,12 @@ class CandidateSiteDraft:
             "heatZone": self.heat_zone_id,
             "listingSource": self.listing_source,
             "status": getattr(self.status, "value", self.status),
+            "siteStatus": self.candidate_site.site_status,
+            "score": self.score,
+            "recommendation": self.recommendation,
+            "modelVersion": self.model_version,
+            "datasetSnapshotId": self.dataset_snapshot_id,
+            "reviewId": self.review_id,
         }
         if self.property_entity_id:
             card["propertyId"] = self.property_entity_id

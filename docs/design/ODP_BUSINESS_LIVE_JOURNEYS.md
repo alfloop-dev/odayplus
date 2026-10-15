@@ -88,9 +88,11 @@ against the live system:
   different caller actor blocks before writes). Capture the POST decision ID,
   require that same newly durable decision, the authorized approve/return/reject
   terminal status, canonical final-decision label and reason, and matching new
-  audit actor/action/entity/reason. The service's record correlation convention
-  `corr-<approvalId>` is distinct from this HTTP write's authorization correlation;
-  both are checked. Empty approve reasons use the canonical decision-log default.
+  audit actor/action/entity/reason. The audit row must bind this actual HTTP
+  write's correlation; a fabricated `corr-<approvalId>` cannot substitute.
+  Every admitted decision needs an authored non-empty reason before writes are
+  armed. The legacy service may retain an empty approve reason, but it is not
+  admitted by this live runner and no risk/budget justification is synthesized.
 - Store Ops verifies the expected outcome of the authorized action, including
   the precise transfer owner. Noop or inadmissible transitions block before
   writes; timestamps, unrelated history or concurrent state changes do not

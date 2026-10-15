@@ -2,7 +2,7 @@
 #
 # Contract:  emgi.data-acquisition-plan.v1 (decision_product, v1.0.0)
 # Release:   oday-data-product-contracts.v0.4.1
-# Producer:  alfloop-dev/oday-data-platform@245aa00e417b6f8450baa608e8976584e00be6fc
+# Producer:  alfloop-dev/oday-data-platform@606c35f26a47df9eae7667eaeb82f5eebf75fa22
 # Schema:    schemas/data-acquisition-plan.schema.json
 # Digest:    751cc0373a10624234865afdd22b9ce608032bbf3ad242699ff731d7e935f487
 """Versioned acquisition priorities and bounded source-value experiments."""

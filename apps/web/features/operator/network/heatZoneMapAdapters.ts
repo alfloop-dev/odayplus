@@ -2,8 +2,8 @@
  * Operator → Map type adapters.
  *
  * These bridge the operator-layer types (OperatorHeatZone, Listing, Candidate)
- * to the expansion-layer types that HeatZoneMap expects. Synthetic/missing
- * fields are derived deterministically from available data.
+ * to the expansion-layer types that HeatZoneMap expects. Candidate locations
+ * preserve recorded address evidence; missing coordinates remain absent.
  *
  * Extracted from NetworkFindAreasWorkspace.tsx under ODP-ENG-FRONTEND-BUILD-001:
  * this layer is pure data mapping with no React or DOM dependency, so keeping it
@@ -100,16 +100,24 @@ export function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
 
 /**
  * Convert an operator Listing to the MapListing type expected by HeatZoneMap.
- * Coordinates are inferred from the associated HeatZone centroid with a small
- * deterministic offset so listings don't stack on top of the zone marker.
+ * Missing geocodes stay unknown. Only an explicit fixture caller may spread
+ * records around a zone centroid for its illustrative map.
  */
 export function operatorListingToMapListing(
   listing: Listing,
   heatZones: OperatorHeatZone[],
   index: number,
+  allowFixtureCoordinates = false,
 ): MapListing {
-  // 137.5° is the golden angle, which spreads successive listings evenly.
-  const coordinates = offsetFromZone(listing.heatZoneId, heatZones, index, 0.003, 137.5);
+  const confidence = listing.geocodeConfidence;
+  const hasGeocode = typeof confidence === "number" && Number.isFinite(confidence) && confidence > 0;
+  const hasCoordinates = typeof listing.longitude === "number" && Number.isFinite(listing.longitude)
+    && typeof listing.latitude === "number" && Number.isFinite(listing.latitude);
+  const coordinates: [number, number] | null = hasGeocode && hasCoordinates
+    ? [listing.longitude!, listing.latitude!]
+    : hasGeocode && allowFixtureCoordinates
+      ? offsetFromZone(listing.heatZoneId ?? "", heatZones, index, 0.003, 137.5)
+      : null;
   return {
     id: listing.id,
     source: listing.sourceId,
@@ -117,13 +125,15 @@ export function operatorListingToMapListing(
     status: listing.status === "hardfail" ? "FAILED_HARD_RULE"
       : listing.status === "duplicate" ? "DUPLICATE"
       : listing.status === "candidate" ? "CANDIDATE"
-      : listing.status === "geocoded" || listing.status === "scored" || listing.status === "watching" ? "GEOCODED"
+      : listing.status === "geocoded" || listing.status === "scored" || listing.status === "watching"
+        ? hasGeocode ? "GEOCODED" : "PARSED"
       : listing.status === "parsed" ? "PARSED"
       : "RAW",
-    issue: listing.hardRuleFailures.join("; ") || "",
+    issue: Array.isArray(listing.hardRuleFailures) ? listing.hardRuleFailures.join("; ") : "硬規則尚未檢核",
     rent: listing.rentPerMonth > 0 ? `NT$${listing.rentPerMonth.toLocaleString()}` : "NT$ *** / 月",
     area: `${listing.areaPing} ping`,
-    geocode: `${listing.geocodeConfidence.toFixed(2)} / operator`,
+    geocode: typeof confidence === "number" && Number.isFinite(confidence)
+      ? `${confidence.toFixed(2)} / operator` : "未知",
     duplicate: listing.duplicateOfId ?? "",
     heatZoneId: listing.heatZoneId,
     coordinates,
@@ -137,28 +147,35 @@ export function operatorListingToMapListing(
  */
 export function operatorCandidateToMapSite(
   candidate: Candidate,
-  heatZones: OperatorHeatZone[],
-  index: number,
 ): MapCandidateSite {
-  const coordinates = offsetFromZone(candidate.heatZoneId, heatZones, index, 0.005, 97.3);
+  const confidence = candidate.geocodeConfidence;
+  const longitude = candidate.longitude;
+  const latitude = candidate.latitude;
+  const hasGeocode = typeof confidence === "number" && Number.isFinite(confidence) && confidence > 0;
+  const coordinates: [number, number] | null = hasGeocode
+    && typeof longitude === "number" && Number.isFinite(longitude) && Math.abs(longitude) <= 180
+    && typeof latitude === "number" && Number.isFinite(latitude) && Math.abs(latitude) <= 90
+    ? [longitude, latitude] : null;
   const isReady = candidate.status === "ready" || candidate.status === "pendingreview" || candidate.status === "approved";
   return {
     id: candidate.id,
     address: candidate.address,
     status: candidate.status === "approved" ? "approved"
       : candidate.status === "rejected" ? "rejected"
-      : candidate.status === "scoring" || candidate.status === "pendingreview" ? "scored"
+      : candidate.status === "scored" || candidate.status === "pendingreview" ? "scored"
       : candidate.status === "wait" || candidate.status === "ready" ? "screened"
       : "new",
     heatZoneId: candidate.heatZoneId,
     coordinates,
     heatZoneScore: candidate.score,
     rentArea: "",
-    geocode: "",
+    geocode: coordinates === null ? "未定位" : `${confidence!.toFixed(2)} / operator`,
     feasibility: candidate.missingData.length ? candidate.missingData.join("; ") : "OK",
     listingSource: candidate.listingId ?? "",
-    siteScore: `${candidate.score} / ${candidate.recommendation}`,
-    readiness: isReady ? "ready" : "blocked",
-    disabledReason: candidate.missingData.length ? candidate.missingData.join("; ") : undefined,
+    siteScore: candidate.recommendation === null ? "等待評分"
+      : candidate.score === null ? candidate.recommendation : `${candidate.score} / ${candidate.recommendation}`,
+    readiness: isReady && coordinates !== null ? "ready" : "blocked",
+    disabledReason: coordinates === null ? "尚無已驗證座標，可在候選點清單查看"
+      : candidate.missingData.length ? candidate.missingData.join("; ") : undefined,
   };
 }

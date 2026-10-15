@@ -738,6 +738,8 @@ class StoreOpsService:
         masking_profile: str = "masked",
         user_roles: Iterable[str] | None = None,
         tenant_id: str | None = None,
+        actor_role_id: str | None = None,
+        actor_name: str | None = None,
     ) -> dict[str, Any]:
         att = self.get_attachment(
             issue_id=issue_id,
@@ -750,8 +752,8 @@ class StoreOpsService:
         roles_list = list(user_roles or ["opsLead"])
         _append_audit_event(
             state,
-            actor_role_id=roles_list[0] if roles_list else "opsLead",
-            actor_name=roles_list[0] if roles_list else "Operator",
+            actor_role_id=actor_role_id or (roles_list[0] if roles_list else "opsLead"),
+            actor_name=actor_name or (roles_list[0] if roles_list else "Operator"),
             action="attachment.downloaded",
             category="attachment",
             message=f"Attachment {attachment_id} downloaded for issue {issue_id} (masked={att.get('masked')}).",

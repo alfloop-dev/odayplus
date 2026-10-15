@@ -14,12 +14,17 @@
  *
  * Assumes: Next.js dev server running at BASE_URL (default http://localhost:3000).
  * The workspace renders from embedded fixtures when the API is unreachable, so
- * write calls fall back to an offline-labelled console audit. The server-side
- * conflict gate and approval-advances-state behaviour are proven by
+ * writes require an actual acknowledged API response. The create case reloads
+ * the persisted action and its audit binding; server-side replay and gates are proven by
  * tests/contract/test_operator_growth_api.py.
  */
 
 import { expect, test } from "@playwright/test";
+import { primeOperatorPersona } from "./_operatorPersona";
+
+test.beforeEach(async ({ page }) => {
+  await primeOperatorPersona(page, "marketing-manager");
+});
 
 // ---------------------------------------------------------------------------
 // 1. Workspace renders all sections
@@ -42,14 +47,20 @@ test("Growth workspace renders segments, recommendations, and actions from fixtu
   await expect(itemTable).toContainText("宵夜外送費試點活動");
 
   // 會員分群 tab renders the segment cards.
-  await page.getByTestId("growth-tab-segments").click();
+  await Promise.all([
+    page.waitForURL(url => url.searchParams.get("gtab") === "segments"),
+    page.getByTestId("growth-tab-segments").click(),
+  ]);
   const segmentTable = page.getByTestId("growth-segment-table");
   await expect(segmentTable).toContainText("都會晚餐高潛力組");
   await expect(segmentTable).toContainText("郊區午餐守成組");
   await expect(segmentTable).toContainText("宵夜外送流失組");
 
   // PriceOps tab renders the pricing recommendation table.
-  await page.getByTestId("growth-tab-priceops").click();
+  await Promise.all([
+    page.waitForURL(url => url.searchParams.get("gtab") === "priceops"),
+    page.getByTestId("growth-tab-priceops").click(),
+  ]);
   const recTable = page.getByTestId("growth-recommendation-table");
   await expect(recTable).toContainText("rec-9001");
   await expect(recTable).toContainText("rec-9002");
@@ -127,19 +138,24 @@ test("Five-step builder navigates all steps and emits a create audit on submit",
   await modal.getByTestId("growth-builder-next").click();
   await expect(page.getByTestId("growth-builder-step-5")).toBeVisible();
 
-  const consoleLogs: string[] = [];
-  page.on("console", (msg) => {
-    if (msg.text().includes("[Console Audit]")) consoleLogs.push(msg.text());
-  });
-
+  const responsePromise = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/operator/growth/actions");
   await modal.getByTestId("growth-draft-submit").click();
+  const response = await responsePromise;
+  expect(response.ok()).toBe(true);
+  const created = await response.json();
+  expect(created.status).toBe("DRAFT");
+  expect(created.kind).toBe("winback");
+  expect(created.name).toBe("宵夜外送會員召回改進版");
+  expect(created.audit.correlationId).toBeTruthy();
   await expect(modal).not.toBeVisible();
+  const stored = await page.request.get(`/api/v1/operator/growth/actions/${created.id}`);
+  expect(stored.ok()).toBe(true);
+  const persisted = await stored.json();
+  expect(persisted.id).toBe(created.id);
+  expect(persisted.name).toBe(created.name);
+  expect(persisted.status).toBe("DRAFT");
+  expect(persisted.audit).toEqual(created.audit);
 
-  expect(consoleLogs.length).toBe(1);
-  const parsed = JSON.parse(consoleLogs[0].replace("[Console Audit] ", ""));
-  expect(parsed.action).toBe("CREATE_DRAFT");
-  expect(parsed.kind).toBe("winback");
-  expect(parsed.name).toBe("宵夜外送會員召回改進版");
 });
 
 test("Growth builder can be dismissed without submitting", async ({ page }) => {
@@ -208,6 +224,8 @@ test("Ineffective Growth Action is blocked from direct closeout", async ({
   await expect(
     closeoutPanel.getByTestId("growth-closeout-gate"),
   ).toHaveAttribute("data-can-close", "false");
+  await closeoutPanel.getByTestId("growth-outcome-open").click();
+  await page.getByLabel("判斷理由（寫入 Decision Log）").fill("合成覆核：目前仍需執行 Rollback，不得直接結案。");
   await expect(closeoutPanel.getByTestId("growth-close-button")).toBeDisabled();
   await expect(
     closeoutPanel.getByTestId("growth-required-action"),
@@ -227,6 +245,8 @@ test("Inconclusive Growth Action is blocked and shows required action", async ({
   await expect(
     closeoutPanel.getByTestId("growth-closeout-gate"),
   ).toHaveAttribute("data-can-close", "false");
+  await closeoutPanel.getByTestId("growth-outcome-open").click();
+  await page.getByLabel("判斷理由（寫入 Decision Log）").fill("合成覆核：目前證據不足，仍不得直接結案。");
   await expect(closeoutPanel.getByTestId("growth-close-button")).toBeDisabled();
   await expect(
     closeoutPanel.getByTestId("growth-required-action"),
@@ -250,7 +270,20 @@ test("Effective Growth Action can be closed and emits console audit log", async 
   await expect(
     closeoutPanel.getByTestId("growth-closeout-gate"),
   ).toHaveAttribute("data-can-close", "true");
+  let writes = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/growth/actions/growth-7001/outcome")) writes += 1;
+  });
+  const trigger = closeoutPanel.getByTestId("growth-outcome-open");
+  await trigger.focus();
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "活動成效判斷" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("判斷理由（寫入 Decision Log）")).toBeFocused();
   const closeButton = closeoutPanel.getByTestId("growth-close-button");
+  await expect(closeButton).toBeDisabled();
+  expect(writes).toBe(0);
+  await dialog.getByLabel("判斷理由（寫入 Decision Log）").fill("已核對對照組、觀測增量與 L3 證據，確認活動成效。");
   await expect(closeButton).toBeEnabled();
 
   const consoleLogs: string[] = [];
@@ -268,6 +301,9 @@ test("Effective Growth Action can be closed and emits console audit log", async 
   expect(parsed.action).toBe("APPROVE_CLOSEOUT");
   expect(parsed.itemId).toBe("growth-7001");
   expect(parsed.decisionId).toBe("dec-growth-7001");
+  expect(writes).toBe(1);
+  await dialog.getByRole("button", { name: "關閉活動成效判斷" }).click();
+  await expect(trigger).toBeFocused();
 });
 
 // ---------------------------------------------------------------------------

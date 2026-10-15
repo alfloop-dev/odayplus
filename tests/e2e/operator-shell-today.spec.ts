@@ -11,15 +11,39 @@ const roleHeaders = (roleId: string) => ({
 });
 
 const expectedWorkspaces: Record<string, string[]> = {
-  "cs-lead": ["today", "store", "govern"],
-  "expansion-manager": ["today", "network", "govern"],
+  "cs-lead": ["today", "store"],
+  "expansion-manager": ["today", "network"],
   "field-lead": ["today", "store"],
-  "marketing-manager": ["today", "growth", "govern"],
-  "ops-lead": ["today", "store", "growth", "network", "govern"],
-  "pm-audit": ["today", "store", "network", "govern"],
+  "marketing-manager": ["today", "growth"],
+  "ops-lead": ["today", "store", "govern"],
+  "pm-audit": ["today", "network", "govern"],
+};
+
+const expectedCards: Record<string, string[]> = {
+  "ops-lead": ["高風險未指派", "已逾期 Issue", "即將逾期", "成效待判斷", "待我核准", "需升級門市"],
+  "cs-lead": ["AI 未解決案件", "Google 負評未回覆", "退款／付款案件", "回覆 SLA 即將逾期", "需轉交工務"],
+  "field-lead": ["指派給我的工單", "設備離線", "遠端重啟失敗", "付款機異常", "巡檢待回報"],
+  "marketing-manager": ["離峰機會", "會員召回候選", "促銷草稿", "待核准活動", "成效待判斷"],
+  "expansion-manager": ["新外部物件", "追蹤中物件", "缺資料候選", "待評分／待送審", "待審 Review", "重配候選門市"],
+  "pm-audit": ["待核准項", "Audit 待補", "今日決策數", "隱私敏感操作"],
 };
 
 test.describe.configure({ mode: "serial" });
+
+test("expansion contributor keeps the server persona and its restricted navigation", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-staff"));
+  await page.goto("/operator");
+  await expect(page.getByTestId("operator-envelope-source")).toHaveText("operator-shell-api-envelope");
+  await expect(page.getByTitle("展店專員", { exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /門市營運/ })).toHaveAttribute("aria-disabled", "true");
+  const api = await playwrightRequest.newContext();
+  const response = await api.get(`${API_BASE_URL}/api/v1/operator/bootstrap`, { headers: roleHeaders("expansion-staff") });
+  expect(response.status()).toBe(200);
+  const body = await response.json();
+  expect(body.meta.role.id).toBe("expansion-staff");
+  expect(body.navigation.allowedWorkspaces).toEqual(["today", "network"]);
+  await api.dispose();
+});
 
 test("bootstrap and today APIs return role-aware envelope data for all six roles", async () => {
   const api = await playwrightRequest.newContext();
@@ -39,6 +63,7 @@ test("bootstrap and today APIs return role-aware envelope data for all six roles
     expect(bootstrapBody.navigation.allowedWorkspaces).toEqual(allowedWorkspaces);
     expect(todayBody.navigation.allowedWorkspaces).toEqual(allowedWorkspaces);
     expect(todayBody.meta.role.id).toBe(roleId);
+    expect(todayBody.today.kpis.map((item: { label: string }) => item.label)).toEqual(expectedCards[roleId]);
     expect(todayBody.today.queue.length).toBeGreaterThan(0);
     expect(todayBody.search.count).toBeGreaterThanOrEqual(todayBody.today.queue.length);
     expect(todayBody.header.counts.taskCenter).toBe(todayBody.today.queue.length);
@@ -106,6 +131,8 @@ function systemRoleFor(roleId: string) {
       return "marketing_manager";
     case "expansion-manager":
       return "expansion_user,site_reviewer";
+    case "expansion-staff":
+      return "expansion_user";
     case "pm-audit":
       return "auditor";
     default:

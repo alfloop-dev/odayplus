@@ -63,6 +63,7 @@ def test_priceops_comparison_api_blocks_infeasible_approval() -> None:
 
     approval = client.post(
         f"/priceops/plans/{plan_id}/approve",
+        headers=auth_headers(Role.PRICING_MANAGER, subject="independent-pricer"),
         json={
             "actor_id": "pricing-director",
             "reason": "attempted approval should be blocked",

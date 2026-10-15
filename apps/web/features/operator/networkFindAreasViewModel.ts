@@ -95,18 +95,19 @@ export type ListingRadarRow = {
   sourceName: string;
   sourceStatus: ListingSource["status"];
   complianceNote: string;
-  heatZoneId: string;
+  heatZoneId: string | null;
   zoneLabel: string;
   address: string;
   status: Listing["status"];
   statusLabel: string;
   rentLabel: string;
   areaPing: number;
-  geocodeConfidence: number;
+  geocodeConfidence: number | null;
   geocodeConfidenceLabel: string;
   isDuplicate: boolean;
   duplicateOfId?: string;
   hardRuleFailures: string[];
+  hardRuleStatus: "measured" | "unmeasured";
   candidateId?: string;
   tone: NetworkTone;
 };
@@ -119,13 +120,13 @@ export type CandidatePipelineRow = {
   address: string;
   status: Candidate["status"];
   statusLabel: string;
-  score: number;
-  scoreMeter: number;
+  score: number | null;
+  scoreMeter: number | null;
   recommendation: Candidate["recommendation"];
-  modelVersion: string;
-  datasetSnapshotId: string;
+  modelVersion: string | null;
+  datasetSnapshotId: string | null;
   missingData: string[];
-  reviewId?: string;
+  reviewId?: string | null;
   listingId?: string;
   isBestInZone: boolean;
   tone: NetworkTone;
@@ -135,13 +136,13 @@ export type SiteScoreLabRow = {
   id: string;
   title: string;
   zoneLabel: string;
-  score: number;
-  scoreMeter: number;
+  score: number | null;
+  scoreMeter: number | null;
   recommendation: Candidate["recommendation"];
   band: string;
   tone: NetworkTone;
-  modelVersion: string;
-  datasetSnapshotId: string;
+  modelVersion: string | null;
+  datasetSnapshotId: string | null;
   missingData: string[];
   evidenceReady: boolean;
   decisionReady: boolean;
@@ -179,7 +180,7 @@ export type ReviewQueueRow = {
   decidedAt?: string;
   reasonRequired: boolean;
   reason?: string;
-  score?: number;
+  score?: number | null;
   recommendation?: Candidate["recommendation"];
   tone: NetworkTone;
 };
@@ -348,6 +349,9 @@ const RISK_LABEL_ZH: Record<RiskLevel, string> = {
 
 // Candidates still being worked: not yet in review and not decided.
 const ACTIVE_CANDIDATE_STATUSES: ReadonlySet<Candidate["status"]> = new Set([
+  "new",
+  "scored",
+  "SCORING_FAILED",
   "missingdata",
   "scoring",
   "wait",
@@ -381,6 +385,9 @@ const LISTING_STATUS_LABEL: Record<Listing["status"], string> = {
 };
 
 const CANDIDATE_STATUS_LABEL: Record<Candidate["status"], string> = {
+  new: "等待評分",
+  scored: "已評分",
+  SCORING_FAILED: "評分失敗",
   missingdata: "缺資料",
   scoring: "評分中",
   wait: "觀望",
@@ -512,11 +519,13 @@ function buildListingRadar(
   const sourceById = new Map(sources.map((source) => [source.id, source] as const));
   return listings.map((listing) => {
     const source = sourceById.get(listing.sourceId);
+    const hardRuleMeasured = Array.isArray(listing.hardRuleFailures);
+    const hardRuleFailures = Array.isArray(listing.hardRuleFailures) ? listing.hardRuleFailures : [];
     const isDuplicate = listing.status === "duplicate" || Boolean(listing.duplicateOfId);
     const tone: NetworkTone =
-      listing.status === "hardfail" || listing.hardRuleFailures.length > 0
+      listing.status === "hardfail" || hardRuleFailures.length > 0
         ? "risk"
-        : isDuplicate || listing.status === "expired"
+        : !hardRuleMeasured || isDuplicate || listing.status === "expired"
           ? "watch"
           : "good";
     return {
@@ -527,7 +536,8 @@ function buildListingRadar(
       duplicateOfId: listing.duplicateOfId,
       geocodeConfidence: listing.geocodeConfidence,
       geocodeConfidenceLabel: formatPercent(listing.geocodeConfidence),
-      hardRuleFailures: listing.hardRuleFailures,
+      hardRuleFailures,
+      hardRuleStatus: hardRuleMeasured ? "measured" : "unmeasured",
       heatZoneId: listing.heatZoneId,
       id: listing.id,
       isDuplicate,
@@ -538,9 +548,15 @@ function buildListingRadar(
       status: listing.status,
       statusLabel: LISTING_STATUS_LABEL[listing.status] ?? listing.status,
       tone,
-      zoneLabel: zoneLabelById.get(listing.heatZoneId) ?? listing.heatZoneId,
+      zoneLabel: listing.heatZoneId ? zoneLabelById.get(listing.heatZoneId) ?? listing.heatZoneId : "待定位",
     };
   });
+}
+
+function compareCandidateScore(left: Candidate, right: Candidate): number {
+  if (left.score === null) return right.score === null ? 0 : 1;
+  if (right.score === null) return -1;
+  return right.score - left.score;
 }
 
 function buildCandidatePipeline(
@@ -549,7 +565,7 @@ function buildCandidatePipeline(
   bestCandidateIds: Set<string>,
 ): CandidatePipelineRow[] {
   return [...candidates]
-    .sort((left, right) => right.score - left.score)
+    .sort(compareCandidateScore)
     .map((candidate) => ({
       address: candidate.address,
       datasetSnapshotId: candidate.datasetSnapshotId,
@@ -562,7 +578,7 @@ function buildCandidatePipeline(
       recommendation: candidate.recommendation,
       reviewId: candidate.reviewId,
       score: candidate.score,
-      scoreMeter: clamp01(candidate.score / 100),
+      scoreMeter: candidate.score === null ? null : clamp01(candidate.score / 100),
       status: candidate.status,
       statusLabel: CANDIDATE_STATUS_LABEL[candidate.status] ?? candidate.status,
       title: candidate.title,
@@ -573,13 +589,18 @@ function buildCandidatePipeline(
 
 function buildSiteScoreLab(candidates: Candidate[], zoneLabelById: Map<string, string>): SiteScoreLabRow[] {
   return [...candidates]
-    .sort((left, right) => right.score - left.score)
+    .sort(compareCandidateScore)
     .map((candidate) => {
       const evidenceReady = candidate.missingData.length === 0;
       const decisionReady = evidenceReady && candidate.recommendation === "GO";
       return {
         band:
-          candidate.recommendation === "GO"
+          candidate.recommendation === null
+            ? "等待評分"
+            : candidate.recommendation === "INVESTIGATE"
+              ? "待補調查"
+            : candidate.score === null ? candidate.recommendation
+            : candidate.recommendation === "GO"
             ? "GO ≥ 80"
             : candidate.recommendation === "WAIT"
               ? "WAIT 60–79"
@@ -587,7 +608,9 @@ function buildSiteScoreLab(candidates: Candidate[], zoneLabelById: Map<string, s
         datasetSnapshotId: candidate.datasetSnapshotId,
         decisionReady,
         evidenceReady,
-        gateLabel: evidenceReady
+        gateLabel: candidate.recommendation === null
+          ? "等待評分結果"
+          : evidenceReady
           ? decisionReady
             ? "可送核准"
             : "證據齊備，建議續觀察"
@@ -597,7 +620,7 @@ function buildSiteScoreLab(candidates: Candidate[], zoneLabelById: Map<string, s
         modelVersion: candidate.modelVersion,
         recommendation: candidate.recommendation,
         score: candidate.score,
-        scoreMeter: clamp01(candidate.score / 100),
+        scoreMeter: candidate.score === null ? null : clamp01(candidate.score / 100),
         title: candidate.title,
         tone: recommendationTone(candidate.recommendation),
         zoneLabel: zoneLabelById.get(candidate.heatZoneId) ?? candidate.heatZoneId,
@@ -775,7 +798,8 @@ function buildZoneViewModel({
     unmetScore,
   });
   const mapPosition = coordinatePosition(zone, bounds);
-  const bestCandidate = [...candidates].sort((left, right) => right.score - left.score)[0];
+  const bestCandidate = candidates.filter((candidate) => candidate.score !== null && candidate.recommendation !== null)
+    .sort(compareCandidateScore)[0];
   const mapTone = zone.cannibalizationRisk === "high" || zone.cannibalizationRisk === "critical" ? "risk" : lensScore >= 0.72 ? "good" : "watch";
   const lensPoints = Math.round(lensScore * 100);
   const availableListingCount = listings.filter((listing) => !CLOSED_LISTING_STATUSES.has(listing.status)).length;
@@ -797,7 +821,9 @@ function buildZoneViewModel({
     bestCandidate,
     candidates,
     candidateCount: candidates.length,
-    candidateSummary: bestCandidate ? `${bestCandidate.id} ${bestCandidate.recommendation} · ${bestCandidate.score}` : "No candidate",
+    candidateSummary: bestCandidate ? `${bestCandidate.id} ${bestCandidate.recommendation} · ${bestCandidate.score}`
+      : candidates.some((candidate) => candidate.status === "scored") ? "已有評分報告，尚無比較排名"
+      : candidates.length ? `${candidates.length} 個候選點等待評分` : "No candidate",
     cannibalizationLabel: RISK_LABEL[zone.cannibalizationRisk] ?? zone.cannibalizationRisk,
     cannibalizationRisk: zone.cannibalizationRisk,
     cannibalizationScore,
@@ -911,7 +937,7 @@ function buildMapPoints(zones: NetworkFindAreasZoneViewModel[]): NetworkFindArea
         heatZoneId: zone.id,
         id: candidate.id,
         label: candidate.title,
-        status: candidate.recommendation,
+        status: candidate.recommendation ?? "等待評分",
         type: "candidate" as const,
         x: point.x,
         y: point.y,
@@ -987,7 +1013,8 @@ function average(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function formatPercent(value: number) {
+function formatPercent(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "未知";
   return `${Math.round(clamp01(value) * 100)}%`;
 }
 

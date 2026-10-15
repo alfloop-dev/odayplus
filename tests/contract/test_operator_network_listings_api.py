@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator
 
 from apps.api.oday_api.main import create_app
+from modules.opsboard.application.network_listings import NetworkListingService
 
 NETWORK_HEADERS = {
     "x-subject-id": "operator-expansion-manager",
@@ -10,6 +13,41 @@ NETWORK_HEADERS = {
     "x-operator-role": "expansion-manager",
     "x-tenant-id": "tenant-a",
 }
+
+
+@pytest.mark.parametrize("recorded", ["absent", None, [], ["missing_geocode_evidence"]],
+                         ids=["absent", "null", "recorded-no-failures", "recorded-failure"])
+def test_listing_read_contract_preserves_unknown_and_recorded_hard_rules(monkeypatch, recorded):
+    original_snapshot = NetworkListingService.snapshot
+
+    def snapshot_with_recorded_verdict(self, **kwargs):
+        snapshot = original_snapshot(self, **kwargs)
+        listing = next(row for row in snapshot["listings"] if row["id"] == "L-2024")
+        if recorded == "absent":
+            listing.pop("hardRuleFailures", None)
+        else:
+            listing["hardRuleFailures"] = recorded
+        # Response validation must not filter already-authorized existing data.
+        listing["sourceEvidence"] = ["EV-L-2024-recorded-snapshot"]
+        return snapshot
+
+    monkeypatch.setattr(NetworkListingService, "snapshot", snapshot_with_recorded_verdict)
+    app = create_app()
+    response = TestClient(app).get("/api/v1/operator/network-listings", headers=NETWORK_HEADERS)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    listing = next(row for row in body["listings"] if row["id"] == "L-2024")
+    assert listing["hardRuleFailures"] == (None if recorded == "absent" else recorded)
+    assert listing["sourceEvidence"] == ["EV-L-2024-recorded-snapshot"]
+    assert listing["address"] and body["heatZones"] and "counts" in body
+
+    schema = app.openapi()
+    response_schema = schema["paths"]["/api/v1/operator/network-listings"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    Draft202012Validator({**response_schema, "components": schema["components"]}).validate(body)
+    verdict = schema["components"]["schemas"]["NetworkListingReadResponse"]["properties"]["hardRuleFailures"]
+    assert {member["type"] for member in verdict["anyOf"]} == {"array", "null"}
+    assert "unmeasured, not passed" in verdict["description"]
+    assert schema["components"]["schemas"]["NetworkListingReadResponse"]["additionalProperties"] is True
 
 
 def test_network_listing_snapshot_exposes_r4_golden_flow_ids() -> None:

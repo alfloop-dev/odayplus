@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 from modules.opsboard.application.operator_live_repository import (
     OperatorLiveRepositoryError,
 )
+from modules.opsboard.application.today_metrics import build_today_metrics
 from modules.opsboard.domain.r4_dtos import (
     ISSUE_STATUS_BY_ACTION,
     ApprovalDecisionRequest,
@@ -62,14 +63,14 @@ ROLES: list[dict[str, Any]] = [
         "id": "ops-lead",
         "label": "營運主管",
         "subtitle": "全域監控、跨域指派與核准",
-        "allowedWorkspaces": ["today", "store", "growth", "network", "govern"],
+        "allowedWorkspaces": ["today", "store", "govern"],
         "heroName": "林承翰",
     },
     {
         "id": "cs-lead",
         "label": "客服主管",
         "subtitle": "評論、客服案件與門市回覆",
-        "allowedWorkspaces": ["today", "store", "govern"],
+        "allowedWorkspaces": ["today", "store"],
         "heroName": "張珮珊",
     },
     {
@@ -83,14 +84,14 @@ ROLES: list[dict[str, Any]] = [
         "id": "marketing-manager",
         "label": "行銷經理",
         "subtitle": "活動、分群、定價建議",
-        "allowedWorkspaces": ["today", "growth", "govern"],
+        "allowedWorkspaces": ["today", "growth"],
         "heroName": "黃仕杰",
     },
     {
         "id": "expansion-manager",
         "label": "展店經理",
         "subtitle": "HeatZone、候選點與 SiteScore",
-        "allowedWorkspaces": ["today", "network", "govern"],
+        "allowedWorkspaces": ["today", "network"],
         "heroName": "王若寧",
     },
     {
@@ -104,7 +105,7 @@ ROLES: list[dict[str, Any]] = [
         "id": "pm-audit",
         "label": "PM／稽核",
         "subtitle": "模型、決策追蹤與稽核線索",
-        "allowedWorkspaces": ["today", "store", "network", "govern"],
+        "allowedWorkspaces": ["today", "network", "govern"],
         "heroName": "周子安",
     },
 ]
@@ -242,11 +243,13 @@ class OperatorStateService:
         persistence_mode: str = "memory",
         provider_mode: str = "fixture",
         live_repository: OperatorLiveRepositoryProtocol | None = None,
+        fixture_issue_repository: Any | None = None,
     ) -> None:
         self._require_live_data = require_live_data or live_repository is not None
         self._persistence_mode = persistence_mode
         self._provider_mode = provider_mode
         self._live_repository = live_repository
+        self._fixture_issue_repository = None if self._require_live_data else fixture_issue_repository
         self._live_ready = False
         self._live_error: str | None = None
         self._state: dict[str, Any] = {} if self._require_live_data else load_r4_seed()
@@ -737,6 +740,14 @@ class OperatorStateService:
             if self._require_live_data
             else self._build_kpis(role=role, counts=counts, queue=queue)
         )
+        if self._require_live_data:
+            if "todayIssues" in state:
+                kpis = build_today_metrics(
+                    issues=state["todayIssues"],
+                    approvals_count=(counts["approvals"] if state.get("_meta", {}).get("sections", {}).get("approvals", {}).get("state") == "available" else None),
+                    now=datetime.now(UTC),
+                    role_id=role_id,
+                )
         response_role = deepcopy(role)
         response_roles = deepcopy(ROLES)
         if self._require_live_data:
@@ -946,59 +957,21 @@ class OperatorStateService:
         counts: dict[str, int],
         queue: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        role_focus = {
-            "ops-lead": ("跨域 SLA", "全域隊列"),
-            "cs-lead": ("客服回覆", "評論與退款"),
-            "field-lead": ("現場派工", "設備與回報"),
-            "marketing-manager": ("活動草稿", "會員成長"),
-            "expansion-manager": ("SiteScore", "候選點佐證"),
-            "pm-audit": ("稽核抽查", "模型追蹤"),
-        }.get(role["id"], ("今日焦點", "角色隊列"))
-        due_label = queue[0]["status"] if queue else "Clear"
-        return [
-            {
-                "label": "今日待處理",
-                "value": str(counts["taskCenter"]),
-                "delta": role_focus[1],
-                "meta": due_label,
-                "tone": "info",
-            },
-            {
-                "label": "Critical SLA",
-                "value": str(counts["critical"]),
-                "delta": role_focus[0],
-                "meta": "API role-filtered",
-                "tone": "danger" if counts["critical"] else "success",
-            },
-            {
-                "label": "待核准",
-                "value": str(counts["approvals"]),
-                "delta": "Approval Center",
-                "meta": "after writes refreshed",
-                "tone": "warning" if counts["approvals"] else "success",
-            },
-            {
-                "label": "可用工作區",
-                "value": str(len(role["allowedWorkspaces"])),
-                "delta": "role policy",
-                "meta": "bootstrap envelope",
-                "tone": "accent",
-            },
-            {
-                "label": "通知",
-                "value": str(counts["notifications"]),
-                "delta": "unread",
-                "meta": "header source",
-                "tone": "neutral",
-            },
-            {
-                "label": "搜尋索引",
-                "value": str(counts["search"]),
-                "delta": "entity deep links",
-                "meta": "Ctrl/Cmd+K",
-                "tone": "success",
-            },
-        ]
+        issues = None
+        if self._fixture_issue_repository is not None:
+            try:
+                issue_state = self._fixture_issue_repository.get_state()
+                candidate_issues = issue_state.get("issues")
+                if isinstance(candidate_issues, list) and all(isinstance(issue, dict) for issue in candidate_issues):
+                    issues = candidate_issues
+            except Exception:
+                issues = None
+        return build_today_metrics(
+            issues=issues,
+            approvals_count=counts["approvals"],
+            now=datetime.now(UTC),
+            role_id=role["id"],
+        )
 
     def _build_search_items(
         self,

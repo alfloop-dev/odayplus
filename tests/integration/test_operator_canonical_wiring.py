@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
 import uvloop
@@ -36,6 +39,7 @@ from modules.priceops import (
     PriceOpsService,
     PricingPlanItem,
 )
+from modules.sitescore.application.candidate_features import feature_from_candidate
 from modules.sitescore.application.reporting import SiteScoreReportService
 from shared.domain import AddressLocation, CandidateSite, Listing
 from shared.infrastructure.persistence import (
@@ -54,8 +58,14 @@ from shared.infrastructure.persistence.operator_network_listings import (
 from shared.infrastructure.persistence.repositories import DurableDecisionStore
 from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 from solver.netplan import NetPlanConstraints
+from tests.intake_registry_fixture import APPROVER, MANAGER, TENANT
+from tests.integration.test_intake_registry_calendar_postgresql import _bundle as _postgres_bundle
+from tests.integration.test_operator_intake_workflow_postgresql import (
+    bridge_database as bridge_database,
+)
 
 BASE = "/api/v1/operator"
+_CONVERTIBLE_LISTING_ID = "00000000-0000-0000-0000-000000000501"
 
 
 @pytest.fixture(autouse=True)
@@ -68,9 +78,9 @@ def _use_production_event_loop_policy() -> Any:
         asyncio.set_event_loop_policy(previous)
 
 
-def _headers(tenant_id: str, *, idempotency_key: str | None = None) -> dict[str, str]:
+def _headers(tenant_id: str, *, idempotency_key: str | None = None, subject: str | None = None) -> dict[str, str]:
     headers = {
-        "x-subject-id": f"operator-{tenant_id}",
+        "x-subject-id": subject or f"operator-{tenant_id}",
         "x-roles": "operations_manager,site_reviewer,expansion_user",
         "x-operator-role": "siteReviewer",
         "x-tenant-id": tenant_id,
@@ -138,9 +148,12 @@ class RecordingLiquidityRuntime:
 
 
 class CanonicalHarness:
-    def __init__(self, database_path: Path, runtime: Any | None = None) -> None:
-        self.bundle = _durable_bundle(database_path)
-        self.document_store = SqliteDocumentStore(self.bundle.engine)
+    def __init__(self, database_path: Path | None, runtime: Any | None = None, *, bundle: Any = None) -> None:
+        self.bundle = bundle if bundle is not None else _durable_bundle(database_path)
+        self.document_store = (
+            bundle.assisted_intake_store._store if bundle is not None
+            else SqliteDocumentStore(self.bundle.engine)
+        )
         self.runtime = runtime or RecordingSiteScoreRuntime()
         self.liquidity_runtime = RecordingLiquidityRuntime()
         self.avm_executor = AVMProductionExecutor(
@@ -181,6 +194,7 @@ class CanonicalHarness:
     def app(self) -> FastAPI:
         app = FastAPI()
         app.state.job_queue = self.bundle.job_queue
+        app.state.persistence_bundle = self.bundle
 
         @app.middleware("http")
         async def correlation_id(request: Request, call_next: Any) -> Any:
@@ -195,6 +209,8 @@ class CanonicalHarness:
                 audit_log=self.bundle.audit_log,
                 document_store=self.document_store,
                 listing_repository_for_tenant=self.listing,
+                intake_workflow_store=getattr(self.bundle, "assisted_intake_store", None),
+                intake_workflow_policy=getattr(self.bundle, "assisted_intake_workflow_policy", None),
                 sitescore_repository_for_tenant=self.sitescore,
                 sitescore_decision_repository_for_tenant=self.decisions,
                 avm_repository_for_tenant=self.avm,
@@ -210,10 +226,41 @@ class CanonicalHarness:
             ),
             prefix="/api/v1",
         )
+        if getattr(self.bundle, "assisted_intake_workflow_policy", None) is not None:
+            from apps.api.app.routes.listings import create_assisted_intake_router
+
+            app.include_router(create_assisted_intake_router(
+                self.bundle.assisted_intake_store,
+                workflow_policy=self.bundle.assisted_intake_workflow_policy,
+            ), prefix="/api/v1")
         return app
 
     def close(self) -> None:
         self.bundle.engine.close()
+
+
+def _postgres_listing_harness(database, monkeypatch, runtime=None):
+    """Exercise the production resolver with its required same-engine workflow.
+
+    The older SQLite harness cannot emulate PostgreSQL advisory locks or the
+    canonical registry. Only the listing/candidate cases below use this real
+    database; their SiteScore runtime remains an explicit recording double.
+    """
+    bundle = _postgres_bundle(database, monkeypatch)
+    monkeypatch.setenv("ODP_INTAKE_SCORE_ATTEMPT_SIGNING_KEY", "synthetic-canonical-writer-test-signing-key")
+    monkeypatch.setenv("ODP_INTAKE_SCORE_RETRY_POLICY_JSON", json.dumps({
+        "policy_id": "synthetic-canonical-writer-retry", "version": 1,
+        "max_attempts": 5, "backoff_seconds": [10, 30, 120, 600],
+    }))
+    # This suite persists feature timestamps as datetime objects. The bridge
+    # fixture's local Clock subclass cannot be pickled, and this suite has no
+    # Intake/SLA wall-clock assertions requiring that synthetic clock.
+    monkeypatch.setattr("modules.opsboard.application.network_listings.datetime", datetime)
+    monkeypatch.setattr("apps.api.app.routes.listings.datetime", datetime)
+    assert bundle.engine.dialect == "postgresql"
+    assert bundle.assisted_intake_store._engine is bundle.engine
+    assert bundle.assisted_intake_workflow_policy is not None
+    return CanonicalHarness(None, runtime, bundle=bundle)
 
 
 def _seed_candidate(harness: CanonicalHarness, tenant_id: str) -> str:
@@ -240,6 +287,8 @@ def _seed_candidate(harness: CanonicalHarness, tenant_id: str) -> str:
         snapshot_id="snapshot-live-1",
         confidence=0.94,
     )
+    # Local synthetic measured verdict; this is not a legacy data backfill.
+    object.__setattr__(listing, "hard_rule_failures", [])
     candidate = CandidateSite(
         candidate_site_id="candidate-live-1",
         listing_id=listing.listing_id,
@@ -374,6 +423,10 @@ def test_scoring_invokes_canonical_runtime_persists_and_isolates_tenant(
         ),
     )
     try:
+        execution = SiteScoreReportService(repository=first.sitescore("tenant-a"), model_runtime=runtime,
+            require_production_model=True, runtime_mode="test").score_candidates_with_execution([
+                feature_from_candidate(first.listing("tenant-a").list_candidates()[0], tenant_id="tenant-a"),
+            ])
         with TestClient(first.app()) as client:
             snapshot = client.get(
                 f"{BASE}/network-scoring",
@@ -390,13 +443,15 @@ def test_scoring_invokes_canonical_runtime_persists_and_isolates_tenant(
             )
         assert snapshot.status_code == 200, snapshot.text
         assert [row["id"] for row in snapshot.json()["candidates"]] == [candidate_id]
-        assert scored.status_code == 200, scored.text
+        assert scored.status_code == 503, scored.text
+        assert scored.json()["detail"]["message"] == "SITESCORE_EXECUTION_OWNER_UNAVAILABLE"
+        assert len(runtime.calls) == 1
         assert runtime.calls[0]["service"] == "sitescore"
         assert runtime.calls[0]["rows"][0]["tenant_id"] == "tenant-a"
         assert runtime.calls[0]["rows"][0]["h3_index"] == "892000000000001"
         assert runtime.calls[0]["rows"][0]["view_version"] == "candidate-site-view-v2"
         assert (
-            scored.json()["scorecard"]["modelVersion"]
+            execution.reports[0].model_version
             == "sitescore:mlflow-production-test"
         )
         assert first.sitescore("tenant-a").latest(candidate_id) is not None
@@ -999,6 +1054,8 @@ def test_canonical_scoring_fails_closed_when_point_in_time_features_missing(
         snapshot_id="snap-b1",
         confidence=0.94,
     )
+    # Local recorded pass isolates this test's existing PIT failure boundary.
+    object.__setattr__(listing, "hard_rule_failures", [])
     candidate = CandidateSite(
         candidate_site_id="cand-b1",
         listing_id=listing.listing_id,
@@ -1143,6 +1200,8 @@ def test_canonical_scoring_fails_closed_when_feature_snapshot_time_is_stale_or_m
         snapshot_id="snap-b4",
         confidence=0.94,
     )
+    # Local recorded pass isolates this test's existing PIT failure boundary.
+    object.__setattr__(listing, "hard_rule_failures", [])
     candidate = CandidateSite(
         candidate_site_id="cand-b4",
         listing_id=listing.listing_id,
@@ -1195,7 +1254,7 @@ def _seed_convertible_listing(
     harness: CanonicalHarness,
     tenant_id: str,
     *,
-    listing_id: str = "listing-convert-1",
+    listing_id: str = _CONVERTIBLE_LISTING_ID,
     snapshot_time: datetime | None = None,
     prior_revenue: float | None = 180_000.0,
 ) -> None:
@@ -1207,7 +1266,7 @@ def _seed_convertible_listing(
     """
 
     address = AddressLocation(
-        address_id=f"ADDR-{listing_id}",
+        address_id="00000000-0000-0000-0000-000000000601",
         raw_address="台北市信義區松仁路 96 號 1F",
         normalized_address="台北市信義區松仁路96號1F",
         city="台北市",
@@ -1227,9 +1286,11 @@ def _seed_convertible_listing(
         area_ping=18,
         floor="1F",
         frontage_m=6,
-        snapshot_id=f"snapshot-{listing_id}",
+        snapshot_id=str(uuid4()),
         confidence=0.94,
     )
+    object.__setattr__(listing, "property_id", str(uuid4()))
+    object.__setattr__(listing, "listing_obs_id", str(uuid4()))
     repository = harness.listing(tenant_id)
     repository.save_listing(
         listing,
@@ -1261,37 +1322,98 @@ def _seed_convertible_listing(
     )
 
 
+def _approve_convertible_listing(database, harness, client):
+    """Real request/review creates the candidate from the original metadata seed.
+
+    No candidate, promotion decision or approval is written by the test. Only
+    measured source admission is an explicit local synthetic input.
+    """
+    from apps.api.app.routes.listings import V1ListingRepositoryAdapter
+    from tests.integration.test_intake_score_delivery_postgresql import _seed_manual_admission
+    from tests.integration.test_operator_intake_promotion_postgresql import (
+        _request,
+        _review,
+        _reviewer_headers,
+    )
+    from tests.integration.test_operator_intake_workflow_postgresql import (
+        _headers as intake_headers,
+    )
+
+    direct = client.post(
+        f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+        headers=_headers(TENANT, subject=MANAGER, idempotency_key="direct-convert-before-approval"),
+        json={"actorRoleId": "expansionManager", "target_format_code": "FORGED-TARGET"},
+    )
+    assert direct.status_code == 422, direct.text
+    assert "PROMOTION_APPROVAL_REQUIRED" in direct.text
+    assert harness.listing(TENANT).list_candidates() == []
+    with database.connect() as conn:
+        for role in ("site_reviewer", "expansion_user"):
+            conn.execute("INSERT INTO identity.account_roles(account_id,role,granted_by) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+                         (APPROVER, role, "isolated-synthetic-writer-test"))
+    base = f"{BASE}/network-listings/intake"
+    submitted = client.post(base + "/submit", json={"url": "https://rent.591.com.tw/synthetic-writer"}, headers=intake_headers())
+    assert submitted.status_code == 200, submitted.text
+    iid = submitted.json()["id"]
+    corrected = client.post(f"{base}/{iid}/correct", json={"fields": {"floor": "1F"}, "reason": "Synthetic recorded input",
+                            "riskSummary": "Synthetic local writer coverage", "riskAcknowledged": True},
+                            headers=intake_headers(key="synthetic-writer-correct"))
+    assert corrected.status_code == 200, corrected.text
+    decided = client.post(f"{base}/{iid}/decide", json={"action": "revise", "targetListingId": _CONVERTIBLE_LISTING_ID,
+                          "reason": "Synthetic measured listing", "riskSummary": "Synthetic local writer coverage", "riskAcknowledged": True},
+                          headers=_reviewer_headers("synthetic-writer-decide"))
+    assert decided.status_code == 200, decided.text
+    intake = decided.json()
+    # Read through the real metadata adapter; do not move PIT values onto the
+    # stored Listing or construct/save a CandidateSiteDraft in the fixture.
+    listing = V1ListingRepositoryAdapter(harness.listing(TENANT)).get_domain_listing(_CONVERTIBLE_LISTING_ID)
+    _seed_manual_admission(database, harness.bundle, intake, listing)
+    requested = _request(client, intake, key="synthetic-writer-request")
+    assert requested.status_code == 202, requested.text
+    assert requested.json()["proposer_subject_id"] == MANAGER
+    reviewed = _review(client, requested.json(), key="synthetic-writer-review")
+    assert reviewed.status_code == 200, reviewed.text
+    receipt = reviewed.json()
+    assert receipt["reviewer_subject_id"] == APPROVER != MANAGER
+    assert receipt["candidate_site_id"]
+    return receipt
+
+
+@pytest.mark.requires_live_env
 def test_operator_convert_carries_point_in_time_contract_into_scoring(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
     """B2: the production writer — not the test — must supply the v2 contract.
 
-    Drives ``POST /listings/{id}/convert`` through the API and then scores the
-    candidate it created. Nothing here calls ``repository.save_candidate``, so a
+    Drives canonical request/review, then the approved-candidate compatibility
+    writer ``POST /listings/{id}/convert``, and scores the resulting candidate. Nothing here calls ``repository.save_candidate``, so a
     pass proves the point-in-time features survive
     ``_candidate_to_dict``/``_dict_to_candidate`` and reach the model row.
     """
 
-    runtime = RecordingSiteScoreRuntime()
-    harness = CanonicalHarness(tmp_path / "operator-convert-roundtrip.sqlite3", runtime)
-    _seed_convertible_listing(harness, "tenant-a")
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from modules.sitescore.tests.test_sitescore_production_runtime import RecordingRuntime
+    from tests.integration.test_intake_score_delivery_postgresql import _claim
+    runtime = RecordingRuntime()
+    harness = _postgres_listing_harness(bridge_database, monkeypatch, runtime)
+    _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
+            accepted = _approve_convertible_listing(bridge_database, harness, client)
             converted = client.post(
-                f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("tenant-a", idempotency_key="convert-live-1"),
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-live-1"),
                 json={"actorRoleId": "expansionManager", "actorName": "Expansion A"},
             )
             assert converted.status_code == 200, converted.text
             candidate_id = converted.json()["candidate"]["id"]
 
-            scored = client.post(
-                f"{BASE}/network-scoring/candidates/{candidate_id}/score",
-                headers=_headers("tenant-a", idempotency_key="score-convert-1"),
-                json={"actorRoleId": "siteReviewer"},
-            )
+            handle_intake_score(_claim(harness.bundle, accepted["site_score_job_id"]), harness.bundle, model_runtime=runtime)
+            scored = client.get(f"{BASE}/network-scoring", headers=_headers(TENANT, subject=MANAGER))
 
         assert scored.status_code == 200, scored.text
+        assert scored.json()["scorecards"][0]["id"] == candidate_id
+        assert scored.json()["scorecards"][0]["reportVersion"] == 1
         row = runtime.calls[0]["rows"][0]
         assert row["prior_90d_cell_net_revenue"] == 180_000.0
         assert row["prior_90d_cell_transaction_count"] == 30
@@ -1304,17 +1426,22 @@ def test_operator_convert_carries_point_in_time_contract_into_scoring(
 
         # The persisted draft must still carry the contract, so the next
         # operator write does not silently wipe it.
-        draft = harness.listing("tenant-a").list_candidates()[0]
+        draft = harness.listing("00000000-0000-0000-0000-000000000001").list_candidates()[0]
         assert draft.prior_90d_cell_net_revenue == 180_000.0
         assert draft.prior_90d_cell_transaction_count == 30
         assert draft.prior_90d_cell_store_count == 1
         assert draft.feature_snapshot_time is not None
+        assert draft.candidate_site.target_format_code == "FORMAT-B"
+        assert draft.candidate_site.created_by == APPROVER
+        assert draft.property_entity_id == draft.listing.property_id
+        assert draft.listing_observation_id == draft.listing.listing_obs_id
     finally:
         harness.close()
 
 
+@pytest.mark.requires_live_env
 def test_operator_listing_write_does_not_wipe_candidate_features(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
     """B2 (wipe path): re-syncing a complete candidate must be lossless.
 
@@ -1323,34 +1450,37 @@ def test_operator_listing_write_does_not_wipe_candidate_features(
     all four point-in-time features set to ``None``.
     """
 
-    runtime = RecordingSiteScoreRuntime()
-    harness = CanonicalHarness(tmp_path / "operator-convert-nowipe.sqlite3", runtime)
-    _seed_convertible_listing(harness, "tenant-a")
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from modules.sitescore.tests.test_sitescore_production_runtime import RecordingRuntime
+    from tests.integration.test_intake_score_delivery_postgresql import _claim
+    runtime = RecordingRuntime()
+    harness = _postgres_listing_harness(bridge_database, monkeypatch, runtime)
+    _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
+            accepted = _approve_convertible_listing(bridge_database, harness, client)
             first = client.post(
-                f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("tenant-a", idempotency_key="convert-nowipe-1"),
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-nowipe-1"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert first.status_code == 200, first.text
             # A second convert re-runs the writer over the existing candidate.
             second = client.post(
-                f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("tenant-a", idempotency_key="convert-nowipe-2"),
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-nowipe-2"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert second.status_code == 200, second.text
             candidate_id = second.json()["candidate"]["id"]
 
-            scored = client.post(
-                f"{BASE}/network-scoring/candidates/{candidate_id}/score",
-                headers=_headers("tenant-a", idempotency_key="score-nowipe-1"),
-                json={"actorRoleId": "siteReviewer"},
-            )
+            handle_intake_score(_claim(harness.bundle, accepted["site_score_job_id"]), harness.bundle, model_runtime=runtime)
+            scored = client.get(f"{BASE}/network-scoring", headers=_headers(TENANT, subject=MANAGER))
 
         assert scored.status_code == 200, scored.text
-        draft = harness.listing("tenant-a").list_candidates()[0]
+        assert scored.json()["scorecards"][0]["id"] == candidate_id
+        assert scored.json()["scorecards"][0]["reportVersion"] == 1
+        draft = harness.listing("00000000-0000-0000-0000-000000000001").list_candidates()[0]
         assert draft.prior_90d_cell_net_revenue == 180_000.0
         assert draft.feature_snapshot_time is not None
         # M7: the recorded hard-rule verdict must not be silently recomputed.
@@ -1359,8 +1489,45 @@ def test_operator_listing_write_does_not_wipe_candidate_features(
         harness.close()
 
 
+@pytest.mark.requires_live_env
+def test_approved_candidate_resync_preserves_queued_worker_authority(bridge_database, monkeypatch):
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from modules.sitescore.tests.test_sitescore_production_runtime import RecordingRuntime
+    from tests.integration.test_intake_score_delivery_postgresql import _claim, _physical
+
+    harness = _postgres_listing_harness(bridge_database, monkeypatch)
+    _seed_convertible_listing(harness, TENANT)
+    try:
+        with TestClient(harness.app()) as client:
+            receipt = _approve_convertible_listing(bridge_database, harness, client)
+            repo = harness.listing(TENANT)
+            before = deepcopy(repo.list_candidates()[0])
+            result = client.post(
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers(TENANT, subject=MANAGER, idempotency_key="resync-queued-candidate"),
+                json={"actorRoleId": "expansionManager"},
+            )
+            assert result.status_code == 200, result.text
+            assert result.json()["created"] is False
+            after = repo.list_candidates()[0]
+            assert vars(after) == vars(before)
+            assert vars(after.listing) == vars(before.listing)
+            runtime = RecordingRuntime()
+            handle_intake_score(_claim(harness.bundle, receipt["site_score_job_id"]),
+                                harness.bundle, model_runtime=runtime)
+            physical = _physical(bridge_database, receipt["site_score_job_id"])
+            assert physical["status"] == "SUCCEEDED"
+            assert len(runtime.calls) == 1
+            assert runtime.calls[0]["rows"][0]["prior_90d_cell_net_revenue"] == 180_000.0
+            assert harness.sitescore(TENANT).get_report(physical["result"]["report_id"]) is not None
+            assert repo.list_candidates()[0].candidate_site.candidate_site_id == receipt["candidate_site_id"]
+    finally:
+        harness.close()
+
+
+@pytest.mark.requires_live_env
 def test_operator_convert_without_cell_aggregates_still_fails_closed(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
     """Criterion 3 on the production path: a real gap must not be scored.
 
@@ -1368,33 +1535,36 @@ def test_operator_convert_without_cell_aggregates_still_fails_closed(
     revenue was never resolved has to fail closed as a permanent data gap.
     """
 
-    harness = CanonicalHarness(tmp_path / "operator-convert-gap.sqlite3")
-    _seed_convertible_listing(harness, "tenant-a", prior_revenue=None)
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from modules.sitescore.tests.test_sitescore_production_runtime import RecordingRuntime
+    from tests.integration.test_intake_score_delivery_postgresql import _claim, _physical
+    runtime = RecordingRuntime()
+    harness = _postgres_listing_harness(bridge_database, monkeypatch, runtime)
+    _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001", prior_revenue=None)
     try:
         with TestClient(harness.app()) as client:
+            accepted = _approve_convertible_listing(bridge_database, harness, client)
             converted = client.post(
-                f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("tenant-a", idempotency_key="convert-gap-1"),
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-gap-1"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert converted.status_code == 200, converted.text
             candidate_id = converted.json()["candidate"]["id"]
 
-            scored = client.post(
-                f"{BASE}/network-scoring/candidates/{candidate_id}/score",
-                headers=_headers("tenant-a", idempotency_key="score-gap-1"),
-                json={"actorRoleId": "siteReviewer"},
-            )
+            handle_intake_score(_claim(harness.bundle, accepted["site_score_job_id"]), harness.bundle, model_runtime=runtime)
 
-        assert scored.status_code == 503, scored.text
-        detail = scored.json()["detail"]
-        assert "prior_90d_cell_net_revenue" in detail["message"]
-        assert detail["code"] == "SITESCORE_FEATURE_CONTRACT_INCOMPLETE"
-        assert detail["retryable"] is False
+        failed = _physical(bridge_database, accepted["site_score_job_id"])
+        assert failed["status"] == "FAILED"
+        assert failed["last_error"]["retryable"] is False
+        assert runtime.calls == []
+        assert harness.sitescore(TENANT).latest(candidate_id) is None
+
     finally:
         harness.close()
 
 
+@pytest.mark.requires_live_env
 @pytest.mark.parametrize(
     ("heat_zone_id", "label"),
     [
@@ -1405,7 +1575,7 @@ def test_operator_convert_without_cell_aggregates_still_fails_closed(
     ],
 )
 def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
     heat_zone_id: str | None,
     label: str,
 ) -> None:
@@ -1419,19 +1589,20 @@ def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
     rejection happened before persistence, not after a partial write.
     """
 
-    harness = CanonicalHarness(tmp_path / f"operator-heatzone-{label}.sqlite3")
-    _seed_convertible_listing(harness, "tenant-a")
+    harness = _postgres_listing_harness(bridge_database, monkeypatch)
+    _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
+            _approve_convertible_listing(bridge_database, harness, client)
             converted = client.post(
-                f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("tenant-a", idempotency_key=f"convert-hz-{label}"),
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key=f"convert-hz-{label}"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert converted.status_code == 200, converted.text
             candidate_id = converted.json()["candidate"]["id"]
 
-        repository = harness.listing("tenant-a")
+        repository = harness.listing("00000000-0000-0000-0000-000000000001")
         before = repository.list_candidates()
         assert len(before) == 1
         good_heat_zone_id = before[0].heat_zone_id
@@ -1440,7 +1611,7 @@ def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
         service = NetworkListingService(
             listing_repository=repository,
             intake_repository=DurableAssistedIntakeRepository(
-                harness.scoped("tenant-a")
+                harness.scoped("00000000-0000-0000-0000-000000000001")
             ),
             seed_fixtures=False,
         )
@@ -1453,7 +1624,7 @@ def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
 
         # Nothing partial was written: the stored candidate still carries the
         # original heat zone and the point-in-time contract.
-        after = harness.listing("tenant-a").list_candidates()
+        after = harness.listing("00000000-0000-0000-0000-000000000001").list_candidates()
         assert len(after) == 1
         assert after[0].heat_zone_id == good_heat_zone_id
         assert after[0].prior_90d_cell_net_revenue == 180_000.0
@@ -1462,28 +1633,30 @@ def test_operator_candidate_write_rejects_blank_heat_zone_before_persistence(
         harness.close()
 
 
+@pytest.mark.requires_live_env
 def test_operator_candidate_write_rejects_missing_heat_zone_key(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
     """M7 (absent key): the original gap must stay closed too."""
 
-    harness = CanonicalHarness(tmp_path / "operator-heatzone-missing.sqlite3")
-    _seed_convertible_listing(harness, "tenant-a")
+    harness = _postgres_listing_harness(bridge_database, monkeypatch)
+    _seed_convertible_listing(harness, "00000000-0000-0000-0000-000000000001")
     try:
         with TestClient(harness.app()) as client:
+            _approve_convertible_listing(bridge_database, harness, client)
             converted = client.post(
-                f"{BASE}/network-listings/listings/listing-convert-1/convert",
-                headers=_headers("tenant-a", idempotency_key="convert-hz-missing"),
+                f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
+                headers=_headers("00000000-0000-0000-0000-000000000001", subject=MANAGER, idempotency_key="convert-hz-missing"),
                 json={"actorRoleId": "expansionManager"},
             )
             assert converted.status_code == 200, converted.text
             candidate_id = converted.json()["candidate"]["id"]
 
-        repository = harness.listing("tenant-a")
+        repository = harness.listing("00000000-0000-0000-0000-000000000001")
         service = NetworkListingService(
             listing_repository=repository,
             intake_repository=DurableAssistedIntakeRepository(
-                harness.scoped("tenant-a")
+                harness.scoped("00000000-0000-0000-0000-000000000001")
             ),
             seed_fixtures=False,
         )
@@ -1494,7 +1667,7 @@ def test_operator_candidate_write_rejects_missing_heat_zone_key(
         with pytest.raises(ValueError, match="no usable heatZoneId"):
             service.save_candidate(candidate)
 
-        after = harness.listing("tenant-a").list_candidates()
+        after = harness.listing("00000000-0000-0000-0000-000000000001").list_candidates()
         assert len(after) == 1
         assert after[0].heat_zone_id.strip()
     finally:
