@@ -385,6 +385,9 @@ test.describe("Network Find Areas Package 10 layout", () => {
 
   test("1440px geometry matches the design grid", async ({ page }) => {
     await openFindAreas(page, 1440);
+    // Zone fixtures render before the API workflow snapshots settle. Keep
+    // their temporary context notice out of this settled fixture-grid measure.
+    await expect(page.getByTestId("network-workflow-context-notice")).toHaveCount(0, { timeout: 10_000 });
     const g = await page.evaluate(() => {
       const box = (selector: string) => {
         const element = document.querySelector<HTMLElement>(selector);
