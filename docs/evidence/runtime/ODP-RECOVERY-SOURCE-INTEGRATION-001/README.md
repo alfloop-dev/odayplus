@@ -9,7 +9,37 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi admitted810 base composition / new immutable measurement candidate
+## Pi admitted810 composition checkpoint — incoming Web failure, NOT final freeze
+
+Actual run162717-ad0baa9f composed/pushed two-parent anchor
+`0137a9faf2aef12a813f5df9784351da1da0b68a` / tree
+`ecf699afd6b0e365c1257de5a58aad85e41f36c9`, preserving task77dde and admitted810.
+Seventeen incoming paths remain base-byte-equal; the shared dependencies seam
+retains both sides' exact owning function ASTs. No conflict/history rewrite or
+manual incoming edit. Original complete blocked6/human-decision evidence unchanged.
+
+Fresh0137 incoming backend controls really finish0 (66 and23 members). Full300
+Operator Web controls really finish1:299 pass, one scoped-snapshot initialisation
+fails at its unchanged1000ms find wait while snapshot remains loading. ONE
+explicitly justified identical retry also fails the SAME1/299. Focused unchanged
+12-case file passes ONLY as a diagnostic contrast, not full300 acceptance or a
+proven timing/flake cause. Native waits/ECHILD/accessible owned-writer closure,
+exact own-container removal and immutable seals remain; external visibilityUNKNOWN.
+The incoming failing test path is UNLEASED and was NOT edited. STOP for finite
+Manager owning diagnostic/lease disposition, preserving all waits/assertions/
+fixtures/inventory; see [precise request](MANAGER-INCOMING-WEB-DISPOSITION-REQUEST.md)
+and [all actual receipts/static preservation](pi-dev810-composition-diagnostics.json).
+
+THIS documentation successor is NOT0137: no pass transfers. Base advance is
+durable but verification is incomplete. No blind third full retry or expensive
+14/17/assessment run against the known incomplete composition. After legitimate
+repair/disposition, freeze ONE head for all fresh14/unchanged17/applicable owning/
+terminal normalCI/full configured sequential assessment. No review submission/
+task_finalize before full author proof. HumanOpsPENDING/account independence
+UNRESOLVED/originalfailedPi/a129PR1459/HOLD/goalfalse remain; no approval/merge/done/
+live effect. The prior base-admission request is resolved, not a scope grant.
+
+## Pi admitted810 base composition / historical measurement candidate
 
 Actual Manager run `pi-20261015T162717Z-ad0baa9f` renewed the running isolated
 workspace/lease at admitted `81072d0ae396c772b39e53db0761a7522524e8fd`.

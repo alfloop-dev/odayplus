@@ -1,0 +1,501 @@
+{
+  "kind": "author-incremental-base-composition-diagnostics-NOT-canonical-or-review",
+  "run": "pi-20261015T162717Z-ad0baa9f",
+  "measured_head": "0137a9faf2aef12a813f5df9784351da1da0b68a",
+  "measured_tree": "ecf699afd6b0e365c1257de5a58aad85e41f36c9",
+  "parents": [
+    "77dde3131df7beb5dd65febe6e063ab4c90546bf",
+    "81072d0ae396c772b39e53db0761a7522524e8fd"
+  ],
+  "documentation_successor_has_different_identity_no_pass_transfer": true,
+  "renewal": {
+    "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/renewal-verified.json",
+    "sha256": "72cd86b70213f542fdd07e6b1fc6d4ac44ef9394d1b6cd4769db21bb6b4dfc83"
+  },
+  "static": {
+    "base": "81072d0ae396c772b39e53db0761a7522524e8fd",
+    "task_parent": "77dde3131df7beb5dd65febe6e063ab4c90546bf",
+    "incoming": [
+      {
+        "path": "apps/api/app/routes/operator.py",
+        "sha256": "4148e8bd1ee05f332cde4da3d082b301c9918ea1cfc9a71f5b5bed7884909a88",
+        "base_sha256": "4148e8bd1ee05f332cde4da3d082b301c9918ea1cfc9a71f5b5bed7884909a88",
+        "base_byte_equal": true
+      },
+      {
+        "path": "apps/api/app/routes/operator_modules/shell.py",
+        "sha256": "0a1a9a8f2af7b2c2339cf7ac8ab6e1ed287142054ed9ddc8bda0db86023460a8",
+        "base_sha256": "0a1a9a8f2af7b2c2339cf7ac8ab6e1ed287142054ed9ddc8bda0db86023460a8",
+        "base_byte_equal": true
+      },
+      {
+        "path": "apps/api/oday_api/security/dependencies.py",
+        "sha256": "9c1edcfb4370305d16b1f8445aee56370c59787632e011af2a0476d117b3e69b",
+        "base_sha256": "6f6e82e470a0ccd9f1a7aa9c0b14f4b8f52a56e27958cd891e1c77763627ab97",
+        "base_byte_equal": false
+      },
+      {
+        "path": "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+        "sha256": "b372cb80c4ca65556e4db713d6c0693d479636c10c73ecab9d8c513b9f982e7c",
+        "base_sha256": "b372cb80c4ca65556e4db713d6c0693d479636c10c73ecab9d8c513b9f982e7c",
+        "base_byte_equal": true
+      },
+      {
+        "path": "apps/web/features/operator/OperatorConsole.tsx",
+        "sha256": "99c1a2b899555ebfeaee1b9581db5df8caba1297d91c5c9eac778bd5872b03d2",
+        "base_sha256": "99c1a2b899555ebfeaee1b9581db5df8caba1297d91c5c9eac778bd5872b03d2",
+        "base_byte_equal": true
+      },
+      {
+        "path": "apps/web/features/operator/TodayWorkspace.tsx",
+        "sha256": "c1bb5eed2e80c894a41fb75b1d3c75030fe0c759e9cf050cb9adec8ef78e0420",
+        "base_sha256": "c1bb5eed2e80c894a41fb75b1d3c75030fe0c759e9cf050cb9adec8ef78e0420",
+        "base_byte_equal": true
+      },
+      {
+        "path": "apps/web/features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx",
+        "sha256": "53ad69f2f19e68ee0faedeb72243cb4cbcfbda7f5ec4a7073ab85bd84aca3435",
+        "base_sha256": "53ad69f2f19e68ee0faedeb72243cb4cbcfbda7f5ec4a7073ab85bd84aca3435",
+        "base_byte_equal": true
+      },
+      {
+        "path": "apps/web/features/operator/__tests__/OperatorConsole.test.tsx",
+        "sha256": "b579b9b7f6a11d7f20fb63eb9108f2a84c491c15b816c80d8aaa02d50b2c5034",
+        "base_sha256": "b579b9b7f6a11d7f20fb63eb9108f2a84c491c15b816c80d8aaa02d50b2c5034",
+        "base_byte_equal": true
+      },
+      {
+        "path": "apps/web/features/operator/network/NetworkShell.tsx",
+        "sha256": "1df04b1591ad6f99b61e6eb3020772597d3643bb03987e32fa51abce1bb11333",
+        "base_sha256": "1df04b1591ad6f99b61e6eb3020772597d3643bb03987e32fa51abce1bb11333",
+        "base_byte_equal": true
+      },
+      {
+        "path": "apps/web/features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx",
+        "sha256": "eaf7c9d24529d855fcaaca12f34901532c52716463203fe8c51119a76aa9a660",
+        "base_sha256": "eaf7c9d24529d855fcaaca12f34901532c52716463203fe8c51119a76aa9a660",
+        "base_byte_equal": true
+      },
+      {
+        "path": "docs/evidence/completion/ODP-OPERATOR-NAV-RBAC-ALIGN-001/README.md",
+        "sha256": "e5384a4ac4dc5ad3ee1ecf04b357928c5d87a1847bd29ad30df7cd480d28d010",
+        "base_sha256": "e5384a4ac4dc5ad3ee1ecf04b357928c5d87a1847bd29ad30df7cd480d28d010",
+        "base_byte_equal": true
+      },
+      {
+        "path": "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json",
+        "sha256": "9663ce2d7217ca5babde85470ac3a6c3905457735da39ec27125da4ec517bd5e",
+        "base_sha256": "9663ce2d7217ca5babde85470ac3a6c3905457735da39ec27125da4ec517bd5e",
+        "base_byte_equal": true
+      },
+      {
+        "path": "docs/evidence/e2e/raw_playwright_results.json",
+        "sha256": "f9a24e6835e5b7237efe2420214ba342bfa4142450cdba662222536486ffc32d",
+        "base_sha256": "f9a24e6835e5b7237efe2420214ba342bfa4142450cdba662222536486ffc32d",
+        "base_byte_equal": true
+      },
+      {
+        "path": "docs/evidence/e2e/raw_pytest_results.json",
+        "sha256": "3260ecdda6db2780b6a135ffe908599b9d6c2ee294e7e5ac335a197b38bb2d94",
+        "base_sha256": "3260ecdda6db2780b6a135ffe908599b9d6c2ee294e7e5ac335a197b38bb2d94",
+        "base_byte_equal": true
+      },
+      {
+        "path": "tests/e2e/operator-assisted-listing-intake.spec.ts",
+        "sha256": "a43131d46271660b2caf4794b65c1c279e4f9a27aa8374f1f5628bc5badc979a",
+        "base_sha256": "a43131d46271660b2caf4794b65c1c279e4f9a27aa8374f1f5628bc5badc979a",
+        "base_byte_equal": true
+      },
+      {
+        "path": "tests/e2e/operator-shell-today.spec.ts",
+        "sha256": "b2b7fbc4c57a69c094327f5c1cbc6768dc27f37991d14bea4b6205d50d9eec9a",
+        "base_sha256": "b2b7fbc4c57a69c094327f5c1cbc6768dc27f37991d14bea4b6205d50d9eec9a",
+        "base_byte_equal": true
+      },
+      {
+        "path": "tests/integration/test_operator_live_domain_modules.py",
+        "sha256": "cdc47fc79b8d94228eacb51770138f9cce07a6cfeac45888155ae267e38a705a",
+        "base_sha256": "cdc47fc79b8d94228eacb51770138f9cce07a6cfeac45888155ae267e38a705a",
+        "base_byte_equal": true
+      },
+      {
+        "path": "tests/security/test_operator_read_authorization.py",
+        "sha256": "755343f6d3fd44a8bb1e40bd0628c8732fe640a28f951376ba157d0d264d707f",
+        "base_sha256": "755343f6d3fd44a8bb1e40bd0628c8732fe640a28f951376ba157d0d264d707f",
+        "base_byte_equal": true
+      }
+    ],
+    "dependencies_task_functions_preserved": [
+      "_correlation_id_from_request",
+      "_enforce_password_rotation",
+      "principal_from_headers"
+    ],
+    "dependencies_base_functions_preserved": [
+      "operator_permission_decision",
+      "require_operator_permission"
+    ],
+    "human_decisions_unchanged": true,
+    "conflicts": false,
+    "not_runtime_proof": true
+  },
+  "static_artifact": {
+    "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/base-static.json",
+    "sha256": "625ce6fa0c2fecea7a50d6802eab3a98ffa199967c69fe574c3e59bda7e0d681"
+  },
+  "results": [
+    {
+      "label": "incoming-operator-security",
+      "terminal": {
+        "at": "2026-10-15T16:31:11.244513+00:00",
+        "head": "0137a9faf2aef12a813f5df9784351da1da0b68a",
+        "tree": "ecf699afd6b0e365c1257de5a58aad85e41f36c9",
+        "argv": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/security/test_operator_read_authorization.py",
+          "tests/security/test_operator_network_read_scope.py",
+          "tests/contract/test_operator_api.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "duration_seconds": 57.33845400810242,
+        "exit_code": 0,
+        "interrupted": false,
+        "kernel_child_closure": {
+          "kernel_waitpid_echild": true
+        },
+        "descendant_exit_unknown": false,
+        "writer_scan": {
+          "same_uid_writers": [],
+          "same_uid_permission_denied": [
+            1085478,
+            1085479,
+            1085599,
+            1085724
+          ],
+          "other_uids_not_inspected": true
+        },
+        "external_writer_exclusion_unproven": true,
+        "raw_sha256": "bb0bc372c002b453aabe7867f8dbbfea20d4d76cf09200e9640ee5a4bc5f060d",
+        "manager_activity_recognized": false,
+        "distinct_manager_observations": 0,
+        "not_canonical_or_review": true
+      },
+      "terminal_artifact": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-security/terminal.json",
+        "sha256": "04f50b7f438fba695c9b37d3d463d08f720a5719ae82959406734375ddf90e91"
+      },
+      "raw": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-security/raw.log",
+        "sha256": "bb0bc372c002b453aabe7867f8dbbfea20d4d76cf09200e9640ee5a4bc5f060d"
+      },
+      "seal": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-security-seal.json",
+        "sha256": "cfbfd55d0ab49f924efc4269520529bd8867d9b70293c49afacfdcf914df2ebb"
+      },
+      "invocation": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-security/invocation.json",
+        "sha256": "9952097a1989ab7089ac152b427df7a6c9fe7261b0edab08189cdacce49829f6"
+      },
+      "pg_guard": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-security/pg-guard.json",
+        "sha256": "467c7014560998364de12125461b32ee8caba8884ddecb53c5f211270a752d36"
+      },
+      "coordinator": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-security/coordinator-terminal.json",
+        "sha256": "ed767d90dcb6b33856c932c3246622495a5df5d7d328690317409f4c35530016"
+      }
+    },
+    {
+      "label": "incoming-operator-live",
+      "terminal": {
+        "at": "2026-10-15T16:32:03.049417+00:00",
+        "head": "0137a9faf2aef12a813f5df9784351da1da0b68a",
+        "tree": "ecf699afd6b0e365c1257de5a58aad85e41f36c9",
+        "argv": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/integration/test_operator_live_domain_modules.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "duration_seconds": 22.592372165992856,
+        "exit_code": 0,
+        "interrupted": false,
+        "kernel_child_closure": {
+          "kernel_waitpid_echild": true
+        },
+        "descendant_exit_unknown": false,
+        "writer_scan": {
+          "same_uid_writers": [],
+          "same_uid_permission_denied": [
+            1085478,
+            1085479,
+            1085599,
+            1085724
+          ],
+          "other_uids_not_inspected": true
+        },
+        "external_writer_exclusion_unproven": true,
+        "raw_sha256": "63c6b98111a564cb049f0fbcc71499ad0184ca308959087741228d61f78d60fb",
+        "manager_activity_recognized": false,
+        "distinct_manager_observations": 0,
+        "not_canonical_or_review": true
+      },
+      "terminal_artifact": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-live/terminal.json",
+        "sha256": "e40994c8402f5a89ed6dc718f2ed05266ae75ee749f45aefa1f6964c9ddb6329"
+      },
+      "raw": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-live/raw.log",
+        "sha256": "63c6b98111a564cb049f0fbcc71499ad0184ca308959087741228d61f78d60fb"
+      },
+      "seal": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-live-seal.json",
+        "sha256": "d5ddd8e994f0f83662e49b6ecae3f549776a72c89bb65afb7463c7920f47b44e"
+      },
+      "invocation": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-live/invocation.json",
+        "sha256": "1dad2966640f71d1d858af84627fbd5cdb46765bf0458d90f4b5fb5593975cc0"
+      },
+      "pg_guard": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-live/pg-guard.json",
+        "sha256": "6d417c40073a4226bf1592c4dfd2432a535399f750a7234718c4abe157aee2b5"
+      },
+      "coordinator": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-live/coordinator-terminal.json",
+        "sha256": "0805a58378cd115b55178f86f9c603588d5936cf18e3862427fcb436c53cc3a0"
+      }
+    },
+    {
+      "label": "incoming-operator-web",
+      "terminal": {
+        "at": "2026-10-15T16:32:39.807608+00:00",
+        "head": "0137a9faf2aef12a813f5df9784351da1da0b68a",
+        "tree": "ecf699afd6b0e365c1257de5a58aad85e41f36c9",
+        "argv": [
+          "pnpm",
+          "--dir",
+          "apps/web",
+          "test",
+          "features/operator/__tests__",
+          "features/operator/network/__tests__"
+        ],
+        "cap_seconds": 420,
+        "duration_seconds": 27.830721945967525,
+        "exit_code": 1,
+        "interrupted": false,
+        "kernel_child_closure": {
+          "kernel_waitpid_echild": true
+        },
+        "descendant_exit_unknown": false,
+        "writer_scan": {
+          "same_uid_writers": [],
+          "same_uid_permission_denied": [
+            1085478,
+            1085479,
+            1085599,
+            1085724
+          ],
+          "other_uids_not_inspected": true
+        },
+        "external_writer_exclusion_unproven": true,
+        "raw_sha256": "cbfeaffcaf7b81b2e6bc56d45a3bf8563f764d38122062c3418870ce1d651f4e",
+        "manager_activity_recognized": false,
+        "distinct_manager_observations": 0,
+        "not_canonical_or_review": true
+      },
+      "terminal_artifact": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-web/terminal.json",
+        "sha256": "b65f575c08be61c1eae0b0def73460b839611d760be4235ad715718ff6f7a0de"
+      },
+      "raw": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-web/raw.log",
+        "sha256": "cbfeaffcaf7b81b2e6bc56d45a3bf8563f764d38122062c3418870ce1d651f4e"
+      },
+      "seal": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-web-seal.json",
+        "sha256": "817c9e1de844aee90edc5272199ead8b3a4805897b010e265c8ef6312f0182e1"
+      },
+      "invocation": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-web/invocation.json",
+        "sha256": "c0440826c83de90f57e3cf2839d8789af87ebbd6e367e1c8194d9f4de4ad5f82"
+      },
+      "pg_guard": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-web/pg-guard.json",
+        "sha256": "e2346f766050ed30cd8043b8904017cd9149bc4e09ddcd50366e3b2311b246e1"
+      },
+      "coordinator": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-web/coordinator-terminal.json",
+        "sha256": "fb823bc9a5771804afb0a5c05acc75870fabf0d8ff47b67f1cf913c47d122610"
+      }
+    },
+    {
+      "label": "incoming-operator-web-retry01",
+      "terminal": {
+        "at": "2026-10-15T16:33:44.105932+00:00",
+        "head": "0137a9faf2aef12a813f5df9784351da1da0b68a",
+        "tree": "ecf699afd6b0e365c1257de5a58aad85e41f36c9",
+        "argv": [
+          "pnpm",
+          "--dir",
+          "apps/web",
+          "test",
+          "features/operator/__tests__",
+          "features/operator/network/__tests__"
+        ],
+        "cap_seconds": 420,
+        "duration_seconds": 30.434650687035173,
+        "exit_code": 1,
+        "interrupted": false,
+        "kernel_child_closure": {
+          "kernel_waitpid_echild": true
+        },
+        "descendant_exit_unknown": false,
+        "writer_scan": {
+          "same_uid_writers": [],
+          "same_uid_permission_denied": [
+            1085478,
+            1085479,
+            1085599,
+            1085724
+          ],
+          "other_uids_not_inspected": true
+        },
+        "external_writer_exclusion_unproven": true,
+        "raw_sha256": "ce28a125fbbb1bd991b01a942958317d5d14a58ea8d793e51bc89d0455d5fcb8",
+        "manager_activity_recognized": false,
+        "distinct_manager_observations": 0,
+        "not_canonical_or_review": true
+      },
+      "terminal_artifact": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-web-retry01/terminal.json",
+        "sha256": "8569491d5cb1cb189df789247567204dfff1b2fe5a5a17f7cb452048c6e7391b"
+      },
+      "raw": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-web-retry01/raw.log",
+        "sha256": "ce28a125fbbb1bd991b01a942958317d5d14a58ea8d793e51bc89d0455d5fcb8"
+      },
+      "seal": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-web-retry01-seal.json",
+        "sha256": "5c4d0a3256c4ca9a56a8e298a94ccfd7520bc3470ba31a69d2c5db704cfcf579"
+      },
+      "invocation": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-web-retry01/invocation.json",
+        "sha256": "d453d161a4cd30e44df4171312f1bde1f139ef169fb6b72b97eb7c957179bc1c"
+      },
+      "pg_guard": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-web-retry01/pg-guard.json",
+        "sha256": "ef021108895ca257a10a33f4f93bb8d83b44002de678652e65c4507b70086087"
+      },
+      "coordinator": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-operator-web-retry01/coordinator-terminal.json",
+        "sha256": "6fe413e0a79bd46c3b371cbd914a6cf8ec0bd6684e2e807d5613bc3a75e4e110"
+      }
+    },
+    {
+      "label": "incoming-web-focused-diagnostic",
+      "terminal": {
+        "at": "2026-10-15T16:34:23.435729+00:00",
+        "head": "0137a9faf2aef12a813f5df9784351da1da0b68a",
+        "tree": "ecf699afd6b0e365c1257de5a58aad85e41f36c9",
+        "argv": [
+          "pnpm",
+          "--dir",
+          "apps/web",
+          "test",
+          "features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx",
+          "--reporter=verbose"
+        ],
+        "cap_seconds": 420,
+        "duration_seconds": 5.847926245070994,
+        "exit_code": 0,
+        "interrupted": false,
+        "kernel_child_closure": {
+          "kernel_waitpid_echild": true
+        },
+        "descendant_exit_unknown": false,
+        "writer_scan": {
+          "same_uid_writers": [],
+          "same_uid_permission_denied": [
+            1085478,
+            1085479,
+            1085599,
+            1085724
+          ],
+          "other_uids_not_inspected": true
+        },
+        "external_writer_exclusion_unproven": true,
+        "raw_sha256": "879d516bc2d8897b4b432346f64ffc57debaaca69c14bfe17f587c4b099fef2d",
+        "manager_activity_recognized": false,
+        "distinct_manager_observations": 0,
+        "not_canonical_or_review": true
+      },
+      "terminal_artifact": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-web-focused-diagnostic/terminal.json",
+        "sha256": "aeb69244d0e6fecd0e0c26e00e06c89de59bfaf45c2e591a9cd4c45d765ec2cc"
+      },
+      "raw": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-web-focused-diagnostic/raw.log",
+        "sha256": "879d516bc2d8897b4b432346f64ffc57debaaca69c14bfe17f587c4b099fef2d"
+      },
+      "seal": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-web-focused-diagnostic-seal.json",
+        "sha256": "d309ea4baa110f6ad5ca204d62c5c10970d4201f7bf7520fa91b217415153f17"
+      },
+      "invocation": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-web-focused-diagnostic/invocation.json",
+        "sha256": "7019d35443a84986e62b6d1082c15acdaac13b2a08421b68cd3bc4a5e2b0c54a"
+      },
+      "pg_guard": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-web-focused-diagnostic/pg-guard.json",
+        "sha256": "5532780e5888deb7cf05f9431b4b304ed15da0d490b672984a1c455d8d6ab2ce"
+      },
+      "coordinator": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/incoming-web-focused-diagnostic/coordinator-terminal.json",
+        "sha256": "1ea4c44ff75d897f4ba0701207a499dfd391effb739abccb4cfc9ea231d6e579"
+      }
+    }
+  ],
+  "retry_reason": {
+    "head": "0137a9faf2aef12a813f5df9784351da1da0b68a",
+    "initial": "incoming-operator-web/terminal.json",
+    "actual_initial_outcome": "native exit1; 1 failed / 299 passed; no interrupted selection",
+    "inspected": "Entire 466-line NetworkConsoleScopedSnapshot.test.tsx and complete failure body; initialises snapshot findByTestId at line268 failed while bootstrap was ready and snapshot remained loading. Observed test duration1943ms; default findBy wait is1000ms. ECONNREFUSED lines are retained, not established cause.",
+    "reason": "One distinct identical full300 selection retry to determine reproducibility of the asynchronous loading observation after admitted composition; source/test bodies are base-byte-equal and no fixture/membership/parallelism/1000ms wait/5000ms Vitest/420s cap/assertion change. No proven flake or unique timing cause is claimed. If it fails, stop for finite owning diagnosis/scope rather than blind repeats.",
+    "not_a_pass_or_failure_erasure": true
+  },
+  "original_complete_task_equal": true,
+  "original_snapshot": {
+    "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/original-task-before.json",
+    "sha256": "5718e76acbc5b6f374d76f5e1e0f1ba175f5ca603e9d75aa8dd3c77d86ace164"
+  },
+  "original_object_sha256": "efaad957044549361067c25f0453369bf5107bc27137cebbe9c37fd117b39132",
+  "new_test_path_unleased_and_unedited": "apps/web/features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx",
+  "hosted_ci_readback": {
+    "artifact": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T162717Z-ad0baa9f/ci0137-readback.json",
+      "sha256": "35b343a4f511a63047d2030a9a88d299fd8c9bc8c3ff75401a9b1fdda8fb06c5"
+    },
+    "databaseId": 38769712929,
+    "url": "https://github.com/alfloop-dev/odayplus/actions/runs/38769712929",
+    "status": "in_progress",
+    "conclusion": "",
+    "not_terminal_success": true
+  },
+  "scope_entries": 361,
+  "source_docs": 18,
+  "native_custody_external_non_owned_inaccessible_fd_exclusion_unknown": true,
+  "no_new_canonical14_supplemental17_or_assessment": true,
+  "HumanOps_final": "PENDING",
+  "underlying_account_independence": "UNRESOLVED",
+  "quarantine_bindingNULL_cleanupUNKNOWN_HOLD_goalfalse_unchanged": true
+}
