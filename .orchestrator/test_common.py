@@ -410,19 +410,22 @@ class ClaudeAuthTests(unittest.TestCase):
 
         refresh.assert_not_called()
 
-    def test_probe_accepts_expired_env_token_with_valid_refresh_token(self) -> None:
+    def test_probe_leaves_expired_env_token_branch_unchanged(self) -> None:
+        # Scoped out of this fix: an env token that mirrors the expired stored
+        # token still needs deliver()'s refresh before it counts as ready.
         env = {"HOME": "/tmp/test-home", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-old"}
         expired_oauth = {
             "accessToken": "sk-ant-oat01-old",
             "refreshToken": "old-refresh",
             "expiresAt": 1,
+            "refreshTokenExpiresAt": int(common.time.time() * 1000) + 86_400_000,
         }
         with (
             mock.patch.object(common, "load_claude_oauth_tokens", return_value=({}, expired_oauth, Path("/tmp/.credentials.json"))),
             mock.patch.object(common, "refresh_claude_oauth_tokens") as refresh,
             mock.patch.object(common, "run_command") as run_command,
         ):
-            self.assertTrue(common.claude_auth_ready("claude", env=env, refresh_if_needed=False))
+            self.assertFalse(common.claude_auth_ready("claude", env=env, refresh_if_needed=False))
 
         refresh.assert_not_called()
         run_command.assert_not_called()

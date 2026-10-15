@@ -765,7 +765,7 @@ def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, 
         if stored_token and stored_token == env_token and not claude_oauth_token_expired(oauth):
             return True
         if not refresh_if_needed:
-            return claude_oauth_refreshable(oauth)
+            return False
         refreshed = refresh_claude_oauth_tokens(env)
         if refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0):
             refreshed_token = str(refreshed.get("accessToken") or "").strip()

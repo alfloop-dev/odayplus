@@ -425,7 +425,7 @@ class ClaudeAuthProbeRefreshTests(unittest.TestCase):
         credentials_path.write_text(json.dumps({"claudeAiOauth": oauth}), encoding="utf-8")
         return credentials_path
 
-    def _probe(self, home: Path, *, env_token: str = "") -> tuple[object, dict, mock.Mock, mock.Mock]:
+    def _probe(self, home: Path) -> tuple[object, dict, mock.Mock, mock.Mock]:
         config = {
             "paths": {"claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"},
             "providers": {
@@ -437,7 +437,7 @@ class ClaudeAuthProbeRefreshTests(unittest.TestCase):
         }
         status = mock.Mock(returncode=0, stdout=json.dumps({"loggedIn": True}))
         with (
-            mock.patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": env_token, "CLAUDE_CONFIG_DIR": ""}, clear=False),
+            mock.patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "", "CLAUDE_CONFIG_DIR": ""}, clear=False),
             mock.patch("adapters.claude_cli.configured_provider_binary", return_value="/usr/bin/claude"),
             mock.patch.object(provider_permissions, "configured_provider_binary", return_value="/usr/bin/claude"),
             mock.patch.object(
@@ -464,27 +464,26 @@ class ClaudeAuthProbeRefreshTests(unittest.TestCase):
 
     def test_expired_access_token_with_valid_refresh_token_is_dispatchable_offline(self) -> None:
         now_ms = int(common.time.time() * 1000)
-        for env_token in ("", "sk-ant-oat01-old"):
-            with self.subTest(env_token=env_token), tempfile.TemporaryDirectory() as tmpdir:
-                home = Path(tmpdir)
-                credentials_path = self._write_credentials(
-                    home,
-                    accessToken="sk-ant-oat01-old",
-                    refreshToken="old-refresh",
-                    expiresAt=now_ms - 60_000,
-                    refreshTokenExpiresAt=now_ms + 86_400_000,
-                )
-                before = credentials_path.read_bytes()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            credentials_path = self._write_credentials(
+                home,
+                accessToken="sk-ant-oat01-old",
+                refreshToken="old-refresh",
+                expiresAt=now_ms - 60_000,
+                refreshTokenExpiresAt=now_ms + 86_400_000,
+            )
+            before = credentials_path.read_bytes()
 
-                capability, report, urlopen, write_json = self._probe(home, env_token=env_token)
+            capability, report, urlopen, write_json = self._probe(home)
 
-                self.assertTrue(capability.can_auto_deliver)
-                self.assertEqual(capability.verified, "verified")
-                self.assertTrue(report["auth_ready"])
-                self.assertTrue(report["supports_auto_approve"])
-                urlopen.assert_not_called()
-                write_json.assert_not_called()
-                self.assertEqual(credentials_path.read_bytes(), before)
+            self.assertTrue(capability.can_auto_deliver)
+            self.assertEqual(capability.verified, "verified")
+            self.assertTrue(report["auth_ready"])
+            self.assertTrue(report["supports_auto_approve"])
+            urlopen.assert_not_called()
+            write_json.assert_not_called()
+            self.assertEqual(credentials_path.read_bytes(), before)
 
     def test_expired_or_missing_refresh_token_is_not_authenticated(self) -> None:
         now_ms = int(common.time.time() * 1000)
