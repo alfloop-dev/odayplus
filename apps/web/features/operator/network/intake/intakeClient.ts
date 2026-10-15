@@ -251,9 +251,13 @@ export const intakeApi = {
     client: OdpApiClient,
     intakeId: string,
     actorRoleId: string,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
   ): Promise<IntakeResult<AssistedIntake>> {
     return guard(() =>
-      client.retryIntake(intakeId, { actorRoleId }, { correlationId: newCorrelationId() }),
+      client.retryIntake(intakeId, { actorRoleId }, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey ?? randomToken(),
+      }),
     );
   },
 

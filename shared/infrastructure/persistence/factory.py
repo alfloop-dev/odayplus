@@ -83,6 +83,7 @@ class PersistenceBundle:
     outbox_repository: Any = None
     operator_intake_repository: Any = None
     assisted_intake_store: Any = None
+    assisted_intake_workflow_policy: Any = None
     engine: Any = None
     # Auth identity/session stores (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
     # In PostgreSQL mode these are durable (SqlIdentityStore + SessionService);
@@ -109,6 +110,9 @@ class PersistenceBundle:
 
     def listing_repository_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("listing_repository", tenant_id)
+
+    def operator_intake_repository_for_tenant(self, tenant_id: str) -> Any | None:
+        return self._scoped_repository("operator_intake_repository", tenant_id)
 
     def sitescore_decision_store_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("sitescore_decision_store", tenant_id)
@@ -493,6 +497,12 @@ def _postgres_bundle(
         config=SessionConfig(),
     )
 
+    from modules.listing.application.intake_registry_calendar import RegistryIntakeWorkflowPolicy
+
+    pg_intake_workflow_policy = RegistryIntakeWorkflowPolicy(
+        SqlDecisionPolicyRepository(engine), pg_identity_store
+    )
+
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
     pg_audit_log = DurableAuditLog(engine, worm_sink=resolved_worm_sink)
     pg_manual_corr_repo = DurableManualCorrectionRepository(engine)
@@ -542,6 +552,7 @@ def _postgres_bundle(
         outbox_repository=DurableOutboxRepository(engine),
         operator_intake_repository=DurableAssistedIntakeRepository(store),
         assisted_intake_store=assisted_intake_store,
+        assisted_intake_workflow_policy=pg_intake_workflow_policy,
         engine=engine,
         identity_store=pg_identity_store,
         session_service=pg_session_service,
