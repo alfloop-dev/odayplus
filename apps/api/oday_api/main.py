@@ -189,6 +189,14 @@ else:
         active_release_manifest_digest = os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", "")
         require_live_data = live_data_required()
         domain_runtime_mode = "production" if require_live_data else "local"
+        feature_flags = getattr(bundle, "feature_flag_registry", None)
+        from shared.infrastructure.persistence.feature_flags import (
+            DurableFeatureFlagRegistry,
+            UnavailableFeatureFlagRegistry,
+        )
+        if (require_live_data and not isinstance(feature_flags, DurableFeatureFlagRegistry)
+                or feature_flags is None and getattr(bundle, "engine", None) is not None):
+            feature_flags = UnavailableFeatureFlagRegistry()
         persistence_mode = str(getattr(bundle, "mode", "unknown")).strip().lower()
         configured_persistence_mode = (
             os.environ.get("ODP_PERSISTENCE", persistence_mode).strip().lower()
@@ -320,6 +328,7 @@ else:
             audit_log=audit_log,
         )
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
+        api.state.feature_flag_registry = feature_flags
         provider_probe_lock = threading.Lock()
         provider_probe_cache: tuple[float, Any] | None = None
 
@@ -2501,8 +2510,9 @@ else:
             api,
             create_feature_flags_router(
                 audit_log=audit_log,
-                engine=build_engine(audit_log=audit_log),
+                engine=build_engine(audit_log=audit_log, flags=feature_flags),
                 boundary=default_boundary(),
+                registry=feature_flags, queue=job_queue,
             ),
         )
 

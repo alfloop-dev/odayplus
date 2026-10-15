@@ -613,6 +613,12 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
   test("a role without listing permission gets the permission-limited state, not an empty queue", async ({
     page,
   }) => {
+    // The generic QA browser holds Network grants. Use this case's actual
+    // restricted Principal as well as its display-persona preference.
+    await page.setExtraHTTPHeaders({
+      "x-subject-id": "synthetic-denied-ops", "x-roles": "operations_manager",
+      "x-operator-role": "ops-lead", "x-tenant-id": "tenant-a",
+    });
     await page.addInitScript(() => {
       window.sessionStorage.setItem("oday.operator.role", "ops-lead");
     });

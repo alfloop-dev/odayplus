@@ -1067,8 +1067,20 @@
               }
             ],
             "title": "Approver"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "riskAcknowledged": {
+            "title": "Riskacknowledged",
+            "type": "boolean"
           }
         },
+        "required": [
+          "reason",
+          "riskAcknowledged"
+        ],
         "title": "ApproveFlagPayload",
         "type": "object"
       },
@@ -2784,8 +2796,20 @@
             },
             "title": "Approvals",
             "type": "array"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "riskAcknowledged": {
+            "title": "Riskacknowledged",
+            "type": "boolean"
           }
         },
+        "required": [
+          "reason",
+          "riskAcknowledged"
+        ],
         "title": "EnableFlagPayload",
         "type": "object"
       },
@@ -3600,6 +3624,24 @@
           "actor"
         ],
         "title": "FinanceApprovalPayload",
+        "type": "object"
+      },
+      "FlagCommandProof": {
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "riskAcknowledged": {
+            "title": "Riskacknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason",
+          "riskAcknowledged"
+        ],
+        "title": "FlagCommandProof",
         "type": "object"
       },
       "ForecastOpsAlertAcknowledgePayload": {
@@ -9490,9 +9532,19 @@
             "default": "experimental",
             "title": "Readiness",
             "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "riskAcknowledged": {
+            "title": "Riskacknowledged",
+            "type": "boolean"
           }
         },
         "required": [
+          "reason",
+          "riskAcknowledged",
           "key",
           "owner"
         ],
@@ -13071,18 +13123,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/ApproveFlagPayload"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/ApproveFlagPayload"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -13188,6 +13233,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlagCommandProof"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -13296,18 +13351,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/EnableFlagPayload"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/EnableFlagPayload"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {

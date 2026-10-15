@@ -22,7 +22,15 @@ export type FeatureFlagListResponse = {
 export type FeatureFlagResponse = {
   status: string;
   flag: FeatureFlagDto;
+  audit?: { event_id: string; delivery_status: string };
 };
+
+export type FeatureFlagCommandProof = {
+  reason: string;
+  riskAcknowledged: true;
+};
+
+export type FeatureFlagCommandResult = Pick<FeatureFlagResponse, "flag" | "audit">;
 
 export const DEFAULT_FEATURE_FLAGS: FeatureFlagDto[] = [
   {
@@ -135,51 +143,72 @@ export async function fetchFeatureFlags(baseUrl = ""): Promise<FeatureFlagDto[]>
   }
 }
 
+function commandProof(proof: FeatureFlagCommandProof, minimum: number): FeatureFlagCommandProof {
+  if (typeof proof?.reason !== "string" || proof.reason.trim().length < minimum || proof.riskAcknowledged !== true) {
+    throw new Error(minimum === 10 ? "核准理由至少需要 10 個字，並須確認操作風險。" : "請填寫操作理由並確認操作風險。");
+  }
+  return { reason: proof.reason.trim(), riskAcknowledged: true };
+}
+
+async function commandResult(res: Response, key: string): Promise<FeatureFlagCommandResult> {
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+    throw new Error(errorBody && typeof errorBody.detail === "string" ? errorBody.detail : `HTTP ${res.status}`);
+  }
+  const data: unknown = await res.json();
+  if (typeof data !== "object" || data === null || Array.isArray(data)) throw new Error("Feature Flag 回應格式無效");
+  if (!operatorFixturesAllowed() && payloadContainsSeedData(data)) {
+    throw new Error("Feature Flag API 回傳非正式資料來源");
+  }
+  const result = data as Record<string, unknown>;
+  if (result.status !== "ok" || !isFeatureFlag(result.flag) || result.flag.key !== key) throw new Error("Feature Flag 回應格式無效");
+  if (result.audit !== undefined) {
+    if (typeof result.audit !== "object" || result.audit === null || Array.isArray(result.audit)) throw new Error("Feature Flag 稽核回應格式無效");
+    const audit = result.audit as Record<string, unknown>;
+    if (typeof audit.event_id !== "string" || !audit.event_id.trim() || typeof audit.delivery_status !== "string" || !audit.delivery_status.trim()) {
+      throw new Error("Feature Flag 稽核回應格式無效");
+    }
+    return { flag: result.flag, audit: { event_id: audit.event_id, delivery_status: audit.delivery_status } };
+  }
+  return { flag: result.flag };
+}
+
 export async function enableFeatureFlag(
   key: string,
-  approvals: string[] = [],
-  baseUrl = ""
-): Promise<FeatureFlagDto> {
+  approvals: string[],
+  baseUrl: string,
+  proof: FeatureFlagCommandProof,
+): Promise<FeatureFlagCommandResult> {
+  const validatedProof = commandProof(proof, 1);
   const res = await fetch(`${baseUrl}/api/v1/admin/feature-flags/${encodeURIComponent(key)}/enable`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(operatorFixturesAllowed() ? { approvals } : {}),
+    body: JSON.stringify(operatorFixturesAllowed() ? { approvals, ...validatedProof } : validatedProof),
   });
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({ detail: "Failed to enable feature flag" }));
-    throw new Error(errorBody.detail || `HTTP ${res.status}`);
-  }
-  const data = (await res.json()) as FeatureFlagResponse;
-  return data.flag;
+  return commandResult(res, key);
 }
 
-export async function disableFeatureFlag(key: string, baseUrl = ""): Promise<FeatureFlagDto> {
+export async function disableFeatureFlag(key: string, baseUrl: string, proof: FeatureFlagCommandProof): Promise<FeatureFlagCommandResult> {
+  const validatedProof = commandProof(proof, 1);
   const res = await fetch(`${baseUrl}/api/v1/admin/feature-flags/${encodeURIComponent(key)}/disable`, {
     method: "POST",
-    headers: { Accept: "application/json" },
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(validatedProof),
   });
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({ detail: "Failed to disable feature flag" }));
-    throw new Error(errorBody.detail || `HTTP ${res.status}`);
-  }
-  const data = (await res.json()) as FeatureFlagResponse;
-  return data.flag;
+  return commandResult(res, key);
 }
 
 export async function approveFeatureFlag(
   key: string,
   approver: string,
-  baseUrl = ""
-): Promise<FeatureFlagDto> {
+  baseUrl: string,
+  proof: FeatureFlagCommandProof,
+): Promise<FeatureFlagCommandResult> {
+  const validatedProof = commandProof(proof, 10);
   const res = await fetch(`${baseUrl}/api/v1/admin/feature-flags/${encodeURIComponent(key)}/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(operatorFixturesAllowed() ? { approver } : {}),
+    body: JSON.stringify(operatorFixturesAllowed() ? { approver, ...validatedProof } : validatedProof),
   });
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({ detail: "Failed to add approval" }));
-    throw new Error(errorBody.detail || `HTTP ${res.status}`);
-  }
-  const data = (await res.json()) as FeatureFlagResponse;
-  return data.flag;
+  return commandResult(res, key);
 }

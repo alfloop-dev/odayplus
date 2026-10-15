@@ -32,13 +32,18 @@ TENANT = "tenant-a"
 def case(database, tmp_path):
     open_engine, _ = database
     engine = open_engine()
-    client, repository, audit = http_context(engine)
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.feature_flags import DurableFeatureFlagRegistry
+
+    flags = DurableFeatureFlagRegistry(SqliteDocumentStore(engine))
+    flags.initialize_defaults()  # This owned fixture starts disabled, never auto-enabled.
+    client, repository, audit = http_context(engine, feature_flag_registry=flags)
     sink = LocalAppendOnlyWormSink(tmp_path / "synthetic-backlog-worm")
     audit._worm_sink = sink
     scenario, _, _ = seed(client)
     assert client.post("/priceops/plans/durable-plan/submit", json={"reason": "independent review"}).status_code == 200
-    queue = DurableJobQueue(engine)
-    bundle = SimpleNamespace(engine=engine, job_queue=queue, audit_log=audit)
+    queue = DurableJobQueue(engine, flags=flags)
+    bundle = SimpleNamespace(engine=engine, job_queue=queue, audit_log=audit, feature_flag_registry=flags)
     registry = default_registry()
     worker = ODayWorker(persistence=bundle, audit_only=True, worker_id="synthetic-backlog-worker",
                        telemetry=Telemetry("oday-worker", metrics=registry))
@@ -48,7 +53,7 @@ def case(database, tmp_path):
         yield SimpleNamespace(engine=engine, client=client, repository=repository, audit=audit,
                               sink=sink, queue=queue, worker=worker, registry=registry,
                               delivery=delivery, checker=checker, scenario=scenario,
-                              open_engine=open_engine)
+                              open_engine=open_engine, flags=flags)
     finally:
         engine.close()
 
@@ -147,7 +152,19 @@ def test_low_risk_reads_simulation_and_rejection_remain_available(case):
     assert case.checker.inspect(TENANT).blocked
 
 
+def enable_synthetic_activation_owner(case):
+    # Explicit engineering setup for only these two legitimate go-live flows;
+    # not production/human approval, not a global fixture auto-enable.
+    for operation, actor in (("approve", "synthetic-flag-admin-a"),
+                             ("approve", "synthetic-flag-admin-b"),
+                             ("enable", "synthetic-flag-admin-a")):
+        case.flags.execute(operation, "high_risk.priceops.execute", actor=actor,
+                           correlation_id="synthetic-backlog-fixture-config", audit_log=case.audit,
+                           queue=case.queue)
+
+
 def test_rollback_remains_available_during_stale_backlog(case):
+    enable_synthetic_activation_owner(case)
     assert approval(case).status_code == 200
     activated = case.client.post("/priceops/plans/durable-plan/activate", json={"executor": "forged"})
     assert activated.status_code == 200, activated.text
@@ -159,6 +176,7 @@ def test_rollback_remains_available_during_stale_backlog(case):
 
 
 def test_authorized_committed_replay_survives_backpressure_and_changed_body_conflicts(case):
+    enable_synthetic_activation_owner(case)
     first = approval(case, key="committed-approval")
     assert first.status_code == 200, first.text
     age(case, 301)

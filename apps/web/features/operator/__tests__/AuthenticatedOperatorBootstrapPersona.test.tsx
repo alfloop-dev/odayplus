@@ -5,6 +5,7 @@ import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsol
 import type { NetworkFindAreasWorkspaceProps } from "../NetworkFindAreasWorkspace";
 
 const confirmedRefreshControl = vi.hoisted(() => ({ enabled: false, invoked: 0 }));
+let canonicalHistoryBefore: { url: string; state: unknown } | null = null;
 vi.mock("../NetworkFindAreasWorkspace", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../NetworkFindAreasWorkspace")>();
   return { ...actual, NetworkFindAreasWorkspace: (props: NetworkFindAreasWorkspaceProps) => {
@@ -46,10 +47,25 @@ function envelope(role: "expansion-manager" | "ops-lead", name: string, decision
   return { meta: { source: "operator-shell-production", dataMode: "live", role: { id: role, label, subtitle: "Unit transport", allowedWorkspaces: workspaces, heroName: name }, counts: { approvals: 0, critical: 0, notifications: 0, search: 0, taskCenter: 1 } },
     navigation: { roles: [{ id: "ops-lead", label: "營運主管", subtitle: "Catalog, not a grant", allowedWorkspaces: ["today", "store"] },
       { id: "expansion-manager", label: "展店經理", subtitle: "Catalog, not a grant", allowedWorkspaces: ["today", "network"] }],
-      workspaces: [{ id: "today", label: "Today", shortLabel: "Today", description: "Current scope", allowed: true }], allowedWorkspaces: workspaces },
+      workspaces: [{ id: "today", label: "Today", shortLabel: "Today", description: "Current scope", allowed: true }], allowedWorkspaces: workspaces, allowedTabs: { network: role === "expansion-manager" ? ["areas", "radar", "candidates", "score", "compare", "review"] : [] } },
     header: { counts: { approvals: 0, critical: 0, notifications: 0, search: 0, taskCenter: 1 } },
     today: { hero: { name, roleLabel: label, scope: "Unit current account", dateLabel: "2026-10-13" }, kpis: [{ label: `${name} current row`, value: "1" }], queue: [], decisions: decision ? [{ id: "SYNTHETIC-APR", title: "Unit refresh callback navigation", meta: "Declared UI callback premise, not approval authority", status: "pending", cta: "Unit refresh", tone: "info", target: { workspace: "network", entityId: "SYNTHETIC-APR", tab: "review" } }] : [], riskRows: [], auditFeed: [] },
     notifications: [], search: { count: 0, items: [] } };
+}
+// Synthetic but complete scoped snapshots. These controls exercise the real
+// Console-owned canonical read lease, not a legacy preload or a fake grant.
+function canonicalNetworkSnapshot(label: string) {
+  const id = `HZ-${label.replace(/[^a-z0-9]+/gi, "-")}`;
+  return { source: "api", selectedHeatZoneId: id, selectedLens: "demand",
+    heatZones: [{ id, label, rank: 1, centroid: [121.5, 25], demandGap: 0.4,
+      competitionIndex: 0.3, cannibalizationRisk: "low", rentBand: "unit", confidence: 0.7,
+      recommendedLens: "demand", reasons: [], risks: [], nextStep: "" }],
+    listingSources: [], listings: [], candidates: [], siteReviews: [], expansionSteps: [], assistedIntakes: [] };
+}
+function failingRead<T>() {
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((_resolve, fail) => { reject = fail; });
+  return { promise, reject };
 }
 const delays = [...operatorBootstrapRetryPolicy.delaysMs];
 // Resolve the conditional lazy module as a fixture prerequisite, within the
@@ -61,8 +77,13 @@ afterEach(() => {
     expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   }
   cleanup(); operatorBootstrapRetryPolicy.delaysMs = [...delays]; vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks();
+  if (canonicalHistoryBefore !== null) {
+    window.history.replaceState(canonicalHistoryBefore.state, "", canonicalHistoryBefore.url);
+    canonicalHistoryBefore = null;
+  }
 });
 type Config = { actor?: string; role?: "expansion-manager" | "ops-lead"; storedRole?: string; session?: unknown;
+  canonicalNetwork?: (actor: string) => Response | Promise<Response>;
   firstBootstrap?: Response | Promise<Response>; refresh?: Response | Promise<Response>; decision?: boolean; tasks?: (actor: string) => Response | Promise<Response>; legacy?: (path: string, actor: string) => Response | Promise<Response>; workspace?: string; issues?: boolean; sessionStatus?: number; invalidRole?: string; denied?: number };
 function mount(config: Config = {}) {
   confirmedRefreshControl.enabled = config.decision === true;
@@ -82,15 +103,26 @@ function mount(config: Config = {}) {
       const hint = new Headers(init?.headers).get("X-Operator-Role");
       if (config.denied || hint && hint !== role) return json({ detail: "requested Operator Console role is outside principal roles" }, config.denied ?? 403);
       const body = envelope(role, actor === A ? "Account A" : actor === B ? "Account B" : actor === "unit-operations-account" ? "Operations account" : actor, config.decision && actor === A);
+      if (config.canonicalNetwork) {
+        // The fixture grants only the read under test; no unrelated domain
+        // request or hidden static persona is needed to start its HTTP/JSON.
+        body.navigation.allowedTabs.network = ["areas"];
+        body.navigation.workspaces.push({ id: "network", label: "Network", shortLabel: "Network", description: "Current scope", allowed: true });
+      }
       if (config.invalidRole) body.meta.role.id = config.invalidRole as typeof role;
       if (config.issues) Object.assign(body, { issues: [{ id: "UNIT-ISSUE", title: "Prior API issue marker", storeName: "Unit store", summary: "Prior API record", severity: "high" }] });
       return json(body);
     }
+    if (new URL(url, window.location.origin).pathname === "/api/v1/operator/network-listings" && config.canonicalNetwork) return config.canonicalNetwork(actor);
     if (url === "/api/v1/operator/shell/tasks" && config.tasks) return config.tasks(actor);
     if (config.legacy && ["/api/v1/heatzones", "/api/v1/listings/candidates", "/api/v1/sitescore/reports"].includes(new URL(url, window.location.origin).pathname)) return config.legacy(new URL(url, window.location.origin).pathname, actor);
     return json({ detail: "unrelated read unavailable" }, 403);
   });
   vi.stubGlobal("fetch", fetch);
+  if (config.canonicalNetwork) {
+    canonicalHistoryBefore ??= { url: window.location.href, state: window.history.state };
+    window.history.replaceState(null, "", "/operator?ws=network&tab=areas");
+  }
   const view = render(<OperatorConsole searchParams={{ ws: config.workspace ?? "today" }} />);
   return { fetch, view, setAccount: (next: string, nextRole = role) => { actor = next; role = nextRole; }, setSession: (value: unknown, status = 200) => { sessionOverride = value; sessionStatus = status; }, boots: () => boots };
 }
@@ -213,16 +245,14 @@ describe("authenticated bootstrap persona ownership", () => {
   it.each(["HTTP", "JSON"])("cookie-only rotation rejects late A Network binding %s without any UI reload", async (boundary) => {
     const pending = deferred<Response>(); const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
-    const { setAccount, fetch } = mount({ workspace: "network", legacy: (path, actor) => {
-      if (path === "/api/v1/heatzones" && actor === A) return boundary === "HTTP" ? pending.promise : late;
-      return json(path === "/api/v1/listings/candidates" ? { candidates: [] } : { items: [] });
-    } });
+    const { setAccount, fetch } = mount({ workspace: "network", canonicalNetwork: (actor) =>
+      actor === A ? boundary === "HTTP" ? pending.promise : late : json(canonicalNetworkSnapshot("Current B binding")) });
     await screen.findByRole("button", { name: /展店經理/ });
     if (boundary === "JSON") await reading.promise;
-    else await waitFor(() => expect(fetch.mock.calls.some(([url]) => new URL(String(url), window.location.origin).pathname === "/api/v1/heatzones")).toBe(true));
+    else await waitFor(() => expect(fetch.mock.calls.some(([url]) => new URL(String(url), window.location.origin).pathname === "/api/v1/operator/network-listings")).toBe(true));
     setAccount(B);
-    await act(async () => { if (boundary === "HTTP") pending.resolve(json({ items: [{ h3_index: "OLD-A", label: "Old A binding" }] }));
-      else body.resolve({ items: [{ h3_index: "OLD-A", label: "Old A binding" }] }); });
+    await act(async () => { if (boundary === "HTTP") pending.resolve(json(canonicalNetworkSnapshot("Old A binding")));
+      else body.resolve(canonicalNetworkSnapshot("Old A binding")); });
     await waitFor(() => expect(bootstrapCalls(fetch).length).toBeGreaterThan(1));
     expect(new Headers(bootstrapCalls(fetch).at(-1)?.[1]?.headers).has("X-Operator-Role")).toBe(false);
     expect(screen.queryByText("Old A binding")).not.toBeInTheDocument();
@@ -237,12 +267,12 @@ describe("authenticated bootstrap persona ownership", () => {
     const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
     const { setSession } = mount({ workspace: surface === "Network" ? "network" : "today", tasks: () => late,
-      legacy: (path) => path === "/api/v1/heatzones" ? late : json({ candidates: [] }) });
+      canonicalNetwork: surface === "Network" ? () => late : undefined });
     if (surface === "Task") { await screen.findByText("Account A current row"); fireEvent.click(screen.getByTestId("operator-task-center-button")); }
     await reading.promise;
     setSession({ detail: "session expired" }, 401);
     await act(async () => { body.resolve(surface === "Task" ? { items: [{ id: "OLD", title: "Old expired task", status: "todo" }] }
-      : { items: [{ h3_index: "OLD", label: "Old expired binding" }] }); });
+      : canonicalNetworkSnapshot("Old expired binding")); });
     await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
     expect(screen.queryByText("Old expired task")).not.toBeInTheDocument();
@@ -253,11 +283,11 @@ describe("authenticated bootstrap persona ownership", () => {
     const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
     const { setSession } = mount({ workspace: surface === "Network" ? "network" : "today", tasks: () => late,
-      legacy: (path) => path === "/api/v1/heatzones" ? late : json({ candidates: [] }) });
+      canonicalNetwork: surface === "Network" ? () => late : undefined });
     if (surface === "Task") { await screen.findByText("Account A current row"); fireEvent.click(screen.getByTestId("operator-task-center-button")); }
     await reading.promise; setSession({ subject: A, expiresAt: 1 });
     await act(async () => { body.resolve(surface === "Task" ? { items: [{ id: "OLD", title: "Old invalid task", status: "todo" }] }
-      : { items: [{ h3_index: "OLD", label: "Old invalid binding" }] }); });
+      : canonicalNetworkSnapshot("Old invalid binding")); });
     await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
     expect(screen.queryByText("Old invalid task")).not.toBeInTheDocument();
@@ -461,5 +491,49 @@ describe("owned reads from explicit no-session POC", () => {
       expect(screen.queryByText("Old no-session binding")).not.toBeInTheDocument();
       expect(screen.queryByText("Old no-session refresh current row")).not.toBeInTheDocument();
       state.view.unmount();
+  });
+});
+
+
+describe("canonical Network read owner epochs", () => {
+  it.each(["HTTP403", "JSON rejection"])("a late old A %s cannot clear current B Network rows", async (boundary) => {
+    const pending = deferred<Response>(); const failedBody = failingRead<unknown>(); const reading = deferred<boolean>();
+    const late = json({}); late.json = () => { reading.resolve(true); return failedBody.promise; };
+    let oldStarted = false;
+    const state = mount({ workspace: "network", canonicalNetwork: (actor) => {
+      if (actor === A && !oldStarted) { oldStarted = true; return boundary === "HTTP403" ? pending.promise : late; }
+      return json(canonicalNetworkSnapshot(actor === B ? "Current B binding" : "Current A binding"));
+    } });
+    if (boundary === "JSON rejection") await reading.promise;
+    else await waitFor(() => expect(state.fetch.mock.calls.some(([url]) => String(url).includes("/operator/network-listings"))).toBe(true));
+    state.setAccount(B); fireEvent.click(screen.getByRole("button", { name: "重設視角" }));
+    await screen.findByText("Account B current row");
+    fireEvent.click(screen.getByRole("button", { name: /^Network/ }));
+    await waitFor(() => expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("Current B binding"));
+    await act(async () => { if (boundary === "HTTP403") pending.resolve(json({ detail: "Old A refused" }, 403));
+      else failedBody.reject(new Error("Old A JSON failed")); });
+    expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("Current B binding");
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("Old A refused")).not.toBeInTheDocument();
+    expect(new Headers(bootstrapCalls(state.fetch).at(-1)?.[1]?.headers).has("X-Operator-Role")).toBe(false);
+  });
+
+  it("a completed A→B→A bootstrap epoch cannot adopt an earlier A HTTP response", async () => {
+    const old = deferred<Response>(); let firstA = true;
+    const state = mount({ workspace: "network", canonicalNetwork: (actor) => {
+      if (actor === A && firstA) { firstA = false; return old.promise; }
+      return json(canonicalNetworkSnapshot(actor === A ? "Current A binding" : "Current B binding"));
+    } });
+    await waitFor(() => expect(state.fetch.mock.calls.some(([url]) => String(url).includes("/operator/network-listings"))).toBe(true));
+    state.setAccount(B); fireEvent.click(screen.getByRole("button", { name: "重設視角" }));
+    await screen.findByText("Account B current row");
+    state.setAccount(A); fireEvent.click(screen.getByRole("button", { name: "重設視角" }));
+    await screen.findByText("Account A current row");
+    fireEvent.click(screen.getByRole("button", { name: /^Network/ }));
+    await waitFor(() => expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("Current A binding"));
+    await act(async () => { old.resolve(json(canonicalNetworkSnapshot("Old A binding"))); });
+    expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("Current A binding");
+    expect(screen.queryByText("Old A binding")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
   });
 });

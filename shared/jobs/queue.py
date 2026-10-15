@@ -65,9 +65,12 @@ JOB_FEATURE_FLAG_MAP: dict[str, str] = {
 def resolve_job_feature_flag_key(job_type: str, payload: dict[str, Any] | None = None) -> str | None:
     """Resolve the feature flag key for a given job type or payload."""
 
+    canonical = JOB_FEATURE_FLAG_MAP.get(job_type)
+    if canonical is not None:
+        return canonical
     if payload and "feature_flag" in payload:
         return str(payload["feature_flag"])
-    return JOB_FEATURE_FLAG_MAP.get(job_type)
+    return None
 
 
 def check_job_feature_flag(
@@ -145,7 +148,8 @@ class JobRecord:
 
 
 class InMemoryJobQueue:
-    def __init__(self) -> None:
+    def __init__(self, *, flags: Any = None) -> None:
+        self._flags = flags
         self._jobs: dict[str, JobRecord] = {}
         self._idempotency_index: dict[str, str] = {}
         self._reservation_lock = RLock()
@@ -162,7 +166,7 @@ class InMemoryJobQueue:
     def enqueue(self, request: JobRequest, *, correlation_id: str) -> tuple[JobRecord, bool]:
         with self._reservation_lock:
             # Enforce kill-switch / feature flag check at enqueue time
-            check_job_feature_flag(request.job_type, request.payload)
+            check_job_feature_flag(request.job_type, request.payload, flags=self._flags)
 
             if request.idempotency_key:
                 existing_job_id = self._idempotency_index.get(request.idempotency_key)
@@ -207,7 +211,7 @@ class InMemoryJobQueue:
             )
             if is_eligible:
                 try:
-                    check_job_feature_flag(record.job_type, record.payload)
+                    check_job_feature_flag(record.job_type, record.payload, flags=self._flags)
                 except NonRetryableJobError as exc:
                     new_record = dataclasses.replace(
                         record,
@@ -352,6 +356,16 @@ class InMemoryJobQueue:
                     and not is_non_executable_receipt_job_type(record.job_type)
                     and (not audit_only or record.job_type in AUDIT_DELIVERY_JOB_TYPES)
                 ):
+                    try:
+                        check_job_feature_flag(record.job_type, record.payload, flags=self._flags)
+                    except NonRetryableJobError as exc:
+                        from dataclasses import replace
+                        self._jobs[job_id] = replace(
+                            record, status=JobStatus.FAILED,
+                            delivery_state=JobDeliveryState.DEAD_LETTER,
+                            version=record.version + 1, error_message=str(exc),
+                        )
+                        continue
                     updated = JobRecord(
                         job_type=record.job_type,
                         payload=record.payload,

@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
+import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace } from "../../NetworkFindAreasWorkspace";
 import { operatorFixturesAllowed } from "../../operatorDataMode";
 import { projectCandidateNativeWorkflow } from "../candidateNativeWorkflowProjection";
 import { inspectReviewsReadProjection } from "../networkReviewProjection";
@@ -12,6 +12,14 @@ import type { ReviewSubmissionBody, ReviewSubmissionContext, ReviewSubmissionRec
 import type { NetworkReviewsSnapshot } from "../networkReviewTypes";
 import type { NetworkScoringSnapshot } from "../networkScoringTypes";
 import samples from "./fixtures/canonicalReviewSubmission.json";
+
+// Explicit read-grant fixture: shell projects listing and SiteScore read families.
+// This is a renderer premise, not a real Principal/production permission grant.
+const NETWORK_READ_FIXTURE_TABS = ["areas", "radar", "candidates", "score", "compare", "review"] as const;
+function NetworkFindAreasWorkspace(props: import("../../NetworkFindAreasWorkspace").NetworkFindAreasWorkspaceProps) {
+  return <GrantedReadNetworkWorkspace allowedTabIds={NETWORK_READ_FIXTURE_TABS} {...props} />;
+}
+
 
 // Synthetic protocol variations of the unchanged older producer fixture.
 // These tests establish no signed SQL grants, real opening or browser result.

@@ -187,6 +187,8 @@ export type ApprovalReadContext = {
 /** ApproveFlagPayload */
 export type ApproveFlagPayload = {
   approver?: string | null;
+  reason: string;
+  riskAcknowledged: boolean;
 };
 
 /** AssignPayload */
@@ -537,6 +539,8 @@ export type EligibilityPayload = {
 /** EnableFlagPayload */
 export type EnableFlagPayload = {
   approvals?: string[];
+  reason: string;
+  riskAcknowledged: boolean;
 };
 
 /** The single error contract for every endpoint. */
@@ -714,6 +718,12 @@ export type FinanceApprovalPayload = {
   actor: string;
   reason?: string;
   reserve_price?: number | null;
+};
+
+/** FlagCommandProof */
+export type FlagCommandProof = {
+  reason: string;
+  riskAcknowledged: boolean;
 };
 
 /** ForecastOpsAlertAcknowledgePayload */
@@ -1726,6 +1736,8 @@ export type RegisterFlagPayload = {
   key: string;
   owner: string;
   readiness?: string;
+  reason: string;
+  riskAcknowledged: boolean;
 };
 
 /** ReleaseHoldPayload */

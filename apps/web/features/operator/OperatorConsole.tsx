@@ -561,13 +561,13 @@ export function OperatorConsole({
   useEffect(() => {
     // Preferences express intent, not authority. Wait for bootstrap before
     // validating them: principal grants can differ from the static persona.
-    if (!hasHydratedPreferences || (!fixturesAllowed && shellDataStatus !== "ready")) return;
+    if (!hasHydratedPreferences || (shellDataStatus !== "ready" && !(fixturesAllowed && bootstrapAuthMode === "fixture"))) return;
     const workspaceId = isWorkspaceAllowed(activeRole, activeWorkspaceId)
       ? activeWorkspaceId
       : DEFAULT_WORKSPACE_ID;
     setActiveWorkspaceId(workspaceId);
     window.sessionStorage.setItem(workspaceStorageKey, workspaceId);
-  }, [activeRole, activeWorkspaceId, fixturesAllowed, hasHydratedPreferences, shellDataStatus]);
+  }, [activeRole, activeWorkspaceId, bootstrapAuthMode, fixturesAllowed, hasHydratedPreferences, shellDataStatus]);
 
   const activeWorkspace = getWorkspace(activeWorkspaceId);
   const liveWorkQueue = shellEnvelope.workQueue;
@@ -1830,6 +1830,16 @@ export function OperatorConsole({
         ) : activeWorkspaceId === "network" ? (
           <NetworkFindAreasWorkspace
             activeRoleId={activeRoleId}
+            createAuthenticatedReadGuard={(readCurrent) => {
+              // Capture the owner before HTTP starts; never adopt a later cookie
+              // subject, persona, or A→B→A epoch for an older Network response.
+              const sequence = bootstrapSequence.current;
+              const subject = bootstrapAccount.current;
+              const persona = bootstrapPersona.current;
+              const current = () => readCurrent() && sequence === bootstrapSequence.current
+                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
+              return () => pinAuthenticatedRead(subject, current);
+            }}
             allowedTabIds={fixturesAllowed ? undefined : shellEnvelope.navigation.allowedTabs?.network ?? []}
             onReviewDecisionConfirmed={async () => {
               try { await refreshOperatorEnvelope(); }

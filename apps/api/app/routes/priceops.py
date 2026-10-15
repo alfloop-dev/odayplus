@@ -1389,7 +1389,39 @@ else:
         if hasattr(body, "executor"):
             body.executor = principal.subject_id
 
+        def require_activation_flag() -> None:
+            # This key controls price go-live, not every EXECUTE permission.
+            # Read the same actual app owner as admin/API/queue composition.
+            from apps.api.oday_api.security.dependencies import require_feature_flag
+
+            if command_store is not None and command_store.is_durable:
+                from shared.infrastructure.persistence.feature_flags import (
+                    FeatureFlagStoreUnavailable,
+                    require_durable_flag_owner,
+                )
+
+                app = request.scope.get("app")
+                owner = getattr(getattr(app, "state", None), "feature_flag_registry", None)
+                try:
+                    queue = command_store.queue
+                    require_durable_flag_owner(owner, queue._engine, queue=queue)
+                except FeatureFlagStoreUnavailable as exc:
+                    raise HTTPException(status_code=503, detail="FEATURE_FLAG_STORE_UNAVAILABLE") from exc
+            require_feature_flag("high_risk.priceops.execute")(request)
+
+        activation = event_type == "priceops.activated.v1"
+        if activation and (command_store is None or not command_store.is_durable):
+            # Process-local receipt stores have no transaction rollback. Refuse
+            # before reserving any receipt; this is not a local-mode exemption.
+            require_activation_flag()
+
         def _execute() -> dict[str, Any]:
+            if activation:
+                # Durable command_store.run has already checked/replayed a
+                # committed key and revalidated locked tenant/object ownership.
+                # New refusal rolls back reservation before any domain/audit/job
+                # success. Replay remains a read of the prior committed result.
+                require_activation_flag()
             approving = (
                 event_type in {"priceops.approved.v1", "priceops.decision_written_back.v1"}
                 and normalize_approval_decision(getattr(body, "decision", "")) == "approved"

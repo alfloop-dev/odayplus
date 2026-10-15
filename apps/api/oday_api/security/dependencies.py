@@ -550,6 +550,9 @@ def require_permission(
         from modules.opsboard.auth.errors import AuthFailureReason
         from shared.audit.policy import is_high_risk
 
+        app = getattr(request, "scope", {}).get("app")
+        owner = getattr(getattr(app, "state", None), "feature_flag_registry", None)
+        request_engine = active_engine.with_flags(owner) if owner is not None else active_engine
         principal = principal_from_headers(request.headers, boundary=boundary)
 
         # Immediate session validation for high-risk actions (Contract §5.4 / T21)
@@ -595,7 +598,7 @@ def require_permission(
                     source_ip=source_ip, attributes={"correlation_id": correlation_id}
                 ),
             )
-            _record_allow_or_fail_closed(active_engine, access, decision)
+            _record_allow_or_fail_closed(request_engine, access, decision)
 
             request.state.operator_principal = principal
             request.state.operator_subject_id = principal.subject_id
@@ -620,7 +623,7 @@ def require_permission(
                 source_ip=source_ip, attributes={"correlation_id": correlation_id}
             ),
         )
-        _record_denial(active_engine, access, decision)
+        _record_denial(request_engine, access, decision)
         _raise_forbidden(decision)
 
     return dependency
@@ -631,8 +634,17 @@ def require_feature_flag(key: str, *, flags: FeatureFlagRegistry | None = None):
 
     registry = flags or default_registry()
 
-    def dependency() -> None:
-        if not registry.is_enabled(key, on=date.today()):
+    def dependency(request: Request = None) -> None:
+        from shared.infrastructure.persistence.feature_flags import FeatureFlagStoreUnavailable
+
+        app = getattr(request, "scope", {}).get("app") if request is not None else None
+        selected = getattr(getattr(app, "state", None), "feature_flag_registry", None)
+        owner = selected if selected is not None else registry
+        try:
+            enabled = owner.is_enabled(key, on=date.today())
+        except FeatureFlagStoreUnavailable as exc:
+            raise HTTPException(status_code=503, detail="FEATURE_FLAG_STORE_UNAVAILABLE") from exc
+        if not enabled:
             decision = Decision.deny(f"feature flag {key!r} is disabled", policy_id="feature_flag")
             _raise_forbidden(decision)
 
@@ -929,6 +941,9 @@ def require_operator_permission(
         from modules.opsboard.auth.errors import AuthFailureReason
         from shared.audit.policy import is_high_risk
 
+        app = getattr(request, "scope", {}).get("app")
+        owner = getattr(getattr(app, "state", None), "feature_flag_registry", None)
+        request_engine = active_engine.with_flags(owner) if owner is not None else active_engine
         principal = principal_from_headers(request.headers, boundary=boundary)
         effective_tenant_id = tenant_id or principal.tenant_id
         resource = ResourceDescriptor(
@@ -941,7 +956,7 @@ def require_operator_permission(
 
         if not principal.authenticated:
             decision = Decision.deny("principal not authenticated", policy_id="authenticated")
-            _record_denial(active_engine, access, decision)
+            _record_denial(request_engine, access, decision)
             _raise_unauthenticated(None)
 
         # High risk / session validation check (Contract §5.4 / T21)
@@ -963,7 +978,7 @@ def require_operator_permission(
                     decision = Decision.deny(
                         "session has been revoked or expired", policy_id="session.revoked"
                     )
-                    _record_denial(active_engine, access, decision)
+                    _record_denial(request_engine, access, decision)
                     _raise_unauthenticated(AuthFailureReason.SESSION_REVOKED)
             except (ValueError, TypeError):
                 _raise_unauthenticated(AuthFailureReason.MALFORMED_TOKEN)
@@ -978,7 +993,7 @@ def require_operator_permission(
                 "session reference required for high-risk action",
                 policy_id="session.required",
             )
-            _record_denial(active_engine, access, decision)
+            _record_denial(request_engine, access, decision)
             _raise_unauthenticated(AuthFailureReason.SESSION_NOT_FOUND)
 
         if not effective_tenant_id:
@@ -986,24 +1001,24 @@ def require_operator_permission(
                 "Operator Console tenant scope is required",
                 policy_id="operator.tenant_isolation",
             )
-            _record_denial(active_engine, access, decision)
+            _record_denial(request_engine, access, decision)
             _raise_forbidden(decision)
 
         selected_role, role_decision = _select_operator_role(request, principal)
         if role_decision is not None:
-            _record_denial(active_engine, access, role_decision)
+            _record_denial(request_engine, access, role_decision)
             _raise_forbidden(role_decision)
 
         scope_decision = operator_permission_decision(
             principal, resource, action, scoped_read_resource=scoped_read_resource
         )
         if not scope_decision.allowed:
-            _record_denial(active_engine, access, scope_decision)
+            _record_denial(request_engine, access, scope_decision)
             _raise_forbidden(scope_decision)
 
         # Audit on allow (T20)
         allow_decision = Decision.allow("Operator Console access accepted")
-        _record_allow_or_fail_closed(active_engine, access, allow_decision)
+        _record_allow_or_fail_closed(request_engine, access, allow_decision)
 
         request.state.operator_principal = principal
         request.state.operator_tenant_id = effective_tenant_id

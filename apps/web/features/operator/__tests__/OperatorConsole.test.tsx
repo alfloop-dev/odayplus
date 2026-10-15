@@ -169,7 +169,7 @@ describe("OperatorConsole production data gate", () => {
       const requestedPersona = new Headers(init?.headers).get("X-Operator-Role");
       return new Response(JSON.stringify({
         ...liveEnvelope,
-        meta: { ...liveEnvelope.meta, role: requestedPersona === roleId ? nextRole : liveEnvelope.meta.role },
+        meta: { ...liveEnvelope.meta, role: requestedPersona === roleId ? nextRole : { ...liveEnvelope.meta.role, allowedWorkspaces: granted } },
         navigation: { ...liveEnvelope.navigation, roles: [liveEnvelope.meta.role, nextRole], allowedWorkspaces: granted },
       }), { status: 200 });
     }));

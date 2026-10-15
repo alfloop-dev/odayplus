@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Form, Modal } from "@oday-plus/ui";
 import styles from "./featureFlags.module.css";
 import { operatorFixturesAllowed } from "./operatorDataMode";
 import {
@@ -9,6 +10,7 @@ import {
   enableFeatureFlag,
   fetchFeatureFlags,
   type FeatureFlagDto,
+  type FeatureFlagCommandProof,
 } from "./featureFlagsAdapter";
 
 export type FeatureFlagsAdminWorkspaceProps = {
@@ -41,9 +43,15 @@ export function FeatureFlagsAdminWorkspace({
   const [filter, setFilter] = useState<"all" | "active" | "disabled" | "high_risk" | "expired">("all");
   const [search, setSearch] = useState("");
 
-  // Approval modal state
+  // The list selects an action; only the separate confirmed form submits it.
   const [modalFlag, setModalFlag] = useState<FeatureFlagDto | null>(null);
   const [approverInput, setApproverInput] = useState("");
+  const [command, setCommand] = useState<"approve" | "enable" | "disable" | null>(null);
+  const [reason, setReason] = useState("");
+  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
+  const [proofError, setProofError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const activeSubmission = useRef<object | null>(null);
 
   const loadFlags = useCallback(async () => {
     if (!isCurrentContext()) return;
@@ -53,6 +61,9 @@ export function FeatureFlagsAdminWorkspace({
     setError(null);
     setFlags([]);
     setModalFlag(null);
+    setCommand(null);
+    setSubmitting(false);
+    activeSubmission.current = null;
     setToast(null);
     try {
       const data = await fetchFeatureFlags(baseUrl);
@@ -75,6 +86,9 @@ export function FeatureFlagsAdminWorkspace({
       setLoadState("ready");
       setError(null);
       setModalFlag(null);
+      setCommand(null);
+      setSubmitting(false);
+      activeSubmission.current = null;
     } else {
       void loadFlags();
     }
@@ -86,70 +100,81 @@ export function FeatureFlagsAdminWorkspace({
     setTimeout(() => { if (isCurrentContext()) setToast(null); }, 4000);
   };
 
-  const handleToggle = async (flag: FeatureFlagDto) => {
+  const chooseCommand = (flag: FeatureFlagDto, nextCommand: "approve" | "enable" | "disable" | null) => {
+    if (!ready || !isCurrentContext() || activeSubmission.current) return;
+    setModalFlag(flag);
+    setCommand(nextCommand);
+    setReason("");
+    setRiskAcknowledged(false);
+    setProofError(null);
+    setError(null);
+    setApproverInput("");
+  };
+
+  const handleToggle = (flag: FeatureFlagDto) => {
+    chooseCommand(flag, flag.is_active ? "disable" : flag.high_risk && flag.approved_by.length < 2 ? null : "enable");
+  };
+
+  const closeModal = () => {
+    if (activeSubmission.current) return;
+    setModalFlag(null);
+    setCommand(null);
+    setProofError(null);
+  };
+
+  const handleConfirmedCommand = async () => {
     const commandSequence = readSequence.current;
-    if (!ready || !isCurrentContext()) return;
-    if (flag.is_active) {
-      // Emergency Kill-Switch: Disable
-      try {
-        const updated = await disableFeatureFlag(flag.key, baseUrl);
-        if (!isCurrentContext() || commandSequence !== readSequence.current) return;
-        setFlags((prev) => prev.map((f) => (f.key === flag.key ? updated : f)));
-        showToast(`🛑 Kill-Switch engaged: Feature flag ${flag.key} disabled!`);
-      } catch (err: any) {
-        if (!isCurrentContext() || commandSequence !== readSequence.current) return;
-        setError(err.message || "Failed to disable flag");
-      }
-    } else {
-      // Enable action: if high risk, show approval modal or attempt enable
-      if (flag.high_risk && flag.approved_by.length < 2) {
-        setModalFlag(flag);
+    if (!ready || !isCurrentContext() || !modalFlag || !command || activeSubmission.current) return;
+    const minimum = command === "approve" ? 10 : 1;
+    if (reason.trim().length < minimum || riskAcknowledged !== true || (command === "approve" && fixturesAllowed && !approverInput.trim())) {
+      setProofError(command === "approve" ? "核准理由至少需要 10 個字，請確認操作風險並填妥核准資料。" : "請填寫操作理由並確認操作風險。");
+      return;
+    }
+    // The server remains authoritative for expiry and two distinct approvals.
+    if (command === "enable" && modalFlag.high_risk && modalFlag.approved_by.length < 2) return;
+    const proof: FeatureFlagCommandProof = { reason: reason.trim(), riskAcknowledged: true };
+    const selectedFlag = modalFlag;
+    const selectedCommand = command;
+    const token = {};
+    activeSubmission.current = token;
+    setSubmitting(true);
+    setProofError(null);
+    setError(null);
+    try {
+      const result = selectedCommand === "approve"
+        ? await approveFeatureFlag(selectedFlag.key, approverInput.trim(), baseUrl, proof)
+        : selectedCommand === "enable"
+          ? await enableFeatureFlag(selectedFlag.key, selectedFlag.approved_by, baseUrl, proof)
+          : await disableFeatureFlag(selectedFlag.key, baseUrl, proof);
+      if (!isCurrentContext() || commandSequence !== readSequence.current || activeSubmission.current !== token) return;
+      const updated = result.flag;
+      setFlags((prev) => prev.map((flag) => flag.key === updated.key ? updated : flag));
+      if (selectedCommand === "approve") {
+        setModalFlag(updated);
+        setCommand(null);
+        setApproverInput("");
+        setReason("");
+        setRiskAcknowledged(false);
       } else {
-        try {
-          const updated = await enableFeatureFlag(flag.key, flag.approved_by, baseUrl);
-          if (!isCurrentContext() || commandSequence !== readSequence.current) return;
-          setFlags((prev) => prev.map((f) => (f.key === flag.key ? updated : f)));
-          showToast(`✅ Feature flag ${flag.key} enabled!`);
-        } catch (err: any) {
-          if (!isCurrentContext() || commandSequence !== readSequence.current) return;
-          if (flag.high_risk) {
-            setModalFlag(flag);
-          } else {
-            setError(err.message || "Failed to enable flag");
-          }
-        }
+        setModalFlag(null);
+        setCommand(null);
       }
-    }
-  };
-
-  const handleAddApproval = async () => {
-    const commandSequence = readSequence.current;
-    if (!ready || !isCurrentContext() || !modalFlag || (fixturesAllowed && !approverInput.trim())) return;
-    try {
-      const updated = await approveFeatureFlag(modalFlag.key, approverInput.trim(), baseUrl);
-      if (!isCurrentContext() || commandSequence !== readSequence.current) return;
-      setModalFlag(updated);
-      setFlags((prev) => prev.map((f) => (f.key === updated.key ? updated : f)));
-      setApproverInput("");
-      showToast(fixturesAllowed ? `✍️ Recorded approval from ${approverInput.trim()}` : "已記錄目前登入帳號的核准。");
-    } catch (err: any) {
-      if (!isCurrentContext() || commandSequence !== readSequence.current) return;
-      setError(err.message || "Failed to record approval");
-    }
-  };
-
-  const handleEnableFromModal = async () => {
-    const commandSequence = readSequence.current;
-    if (!ready || !isCurrentContext() || !modalFlag) return;
-    try {
-      const updated = await enableFeatureFlag(modalFlag.key, modalFlag.approved_by, baseUrl);
-      if (!isCurrentContext() || commandSequence !== readSequence.current) return;
-      setFlags((prev) => prev.map((f) => (f.key === updated.key ? updated : f)));
-      setModalFlag(null);
-      showToast(`🚀 Dual approval complete! Feature flag ${modalFlag.key} enabled.`);
-    } catch (err: any) {
-      if (!isCurrentContext() || commandSequence !== readSequence.current) return;
-      setError(err.message || "Dual approval requirement not met");
+      const message = selectedCommand === "approve"
+        ? fixturesAllowed ? `✍️ Recorded approval from ${approverInput.trim()}` : "已記錄目前登入帳號的核准。"
+        : selectedCommand === "disable"
+          ? `🛑 Kill-Switch engaged: Feature flag ${selectedFlag.key} disabled!`
+          : `✅ Feature flag ${selectedFlag.key} enabled!`;
+      const audit = result.audit ? ` 稽核事件：${result.audit.event_id}；傳遞狀態：${result.audit.delivery_status}` : "";
+      showToast(message + audit);
+    } catch (err: unknown) {
+      if (!isCurrentContext() || commandSequence !== readSequence.current || activeSubmission.current !== token) return;
+      setError(err instanceof Error ? err.message : "Feature Flag 操作失敗");
+      // Keep the exact reason, acknowledgment and action so the user can retry.
+    } finally {
+      if (activeSubmission.current === token) {
+        activeSubmission.current = null;
+        if (isCurrentContext() && commandSequence === readSequence.current) setSubmitting(false);
+      }
     }
   };
 
@@ -191,13 +216,13 @@ export function FeatureFlagsAdminWorkspace({
             FR-SHARED-004 / FR-GOV-009 Kill-Switch 控制面板：即時切換 UI、API、Job 執行權限
           </p>
         </div>
-        <button className={styles.filterBtn} onClick={loadFlags} disabled={loading}>
+        <button className={styles.filterBtn} onClick={loadFlags} disabled={loading || submitting}>
           {loading ? "更新中..." : "🔄 重新整理"}
         </button>
       </div>
 
       {/* Error alert */}
-      {error && apiReadContext === renderContext && (
+      {error && !modalFlag && apiReadContext === renderContext && (
         <div role="alert" style={{ background: "rgba(239,68,68,0.2)", color: "#f87171", padding: "0.75rem", borderRadius: "6px", border: "1px solid #ef4444" }}>
           ⚠️ 錯誤: {error}
         </div>
@@ -325,6 +350,7 @@ export function FeatureFlagsAdminWorkspace({
                     flag.is_active ? styles.toggleBtnDisable : styles.toggleBtnEnable
                   }`}
                   onClick={() => handleToggle(flag)}
+                  disabled={submitting}
                 >
                   {flag.is_active ? "🛑 緊急停用 (Kill-Switch)" : "▶️ 啟用功能"}
                 </button>
@@ -332,7 +358,8 @@ export function FeatureFlagsAdminWorkspace({
                 {flag.high_risk && (
                   <button
                     className={styles.approveBtn}
-                    onClick={() => setModalFlag(flag)}
+                    onClick={() => chooseCommand(flag, null)}
+                    disabled={submitting}
                   >
                     ✍️ 簽核明細
                   </button>
@@ -345,70 +372,64 @@ export function FeatureFlagsAdminWorkspace({
 
       </>}
 
-      {/* Dual Approval Modal */}
       {ready && modalFlag && (
-        <div className={styles.modalOverlay} onClick={() => setModalFlag(null)}>
-          <div className={styles.modalBox} onClick={(e) => e.stopPropagation()}>
-            <h3 className={styles.modalTitle}>
-              🛡️ 高風險 Feature Flag 雙人核准 (SA-04 §3)
-            </h3>
-            <p style={{ color: "#9ca3af", fontSize: "0.875rem", margin: 0 }}>
-              Flag: <strong style={{ color: "#60a5fa" }}>{modalFlag.key}</strong>
-            </p>
-            <p style={{ color: "#d1d5db", fontSize: "0.875rem" }}>
-              高風險功能啟用必須取得至少 <strong>2 個獨立核准者</strong> 簽名。未達標準前 UI、API 與 Job 均會保持停用 (Fail-Safe)。
-            </p>
-
-            <div style={{ background: "rgba(0,0,0,0.3)", padding: "0.75rem", borderRadius: "6px" }}>
-              <div style={{ fontSize: "0.8rem", color: "#9ca3af", marginBottom: "0.4rem" }}>
-                目前已簽核人員 ({modalFlag.approved_by.length}/2):
-              </div>
-              {modalFlag.approved_by.length === 0 ? (
-                <div style={{ fontSize: "0.85rem", color: "#f87171" }}>尚無簽核記錄</div>
-              ) : (
-                <ul style={{ margin: 0, paddingLeft: "1.2rem", color: "#34d399", fontSize: "0.875rem" }}>
-                  {modalFlag.approved_by.map((appr) => (
-                    <li key={appr}>{appr}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              {fixturesAllowed && <input
-                type="text"
-                placeholder="輸入核准者 ID / 角色 (如 ops_lead_john)..."
-                className={styles.searchInput}
-                style={{ flex: 1 }}
-                value={approverInput}
-                onChange={(e) => setApproverInput(e.target.value)}
-              />}
-              <button className={styles.approveBtn} onClick={handleAddApproval}>
+        <Modal
+          open
+          title={modalFlag.high_risk ? "🛡️ 高風險 Feature Flag 雙人核准 (SA-04 §3)" : "Feature Flag 操作確認"}
+          onClose={closeModal}
+          closeDisabled={submitting}
+        >
+          <p>Flag: <strong>{modalFlag.key}</strong> · Owner: {modalFlag.owner}</p>
+          <p>目前狀態：{modalFlag.is_active ? "已啟用" : "已停用"}；到期日：{modalFlag.expires_on ?? "未設定"}</p>
+          {modalFlag.high_risk && <p>高風險功能啟用仍須 2 個獨立核准者；本次確認不會取代雙人核准。</p>}
+          <div>
+            <p>目前已簽核人員 ({modalFlag.approved_by.length}/2):</p>
+            {modalFlag.approved_by.length === 0 ? <p>尚無簽核記錄</p> : (
+              <ul>{modalFlag.approved_by.map((actor) => <li key={actor}>{actor}</li>)}</ul>
+            )}
+          </div>
+          {!command ? (
+            <div className="odp-actions">
+              <button className={styles.approveBtn} onClick={() => chooseCommand(modalFlag, "approve")}>
                 {fixturesAllowed ? "+ 簽名" : "以目前登入帳號核准"}
-              </button>
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem", marginTop: "1rem" }}>
-              <button
-                className={styles.filterBtn}
-                onClick={() => setModalFlag(null)}
-              >
-                取消
               </button>
               <button
                 className={`${styles.toggleBtn} ${styles.toggleBtnEnable}`}
-                disabled={modalFlag.approved_by.length < 2}
-                onClick={handleEnableFromModal}
-                style={{
-                  opacity: modalFlag.approved_by.length < 2 ? 0.5 : 1,
-                  cursor: modalFlag.approved_by.length < 2 ? "not-allowed" : "pointer",
-                }}
+                disabled={modalFlag.high_risk && modalFlag.approved_by.length < 2}
+                onClick={() => chooseCommand(modalFlag, "enable")}
               >
                 🚀 正式啟用 (核准數 {modalFlag.approved_by.length}/2)
               </button>
             </div>
-          </div>
-        </div>
+          ) : (
+            <Form
+              affectedEntities={[{ entityType: "feature_flag", entityId: modalFlag.key, label: modalFlag.key }]}
+              previewBeforeSubmit
+              fieldErrors={[
+                ...(proofError ? [{ field: "操作理由／風險確認", message: proofError }] : []),
+                ...(error && apiReadContext === renderContext ? [{ field: "伺服器操作", message: error }] : []),
+              ]}
+              submitAction={{ id: "confirm-feature-flag-command", label: command === "approve" ? "確認核准" : command === "enable" ? "確認啟用" : "確認停用", loading: submitting, permitted: !submitting, tone: command === "disable" ? "danger" : undefined }}
+              onSubmit={(event) => { event.preventDefault(); void handleConfirmedCommand(); }}
+            >
+              <p>操作預覽：{command === "approve" ? fixturesAllowed ? "新增 POC 核准紀錄" : "新增目前登入帳號的核准" : command === "enable" ? "啟用此功能" : "停用此功能（Kill-Switch）"}。</p>
+              {command === "approve" && fixturesAllowed && (
+                <label className="odp-field">
+                  <span>核准者 ID（POC）</span>
+                  <input className={styles.searchInput} placeholder="輸入核准者 ID / 角色 (如 ops_lead_john)..." value={approverInput} disabled={submitting} onChange={(event) => setApproverInput(event.currentTarget.value)} />
+                </label>
+              )}
+              <label className="odp-field">
+                <span>操作理由{command === "approve" ? "（至少 10 個字）" : ""}</span>
+                <textarea className="odp-input" required minLength={command === "approve" ? 10 : 1} value={reason} disabled={submitting} onChange={(event) => setReason(event.currentTarget.value)} />
+              </label>
+              <label className="odp-field">
+                <input type="checkbox" required checked={riskAcknowledged} disabled={submitting} onChange={(event) => setRiskAcknowledged(event.currentTarget.checked)} />
+                <span>我已確認此操作的風險及影響範圍</span>
+              </label>
+            </Form>
+          )}
+        </Modal>
       )}
 
       {/* Toast Notification */}

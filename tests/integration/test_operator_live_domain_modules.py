@@ -1219,6 +1219,8 @@ def test_live_domain_state_and_idempotency_are_tenant_isolated(
 def test_live_governance_export_refuses_metadata_only_success_after_restart(tmp_path: Path) -> None:
     database_path = tmp_path / "operator-governance-unavailable.sqlite3"
     headers = _headers("tenant-governance", idempotency_key="idem-unadmitted-export")
+    # Reach the canonical export admission gate with the actual audit grant.
+    headers["x-roles"] += ",auditor"
     payload = {"dateFrom": "2026-07-01", "dateTo": "2026-07-24", "modules": ["Network"], "contents": ["Audit Trail"], "format": "PDF"}
     for _attempt in range(2):
         app, bundle = _live_app(database_path)

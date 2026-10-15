@@ -4,9 +4,17 @@ import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
+import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace } from "../../NetworkFindAreasWorkspace";
 import { ExpansionStepper } from "../ExpansionStepper";
 import type { NetworkShell } from "../NetworkShell";
+
+// Explicit read-grant fixture: shell projects listing and SiteScore read families.
+// This is a renderer premise, not a real Principal/production permission grant.
+const NETWORK_READ_FIXTURE_TABS = ["areas", "radar", "candidates", "score", "compare", "review"] as const;
+function NetworkFindAreasWorkspace(props: import("../../NetworkFindAreasWorkspace").NetworkFindAreasWorkspaceProps) {
+  return <GrantedReadNetworkWorkspace allowedTabIds={NETWORK_READ_FIXTURE_TABS} {...props} />;
+}
+
 
 const nav = vi.hoisted(() => ({ search: "ws=network&tab=candidates&candidate=ui03-second", push: vi.fn() }));
 const capture = vi.hoisted(() => ({ props: null as ComponentProps<typeof NetworkShell> | null }));

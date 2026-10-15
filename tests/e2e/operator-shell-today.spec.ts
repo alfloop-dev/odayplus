@@ -42,18 +42,28 @@ const expectedCards: Record<string, string[]> = {
 
 test.describe.configure({ mode: "serial" });
 
-test("expansion contributor keeps the server persona and its restricted navigation", async ({ page }) => {
+test("expansion contributor keeps the server persona, principal-derived navigation and decision denial", async ({ page }) => {
+  await page.setExtraHTTPHeaders(roleHeaders("expansion-staff"));
   await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-staff"));
   await page.goto("/operator");
   await expect(page.getByTestId("operator-envelope-source")).toHaveText("operator-shell-api-envelope");
   await expect(page.getByTitle("展店專員", { exact: true })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /門市營運/ })).toHaveAttribute("aria-disabled", "true");
+  // Expansion has operator_console VIEW, which protects these non-Network
+  // reads. The persona label cannot remove its actual API grants.
+  await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /門市營運/ })).toHaveAttribute("aria-disabled", "false");
   const api = await playwrightRequest.newContext();
   const response = await api.get(`${API_BASE_URL}/api/v1/operator/bootstrap`, { headers: roleHeaders("expansion-staff") });
   expect(response.status()).toBe(200);
   const body = await response.json();
   expect(body.meta.role.id).toBe("expansion-staff");
-  expect(body.navigation.allowedWorkspaces).toEqual(["today", "network"]);
+  expect(body.navigation.allowedWorkspaces).toEqual(allWorkspaces);
+  expect(body.meta.role.allowedWorkspaces).toEqual(allWorkspaces);
+  // Console read access does not grant SiteScore decision authority.
+  const decision = await api.post(`${API_BASE_URL}/api/v1/operator/network-reviews/RV-701/decide`, {
+    headers: roleHeaders("expansion-staff"),
+    data: { decision: "GO", reason: "Verify contributor decision denial without mutation." },
+  });
+  expect(decision.status()).toBe(403);
   await api.dispose();
 });
 

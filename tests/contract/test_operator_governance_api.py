@@ -441,11 +441,18 @@ def test_governance_audit_export_grant_still_requires_operator_console_access():
 
 
 def test_durable_governance_export_checks_same_grant_then_retains_canonical_hold(tmp_path):
+    from modules.opsboard.application.operator_live_repository import OperatorLiveRepository
     from shared.infrastructure.persistence.factory import _durable_bundle
 
     bundle = _durable_bundle(tmp_path / "synthetic-govern-export-permission.sqlite")
     try:
-        client = TestClient(create_app(persistence=bundle, external_provider_validation=lambda: None))
+        # Durable storage alone keeps the explicit local fixture composition.
+        # Inject its real read owner to exercise the canonical Operator router.
+        client = TestClient(create_app(
+            persistence=bundle,
+            operator_live_repository=OperatorLiveRepository(bundle),
+            external_provider_validation=lambda: None,
+        ))
         payload = {"dateFrom": "2026-07-01", "dateTo": "2026-07-24",
                    "modules": ["Growth"], "contents": ["Audit Trail"]}
         for roles, expected_status, allowed in [
@@ -456,6 +463,7 @@ def test_durable_governance_export_checks_same_grant_then_retains_canonical_hold
             assert snapshot.status_code == 200, snapshot.text
             assert snapshot.json()["actionAuthority"]["exportEvidence"] is allowed
             before = snapshot.json()["evidencePackages"]
+            assert before == [], "canonical empty storage must not project seeded packages"
             response = client.post(f"{BASE}/evidence-package", headers=headers, json=payload)
             assert response.status_code == expected_status, response.text
             if allowed:

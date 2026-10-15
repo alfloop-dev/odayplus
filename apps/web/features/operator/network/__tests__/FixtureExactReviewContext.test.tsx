@@ -2,8 +2,16 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReviewPanel } from "../ReviewPanel";
-import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
+import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace } from "../../NetworkFindAreasWorkspace";
 import type { ReviewItem } from "../networkReviewTypes";
+
+// Explicit read-grant fixture: shell projects listing and SiteScore read families.
+// This is a renderer premise, not a real Principal/production permission grant.
+const NETWORK_READ_FIXTURE_TABS = ["areas", "radar", "candidates", "score", "compare", "review"] as const;
+function NetworkFindAreasWorkspace(props: import("../../NetworkFindAreasWorkspace").NetworkFindAreasWorkspaceProps) {
+  return <GrantedReadNetworkWorkspace allowedTabIds={NETWORK_READ_FIXTURE_TABS} {...props} />;
+}
+
 const nav=vi.hoisted(()=>({pathname:"/operator",search:"",push:vi.fn()}));
 vi.mock("next/navigation",()=>({usePathname:()=>nav.pathname,useSearchParams:()=>new URLSearchParams(nav.search),useRouter:()=>({push:nav.push})}));
 // Actual local application fixture JSON. Network candidates were prepared using

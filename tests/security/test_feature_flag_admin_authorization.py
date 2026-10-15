@@ -35,6 +35,9 @@ ADMIN_REQUESTS = [
 ]
 
 
+COMMAND_PROOF = {"reason": "Synthetic operational command reason", "riskAcknowledged": True}
+
+
 @dataclass
 class FlagContext:
     client: TestClient
@@ -217,7 +220,7 @@ def test_body_approval_names_are_not_authenticated_evidence(
     before = context.registry.get(KEY)
 
     response = context.client.post(
-        BASE + "/" + KEY + suffix, json=body, headers=_headers("admin-a")
+        BASE + "/" + KEY + suffix, json={**COMMAND_PROOF, **body}, headers=_headers("admin-a")
     )
 
     assert response.status_code == 403
@@ -233,22 +236,22 @@ def test_two_distinct_verified_principals_control_enable_and_kill_switch(authori
     path = BASE + "/" + KEY
     for _ in range(2):
         approved = context.client.post(
-            path + "/approve", json={}, headers=_headers("admin-a")
+            path + "/approve", json={**COMMAND_PROOF, **({})}, headers=_headers("admin-a")
         )
         assert approved.status_code == 200
         assert approved.json()["flag"]["approved_by"] == ["admin-a"]
-    denied = context.client.post(path + "/enable", json={}, headers=_headers("admin-a"))
+    denied = context.client.post(path + "/enable", json={**COMMAND_PROOF, **({})}, headers=_headers("admin-a"))
     assert denied.status_code == 403
     assert context.registry.get(KEY).enabled is False
 
-    second = context.client.post(path + "/approve", json={}, headers=_headers("admin-b"))
+    second = context.client.post(path + "/approve", json={**COMMAND_PROOF, **({})}, headers=_headers("admin-b"))
     assert second.status_code == 200
     assert second.json()["flag"]["approved_by"] == ["admin-a", "admin-b"]
-    enabled = context.client.post(path + "/enable", json={}, headers=_headers("admin-a"))
+    enabled = context.client.post(path + "/enable", json={**COMMAND_PROOF, **({})}, headers=_headers("admin-a"))
     assert enabled.status_code == 200
     assert enabled.json()["flag"]["is_active"] is True
     assert context.registry.is_enabled(KEY) is True
-    disabled = context.client.post(path + "/disable", headers=_headers("admin-b"))
+    disabled = context.client.post(path + "/disable", headers=_headers("admin-b"), json=COMMAND_PROOF)
     assert disabled.status_code == 200
     assert disabled.json()["flag"]["is_active"] is False
     assert disabled.json()["flag"]["approved_by"] == []
@@ -272,13 +275,13 @@ def test_admin_reads_registration_and_audit_use_actual_request_identity(authoriz
     assert listed.status_code == 200
     assert listed.json()["count"] == 1
     created = context.client.post(
-        BASE, json={"key": key, "owner": "different-configuration-owner"},
+        BASE, json={**COMMAND_PROOF, **({"key": key, "owner": "different-configuration-owner"})},
         headers=headers,
     )
     assert created.status_code == 200
     assert created.json()["flag"]["owner"] == "different-configuration-owner"
     assert context.client.get(BASE + "/" + key, headers=headers).status_code == 200
-    enabled = context.client.post(BASE + "/" + key + "/enable", json={}, headers=headers)
+    enabled = context.client.post(BASE + "/" + key + "/enable", json={**COMMAND_PROOF, **({})}, headers=headers)
     assert enabled.status_code == 200
     events = [
         event for event in context.audit.list_events()
@@ -294,7 +297,7 @@ def test_create_cannot_downgrade_existing_high_risk_or_erase_approvals(authorize
     context = authorized_flags
     path = BASE + "/" + KEY
     approved = context.client.post(
-        path + "/approve", json={}, headers=_headers("admin-a")
+        path + "/approve", json={**COMMAND_PROOF, **({})}, headers=_headers("admin-a")
     )
     assert approved.status_code == 200
     before = context.registry.get(KEY)
@@ -302,13 +305,13 @@ def test_create_cannot_downgrade_existing_high_risk_or_erase_approvals(authorize
     assert before.approved_by == frozenset({"admin-a"})
 
     response = context.client.post(
-        BASE, json={"key": KEY, "owner": "replacement-owner", "high_risk": False},
+        BASE, json={**COMMAND_PROOF, **({"key": KEY, "owner": "replacement-owner", "high_risk": False})},
         headers=_headers("admin-a"),
     )
 
     assert response.status_code == 409
     assert context.registry.get(KEY) == before
-    denied = context.client.post(path + "/enable", json={}, headers=_headers("admin-a"))
+    denied = context.client.post(path + "/enable", json={**COMMAND_PROOF, **({})}, headers=_headers("admin-a"))
     assert denied.status_code == 403
     assert context.registry.get(KEY).high_risk is True
     assert context.registry.get(KEY).approved_by == frozenset({"admin-a"})
@@ -382,17 +385,17 @@ def test_default_boundary_is_pinned_for_two_router_instances(monkeypatch):
     a_headers = _headers("admin-a")
     b_headers = _headers("admin-b", issuer=other_issuer, signing_key=other_key)
 
-    allowed_a = client_a.post(BASE + "/" + KEY + "/approve", json={}, headers=a_headers)
+    allowed_a = client_a.post(BASE + "/" + KEY + "/approve", json={**COMMAND_PROOF, **({})}, headers=a_headers)
     assert allowed_a.status_code == 200
     assert registry_a.get(KEY).approved_by == frozenset({"admin-a"})
     assert registry_b.get(KEY).approved_by == frozenset()
     assert client_a.post(
-        BASE + "/" + KEY + "/approve", json={}, headers=b_headers
+        BASE + "/" + KEY + "/approve", json={**COMMAND_PROOF, **({})}, headers=b_headers
     ).status_code == 401
     assert client_b.post(
-        BASE + "/" + KEY + "/approve", json={}, headers=a_headers
+        BASE + "/" + KEY + "/approve", json={**COMMAND_PROOF, **({})}, headers=a_headers
     ).status_code == 401
-    allowed_b = client_b.post(BASE + "/" + KEY + "/approve", json={}, headers=b_headers)
+    allowed_b = client_b.post(BASE + "/" + KEY + "/approve", json={**COMMAND_PROOF, **({})}, headers=b_headers)
     assert allowed_b.status_code == 200
     assert registry_b.get(KEY).approved_by == frozenset({"admin-b"})
     assert registry_a.get(KEY).approved_by == frozenset({"admin-a"})

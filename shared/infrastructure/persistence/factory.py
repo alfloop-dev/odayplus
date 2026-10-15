@@ -97,6 +97,7 @@ class PersistenceBundle:
     # share one registry repository when it is available.
     forecastops_policy_repository: Any = None
     current_model_admission: Any = None
+    feature_flag_registry: Any = None
 
 
     @property
@@ -306,12 +307,15 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     )
     mem_corr_repo = InMemoryManualCorrectionRepository()
     mem_audit_log = InMemoryAuditLog(worm_sink=worm_sink)
+    from shared.auth.feature_flags import default_registry
+    memory_flags = default_registry()
 
     return PersistenceBundle(
         mode="memory",
         audit_log=mem_audit_log,
         evidence_store=InMemoryEvidenceBundleStore(worm_sink=worm_sink),
-        job_queue=InMemoryJobQueue(),
+        job_queue=InMemoryJobQueue(flags=memory_flags),
+        feature_flag_registry=memory_flags,
         avm_repository=InMemoryAVMRepository(),
         forecastops_repository=InMemoryForecastOpsRepository(),
         forecastops_policy_repository=_default_decision_policy_repository(),
@@ -397,6 +401,9 @@ def _durable_bundle(
 
     engine = SqliteEngine(db_path)
     store = SqliteDocumentStore(engine)
+    from shared.infrastructure.persistence.feature_flags import DurableFeatureFlagRegistry
+    durable_flags = DurableFeatureFlagRegistry(store)
+    durable_flags.initialize_defaults()
     # The identity schema is PostgreSQL-only (migration 000011), so SQLite mode
     # carries in-memory doubles rather than None: the auth boundary always has
     # an identity store and a session verifier and never silently skips them.
@@ -424,7 +431,8 @@ def _durable_bundle(
         mode="durable",
         audit_log=durable_audit_log,
         evidence_store=DurableEvidenceBundleStore(engine, worm_sink=resolved_worm_sink),
-        job_queue=DurableJobQueue(engine),
+        job_queue=DurableJobQueue(engine, flags=durable_flags),
+        feature_flag_registry=durable_flags,
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
         forecastops_policy_repository=_default_decision_policy_repository(),
@@ -562,7 +570,10 @@ def _postgres_bundle(
     from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
 
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
-    pg_job_queue = DurableJobQueue(engine, canonical_intake_score_schedule=True)
+    from shared.infrastructure.persistence.feature_flags import DurableFeatureFlagRegistry
+    pg_flags = DurableFeatureFlagRegistry(store)
+    pg_flags.initialize_defaults()
+    pg_job_queue = DurableJobQueue(engine, canonical_intake_score_schedule=True, flags=pg_flags)
     canonical_audit_writer = CanonicalPostgresAuditLog(engine)
 
     assisted_intake_store.configure_canonical_audit(CanonicalIntakeAuditSink(
@@ -583,6 +594,7 @@ def _postgres_bundle(
             worm_sink=resolved_worm_sink,
         ),
         job_queue=pg_job_queue,
+        feature_flag_registry=pg_flags,
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
         forecastops_policy_repository=SqlDecisionPolicyRepository(engine),
