@@ -846,6 +846,12 @@ def handle_store_ops_materialize(job: JobRecord, persistence: PersistenceBundle)
     )
 
 
+def handle_identity_execution(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from modules.listing.application.identity_delivery import run_identity_delivery
+
+    run_identity_delivery(job, persistence.canonical_identity_graph())
+
+
 def build_default_registry() -> JobRegistry:
     """The registry the runtime worker uses by default."""
     from apps.worker.assisted_listing_intake.worker import (
@@ -879,6 +885,7 @@ def build_default_registry() -> JobRegistry:
     registry.register(DURABLE_AUDIT_JOB_TYPE, handle_durable_audit_delivery)
 
     registry.register(STORE_OPS_MATERIALIZE_JOB_TYPE, handle_store_ops_materialize)
+    registry.register("identity-execution", handle_identity_execution)
     return registry
 
 

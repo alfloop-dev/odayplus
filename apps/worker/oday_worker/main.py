@@ -177,6 +177,7 @@ class ODayWorker:
             ScoreExecutionJobRepository,
         )
         canonical_score_job = job.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}
+        canonical_identity_job = job.job_type == "identity-execution"
         score_owner = ScoreExecutionJobRepository if job.job_type == SITESCORE_EXECUTION_JOB_TYPE else IntakeScoreJobRepository
 
         def score_heartbeat(job_id: str, *, expected_version: int, fence_token: int) -> int:
@@ -186,6 +187,12 @@ class ODayWorker:
             return score_owner(self.persistence).heartbeat(
                 job_id, expected_version=expected_version, fence_token=fence_token,
             )
+
+        def identity_heartbeat(job_id: str, *, expected_version: int, fence_token: int) -> int:
+            from modules.listing.application.identity_delivery import IdentityJobAdmission
+
+            return IdentityJobAdmission(self.persistence.canonical_identity_graph()).heartbeat(
+                job_id, expected_version=expected_version, fence_token=fence_token)
 
         context = TraceContext(
             correlation_id=job.correlation_id,
@@ -209,7 +216,7 @@ class ODayWorker:
                 queue=self.job_queue,
                 job=job,
                 interval_seconds=self.heartbeat_interval_seconds,
-                heartbeat=score_heartbeat if canonical_score_job else None,
+                heartbeat=score_heartbeat if canonical_score_job else identity_heartbeat if canonical_identity_job else None,
             )
             heartbeat.start()
             try:
@@ -239,7 +246,7 @@ class ODayWorker:
                     )
                     return True
 
-                if canonical_score_job:
+                if canonical_score_job or canonical_identity_job:
                     if (latest_job is not None
                             and latest_job.status == JobStatus.QUEUED
                             and latest_job.delivery_state == JobDeliveryState.RETRYING):
@@ -341,7 +348,7 @@ class ODayWorker:
                         error_code=type(exc).__name__,
                     )
 
-                    if canonical_score_job:
+                    if canonical_score_job or canonical_identity_job:
                         # A storage/authorization/fence failure must not be
                         # converted into a separate delivery-only retry. The
                         # authoritative checkpoint stays recoverable.

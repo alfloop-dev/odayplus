@@ -31,7 +31,7 @@ class IdentityExecutionService:
         if (current is None or current.job_type != self.graph.job_type or current.status != JobStatus.RUNNING
                 or not current.locked_by or current.locked_by != delivery.locked_by
                 or current.fence_token != delivery.fence_token or current.payload != delivery.payload
-                or current.payload != {"tenant_id": tenant, "decision_id": decision_id, "job_id": delivery.job_id}
+                or self.graph.delivery_reference(current) != {"tenant_id": tenant, "decision_id": decision_id, "job_id": delivery.job_id}
                 or current.lease_expires_at is None or current.lease_expires_at <= now):
             raise JobFenceRejectedError("IDENTITY_DELIVERY_FENCE_REJECTED")
         return current
@@ -167,7 +167,9 @@ class IdentityExecutionService:
                 raise JobFenceRejectedError("IDENTITY_BUSINESS_LEASE_EXPIRED")
 
     def run(self, delivery: JobRecord) -> dict:
-        tenant, decision_id = delivery.payload["tenant_id"], delivery.payload["decision_id"]
+        with self.engine.transaction():
+            reference = self.graph.delivery_reference(delivery)
+        tenant, decision_id = reference["tenant_id"], reference["decision_id"]
         UUID(tenant)
         UUID(decision_id)
         fence = self.begin(tenant, decision_id, delivery)

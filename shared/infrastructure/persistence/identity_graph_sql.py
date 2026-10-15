@@ -41,12 +41,20 @@ class CanonicalIdentityGraphRepository:
 
     job_type = "identity-execution"
 
-    def __init__(self, engine: Any, queue: Any, audit_sink: Any) -> None:
+    def __init__(self, engine: Any, queue: Any, audit_sink: Any, *, delivery_authenticator: Any = None) -> None:
         if (getattr(engine, "dialect", None) != "postgresql"
                 or getattr(queue, "_engine", None) is not engine
                 or getattr(getattr(audit_sink, "writer", None), "engine", None) is not engine):
             raise ValueError("Canonical identity requires one PostgreSQL engine")
         self.engine, self.queue, self.audit_sink = engine, queue, audit_sink
+        self.delivery_authenticator = delivery_authenticator
+
+    def delivery_reference(self, delivery: JobRecord) -> dict:
+        if self.delivery_authenticator is not None:
+            return self.delivery_authenticator.reference(delivery)
+        # Explicit component fixtures retain their already accepted internal
+        # transport. Runtime factory composition always injects authentication.
+        return delivery.payload
 
     @contextmanager
     def transaction(self, tenant_id: str):
@@ -103,8 +111,8 @@ class CanonicalIdentityGraphRepository:
                 or current.fence_token != delivery.fence_token
                 or current.payload != delivery.payload
                 or current.lease_expires_at is None or current.lease_expires_at <= now
-                or current.payload != {"tenant_id": tenant, "decision_id": decision_id,
-                                       "job_id": delivery.job_id}):
+                or self.delivery_reference(current) != {"tenant_id": tenant, "decision_id": decision_id,
+                                                       "job_id": delivery.job_id}):
             raise JobFenceRejectedError("IDENTITY_DELIVERY_FENCE_REJECTED")
         job = self._one(
             "SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=? FOR UPDATE",

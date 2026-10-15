@@ -121,6 +121,7 @@ class PersistenceBundle:
 
     def canonical_identity_graph(self) -> Any:
         """Use native canonical rows with the configured Intake audit policy."""
+        from modules.listing.application.identity_delivery import IdentityDeliveryAuthenticator
         from shared.infrastructure.persistence.identity_graph_sql import (
             CanonicalIdentityGraphRepository,
         )
@@ -128,6 +129,7 @@ class PersistenceBundle:
         return CanonicalIdentityGraphRepository(
             self.engine, self.job_queue,
             getattr(self.assisted_intake_store, "_canonical_audit_sink", None),
+            delivery_authenticator=IdentityDeliveryAuthenticator(self.engine),
         )
 
     def canonical_match_cases(self) -> Any:
@@ -136,6 +138,13 @@ class PersistenceBundle:
         )
 
         return CanonicalMatchCaseRepository(self.canonical_identity_graph())
+
+    def canonical_identity_decisions(self) -> Any:
+        from shared.infrastructure.persistence.identity_decisions_sql import (
+            CanonicalIdentityDecisionRepository,
+        )
+
+        return CanonicalIdentityDecisionRepository(self.canonical_identity_graph())
 
     def network_review_resolver(self, *, hooks: Any = ()) -> Any:
         """Native aliases share the Operator review domain's durable owner."""
