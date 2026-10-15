@@ -197,6 +197,55 @@ class AssignmentAggregate:
     due_at: datetime | None = None
 
 
+@dataclass(frozen=True)
+class SlaSchedule:
+    """Tenant-bound checkpoints resolved by the backend policy/calendar owner.
+
+    These values are not policy approval or caller-supplied SLA durations.
+    No default policy, calendar, warning window or breach grace is inferred.
+    """
+
+    tenant_id: str
+    policy_version: str
+    calendar_version: str
+    started_at: datetime
+    due_soon_at: datetime
+    due_at: datetime
+    breach_at: datetime
+
+    def __post_init__(self) -> None:
+        for name in ("tenant_id", "policy_version", "calendar_version"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"SLA schedule requires {name}")
+        for name in ("started_at", "due_soon_at", "due_at", "breach_at"):
+            value = getattr(self, name)
+            if not isinstance(value, datetime) or value.utcoffset() is None:
+                raise ValueError(f"SLA {name} must be timezone-aware")
+            object.__setattr__(self, name, value.astimezone(UTC))
+        if not self.started_at <= self.due_soon_at <= self.due_at <= self.breach_at:
+            raise ValueError("SLA checkpoints must be chronologically ordered")
+
+
+@dataclass(frozen=True)
+class SlaPauseInterval:
+    started_at: datetime
+    expected_resume_at: datetime
+    reason: str
+    ended_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("started_at", "expected_resume_at", "ended_at"):
+            value = getattr(self, name)
+            if name == "ended_at" and value is None:
+                continue
+            if not isinstance(value, datetime) or value.utcoffset() is None:
+                raise ValueError(f"SLA pause {name} must be timezone-aware")
+            object.__setattr__(self, name, value.astimezone(UTC))
+        if not self.reason.strip() or self.expected_resume_at <= self.started_at:
+            raise ValueError("SLA pause requires a reason and future expected resume")
+        if self.ended_at is not None and self.ended_at < self.started_at:
+            raise ValueError("SLA pause ends before it starts")
 @dataclass
 class SlaInstanceAggregate:
     id: str
@@ -206,6 +255,9 @@ class SlaInstanceAggregate:
     due_at: datetime
     paused_reason: str | None = None
     resume_at: datetime | None = None
+    schedule: SlaSchedule | None = None
+    pause_intervals: list[SlaPauseInterval] = field(default_factory=list)
+    paused_duration_seconds: int = 0
 
 
 @dataclass
