@@ -3151,24 +3151,30 @@ def evaluate_gate(
         # scheduled path, and the ingestion runs it persists are exactly what
         # ``_check_source_data`` reads back. Reading the history first meant the
         # gate asserted evidence that only a manual POST could ever have created.
-        _check_worker_and_audit(
-            http=http,
-            config=config,
-            worker_driver=worker_driver,
-            correlation_id=correlation_id,
-            checks=checks,
-            report=report,
-            provider=runtime_provider,
-            monotonic=monotonic,
-            sleep=sleep,
-        )
+        # These probes POST jobs and invoke the worker. A final blocked report
+        # cannot undo those effects: all read-only prerequisites, including the
+        # serving release binding, must positively pass BEFORE entering them.
+        if all(check.ok for check in checks):
+            _check_worker_and_audit(
+                http=http,
+                config=config,
+                worker_driver=worker_driver,
+                correlation_id=correlation_id,
+                checks=checks,
+                report=report,
+                provider=runtime_provider,
+                monotonic=monotonic,
+                sleep=sleep,
+            )
         _check_source_data(
             http.request("GET", "/api/v1/external-data/ingestion-runs?limit=100"),
             config=config,
             provider=runtime_provider,
             checks=checks,
         )
-        if config.dev_admin:
+        # Login, password rotation and session probes are mutations too. Keep
+        # read-only diagnostics above, but never enter this journey on HOLD.
+        if config.dev_admin and all(check.ok for check in checks):
             _check_dev_admin_session(
                 web=web_http,
                 config=config,

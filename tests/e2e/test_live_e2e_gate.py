@@ -1051,6 +1051,75 @@ def test_unreachable_version_surface_blocks() -> None:
     assert "release:platform_version" in blocker_names(report)
 
 
+@pytest.mark.parametrize("profile", ["full", "dev-admin"])
+@pytest.mark.parametrize(
+    "version",
+    [
+        response(200, {"release_sha": "c" * 40}),
+        response(0, error="version response unavailable"),
+        response(503, {"release_sha": EXPECTED_SHA}),
+        response(200, {}),
+        response(200, {"release_sha": [EXPECTED_SHA]}),
+        response(200, {"release_sha": EXPECTED_SHA, "source": "fixture"}),
+    ],
+    ids=["wrong-sha", "unavailable", "failed-status", "missing", "malformed", "surrogate"],
+)
+def test_release_preflight_blocks_all_mutating_probes(profile: str, version: Any) -> None:
+    readiness = readiness_payload()
+    readiness["details"]["releaseProfile"].update(
+        name=profile, modelReadinessClaimed=profile == "full"
+    )
+    http = FakeHttp(live_routes(**{
+        "anon GET /platform/version": version,
+        "anon GET /readiness": response(200, readiness),
+    }))
+    web = passing_web_http()  # Any attempted login/rotation would be unrouted.
+    driver = FakeWorkerDriver()
+    clock = FakeClock()
+    _, report = gate.evaluate_gate(
+        config(release_profile=profile, dev_admin_username="fixture.admin",
+               dev_admin_password="fixture-passphrase", dev_admin_denied_role="cs-lead"),
+        http=http, web_http=web, worker_driver=driver,
+        correlation_id=CORRELATION_ID, now=NOW,
+        monotonic=clock.monotonic, sleep=clock.sleep,
+    )
+    assert not report["ok"]
+    assert any(name.startswith("release:") for name in blocker_names(report))
+    assert driver.calls == 0
+    assert all(" GET " in f" {call}" for call in http.calls + web.calls)
+    assert "worker" not in report and "dev_admin" not in report
+    # Failed release binding does not hide other read-only observations.
+    assert "anon GET /readiness" in http.calls
+    assert "GET /api/v1/learninghub/models" in http.calls
+    assert "GET /api/v1/external-data/ingestion-runs?limit=100" in http.calls
+
+
+@pytest.mark.parametrize("dependency", ["readiness", "operator", "web", "models"])
+def test_other_preflight_failures_do_not_enter_worker(dependency: str) -> None:
+    routes = live_routes()
+    web = passing_web_http()
+    if dependency == "readiness":
+        routes["anon GET /readiness"] = response(0, error="readiness unavailable")
+    elif dependency == "operator":
+        routes["GET /api/v1/operator/bootstrap"] = response(401)
+    elif dependency == "web":
+        web = FakeHttp({"anon GET /operator": response(200)})
+    else:
+        routes["GET /api/v1/learninghub/models"] = response(503)
+    http = FakeHttp(routes)
+    driver = FakeWorkerDriver()
+    clock = FakeClock()
+    _, report = gate.evaluate_gate(
+        config(), http=http, web_http=web, worker_driver=driver,
+        correlation_id=CORRELATION_ID, now=NOW,
+        monotonic=clock.monotonic, sleep=clock.sleep,
+    )
+    assert not report["ok"]
+    assert driver.calls == 0
+    assert all(" GET " in f" {call}" for call in http.calls + web.calls)
+    assert "worker" not in report
+
+
 # ---------------------------------------------------------------------------
 # Runtime dependencies
 # ---------------------------------------------------------------------------
