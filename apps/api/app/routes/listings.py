@@ -1710,6 +1710,22 @@ else:
             intake_id = value.get("intake_id")
             return active.intakes.get(intake_id) if intake_id else None
 
+        def require_workflow_resource_scope(principal: Principal, value: dict[str, Any]) -> None:
+            # Authorize against the authoritative linked Intake, not a less
+            # specific child envelope. A dangling or foreign link cannot grant
+            # access from the child's own tenant metadata.
+            if value.get("intake_id"):
+                intake = linked_intake(value)
+                if intake is None:
+                    raise HTTPException(403, "SCOPE_DENIED")
+                if intake.get("scope", {}).get("tenant_id") != principal.tenant_id:
+                    raise HTTPException(403, "TENANT_SCOPE_DENIED")
+                require_intake_scope(principal, intake)
+            else:
+                # Historical standalone resources retain their own envelope;
+                # missing axes still fail closed for restricted principals.
+                require_intake_scope(principal, value)
+
         def require_actor(request: Request) -> str:
             principal = get_principal(request)
             if not principal.authenticated:
@@ -4000,9 +4016,7 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
-            intake = linked_intake(current)
-            if intake is not None:
-                require_intake_scope(principal, intake)
+            require_workflow_resource_scope(principal, current)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -4094,9 +4108,7 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
-            intake = linked_intake(current)
-            if intake is not None:
-                require_intake_scope(principal, intake)
+            require_workflow_resource_scope(principal, current)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -4195,9 +4207,7 @@ else:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
-            intake = linked_intake(current)
-            if intake is not None:
-                require_intake_scope(principal, intake)
+            require_workflow_resource_scope(principal, current)
 
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
                 "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
@@ -4263,6 +4273,7 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
+            require_workflow_resource_scope(principal, current)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
@@ -4331,6 +4342,7 @@ else:
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
+            require_workflow_resource_scope(principal, current)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
             is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
