@@ -213,7 +213,7 @@ else:
             record = owned_record(export_id, principal)
             # A string supplied as authorized_by/authorization_id is not an
             # independently verified sensitive-data authorization receipt.
-            if record.sensitive or record.data_classification.lower() in {
+            if record.sensitive or record.data_classification.strip().lower() in {
                 "restricted",
                 "highly_restricted",
                 "secret",

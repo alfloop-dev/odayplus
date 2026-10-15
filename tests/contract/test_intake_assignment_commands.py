@@ -276,6 +276,8 @@ def test_claim_transfer_accept_complete_and_sla_are_audited_atomic_and_replayabl
     accepted = _action(journey, "claim", actor=TARGET)
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["version"] == transferred.json()["version"] + 2
+    assert store.assignments[aid]["claimed_by"] == TARGET
+    assert store.assignments[aid]["claimed_at"] == AT.isoformat().replace("+00:00", "Z")
     snapshot = _snapshot(store)
     incomplete = _action(journey, "complete", actor=TARGET)
     assert incomplete.status_code == 409 and "WORK_INCOMPLETE" in incomplete.text

@@ -272,6 +272,8 @@ def change_assignment(
         checkpoint.update({"status": state, "version": version})
         if audit_action == "assignment.accept":
             checkpoint.update({"claimed_by": None, "claimed_at": None})
+        elif audit_action == "assignment.claim":
+            checkpoint.update({"claimed_by": str(UUID(actor_id)), "claimed_at": timestamp})
         checkpoint.setdefault("transition_history", []).append(
             {
                 "transition_id": str(uuid4()),
