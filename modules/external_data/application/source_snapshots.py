@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -90,6 +91,8 @@ class SourceSnapshotService:
     def _is_sqlite(self) -> bool:
         if self.db_conn is None:
             return True
+        if getattr(self.db_conn, "dialect", None) in {"sqlite", "postgresql"}:
+            return self.db_conn.dialect == "sqlite"
         conn_str = str(type(self.db_conn)).lower()
         if "psycopg" in conn_str or "postgres" in conn_str:
             return False
@@ -191,8 +194,60 @@ class SourceSnapshotService:
             ),
         )
 
+    def _native_source_policy(self, source_id: str) -> str:
+        """Use only the current native row; a failed read is never a fixture grant.
+
+        Both the runtime engine and raw PostgreSQL connections are supported.
+        Reading through a caller's connection must not commit its transaction.
+        This gate does not provision policy or claim a processing/job receipt.
+        """
+        sql = (
+            "SELECT retrieval_mode,kill_switch,production_enabled,version,"
+            "policy_owner_subject_id,legal_approval_ref,license_approval_ref,review_expires_at "
+            "FROM intake.source_registry WHERE source_id=%s"
+        )
+        try:
+            if getattr(self.db_conn, "dialect", None) == "postgresql":
+                row = self.db_conn.query_one(sql.replace("%s", "?"), (source_id,))
+            else:
+                with self.db_conn.cursor() as cursor:
+                    cursor.execute(sql, (source_id,))
+                    result = cursor.fetchone()
+                    if result is None:
+                        row = None
+                    elif isinstance(result, Mapping):
+                        row = dict(result)
+                    else:
+                        row = dict(zip((column[0] for column in cursor.description), result, strict=True))
+        except Exception as exc:
+            raise SourcePolicyViolation("POLICY_UNKNOWN") from exc
+
+        if row is None or any(type(row.get(key)) is not bool for key in ("kill_switch", "production_enabled")):
+            return "POLICY_UNKNOWN"
+        if row["kill_switch"] or not row["production_enabled"]:
+            return "SOURCE_BLOCKED"
+        mode = row.get("retrieval_mode")
+        if mode in {"ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED", "SOURCE_BLOCKED", "POLICY_UNKNOWN"}:
+            return mode
+        if mode != "APPROVED_RETRIEVAL":
+            return "POLICY_UNKNOWN"
+        try:
+            expiry = row.get("review_expires_at")
+            expiry = expiry if isinstance(expiry, datetime) else datetime.fromisoformat(str(expiry))
+            if (type(row.get("version")) is not int or row["version"] < 1
+                    or not uuid.UUID(str(row.get("policy_owner_subject_id"))).int
+                    or any(not isinstance(row.get(key), str) or not row[key].strip()
+                           for key in ("legal_approval_ref", "license_approval_ref"))
+                    or expiry.tzinfo is None or expiry.utcoffset() is None or expiry <= datetime.now(UTC)):
+                return "POLICY_UNKNOWN"
+        except (ValueError, TypeError, OverflowError):
+            return "POLICY_UNKNOWN"
+        return mode
+
     def check_source_policy(self, tenant_id: str, source_id: str) -> str:
         """Enforce access policy rules and return source evaluation policy."""
+        if self.db_conn is not None and not self._is_sqlite():
+            return self._native_source_policy(source_id)
         if self.db_conn is not None:
             sql = """
                 SELECT retrieval_mode, kill_switch, production_enabled
