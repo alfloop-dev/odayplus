@@ -110,6 +110,9 @@ class PersistenceBundle:
     def listing_repository_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("listing_repository", tenant_id)
 
+    def operator_intake_repository_for_tenant(self, tenant_id: str) -> Any | None:
+        return self._scoped_repository("operator_intake_repository", tenant_id)
+
     def sitescore_decision_store_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("sitescore_decision_store", tenant_id)
 

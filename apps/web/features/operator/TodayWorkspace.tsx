@@ -72,6 +72,22 @@ export type ShellAuditEvent = {
   time: string;
 };
 
+const auditTimeFormat = new Intl.DateTimeFormat("zh-TW", {
+  timeZone: "Asia/Taipei",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+function auditTimeLabel(value: string): string {
+  // Package 10's activity rail uses a compact clock label. Live audit records
+  // carry ISO instants; preserve those instants on <time> rather than allowing
+  // an unbounded timestamp column to squeeze the event into a vertical strip.
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) return value;
+  const instant = new Date(value);
+  return Number.isNaN(instant.getTime()) ? value : auditTimeFormat.format(instant);
+}
+
 export type ShellNotification = {
   id?: string;
   title: string;
@@ -681,7 +697,7 @@ export function TodayWorkspace({
               {today.auditFeed.length ? (
                 today.auditFeed.map((event) => (
                   <article key={`${event.time}-${event.category}-${event.detail}`}>
-                    <time>{event.time}</time>
+                    <time dateTime={event.time} title={event.time}>{auditTimeLabel(event.time)}</time>
                     <p>
                       <strong>{event.actor}</strong> {event.detail} <b>{event.category}</b>
                     </p>

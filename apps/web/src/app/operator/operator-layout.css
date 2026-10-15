@@ -3,6 +3,11 @@ body {
   padding: 0 !important;
 }
 
+/* Native scrolling must leave controls below the sticky, responsive topbar. */
+html:has([data-testid="operator-console"]) {
+  scroll-padding-top: calc(var(--operator-sticky-header-height, 53px) + 12px);
+}
+
 /*
  * Intake detail is the sole content layer below the Package 10 top navigation.
  * Neutralize legacy console minimum widths only while that durable detail

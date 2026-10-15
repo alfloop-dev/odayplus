@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from modules.listing.domain.intake_states import (
     AssignmentAggregate,
     AssignmentState,
     AssignmentStateMachine,
+    DenialCode,
+    DomainValidationError,
+    PrincipalRole,
     SlaInstanceAggregate,
+    SlaPauseInterval,
+    SlaSchedule,
     SlaState,
     SlaStateMachine,
     TransitionContext,
@@ -28,6 +34,18 @@ class SlaRepository(Protocol):
 
     def save_sla(self, sla: SlaInstanceAggregate) -> None:
         ...
+
+
+class SlaCalendar(Protocol):
+    """Server-owned policy/calendar adapter; never a frontend deadline fallback."""
+
+    def permits_pause(
+        self, schedule: SlaSchedule, reason: str, expected_resume_at: datetime
+    ) -> bool: ...
+
+    def resume_schedule(
+        self, schedule: SlaSchedule, interval: SlaPauseInterval, resumed_at: datetime
+    ) -> SlaSchedule: ...
 
 
 class InMemoryAssignmentRepository:
@@ -55,9 +73,11 @@ class InMemorySlaRepository:
 class AssignmentSlaService:
     """Manages Task Assignments and SLAs, including state derivation and pausing."""
 
-    def __init__(self, assignment_repo: AssignmentRepository, sla_repo: SlaRepository) -> None:
+    def __init__(self, assignment_repo: AssignmentRepository, sla_repo: SlaRepository,
+                 *, calendar: SlaCalendar | None = None) -> None:
         self.assignment_repo = assignment_repo
         self.sla_repo = sla_repo
+        self.calendar = calendar
         self.emitted_events: list[dict[str, Any]] = []
 
     def _record_event(self, event_type: str, entity_id: str, tenant_id: str, correlation_id: str | None, payload: dict[str, Any]) -> None:
@@ -198,15 +218,37 @@ class AssignmentSlaService:
 
     # SLA Tracking Functions
 
-    def create_sla(self, sla_id: str, tenant_id: str, due_at: datetime, context: TransitionContext) -> SlaInstanceAggregate:
+
+    def create_sla(
+        self, sla_id: str, tenant_id: str, schedule: SlaSchedule, context: TransitionContext
+    ) -> SlaInstanceAggregate:
+        if context.actor.tenant_id != tenant_id:
+            raise DomainValidationError(DenialCode.TENANT_SCOPE_DENIED, "SLA tenant mismatch")
+        if not isinstance(schedule, SlaSchedule):
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED, "Resolved SLA schedule is required"
+            )
+        if schedule.tenant_id != tenant_id:
+            raise DomainValidationError(DenialCode.TENANT_SCOPE_DENIED, "SLA schedule tenant mismatch")
         SlaStateMachine.transition(None, SlaState.ON_TRACK, context)
+
+        existing = self.sla_repo.get_sla(sla_id)
+        if existing is not None:
+            self._validate_sla_context(existing, context)
+            if existing.schedule != schedule:
+                raise DomainValidationError(
+                    DenialCode.WORKFLOW_STATE_DENIED,
+                    "Existing SLA schedule cannot be replaced by initialization",
+                )
+            return existing
 
         sla = SlaInstanceAggregate(
             id=sla_id,
             tenant_id=tenant_id,
             status=SlaState.ON_TRACK,
             version=1,
-            due_at=due_at,
+            due_at=schedule.due_at,
+            schedule=schedule,
         )
         self.sla_repo.save_sla(sla)
 
@@ -215,31 +257,79 @@ class AssignmentSlaService:
             sla_id,
             tenant_id,
             context.correlation_id,
-            {"status": SlaState.ON_TRACK.value, "version": 1}
+            {
+                "status": SlaState.ON_TRACK.value,
+                "version": 1,
+                "policy_version": schedule.policy_version,
+                "calendar_version": schedule.calendar_version,
+                "due_soon_at": schedule.due_soon_at.isoformat(),
+                "due_at": schedule.due_at.isoformat(),
+                "breach_at": schedule.breach_at.isoformat(),
+            },
         )
         return sla
 
-    def get_derived_sla_state(self, due_at: datetime, current_time: datetime) -> SlaState:
-        """Helper to derive SLA state strictly from time difference."""
-        if current_time >= due_at + timedelta(hours=24):
+
+    def get_derived_sla_state(self, schedule: SlaSchedule, current_time: datetime) -> SlaState:
+        """Evaluate authoritative checkpoints, including their exact boundaries."""
+        if not isinstance(schedule, SlaSchedule):
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED, "Resolved SLA schedule is required"
+            )
+        current_time = self._aware_time(current_time)
+        if current_time >= schedule.breach_at:
             return SlaState.BREACHED
-        elif current_time > due_at:
+        elif current_time >= schedule.due_at:
             return SlaState.OVERDUE
-        elif due_at - current_time <= timedelta(hours=2):
+        elif current_time >= schedule.due_soon_at:
             return SlaState.DUE_SOON
         else:
             return SlaState.ON_TRACK
+
+
+    @staticmethod
+    def _aware_time(value: datetime) -> datetime:
+        if not isinstance(value, datetime) or value.utcoffset() is None:
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED, "SLA clock must be timezone-aware"
+            )
+        return value.astimezone(UTC)
+
+
+    @staticmethod
+    def _validate_sla_context(sla: SlaInstanceAggregate, context: TransitionContext) -> None:
+        if sla.tenant_id != context.actor.tenant_id:
+            raise DomainValidationError(DenialCode.TENANT_SCOPE_DENIED, "SLA tenant mismatch")
+        if context.version_before is not None and context.version_before != sla.version:
+            raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "SLA version conflict")
+
+
+    @staticmethod
+    def _schedule(sla: SlaInstanceAggregate) -> SlaSchedule:
+        if sla.schedule is None or sla.schedule.due_at != sla.due_at:
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED, "Resolved SLA schedule missing or inconsistent"
+            )
+        if sla.schedule.tenant_id != sla.tenant_id:
+            raise DomainValidationError(DenialCode.TENANT_SCOPE_DENIED, "SLA schedule tenant mismatch")
+        return sla.schedule
+
 
     def update_sla_derived_state(self, sla_id: str, context: TransitionContext) -> SlaInstanceAggregate:
         sla = self.sla_repo.get_sla(sla_id)
         if not sla:
             raise ValueError(f"SLA {sla_id} not found")
 
+        self._validate_sla_context(sla, context)
+        if context.actor.role not in {PrincipalRole.SVC_SLA, PrincipalRole.EMERGENCY_ADMIN}:
+            raise DomainValidationError(
+                DenialCode.ROLE_DENIED, "Only SLA worker may evaluate the clock"
+            )
         if sla.status in {SlaState.COMPLETED, SlaState.PAUSED}:
             # Completed or paused SLAs do not auto-derive state changes from running clock
             return sla
 
-        derived = self.get_derived_sla_state(sla.due_at, context.current_time)
+        derived = self.get_derived_sla_state(self._schedule(sla), context.current_time)
         if derived != sla.status:
             SlaStateMachine.transition(sla, derived, context)
             self.sla_repo.save_sla(sla)
@@ -249,18 +339,43 @@ class AssignmentSlaService:
                 sla_id,
                 sla.tenant_id,
                 context.correlation_id,
-                {"status": derived.value, "version": sla.version}
+                {"status": derived.value, "version": sla.version},
             )
         return sla
 
-    def pause_sla(self, sla_id: str, paused_reason: str, resume_at: datetime, context: TransitionContext) -> SlaInstanceAggregate:
+
+    def pause_sla(
+        self, sla_id: str, paused_reason: str, resume_at: datetime, context: TransitionContext
+    ) -> SlaInstanceAggregate:
         sla = self.sla_repo.get_sla(sla_id)
         if not sla:
             raise ValueError(f"SLA {sla_id} not found")
 
+        self._validate_sla_context(sla, context)
+        if sla.status not in {SlaState.ON_TRACK, SlaState.DUE_SOON, SlaState.OVERDUE}:
+            raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "SLA state cannot be paused")
+        started_at, resume_at = self._aware_time(context.current_time), self._aware_time(resume_at)
+        if not paused_reason.strip() or resume_at <= started_at:
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED, "Pause requires a reason and future resume time"
+            )
+        schedule = self._schedule(sla)
+        if context.actor.role not in {
+            PrincipalRole.EXPANSION_MANAGER,
+            PrincipalRole.SVC_SLA,
+            PrincipalRole.EMERGENCY_ADMIN,
+        }:
+            raise DomainValidationError(
+                DenialCode.ROLE_DENIED, "Only an authorized SLA manager may pause"
+            )
+        if self.calendar is None or not self.calendar.permits_pause(schedule, paused_reason, resume_at):
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED, "SLA policy/calendar does not authorize pause"
+            )
         SlaStateMachine.transition(sla, SlaState.PAUSED, context)
         sla.paused_reason = paused_reason
         sla.resume_at = resume_at
+        sla.pause_intervals.append(SlaPauseInterval(started_at, resume_at, paused_reason))
         self.sla_repo.save_sla(sla)
 
         self._record_event(
@@ -268,21 +383,75 @@ class AssignmentSlaService:
             sla_id,
             sla.tenant_id,
             context.correlation_id,
-            {"status": SlaState.PAUSED.value, "version": sla.version, "reason": paused_reason}
+            {"status": SlaState.PAUSED.value, "version": sla.version, "reason": paused_reason},
         )
         return sla
+
 
     def resume_sla(self, sla_id: str, context: TransitionContext) -> SlaInstanceAggregate:
         sla = self.sla_repo.get_sla(sla_id)
         if not sla:
             raise ValueError(f"SLA {sla_id} not found")
 
+        self._validate_sla_context(sla, context)
+        if context.actor.role not in {
+            PrincipalRole.EXPANSION_MANAGER,
+            PrincipalRole.SVC_SLA,
+            PrincipalRole.EMERGENCY_ADMIN,
+        }:
+            raise DomainValidationError(
+                DenialCode.ROLE_DENIED, "Only an authorized SLA manager/worker may resume"
+            )
         if sla.status != SlaState.PAUSED:
             raise ValueError("SLA is not paused")
 
-        # Resume to derived state from clock
-        derived = self.get_derived_sla_state(sla.due_at, context.current_time)
+        if not sla.pause_intervals or sla.pause_intervals[-1].ended_at is not None:
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED, "Active SLA pause interval missing"
+            )
+        interval = sla.pause_intervals[-1]
+        resumed_at = self._aware_time(context.current_time)
+        if resumed_at < interval.started_at:
+            raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "SLA resume predates pause")
+        schedule = self._schedule(sla)
+        if self.calendar is None:
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED, "Resolved SLA calendar is required"
+            )
+        resumed = self.calendar.resume_schedule(schedule, interval, resumed_at)
+        if not isinstance(resumed, SlaSchedule) or (
+            resumed.tenant_id,
+            resumed.policy_version,
+            resumed.calendar_version,
+            resumed.started_at,
+        ) != (
+            schedule.tenant_id,
+            schedule.policy_version,
+            schedule.calendar_version,
+            schedule.started_at,
+        ):
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED, "Resumed SLA schedule changed its binding"
+            )
+        if any(
+            getattr(resumed, name) < getattr(schedule, name)
+            for name in ("due_soon_at", "due_at", "breach_at")
+        ):
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED,
+                "Pause exclusion cannot move SLA checkpoints backwards",
+            )
+        derived = self.get_derived_sla_state(resumed, resumed_at)
         SlaStateMachine.transition(sla, derived, context)
+        sla.schedule, sla.due_at = resumed, resumed.due_at
+        sla.pause_intervals[-1] = replace(interval, ended_at=resumed_at)
+        sla.paused_duration_seconds = int(
+            sum(
+                (pause.ended_at - pause.started_at).total_seconds()
+                for pause in sla.pause_intervals
+                if pause.ended_at is not None
+            )
+        )
         sla.paused_reason = None
         sla.resume_at = None
         self.sla_repo.save_sla(sla)
@@ -292,9 +461,19 @@ class AssignmentSlaService:
             sla_id,
             sla.tenant_id,
             context.correlation_id,
-            {"status": derived.value, "version": sla.version}
+            {
+                "status": derived.value,
+                "version": sla.version,
+                "paused_duration_seconds": sla.paused_duration_seconds,
+                "policy_version": resumed.policy_version,
+                "calendar_version": resumed.calendar_version,
+                "due_soon_at": resumed.due_soon_at.isoformat(),
+                "due_at": resumed.due_at.isoformat(),
+                "breach_at": resumed.breach_at.isoformat(),
+            },
         )
         return sla
+
 
     def complete_sla(self, sla_id: str, context: TransitionContext) -> SlaInstanceAggregate:
         sla = self.sla_repo.get_sla(sla_id)
@@ -304,18 +483,12 @@ class AssignmentSlaService:
         SlaStateMachine.transition(sla, SlaState.COMPLETED, context)
         self.sla_repo.save_sla(sla)
 
-        self._record_event(
-            "sla.completed.v1",
-            sla_id,
-            sla.tenant_id,
-            context.correlation_id,
-            {}
-        )
+        self._record_event("sla.completed.v1", sla_id, sla.tenant_id, context.correlation_id, {})
         self._record_event(
             "sla.state_changed.v1",
             sla_id,
             sla.tenant_id,
             context.correlation_id,
-            {"status": SlaState.COMPLETED.value, "version": sla.version}
+            {"status": SlaState.COMPLETED.value, "version": sla.version},
         )
         return sla
