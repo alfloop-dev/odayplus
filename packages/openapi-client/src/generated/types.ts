@@ -293,11 +293,51 @@ export type BatchSiteContextPayload = {
 /** CandidateDisposition */
 export type CandidateDisposition = "KEEP_HISTORICAL" | "REASSIGN" | "REQUIRE_REVIEW";
 
+/** CandidateDispositionRequest */
+export type CandidateDispositionRequest = {
+  candidate_site_id: string;
+  disposition: "KEEP_HISTORICAL" | "REQUIRE_REVIEW" | "REASSIGN";
+  expected_version: number;
+  target_property_id?: string | null;
+};
+
 /** CandidateReassignment */
 export type CandidateReassignment = {
   candidate_site_id: string;
   disposition: CandidateDisposition;
   target_property_id?: string | null;
+};
+
+/** CanonicalIdentityReceipt */
+export type CanonicalIdentityReceipt = {
+  audit_event_id: string;
+  correlation_id: string;
+  decision_id: string;
+  job_id: string | null;
+  job_status?: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "RETRYING" | "CANCELLED" | "DEAD_LETTER" | null;
+  match_case_id: string;
+  match_case_version: number;
+  review_audit_event_id?: string | null;
+  status: "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "EXECUTING" | "EXECUTED" | "FAILED";
+  version: number;
+};
+
+/** CanonicalIdentitySummary */
+export type CanonicalIdentitySummary = {
+  decision_id: string;
+  decision_type: "MERGE" | "SPLIT";
+  intake_id: string;
+  intake_version: number;
+  job_id: string | null;
+  job_status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "RETRYING" | "CANCELLED" | "DEAD_LETTER" | null;
+  job_version: number | null;
+  match_case_id: string;
+  match_case_version: number;
+  plan: MergePlan | SplitPlan;
+  proposer_subject_id: string;
+  reviewer_subject_id: string | null;
+  status: "DRAFT" | "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "EXECUTING" | "EXECUTED" | "FAILED" | "REVERSAL_PENDING" | "REVERSED" | "SUPERSEDED";
+  version: number;
 };
 
 /** ClosePayload */
@@ -824,6 +864,14 @@ export type IdentityPartition = {
   target_property_id: string | null;
 };
 
+/** IdentityReviewRequest */
+export type IdentityReviewRequest = {
+  decision: "APPROVE" | "REJECT";
+  expected_case_version: number;
+  reason: string;
+  risk_acknowledged: boolean;
+};
+
 /** IngestionRunPayload */
 export type IngestionRunPayload = {
   idempotency_key?: string | null;
@@ -1101,6 +1149,24 @@ export type MatchEvidenceCandidate = {
 
 /** MatchOutcome */
 export type MatchOutcome = "NEW" | "EXACT_DUPLICATE" | "REVISION" | "POSSIBLE_MATCH" | "QUARANTINED";
+
+/** MergePlan */
+export type MergePlan = {
+  candidate_reassignment_plan: CandidateDispositionRequest[];
+  expected_edge_versions: Record<string, number>;
+  expected_listing_versions: Record<string, number>;
+  expected_property_versions: Record<string, number>;
+  source_property_ids: string[];
+  target_property_id: string;
+};
+
+/** MergeProposal */
+export type MergeProposal = {
+  decision_type: "MERGE";
+  plan: MergePlan;
+  reason: string;
+  risk_acknowledged: true;
+};
 
 /** MergeRequest */
 export type MergeRequest = {
@@ -1947,6 +2013,30 @@ export type SourceValueExperimentPayload = {
   survey_effort_hours?: number;
 };
 
+/** SplitPartition */
+export type SplitPartition = {
+  source_identity_edge_ids: string[];
+  target_property_id: string;
+};
+
+/** SplitPlan */
+export type SplitPlan = {
+  candidate_reassignment_plan: CandidateDispositionRequest[];
+  expected_edge_versions: Record<string, number>;
+  expected_listing_versions: Record<string, number>;
+  expected_property_versions: Record<string, number>;
+  partitions: SplitPartition[];
+  source_property_id: string;
+};
+
+/** SplitProposal */
+export type SplitProposal = {
+  decision_type: "SPLIT";
+  plan: SplitPlan;
+  reason: string;
+  risk_acknowledged: true;
+};
+
 /** SplitRequest */
 export type SplitRequest = {
   partitions: IdentityPartition[];
@@ -2249,6 +2339,8 @@ export const API_PATHS = {
   "/api/v1/avm/deal-outcomes": ["GET", "POST"],
   "/api/v1/avm/deal-outcomes/export": ["POST"],
   "/api/v1/avm/deal-outcomes/{outcome_id}": ["GET"],
+  "/api/v1/canonical-identity-decisions/{decision_id}": ["GET"],
+  "/api/v1/canonical-identity-decisions/{decision_id}/actions/review": ["POST"],
   "/api/v1/external-data/freshness": ["GET"],
   "/api/v1/external-data/ingestion-runs": ["GET", "POST"],
   "/api/v1/external-data/ingestion-runs/{run_id}": ["GET"],
@@ -2361,6 +2453,7 @@ export const API_PATHS = {
   "/api/v1/market-intelligence/sites/context/batch": ["POST"],
   "/api/v1/market-intelligence/sites/{site_id}/context": ["GET"],
   "/api/v1/match-cases/{match_case_id}/decisions": ["POST"],
+  "/api/v1/match-cases/{match_case_id}/identity-decisions": ["POST"],
   "/api/v1/netplan/scenarios": ["GET", "POST"],
   "/api/v1/netplan/scenarios/{scenario_id}": ["GET", "PUT"],
   "/api/v1/netplan/scenarios/{scenario_id}/close": ["POST"],

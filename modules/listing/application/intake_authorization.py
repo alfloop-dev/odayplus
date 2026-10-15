@@ -201,6 +201,7 @@ def authorize_intake_action(
             "archive": Action.UPDATE,
             "correct": Action.UPDATE,
             "decide": Action.UPDATE,
+            "reject_identity": Action.UPDATE,
             "merge": Action.UPDATE,
             "split": Action.UPDATE,
             "promote": Action.UPDATE,
@@ -399,6 +400,12 @@ def authorize_intake_action(
             # Staff can only propose
             pass
         elif not (is_manager or is_steward):
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
+
+    elif action == "reject_identity":
+        # Rejecting a pending proposal does not execute its graph plan. The
+        # identity state contract requires a reason, with the same reviewers.
+        if not (is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action in ("merge", "split", "unmerge"):

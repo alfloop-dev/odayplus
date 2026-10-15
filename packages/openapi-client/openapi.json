@@ -1504,6 +1504,49 @@
         "title": "CandidateDisposition",
         "type": "string"
       },
+      "CandidateDispositionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_site_id": {
+            "format": "uuid",
+            "title": "Candidate Site Id",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "KEEP_HISTORICAL",
+              "REQUIRE_REVIEW",
+              "REASSIGN"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "target_property_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Property Id"
+          }
+        },
+        "required": [
+          "candidate_site_id",
+          "expected_version",
+          "disposition"
+        ],
+        "title": "CandidateDispositionRequest",
+        "type": "object"
+      },
       "CandidateReassignment": {
         "properties": {
           "candidate_site_id": {
@@ -1532,6 +1575,256 @@
           "disposition"
         ],
         "title": "CandidateReassignment",
+        "type": "object"
+      },
+      "CanonicalIdentityReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "format": "uuid",
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "job_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "QUEUED",
+                  "RUNNING",
+                  "SUCCEEDED",
+                  "FAILED",
+                  "RETRYING",
+                  "CANCELLED",
+                  "DEAD_LETTER"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Status"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "match_case_version": {
+            "minimum": 1.0,
+            "title": "Match Case Version",
+            "type": "integer"
+          },
+          "review_audit_event_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Audit Event Id"
+          },
+          "status": {
+            "enum": [
+              "PENDING_REVIEW",
+              "APPROVED",
+              "REJECTED",
+              "EXECUTING",
+              "EXECUTED",
+              "FAILED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decision_id",
+          "match_case_id",
+          "match_case_version",
+          "status",
+          "version",
+          "job_id",
+          "audit_event_id",
+          "correlation_id"
+        ],
+        "title": "CanonicalIdentityReceipt",
+        "type": "object"
+      },
+      "CanonicalIdentitySummary": {
+        "properties": {
+          "decision_id": {
+            "format": "uuid",
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "decision_type": {
+            "enum": [
+              "MERGE",
+              "SPLIT"
+            ],
+            "title": "Decision Type",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_version": {
+            "minimum": 1.0,
+            "title": "Intake Version",
+            "type": "integer"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "job_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "QUEUED",
+                  "RUNNING",
+                  "SUCCEEDED",
+                  "FAILED",
+                  "RETRYING",
+                  "CANCELLED",
+                  "DEAD_LETTER"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Status"
+          },
+          "job_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Version"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "match_case_version": {
+            "minimum": 1.0,
+            "title": "Match Case Version",
+            "type": "integer"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MergePlan"
+              },
+              {
+                "$ref": "#/components/schemas/SplitPlan"
+              }
+            ],
+            "title": "Plan"
+          },
+          "proposer_subject_id": {
+            "format": "uuid",
+            "title": "Proposer Subject Id",
+            "type": "string"
+          },
+          "reviewer_subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Subject Id"
+          },
+          "status": {
+            "enum": [
+              "DRAFT",
+              "PENDING_REVIEW",
+              "APPROVED",
+              "REJECTED",
+              "EXECUTING",
+              "EXECUTED",
+              "FAILED",
+              "REVERSAL_PENDING",
+              "REVERSED",
+              "SUPERSEDED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decision_id",
+          "decision_type",
+          "status",
+          "version",
+          "match_case_id",
+          "match_case_version",
+          "intake_id",
+          "intake_version",
+          "proposer_subject_id",
+          "reviewer_subject_id",
+          "plan",
+          "job_id",
+          "job_status",
+          "job_version"
+        ],
+        "title": "CanonicalIdentitySummary",
         "type": "object"
       },
       "ClosePayload": {
@@ -3962,6 +4255,42 @@
         "title": "IdentityPartition",
         "type": "object"
       },
+      "IdentityReviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "enum": [
+              "APPROVE",
+              "REJECT"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "expected_case_version": {
+            "minimum": 1.0,
+            "title": "Expected Case Version",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "decision",
+          "expected_case_version",
+          "reason",
+          "risk_acknowledged"
+        ],
+        "title": "IdentityReviewRequest",
+        "type": "object"
+      },
       "IngestionRunPayload": {
         "properties": {
           "idempotency_key": {
@@ -5454,6 +5783,100 @@
         ],
         "title": "MatchOutcome",
         "type": "string"
+      },
+      "MergePlan": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_reassignment_plan": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateDispositionRequest"
+            },
+            "maxItems": 1000,
+            "title": "Candidate Reassignment Plan",
+            "type": "array"
+          },
+          "expected_edge_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Edge Versions",
+            "type": "object"
+          },
+          "expected_listing_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Listing Versions",
+            "type": "object"
+          },
+          "expected_property_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Property Versions",
+            "type": "object"
+          },
+          "source_property_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Source Property Ids",
+            "type": "array"
+          },
+          "target_property_id": {
+            "format": "uuid",
+            "title": "Target Property Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_property_versions",
+          "expected_listing_versions",
+          "expected_edge_versions",
+          "candidate_reassignment_plan",
+          "source_property_ids",
+          "target_property_id"
+        ],
+        "title": "MergePlan",
+        "type": "object"
+      },
+      "MergeProposal": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_type": {
+            "const": "MERGE",
+            "title": "Decision Type",
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/MergePlan"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 20,
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "const": true,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason",
+          "risk_acknowledged",
+          "decision_type",
+          "plan"
+        ],
+        "title": "MergeProposal",
+        "type": "object"
       },
       "MergeRequest": {
         "properties": {
@@ -10511,6 +10934,125 @@
           "source_id"
         ],
         "title": "SourceValueExperimentPayload",
+        "type": "object"
+      },
+      "SplitPartition": {
+        "additionalProperties": false,
+        "properties": {
+          "source_identity_edge_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Source Identity Edge Ids",
+            "type": "array"
+          },
+          "target_property_id": {
+            "format": "uuid",
+            "title": "Target Property Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_property_id",
+          "source_identity_edge_ids"
+        ],
+        "title": "SplitPartition",
+        "type": "object"
+      },
+      "SplitPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_reassignment_plan": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateDispositionRequest"
+            },
+            "maxItems": 1000,
+            "title": "Candidate Reassignment Plan",
+            "type": "array"
+          },
+          "expected_edge_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Edge Versions",
+            "type": "object"
+          },
+          "expected_listing_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Listing Versions",
+            "type": "object"
+          },
+          "expected_property_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Property Versions",
+            "type": "object"
+          },
+          "partitions": {
+            "items": {
+              "$ref": "#/components/schemas/SplitPartition"
+            },
+            "maxItems": 100,
+            "minItems": 2,
+            "title": "Partitions",
+            "type": "array"
+          },
+          "source_property_id": {
+            "format": "uuid",
+            "title": "Source Property Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_property_versions",
+          "expected_listing_versions",
+          "expected_edge_versions",
+          "candidate_reassignment_plan",
+          "source_property_id",
+          "partitions"
+        ],
+        "title": "SplitPlan",
+        "type": "object"
+      },
+      "SplitProposal": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_type": {
+            "const": "SPLIT",
+            "title": "Decision Type",
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/SplitPlan"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 20,
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "const": true,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason",
+          "risk_acknowledged",
+          "decision_type",
+          "plan"
+        ],
+        "title": "SplitProposal",
         "type": "object"
       },
       "SplitRequest": {
@@ -16271,6 +16813,134 @@
         "summary": "Get Deal Outcome",
         "tags": [
           "avm"
+        ]
+      }
+    },
+    "/api/v1/canonical-identity-decisions/{decision_id}": {
+      "get": {
+        "operationId": "getCanonicalIdentityDecision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Decision Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIdentitySummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Read",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-identity-decisions/{decision_id}/actions/review": {
+      "post": {
+        "operationId": "reviewCanonicalIdentity",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Decision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIdentityReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Review",
+        "tags": [
+          "assisted-listing-intake"
         ]
       }
     },
@@ -30055,6 +30725,101 @@
           }
         },
         "summary": "Decide Match Case",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/match-cases/{match_case_id}/identity-decisions": {
+      "post": {
+        "operationId": "proposeCanonicalIdentity",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Match Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "discriminator": {
+                  "mapping": {
+                    "MERGE": "#/components/schemas/MergeProposal",
+                    "SPLIT": "#/components/schemas/SplitProposal"
+                  },
+                  "propertyName": "decision_type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/MergeProposal"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SplitProposal"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIdentityReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Propose",
         "tags": [
           "assisted-listing-intake"
         ]
