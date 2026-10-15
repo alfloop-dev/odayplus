@@ -1,5 +1,7 @@
 import type { ExpansionStep } from "./ExpansionStepper";
 import { readId, readObject } from "./networkReadValidation";
+import { candidateScoreJob, type CandidateScoreJobRead, type CandidateScoreJobsRead } from "./candidateScoreJobs";
+import type { CurrentScoreAdmission, ScoringGate } from "./networkScoringTypes";
 
 // These are read identities, not new domain states or scoring/admission rules.
 export type WorkflowRead<T> = {
@@ -8,7 +10,7 @@ export type WorkflowRead<T> = {
   generation: number | null;
 };
 type CandidateIdentity = { id: string; listingId?: string | null; heatZoneId?: string; status?: string; datasetSnapshotId?: string | null };
-type ScoringIdentity = { id: string; listingId?: string | null };
+type ScoringIdentity = { id: string; listingId?: string | null; gate?: ScoringGate; currentAdmission?: CurrentScoreAdmission };
 type ReportIdentity = {
   id: string; reportId?: string; reportVersion?: number; sitescoreRunId?: string;
   modelVersion?: string; datasetSnapshotId?: string;
@@ -41,8 +43,10 @@ export type CandidateWorkflowProjection = {
   report: CommittedWorkflowReport | null;
   reviewId: string | null;
   reviewReason: string;
-  currentJob: "unknown";
-  executionAdmission: "unknown";
+  dataReadiness: ScoringGate | null;
+  currentJob: CandidateScoreJobRead | null;
+  reviewDecision: { id: string; status: string; reportId: string; reportVersion: number } | null;
+  executionAdmission: "unknown" | "blocked" | "verified";
 };
 
 const stepDefinitions = [
@@ -90,13 +94,14 @@ export function projectCandidateWorkflow(input: {
   network: WorkflowRead<WorkflowNetworkSnapshot>;
   scoring: WorkflowRead<WorkflowScoringSnapshot>;
   reviews: WorkflowRead<WorkflowReviewSnapshot>;
+  jobs?: CandidateScoreJobsRead;
 }): CandidateWorkflowProjection {
   const initialNotice = input.selection.invalid ? "候選點連結包含不一致或空白的選取值，請重新選取。" : "請選取候選點以查看對應物件與已保存報告；區域與物件頁籤仍可瀏覽。";
   const result: CandidateWorkflowProjection = {
     steps: neutralSteps(initialNotice), notice: initialNotice, nextAction: "請選取候選點以查看流程",
     reason: input.selection.invalid ? "invalid_selection" : "selection_required",
     candidateId: null, listingId: null, report: null, reviewId: null, reviewReason: "report_unavailable",
-    currentJob: "unknown", executionAdmission: "unknown",
+    dataReadiness: null, currentJob: null, reviewDecision: null, executionAdmission: "unknown",
   };
   if (input.selection.invalid || !input.selection.id) return result;
   const unavailable = readProblem(input.network, input.currentGeneration, "network")
@@ -128,6 +133,14 @@ export function projectCandidateWorkflow(input: {
   }
   result.candidateId = id;
   result.listingId = listingId;
+  result.dataReadiness = scoringRows[0].gate ?? null;
+  result.currentJob = candidateScoreJob(input.jobs, input.currentGeneration, id, listingId);
+  const admission = scoringRows[0].currentAdmission;
+  if (admission?.candidateId === id && admission.listingId === listingId) {
+    const states = [admission.currentInputs, admission.source, admission.pit, admission.model].map((fact) => fact.state);
+    result.executionAdmission = states.includes("blocked") ? "blocked"
+      : states.every((state) => state === "verified") ? "verified" : "unknown";
+  }
   result.steps[1] = { ...result.steps[1], state: "completed", entityId: listingId, stateLabel: `已關聯 · ${listingId}`, summary: "指定候選點記錄與目前授權物件身分相符。" };
   result.steps[2] = { ...result.steps[2], state: "completed", entityId: id, stateLabel: `已選取 · ${id}`, summary: "已精確選取候選點；不代表資料 Gate、工作或人審通過。" };
   const zones = (Array.isArray(network.heatZones) ? network.heatZones : []).filter((zone) => zone.id === candidate.heatZoneId);
@@ -147,6 +160,16 @@ export function projectCandidateWorkflow(input: {
     result.nextAction = "查閱指定候選點的資料與報告狀態";
     result.steps[3].entityId = id;
     result.steps[3].summary = result.notice;
+    const job = result.currentJob;
+    if (job?.availability === "recorded") {
+      const pending = ["QUEUED", "RUNNING", "RETRYING"].includes(job.status ?? "");
+      result.notice = `評分工作 ${job.jobId}：${job.status}${job.deliveryState ? ` / ${job.deliveryState}` : ""}；尚無已保存報告。`;
+      result.steps[3] = { ...result.steps[3], state: pending ? "current" : "blocked",
+        stateLabel: `工作 ${job.status}`, summary: result.notice };
+    } else if (candidate.status === "SCORING_FAILED") {
+      result.notice = "候選點記錄為評分失敗，尚無已保存報告；目前授權工作回條尚未確認。";
+      result.steps[3].summary = result.notice;
+    }
     return result;
   }
   result.report = { candidateId: id, reportId: report.reportId!, reportVersion: report.reportVersion!,
@@ -177,6 +200,7 @@ export function projectCandidateWorkflow(input: {
       const status = review.canonicalDecisionStatus;
       if (["DRAFT", "SYSTEM_RECOMMENDED", "PENDING_REVIEW", "APPROVED", "REJECTED"].includes(status ?? "")) {
         result.reviewId = review.id;
+        result.reviewDecision = { id: review.id, status: status!, reportId: report.reportId!, reportVersion: report.reportVersion! };
         result.reviewReason = "exact_report_decision_available";
         result.steps[5] = { ...result.steps[5], entityId: review.id,
           state: status === "APPROVED" || status === "REJECTED" ? "completed" : status === "PENDING_REVIEW" ? "current" : "blocked",

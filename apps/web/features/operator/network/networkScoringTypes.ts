@@ -52,7 +52,9 @@ export type CurrentScoreAdmission = {
   addressId: string;
   checkedAt: string | null;
   currentInputs: { state: "verified" | "blocked" | "unverified"; reasonCode: string | null };
-  source: CurrentScoreAdmission["currentInputs"];
+  source: CurrentScoreAdmission["currentInputs"] & {
+    jobId?: string; intakeId?: string; promotionDecisionId?: string;
+  };
   pit: CurrentScoreAdmission["currentInputs"];
   model: CurrentScoreAdmission["currentInputs"];
 };
@@ -84,7 +86,7 @@ export type CandidateReviewReadTarget = {
   generation: number;
   relation: "current" | "historical";
 };
-export type CandidateNativeStage = "needdata" | "ready" | "evaluated" | "pendingreview" | "approved" | "rejected" | "onhold";
+export type CandidateNativeStage = "needdata" | "ready" | "scoring" | "evaluated" | "pendingreview" | "approved" | "rejected" | "onhold";
 export type CandidateNativeWorkflowRead = {
   candidateId: string;
   stage: CandidateNativeStage | null;
@@ -92,6 +94,7 @@ export type CandidateNativeWorkflowRead = {
   lifecycle: string | null;
   reason: string;
   review: CandidateReviewReadTarget | null;
+  scoreJob?: import("./candidateScoreJobs").CandidateScoreJobRead;
 };
 export type CandidateNativeWorkflowReads = Readonly<Record<string, CandidateNativeWorkflowRead>>;
 

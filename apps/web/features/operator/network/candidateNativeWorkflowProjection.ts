@@ -5,6 +5,7 @@ import { hasCurrentPendingSubmissionHistory } from "./networkPendingReviewHistor
 import type { NetworkReviewsSnapshot, ReviewItem } from "./networkReviewTypes";
 import type { CandidateNativeWorkflowRead, CandidateNativeWorkflowReads, CandidateReviewReadTarget, NetworkScoringSnapshot } from "./networkScoringTypes";
 import type { WorkflowRead } from "./networkWorkflowProjection";
+import { candidateScoreJob, pendingScoreJob, type CandidateScoreJobsRead } from "./candidateScoreJobs";
 
 type NetworkRead = { source?: string; candidates?: readonly unknown[]; listings?: readonly unknown[] };
 type Input = {
@@ -13,6 +14,7 @@ type Input = {
   network: WorkflowRead<NetworkRead>;
   scoring: WorkflowRead<NetworkScoringSnapshot>;
   reviews: WorkflowRead<NetworkReviewsSnapshot>;
+  jobs?: CandidateScoreJobsRead;
 };
 const version = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -52,6 +54,7 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
     }
     result.lifecycle = typeof raw.canonicalSiteStatus === "string" ? raw.canonicalSiteStatus
       : typeof raw.status === "string" ? raw.status : null;
+    result.scoreJob = candidateScoreJob(input.jobs, input.currentGeneration, candidate.id, candidate.listingId) ?? undefined;
     if (!validReviews || !reviews) { result.reason = messages.graph; continue; }
     const reports = scoring.scorecards.filter((row) => row.id === candidate.id);
     const latest = reports.length === 1 && readId(reports[0].reportId) && version(reports[0].reportVersion)
@@ -157,7 +160,16 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
       result.reason = messages.graph; continue;
     }
     if (["SCORING_QUEUED", "SCORING_FAILED"].includes(String(result.lifecycle))) {
-      result.reason = `候選點記錄為 ${result.lifecycle}；完整工作集合未接通，已保存報告不代表當次成功。`; continue;
+      if (result.scoreJob?.availability !== "recorded") {
+        result.reason = `候選點記錄為 ${result.lifecycle}；${result.scoreJob?.reason ?? "目前工作回條尚未確認"}，已保存報告不代表當次成功。`; continue;
+      }
+    }
+    if (result.scoreJob && pendingScoreJob(result.scoreJob)) {
+      Object.assign(result, { availability: "recorded", stage: "scoring",
+        reason: `評分工作 ${result.scoreJob.jobId}：${result.scoreJob.status}；保存報告與人工狀態另列。` }); continue;
+    }
+    if (result.scoreJob?.availability === "recorded" && ["FAILED", "DEAD_LETTER", "CANCELLED"].includes(result.scoreJob.status ?? "")) {
+      result.reason = `評分工作 ${result.scoreJob.jobId}：${result.scoreJob.status}；保留候選點與歷史報告，不推算重試資格。`; continue;
     }
     // Actual _gate produces passed=true only with ready/warn and no required
     // missing fields. Supplementary otherMissing remains legal for warn.

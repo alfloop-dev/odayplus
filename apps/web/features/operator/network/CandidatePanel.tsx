@@ -437,7 +437,7 @@ function GateDetail({
 }
 
 function nativeStageLabel(read?: CandidateNativeWorkflowRead): string {
-  const labels = { needdata: "缺資料／退回", ready: "資料齊備", evaluated: "已保存報告", pendingreview: "審核中",
+  const labels = { needdata: "缺資料／退回", ready: "資料齊備", scoring: "評分中", evaluated: "已保存報告", pendingreview: "審核中",
     approved: "已核准", rejected: "未通過", onhold: "暫停（WAIT）" };
   return read?.stage && read.availability === "recorded" ? labels[read.stage] : "流程未核驗";
 }

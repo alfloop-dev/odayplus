@@ -54,6 +54,8 @@ import { ReviewPanel, resolveEffectiveReviews } from "./network/ReviewPanel";
 import { hasRecordedReviewReport, inspectReviewsReadProjection, isReviewPending } from "./network/networkReviewProjection";
 import { NetworkShell } from "./network/NetworkShell";
 import { projectCandidateWorkflow } from "./network/networkWorkflowProjection";
+import { useCandidateScoreJobs } from "./network/useCandidateScoreJobs";
+import { CandidateWorkflowFacts } from "./network/CandidateWorkflowFacts";
 import { projectCandidateNativeWorkflow, resolveCandidateReviewTarget } from "./network/candidateNativeWorkflowProjection";
 import { hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, hasCanonicalScoreSession, hasScoreExecutionContext, hasScoreExecutionReceipt, scoreExecutionCommandReceiptMatches, hasVerifiedCurrentScoreAdmission, readId, readObject } from "./network/networkReadValidation";
 import { FindAreasPanel } from "./network/FindAreasPanel";
@@ -652,7 +654,7 @@ export function NetworkFindAreasWorkspace({
   const [scoringNavigationGeneration, setScoringNavigationGeneration] = useState<number | null>(null);
   const [reviewsNavigationGeneration, setReviewsNavigationGeneration] = useState<number | null>(null);
   const [navigationError, setNavigationError] = useState<string | null>(null);
-  const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId]);
+  const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId, navigationContextKey]);
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
   const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
@@ -2093,6 +2095,10 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
+  const scoreJobRead = useCandidateScoreJobs(isCandidateWorkflowTab(activeTab)
+    && scoringWorkflowProvenance === "canonical" && scoringLoadState === "ready" ? scoringSnapshot : null,
+    NETWORK_OPERATOR_HEADERS, JSON.stringify([navigationContextKey, navigationLocationKey]),
+    navigationContext.current.generation, `${scoreExecution?.executionRequestId}:${scoreExecution?.actualVersion}`, reloadScoringSnapshot);
   const workflowProjection = projectCandidateWorkflow({
     selection: { id: workflowCandidateId, invalid: isCandidateWorkflowTab(activeTab) && !overrideApplies && urlCandidateSelection.invalid },
     currentGeneration: navigationContext.current.generation,
@@ -2100,6 +2106,7 @@ export function NetworkFindAreasWorkspace({
     scoring: { snapshot: scoringSnapshot, status: fixturesAllowed && scoringWorkflowProvenance === "unknown" ? "error" : scoringLoadState, generation: scoringNavigationGeneration },
     // Use only the admitted review read from the current access generation.
     reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
+    jobs: scoreJobRead,
   });
   // Both snapshots are masked to the current access generation above. A prior
   // fixture read cannot survive a role/tenant change or a failed current read.
@@ -2111,6 +2118,7 @@ export function NetworkFindAreasWorkspace({
     network: { snapshot: networkSnapshot, status: networkLoadState, generation: networkNavigationGeneration },
     scoring: { snapshot: scoringSnapshot, status: scoringWorkflowProvenance === "canonical" ? scoringLoadState : "error", generation: scoringNavigationGeneration },
     reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
+    jobs: scoreJobRead,
   });
   const submissionCandidates = canOfferReviewSubmission(activeRoleId)
     ? reviewSubmissionOffers(networkSnapshot, scoringSnapshot, reviewsSnapshot, nativeWorkflow) : {};
@@ -2283,6 +2291,7 @@ export function NetworkFindAreasWorkspace({
         tabCounts={tabCounts}
         tabs={networkTabs}
       >
+        {!useFixtureWorkflow && <CandidateWorkflowFacts value={workflowProjection} />}
         {activeTabGateState ? (
           <OperatorDataUnavailableGate
             detail={activeTabGateDetail}

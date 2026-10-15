@@ -28,7 +28,7 @@ describe("exact authorized workflow read projection", () => {
       sitescoreRunId: "run-second", modelVersion: "model-second", datasetSnapshotId: "snapshot" });
     expect(step(result, "sitescore").state).toBe("completed");
     expect(result.steps).toHaveLength(6);
-    expect(result.currentJob).toBe("unknown"); expect(result.executionAdmission).toBe("unknown");
+    expect(result.currentJob).toBeNull(); expect(result.executionAdmission).toBe("unknown");
     expect(result.nextAction).not.toContain("執行");
   });
 
@@ -110,7 +110,7 @@ describe("exact authorized workflow read projection", () => {
     expect(result.reason).toBe("failed_candidate_with_historical_report");
     expect(result.report?.reportId).toBe("report-second");
     expect(result.notice).toContain("評分失敗"); expect(result.notice).toContain("先前已保存報告");
-    expect(result.currentJob).toBe("unknown"); expect(result.executionAdmission).toBe("unknown");
+    expect(result.currentJob).toBeNull(); expect(result.executionAdmission).toBe("unknown");
   });
 
   it("keeps a different snapshot explicit instead of fabricating a fresh score", () => {
