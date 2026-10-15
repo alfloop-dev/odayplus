@@ -52,7 +52,7 @@ def test_real_postgresql_issues_are_tenant_brand_region_and_store_scoped(case):
     _write(documents, tenant_a, [_issue(stores[0]), _issue(stores[1]), _issue(stores[2], title="foreign store inside tenant partition")])
     _write(documents, tenant_b, [_issue(stores[2], title="foreign tenant secret")])
     # A legacy global document must never supply the scoped Today metric.
-    DurableStoreOpsRepository(documents).save_state({"issues": [_issue(stores[0], title="global legacy secret")]})
+    documents.put("opsboard.store_ops.state", "default", {"issues": [_issue(stores[0], title="global legacy secret")]})
     scope = {"tenant_id": tenant_a, "brand_ids": (brand_a,), "region_ids": ("north",), "store_ids": (stores[0],)}
     state = OperatorLiveRepository(bundle).load_state(**scope)
     assert state["_meta"]["sections"]["storeOpsIssues"]["recordCount"] == 1
