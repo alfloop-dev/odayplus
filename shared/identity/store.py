@@ -357,7 +357,7 @@ class SqlIdentityStore:
         aid = _parse_uuid(account_id)
         with open_connection(self._conn_factory) as conn:
             if conn is None:
-                return Scope()
+                raise ValueError("identity scope unavailable")
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -383,21 +383,24 @@ class SqlIdentityStore:
                         tid = account_row["tenant_id"] if isinstance(account_row, dict) else account_row[0]
                         tenant_id = str(tid)
                     else:
-                        tenant_id = None
+                        raise ValueError("identity scope unavailable")
                     return Scope(tenant_id=tenant_id, clearance=DataClassification.CONFIDENTIAL)
 
                 def _parse_list(val: Any) -> frozenset[str]:
-                    if isinstance(val, list):
-                        return frozenset(str(x) for x in val if x)
-                    return frozenset()
+                    if not isinstance(val, list) or any(not isinstance(x, str) or not x.strip() for x in val):
+                        raise ValueError("invalid persisted identity scope")
+                    return frozenset(val)
 
                 def _col(name: str, idx: int) -> Any:
                     return row[name] if isinstance(row, dict) else row[idx]
 
+                raw_clearance = _col("clearance", 6)
+                if not isinstance(raw_clearance, str):
+                    raise ValueError("invalid persisted identity clearance")
                 try:
-                    clearance = DataClassification[str(_col("clearance", 6)).upper()]
-                except (KeyError, AttributeError):
-                    clearance = DataClassification.CONFIDENTIAL
+                    clearance = DataClassification[raw_clearance.upper()]
+                except KeyError as exc:
+                    raise ValueError("invalid persisted identity clearance") from exc
 
                 raw_tenant = _col("tenant_id", 7)
                 return Scope(

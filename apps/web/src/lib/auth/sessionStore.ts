@@ -36,7 +36,23 @@ export interface LegacyOidcAccount {
   tenantId?: string;
 }
 
+export interface LegacyOidcSessionParams {
+  /** Digest of an authenticated legacy cookie, never the cookie or bearer. */
+  migrationKey: string;
+  oidcSubject: string;
+  issuer?: string;
+  accountId: string;
+  accessToken: string;
+  subject: string;
+  tenantId?: string;
+  idleTimeoutMs: number;
+  absoluteExpiresAt: Date;
+}
+
 export interface SessionStore {
+  /** Claim once atomically; revoked/expired/missing prior session stays absent. */
+  migrateLegacyOidcSession(params: LegacyOidcSessionParams): Promise<SessionRecord | null>;
+
   /** Create a new session record in identity.sessions. */
   createSession(params: {
     sessionId: string;
@@ -48,6 +64,8 @@ export interface SessionStore {
     idleTimeoutMs: number;
     absoluteLifetimeMs: number;
     rotatedFrom?: string;
+    /** Server-side local-password proof, never a browser/caller-supplied claim. */
+    verifiedCredentialRevision?: string;
   }): Promise<SessionRecord>;
 
   /** Validate a session is still active. Returns null if revoked/expired/not found. */
@@ -121,9 +139,14 @@ export class PostgresSessionStore implements SessionStore {
     idleTimeoutMs: number;
     absoluteLifetimeMs: number;
     rotatedFrom?: string;
+    verifiedCredentialRevision?: string;
   }): Promise<SessionRecord> {
     if (!params.accessToken)
       throw new Error("Session access token is required");
+    if (params.provider === "local_password" &&
+        (!params.verifiedCredentialRevision || !/^[1-9][0-9]{0,18}$/.test(params.verifiedCredentialRevision))) {
+      throw new Error("SESSION_CREDENTIAL_REVISION_REQUIRED");
+    }
     const pool = await this.pool();
     const now = new Date();
     const idleExpiresAt = new Date(
@@ -135,8 +158,11 @@ export class PostgresSessionStore implements SessionStore {
     await pool.query(
       `INSERT INTO identity.sessions
          (session_id, account_id, provider, access_token, session_subject, tenant_id,
-          created_at, last_seen_at, idle_expires_at, absolute_expires_at, rotated_from)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10)`,
+          created_at, last_seen_at, idle_expires_at, absolute_expires_at, rotated_from,
+          verified_credential_revision)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11)`,
+      // The INSERT trigger holds the credential SHARE lock until this statement
+      // commits and compares against the verified revision under that lock.
       [
         params.sessionId,
         params.accountId,
@@ -148,6 +174,7 @@ export class PostgresSessionStore implements SessionStore {
         idleExpiresAt,
         absoluteExpiresAt,
         params.rotatedFrom || null,
+        params.verifiedCredentialRevision || null,
       ],
     );
     return {
@@ -267,6 +294,62 @@ export class PostgresSessionStore implements SessionStore {
     return result.rowCount ?? 0;
   }
 
+  async migrateLegacyOidcSession(params: LegacyOidcSessionParams): Promise<SessionRecord | null> {
+    if (!/^[a-f0-9]{64}$/.test(params.migrationKey) || !params.accessToken || !Number.isFinite(params.absoluteExpiresAt.getTime())) {
+      throw new Error("WEB_AUTH_UNAVAILABLE");
+    }
+    const pool = await this.pool();
+    const client = await pool.connect();
+    let sid: string;
+    try {
+      await client.query("BEGIN");
+      // Recheck the active federation inside the SAME transaction, not just
+      // the earlier lookup. Locks pin account/link through migration commit.
+      const link = await client.query(
+        `SELECT a.account_id FROM identity.federated_identities f
+         JOIN identity.accounts a ON a.account_id = f.account_id
+         WHERE f.subject = $1 AND a.account_id = $2 AND a.status = 'active'
+           AND ($3::text IS NULL OR f.issuer = $3)
+         FOR SHARE OF a, f`, [params.oidcSubject, params.accountId, params.issuer || null]);
+      if (!link.rows.length) { await client.query("ROLLBACK"); return null; }
+      const claimed = await client.query(
+        `INSERT INTO identity.legacy_oidc_session_migrations(migration_key, session_id, account_id, expires_at)
+         SELECT $1, $2, $3, $4 WHERE $4::timestamptz > clock_timestamp()
+         ON CONFLICT (migration_key) DO NOTHING RETURNING session_id`,
+        [params.migrationKey, crypto.randomUUID(), params.accountId, params.absoluteExpiresAt]);
+      if (claimed.rows.length) {
+        sid = claimed.rows[0].session_id;
+        const created = await client.query(
+          `INSERT INTO identity.sessions(session_id, account_id, provider, access_token, session_subject, tenant_id,
+            created_at, last_seen_at, idle_expires_at, absolute_expires_at)
+           SELECT $1, $2, 'oidc', $3, $4, $5, clock_timestamp(), clock_timestamp(),
+             LEAST(clock_timestamp() + ($6::double precision * interval '1 millisecond'), $7),
+             LEAST($7, clock_timestamp() + ($8::double precision * interval '1 millisecond'))
+           WHERE $7::timestamptz > clock_timestamp() RETURNING session_id`,
+          [sid, params.accountId, params.accessToken, params.subject, params.tenantId || null,
+            boundedIdleTimeout(params.idleTimeoutMs), params.absoluteExpiresAt, MAX_SESSION_ABSOLUTE_LIFETIME_MS]);
+        if (created.rows.length !== 1) throw new Error("WEB_AUTH_UNAVAILABLE");
+      } else {
+        const existing = await client.query(
+          `SELECT session_id FROM identity.legacy_oidc_session_migrations
+           WHERE migration_key = $1 AND account_id = $2 AND expires_at > clock_timestamp()`,
+          [params.migrationKey, params.accountId]);
+        if (!existing.rows.length) { await client.query("ROLLBACK"); return null; }
+        sid = existing.rows[0].session_id;
+      }
+      await client.query("COMMIT");
+    } catch {
+      try { await client.query("ROLLBACK"); } catch { /* commit truth may be unknown; no retry */ }
+      throw new Error("WEB_AUTH_UNAVAILABLE");
+    } finally {
+      client.release();
+    }
+    // Release BEFORE validation, including pool-size1. Lost commit/read reply
+    // never remints; the permanent migration key points to this same SID.
+    const record = await this.validateSession(sid!);
+    return record?.accountId === params.accountId && record.provider === "oidc" ? record : null;
+  }
+
   async resolveOidcAccount(
     subject: string,
     issuer?: string,
@@ -301,6 +384,26 @@ export class PostgresSessionStore implements SessionStore {
 export class MockSessionStore implements SessionStore {
   sessions: Map<string, SessionRecord> = new Map();
   oidcAccounts: Map<string, LegacyOidcAccount> = new Map();
+  legacyMigrations: Map<string, { sid: string; accountId: string; expiresAt: number }> = new Map();
+
+  async migrateLegacyOidcSession(params: LegacyOidcSessionParams): Promise<SessionRecord | null> {
+    const existing = this.legacyMigrations.get(params.migrationKey);
+    if (existing) {
+      if (existing.accountId !== params.accountId || existing.expiresAt <= Date.now()) return null;
+      return this.validateSession(existing.sid);
+    }
+    if (params.absoluteExpiresAt.getTime() <= Date.now()) return null;
+    const sid = crypto.randomUUID();
+    this.legacyMigrations.set(params.migrationKey, { sid, accountId: params.accountId, expiresAt: params.absoluteExpiresAt.getTime() });
+    try {
+      return await this.createSession({ sessionId: sid, accountId: params.accountId, provider: "oidc",
+        accessToken: params.accessToken, subject: params.subject, tenantId: params.tenantId,
+        idleTimeoutMs: params.idleTimeoutMs, absoluteLifetimeMs: params.absoluteExpiresAt.getTime() - Date.now() });
+    } catch (error) {
+      this.legacyMigrations.delete(params.migrationKey);
+      throw error;
+    }
+  }
 
   async createSession(params: {
     sessionId: string;
@@ -312,6 +415,7 @@ export class MockSessionStore implements SessionStore {
     idleTimeoutMs: number;
     absoluteLifetimeMs: number;
     rotatedFrom?: string;
+    verifiedCredentialRevision?: string;
   }): Promise<SessionRecord> {
     if (!params.accessToken)
       throw new Error("Session access token is required");

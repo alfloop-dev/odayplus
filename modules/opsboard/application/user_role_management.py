@@ -35,6 +35,10 @@ class UserRolePolicyError(UserRoleManagementError):
     """Raised when a role management operation violates policy."""
 
 
+class UserRoleAuthorizationRefused(UserRolePolicyError):
+    """Persisted administrator/session authority is absent or expired."""
+
+
 # Default seed principals used in development and fallback
 DEFAULT_SEED_USERS: list[dict[str, Any]] = [
     {

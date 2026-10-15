@@ -233,7 +233,7 @@ export async function readWebSession(
       };
     }
     if (!store) {
-      if (isProductionWebRuntime(environment)) return null;
+      if (isProductionWebRuntime(environment)) throw new Error("WEB_AUTH_UNAVAILABLE");
       const sid = await stableLegacySid(value.subject, value.issuedAt);
       return {
         ...(value as WebSession),
@@ -259,20 +259,23 @@ export async function readWebSession(
       };
     }
 
-    const remainingLifetimeMs = Math.max(
-      1,
-      (value.expiresAt - nowSeconds) * 1000,
-    );
-    const record = await store.createSession({
-      sessionId: crypto.randomUUID(),
+    // One durable migration identity per authenticated legacy cookie. The
+    // store keeps a tombstone even if its session row is removed; never create
+    // another session after logout, natural expiry, restart or a lost reply.
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(cookieValue!));
+    const migrationKey = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
+    const record = await store.migrateLegacyOidcSession({
+      migrationKey,
+      oidcSubject: value.subject,
+      issuer: environment.ODP_WEB_OIDC_ISSUER,
       accountId: account.accountId,
-      provider: "oidc",
       accessToken: value.accessToken,
       subject: account.subject || value.subject,
       tenantId: account.tenantId,
       idleTimeoutMs: options.idleTimeoutMs ?? DEFAULT_SESSION_IDLE_TIMEOUT_MS,
-      absoluteLifetimeMs: remainingLifetimeMs,
+      absoluteExpiresAt: new Date(value.expiresAt * 1000),
     });
+    if (!record) return null;
     const upgraded = recordToSession(
       {
         kind: "web-session",
@@ -297,7 +300,7 @@ export async function readWebSession(
     // migration fixtures are exercised. A deployed production process always
     // has to resolve an opaque cookie through identity.sessions.
     if (isProductionWebRuntime(environment)) {
-      return null;
+      throw new Error("WEB_AUTH_UNAVAILABLE");
     }
     if (value.accessToken && value.subject) return value as WebSession;
     return null;
@@ -333,7 +336,10 @@ export async function readWebSession(
       await store.updateAccessToken(record.sessionId, accessToken);
       record = { ...record, accessToken };
     } catch {
-      return null;
+      // Availability is not revocation. In particular logout MUST NOT mistake
+      // an active session with a failed bearer refresh for an absent session,
+      // clear its cookie and acknowledge cleanup while its DB row stays live.
+      throw new Error("WEB_AUTH_UNAVAILABLE");
     }
   }
   await store.touchSession(

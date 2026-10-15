@@ -943,6 +943,64 @@ else:
         # balancers that must not be asked to learn a version prefix.
         platform_router = APIRouter()
 
+        def _job_principal(request: Request) -> Any:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.auth import ANONYMOUS, Action
+            try:
+                return principal_from_headers(request.headers)
+            except HTTPException as exc:
+                principal = getattr(exc, "_verified_principal", ANONYMOUS)
+                _record_job_denial(exc, principal, request,
+                                   Action.VIEW if request.method == "GET" else Action.CREATE)
+                raise
+
+        def _validate_job_fields(payload: Any) -> None:
+            pending = [payload]
+            while pending:
+                node = pending.pop()
+                if isinstance(node, dict):
+                    if "fields" in node and (not isinstance(node["fields"], list)
+                            or any(not isinstance(field, dict) for field in node["fields"])):
+                        raise HTTPException(422, detail={"code": "JOB_FIELDS_INVALID"})
+                    pending.extend(node.values())
+                elif isinstance(node, list):
+                    pending.extend(node)
+
+        def _job_audit_marker(request: Request) -> Any:
+            marker = getattr(request.state, "job_denial_marker", None)
+            if marker is None:
+                marker = object()
+                request.state.job_denial_marker = marker
+            return marker
+
+        def _record_job_denial(exc: HTTPException, principal: Any, request: Request, action: Any, job: Any = None) -> None:
+            exc._verified_principal = principal
+            if exc.status_code not in (403, 404) or getattr(exc, "_job_denial_marker", None) is _job_audit_marker(request):
+                return
+            from shared.audit import build_security_event
+            from shared.auth import AccessRequest, Decision, Environment, ResourceDescriptor
+            reason = exc.detail.get("code") if isinstance(exc.detail, dict) else exc.detail
+            safe_reasons = {"JOB_MODULE_FORBIDDEN", "FORECAST_MODULE_FORBIDDEN", "MODULE_SCOPE_DENIED", "SCOPE_DENIED", "OWNERSHIP_REQUIRED",
+                            "JOB_ITEM_SCOPE_INVALID", "BATCH_INTAKE_RETRY_FORBIDDEN", "JOB_TYPE_READ_FORBIDDEN",
+                            "EXTERNAL_FETCH_VIEW_FORBIDDEN", "FORECAST_EXECUTE_FORBIDDEN", "BATCH_INTAKE_FORBIDDEN",
+                            "JOB_TYPE_CREATE_FORBIDDEN", "TENANT_SCOPE_MISMATCH", "PASSWORD_CHANGE_REQUIRED"}
+            if not isinstance(reason, str) or reason not in safe_reasons:
+                reason = "JOB_AUTHORIZATION_DENIED"
+            correlation_id = CorrelationContext.from_header(getattr(request.state, "correlation_id", None)).correlation_id
+            audit_log.record(build_security_event(AccessRequest(
+                principal=principal, action=action,
+                resource=ResourceDescriptor(type="job", resource_id=getattr(job, "job_id", None), tenant_id=principal.tenant_id),
+                environment=Environment(source_ip=request.client.host if request.client else None,
+                                        attributes={"correlation_id": correlation_id}),
+            ), Decision.deny(reason=reason, policy_id="job_authorization")))
+            exc._job_denial_marker = _job_audit_marker(request)
+
+        def _require_job_module(principal: Any, request: Request, module: str, action: Any, job: Any = None, *, reason: str = "JOB_MODULE_FORBIDDEN") -> None:
+            if not principal.scope.permits_module(module):
+                exc = HTTPException(403, detail={"code": reason})
+                _record_job_denial(exc, principal, request, action, job)
+                raise exc
+
         def forecast_job_tenant(request: Request, *, action: str) -> str:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from shared.auth import Action, rbac_allows
@@ -957,6 +1015,8 @@ else:
                     },
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+            _require_job_module(principal, request, "forecastops", Action.EXECUTE if action == "execute" else Action.VIEW,
+                                reason="FORECAST_MODULE_FORBIDDEN")
             required_action = Action.EXECUTE if action == "execute" else Action.VIEW
             if not rbac_allows(principal, "forecastops", required_action):
                 raise HTTPException(
@@ -1006,6 +1066,7 @@ else:
                     },
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+            _require_job_module(principal, request, "integration", Action.CREATE)
             if not rbac_allows(principal, "integration", Action.CREATE):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -1044,6 +1105,7 @@ else:
                 if action == "execute"
                 else (Action.CREATE if action == "create" else Action.VIEW)
             )
+            _require_job_module(principal, request, "listing", required_action)
             if not rbac_allows(principal, "listing", required_action):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -1076,7 +1138,22 @@ else:
                 ("regionId", "region_id"),
                 ("brandId", "brand_id"),
                 ("assignedAreaId", "assigned_area_id"),
+                ("storeId", "store_id"),
+                ("tenantId", "tenant_id"),
             )
+            nested = raw_item.get("scope", {})
+            if not isinstance(nested, dict):
+                raise HTTPException(422, detail={"code": "INVALID_ITEM_SCOPE"})
+            # Complete object evidence, not collection filters. Resolve EVERY
+            # flat/nested spelling and refuse conflicts instead of hiding one.
+            raw_item = dict(raw_item)
+            for camel_key, snake_key in axis_pairs:
+                values = {str(source[key]).strip() for source in (raw_item, nested)
+                          for key in (camel_key, snake_key) if source.get(key) is not None and str(source[key]).strip()}
+                if len(values) > 1:
+                    raise HTTPException(422, detail={"code": "CONFLICTING_SCOPE_ALIAS"})
+                if values:
+                    raw_item[camel_key] = raw_item[snake_key] = next(iter(values))
             scope: dict[str, Any] = {}
             for camel_key, snake_key in axis_pairs:
                 has_camel = camel_key in raw_item and raw_item[camel_key] is not None
@@ -1115,12 +1192,14 @@ else:
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
-            from apps.api.oday_api.security.dependencies import principal_from_headers
 
             try:
                 return _enqueue_job_response(body, request, idempotency_key)
             except HTTPException as exc:
-                principal = principal_from_headers(request.headers)
+                from shared.auth import ANONYMOUS
+                # Rotation/authorization has already supplied the verified
+                # actor. Never repeat the dependency that caused the refusal.
+                principal = getattr(exc, "_verified_principal", ANONYMOUS)
                 audit_log.record(
                     AuditEvent(
                         event_type="job.enqueue",
@@ -1137,9 +1216,19 @@ else:
         def _enqueue_job_response(
             body: JobCreatePayload, request: Request, idempotency_key: str | None,
         ) -> dict[str, Any]:
+            from shared.auth import Action
+            principal = _job_principal(request)
+            if not principal.authenticated:
+                raise HTTPException(401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+            try:
+                return _enqueue_job_checked(body, request, idempotency_key, principal)
+            except HTTPException as exc:
+                _record_job_denial(exc, principal, request, Action.CREATE)
+                raise
+
+        def _enqueue_job_checked(body: JobCreatePayload, request: Request, idempotency_key: str | None, principal: Any) -> dict[str, Any]:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_authorization import authorize_intake_action
-
             payload = body.payload
             idempotency_tenant_id: str | None = None
             idempotency_scope = ""
@@ -1196,6 +1285,7 @@ else:
                     for k, v in payload.items()
                     if k not in ("receipt", "summary", "delivery_state", "status", "_retry_count")
                 }
+                _validate_job_fields(payload)
                 raw_items = payload.get("items") or payload.get("rows")
                 principal = principal_from_headers(request.headers)
                 normalized_items: list[dict[str, Any]] = []
@@ -1214,13 +1304,16 @@ else:
                                 )
                             seen_ids.add(item_id)
                             norm_item, item_scope = _normalize_batch_item_scope(raw_item, item_id)
-                            authorize_intake_action(
-                                principal,
-                                "submit_csv",
-                                collection_scope=item_scope,
-                                tenant_id=active_tenant_id,
-                                correlation_id=getattr(request.state, "correlation_id", None),
-                            )
+                            try:
+                                authorize_intake_action(
+                                    principal, "submit_csv", collection_scope=item_scope,
+                                    tenant_id=active_tenant_id, audit_log=audit_log,
+                                    correlation_id=request.state.correlation_id,
+                                    source_ip=request.client.host if request.client else None,
+                                )
+                            except HTTPException as exc:
+                                exc._job_denial_marker = _job_audit_marker(request)
+                                raise
                             normalized_items.append(norm_item)
                         else:
                             normalized_items.append(raw_item)
@@ -1273,6 +1366,10 @@ else:
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail={"code": "RESERVED_IDEMPOTENCY_NAMESPACE"},
                 )
+            # Read authorization is NEVER enqueue authority. Assisted intake
+            # uses its dedicated creation path, not this generic endpoint.
+            if body.job_type not in {"forecast", "external-fetch", "batch-listing-intake"}:
+                raise HTTPException(403, detail={"code": "JOB_TYPE_CREATE_FORBIDDEN"})
             job_request = JobRequest(
                 job_type=body.job_type, payload=payload,
                 idempotency_key=queue_idempotency_key,
@@ -1313,10 +1410,66 @@ else:
                 "audit_event_id": audit_event.event_id,
             }
 
-        def _authorize_job_access(job: Any, request: Request) -> None:
-            from apps.api.oday_api.security.dependencies import principal_from_headers
+        def _authorize_intake_job_items(job: Any, principal: Any, tenant_id: str, action: str, request: Request) -> None:
+            from modules.listing.application.intake_authorization import (
+                authorize_intake_action,
+                intake_resource_in_scope,
+            )
+            from shared.auth import Role
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER)
+            if principal.has_role(Role.EXPANSION_USER) and not is_manager:
+                # Missing/unassigned ownership is not affirmative staff authority.
+                # Preserve existing submitter precedence; never claim ownership
+                # on behalf of the requester while reading/retrying a legacy job.
+                submitter = job.payload.get("submitter") or job.payload.get("owner")
+                if (not isinstance(submitter, str) or not submitter.strip()
+                        or submitter in {"system", "unassigned", "SYSTEM", "UNASSIGNED"}
+                        or submitter != principal.subject_id):
+                    raise HTTPException(403, detail="OWNERSHIP_REQUIRED")
+            # Both reads and retries address COMPLETE stored objects, never
+            # projected collection filters. Empty lists still require envelope
+            # scope and role/action authority; malformed lists cannot disappear.
+            items = []
+            for key in ("items", "rows"):
+                if key not in job.payload:
+                    continue
+                collection = job.payload[key]
+                if not isinstance(collection, list) or any(not isinstance(item, dict) for item in collection):
+                    raise HTTPException(403, detail="JOB_ITEM_SCOPE_INVALID")
+                items.extend(collection)
+            for idx, item in enumerate(items or [job.payload]):
+                item_id = str(item.get("item_id") or f"row-{idx+1:03d}").strip()
+                _, scope = _normalize_batch_item_scope(item, item_id)
+                if scope.get("tenantId") not in {None, tenant_id} or not intake_resource_in_scope(principal, scope):
+                    raise HTTPException(403, detail="SCOPE_DENIED")
+                try:
+                    authorize_intake_action(principal, action, collection_scope=scope, tenant_id=tenant_id,
+                                            audit_log=audit_log, correlation_id=request.state.correlation_id,
+                                            source_ip=request.client.host if request.client else None)
+                except HTTPException as exc:
+                    # The shared authorizer has already durably recorded its
+                    # denial; the outer job boundary must not duplicate it.
+                    exc._job_denial_marker = _job_audit_marker(request)
+                    raise
 
+        def _authorize_job_access(job: Any, request: Request) -> None:
+            from shared.auth import Action
+            principal = _job_principal(request)
+            try:
+                _check_job_access(job, request, principal)
+            except HTTPException as exc:
+                _record_job_denial(exc, principal, request, Action.VIEW, job)
+                raise
+
+        def _check_job_access(job: Any, request: Request, principal: Any) -> None:
+            from shared.auth import Action
+            if not principal.authenticated:
+                raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
+            module = {"forecast": "forecastops", "external-fetch": "integration",
+                      "batch-listing-intake": "listing", "assisted-listing-intake": "listing"}.get(job.job_type)
+            if module:
+                _require_job_module(principal, request, module, Action.VIEW, job)
             if job.job_type == "forecast":
                 active_tenant_id = forecast_job_tenant(request, action="view")
                 if not job_tenant:
@@ -1332,6 +1485,17 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
+                _, scope = _normalize_batch_item_scope(job.payload, "forecast-job")
+                # The entire stored forecast object is serialized/executed, not
+                # a projected collection. Enforce every restricted axis before
+                # new work or actual idempotent replay can be acknowledged.
+                checks = (("storeId", principal.scope.permits_store),
+                          ("brandId", principal.scope.permits_brand),
+                          ("regionId", principal.scope.permits_region),
+                          ("assignedAreaId", principal.scope.permits_assigned_area),
+                          ("heatZoneId", principal.scope.permits_heat_zone))
+                if scope.get("tenantId") != active_tenant_id or not all(check(scope.get(axis)) for axis, check in checks):
+                    raise HTTPException(403, detail="SCOPE_DENIED")
             elif job.job_type in ("batch-listing-intake", "assisted-listing-intake"):
                 active_tenant_id = batch_intake_job_tenant(request, action="view")
                 if not job_tenant or job_tenant != active_tenant_id:
@@ -1339,53 +1503,17 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
-                principal = principal_from_headers(request.headers)
-                from modules.listing.application.intake_authorization import authorize_intake_action
-                from shared.auth import Role
-
-                is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER)
-                is_staff = (
-                    principal.has_role(Role.EXPANSION_USER)
-                    or any(r in ("expansion_user", "expansion-user", "expansionStaff", "expansion-staff") for r in [r.value for r in principal.roles])
-                ) and not is_manager
-
-                if is_staff:
-                    submitter = job.payload.get("submitter") or job.payload.get("owner")
-                    if submitter and submitter != principal.subject_id:
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail="OWNERSHIP_REQUIRED",
-                        )
-
-                raw_items = job.payload.get("items") or job.payload.get("rows") or []
-                if isinstance(raw_items, list):
-                    for idx, raw_item in enumerate(raw_items):
-                        if isinstance(raw_item, dict):
-                            item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
-                            _, item_scope = _normalize_batch_item_scope(raw_item, item_id)
-                            authorize_intake_action(
-                                principal,
-                                "view",
-                                collection_scope=item_scope,
-                                tenant_id=active_tenant_id,
-                            )
-            elif job_tenant:
-                principal = principal_from_headers(request.headers)
-                if not principal.authenticated:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail={
-                            "code": "AUTHENTICATION_REQUIRED",
-                            "message": "Authentication required to read jobs",
-                        },
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
+                _authorize_intake_job_items(job, principal, active_tenant_id, "view", request)
+            elif job.job_type == "external-fetch":
+                from shared.auth import Action, rbac_allows
+                if not rbac_allows(principal, "integration", Action.VIEW):
+                    raise HTTPException(status_code=403, detail={"code": "EXTERNAL_FETCH_VIEW_FORBIDDEN"})
                 active_tenant_id = str(principal.tenant_id or "").strip()
-                if not active_tenant_id or job_tenant != active_tenant_id:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="job not found",
-                    )
+                if not job_tenant or not active_tenant_id or job_tenant != active_tenant_id:
+                    raise HTTPException(status_code=404, detail="job not found")
+            else:
+                # Unknown/tenantless legacy records have no implicit read grant.
+                raise HTTPException(status_code=403, detail={"code": "JOB_TYPE_READ_FORBIDDEN"})
 
         def _authorized_job_response(job: Any, request: Request) -> dict[str, Any]:
             from apps.api.oday_api.security.dependencies import principal_from_headers
@@ -1401,6 +1529,8 @@ else:
             return res
 
         def _get_job_response(job_id: str, request: Request) -> dict[str, Any]:
+            if not _job_principal(request).authenticated:
+                raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
@@ -1410,7 +1540,19 @@ else:
         def get_job(job_id: str, request: Request) -> dict[str, Any]:
             return _get_job_response(job_id, request)
 
-        def _retry_job_response(
+        def _retry_job_response(job_id: str, body: JobRetryPayload | None, request: Request) -> dict[str, Any]:
+            from shared.auth import Action
+            # Authenticate BEFORE existence/state lookup, as generic GET does.
+            principal = _job_principal(request)
+            if not principal.authenticated:
+                raise HTTPException(401, detail={"code": "AUTHENTICATION_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+            try:
+                return _retry_job_checked(job_id, body, request)
+            except HTTPException as exc:
+                _record_job_denial(exc, principal, request, Action.CREATE, job_queue.get(job_id))
+                raise
+
+        def _retry_job_checked(
             job_id: str,
             body: JobRetryPayload | None,
             request: Request,
@@ -1447,35 +1589,7 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
-                from modules.listing.application.intake_authorization import authorize_intake_action
-                from shared.auth import Role
-
-                is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER)
-                is_staff = (
-                    principal.has_role(Role.EXPANSION_USER)
-                    or any(r in ("expansion_user", "expansion-user", "expansionStaff", "expansion-staff") for r in [r.value for r in principal.roles])
-                ) and not is_manager
-
-                if is_staff:
-                    submitter = job.payload.get("submitter") or job.payload.get("owner")
-                    if submitter and submitter != principal.subject_id:
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail="OWNERSHIP_REQUIRED",
-                        )
-
-                raw_items = job.payload.get("items") or job.payload.get("rows") or []
-                if isinstance(raw_items, list):
-                    for idx, raw_item in enumerate(raw_items):
-                        if isinstance(raw_item, dict):
-                            item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
-                            _, item_scope = _normalize_batch_item_scope(raw_item, item_id)
-                            authorize_intake_action(
-                                principal,
-                                "submit_csv",
-                                collection_scope=item_scope,
-                                tenant_id=active_tenant_id,
-                            )
+                _authorize_intake_job_items(job, principal, active_tenant_id, "submit_csv", request)
             else:
                 principal = principal_from_headers(request.headers)
                 if not principal.authenticated:
@@ -1487,6 +1601,9 @@ else:
                         },
                         headers={"WWW-Authenticate": "Bearer"},
                     )
+                # Unsupported mutation is not permission to discover another
+                # tenant's job or its type. Preserve400 only for visible jobs.
+                _authorize_job_access(job, request)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail={
@@ -1578,7 +1695,10 @@ else:
                     },
                 ) from exc
 
-            correlation_id = getattr(getattr(request, "state", None), "correlation_id", None) or request.headers.get("x-correlation-id") or f"corr-retry-{uuid4().hex[:8]}"
+            correlation_id = CorrelationContext.from_header(
+                getattr(getattr(request, "state", None), "correlation_id", None)
+                or request.headers.get("x-correlation-id") or f"corr-retry-{uuid4().hex[:8]}"
+            ).correlation_id
             audit_log.record(
                 AuditEvent(
                     event_type="job.retry",
@@ -1637,14 +1757,23 @@ else:
 
         @platform_router.get("/audit/events", tags=["audit"])
         def list_audit_events(
+            request: Request,
             correlation_id: str | None = None,
         ) -> dict[str, Any]:
-            return {
-                "events": [
-                    event.to_dict()
-                    for event in audit_log.list_events(correlation_id=correlation_id)
-                ]
-            }
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.audit.tenant_read import validated_tenant_events
+            from shared.auth import Action, rbac_allows
+
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(status_code=401, detail="Authentication required")
+            if not principal.tenant_id or not rbac_allows(principal, "audit", Action.VIEW):
+                raise HTTPException(status_code=403, detail="AUDIT_READ_REFUSED")
+            try:
+                events = validated_tenant_events(audit_log, principal.tenant_id, correlation_id=correlation_id)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=403, detail="RECOVERY_AUDIT_LINEAGE_INVALID") from None
+            return {"events": [event.to_dict() for event in events]}
 
         mount_versioned(api, platform_router)
 

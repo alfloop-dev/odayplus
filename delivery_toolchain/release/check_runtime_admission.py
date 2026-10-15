@@ -79,6 +79,9 @@ from delivery_toolchain.e2e.check_release_gate_registry import (  # noqa: E402
     STAGE_CONTRACT,
     SUPPORTED_SCHEMA_VERSIONS,
     check_candidate_ancestry,
+    validate_gate,
+    validate_go_signoff,
+    validate_stage_metadata,
 )
 from delivery_toolchain.release.release_lease import (  # noqa: E402
     DEFAULT_ACTION,
@@ -97,7 +100,6 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     is_sha256_digest,
     load_manifest,
     manifest_release_profile,
-    release_profile_errors,
     validate_release_admission,
 )
 
@@ -149,6 +151,8 @@ def registry_admission_errors(
     if release.get("decision") != "go":
         errors.append(f"registry decision is {release.get('decision')!r}, expected 'go'")
 
+    validate_go_signoff(release, errors)
+    validate_stage_metadata(release, label="release", errors=errors)
     errors.extend(_stage_boundary_errors(release, environment, allowed_environments))
     errors.extend(_manifest_binding_errors(release, expected_manifest_digest))
 
@@ -159,7 +163,7 @@ def registry_admission_errors(
     elif SHA_PATTERN.fullmatch(release_sha):
         errors.extend(check_candidate_ancestry(candidate_sha, release_sha, root))
 
-    errors.extend(_gate_admission_errors(registry, environment, candidate_sha))
+    errors.extend(_gate_admission_errors(registry, environment, candidate_sha, root))
     return errors
 
 
@@ -204,7 +208,7 @@ def _manifest_binding_errors(
 
 
 def _gate_admission_errors(
-    registry: dict[str, Any], environment: str, candidate_sha: str | None
+    registry: dict[str, Any], environment: str, candidate_sha: str | None, root: Path | None = None
 ) -> list[str]:
     errors: list[str] = []
     gates = registry.get("gates")
@@ -216,13 +220,18 @@ def _gate_admission_errors(
         if not isinstance(gate, dict):
             errors.append(f"gates[{index}] is not an object")
             continue
+        if gate.get("id") != f"gate-{index}":
+            errors.append(f"gates[{index}].id must be gate-{index}; duplicate/substituted gate refused")
+        # Selection itself must not trust contradictory target metadata.
+        validate_stage_metadata(gate, label=f"gates[{index}]", errors=errors)
         if gate.get("admission_target") == environment:
+            # SAME canonical gate integrity, not just one surviving pass label.
+            # Non-target gates may remain legitimately open: admission is staged.
+            validate_gate(gate, index, candidate_sha, ROOT if root is None else root, errors)
             admitting.append(gate)
 
-    if errors:
-        return errors
     if not admitting:
-        return [
+        return errors + [
             f"no gate is bound to admission_target {environment!r}; the registry admits "
             "nothing for this environment"
         ]
@@ -287,9 +296,18 @@ def admit_release(
     # staging or production.
     extra.extend(
         error
-        for error in release_profile_errors(manifest, environment=environment)
+        for error in validate_release_admission(manifest, environment=environment, root=root)
         if error not in extra
     )
+    # One VALIDATED object supplies identity for registry, images and lease.
+    # A caller's optional expected digest is only a consistency assertion.
+    effective_digest = manifest.get("manifest_digest") if isinstance(manifest, dict) else None
+    effective_candidate = manifest.get("candidate_sha") if isinstance(manifest, dict) else None
+    if manifest_digest is not None and manifest_digest != effective_digest:
+        extra.append("expected manifest digest does not match the validated manifest")
+    release = registry.get("release") if isinstance(registry, dict) else None
+    if not isinstance(release, dict) or release.get("candidate_sha") != effective_candidate:
+        extra.append("validated manifest candidate_sha does not match registry candidate_sha")
     if component_images:
         # A manifest that failed to load is `None` here, and binding against it
         # reports an error rather than silently skipping the check.
@@ -303,16 +321,12 @@ def admit_release(
             registry,
             release_sha=release_sha,
             environment=environment,
-            expected_manifest_digest=manifest_digest,
+            expected_manifest_digest=effective_digest,
             root=root,
         )
     )
 
-    expected_candidate_sha = None
-    if isinstance(registry, dict):
-        candidate = (registry.get("release") or {}).get("candidate_sha")
-        if isinstance(candidate, str) and SHA_PATTERN.fullmatch(candidate):
-            expected_candidate_sha = candidate
+    expected_candidate_sha = effective_candidate if isinstance(effective_candidate, str) and SHA_PATTERN.fullmatch(effective_candidate) else None
 
     return admit_and_consume(
         lease,
@@ -323,7 +337,7 @@ def admit_release(
         extra_errors=extra,
         expected_task_id=task_id,
         expected_candidate_sha=expected_candidate_sha,
-        expected_manifest_digest=manifest_digest,
+        expected_manifest_digest=effective_digest,
         expected_environment=environment,
         expected_action=allowed_action,
         now=now,
@@ -494,7 +508,7 @@ def main(argv: list[str] | None = None) -> int:
         expected_digest=expected_manifest_digest or None,
     )
     if manifest is not None:
-        admission_errors = validate_release_admission(manifest)
+        admission_errors = validate_release_admission(manifest, environment=args.environment)
         manifest_errors.extend(
             error for error in admission_errors if error not in manifest_errors
         )
@@ -521,7 +535,8 @@ def main(argv: list[str] | None = None) -> int:
         component_images=component_images,
         allowed_action=args.action,
         consumed_by=_consumer_label(args.environment, args.release_sha),
-        now=now,
+        # Preliminary manifest/Git/I/O must not freeze the verification clock.
+        now=None,
     )
     # Digests are not secrets, and an admission receipt that does not say which
     # artifact was admitted cannot be audited against what actually deployed.

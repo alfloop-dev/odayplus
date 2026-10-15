@@ -37,10 +37,15 @@ def _as_str_set(value: Any) -> frozenset[str]:
     if value is None:
         return frozenset()
     if isinstance(value, str):
-        return frozenset(part.strip() for part in value.split(",") if part.strip())
+        values = frozenset(part.strip() for part in value.split(",") if part.strip())
+        if value.strip() and not values:
+            raise ValueError("invalid configured scope axis")
+        return values
     if isinstance(value, (list, tuple, set, frozenset)):
-        return frozenset(str(item).strip() for item in value if str(item).strip())
-    return frozenset()
+        if any(not isinstance(item, str) or not item.strip() for item in value):
+            raise ValueError("invalid configured scope member")
+        return frozenset(item.strip() for item in value)
+    raise ValueError("invalid configured scope axis")
 
 
 def _parse_roles(value: Any) -> frozenset[Role]:
@@ -56,10 +61,14 @@ def _parse_roles(value: Any) -> frozenset[Role]:
 def _parse_clearance(value: Any) -> DataClassification:
     if value is None:
         return DataClassification.CONFIDENTIAL
+    if isinstance(value, DataClassification):
+        return value
+    if not isinstance(value, str):
+        raise ValueError("invalid configured clearance")
     try:
-        return DataClassification[str(value).strip().upper()]
-    except KeyError:
-        return DataClassification.CONFIDENTIAL
+        return DataClassification[value.strip().upper()]
+    except KeyError as exc:
+        raise ValueError("invalid configured clearance") from exc
 
 
 def principal_from_claims(
@@ -76,12 +85,28 @@ def principal_from_claims(
     """
 
     mapping = principal_mapping
+    if not isinstance(mapping, Mapping):
+        raise ValueError("invalid principal declaration")
+    nested = mapping.get("scope")
+    if nested is not None and not isinstance(nested, Mapping):
+        raise ValueError("invalid configured scope")
+    # Validate BOTH representations before precedence chooses a value. Invalid
+    # restrictions must never become the empty/unrestricted sentinel or be
+    # hidden beneath another valid top-level grant.
+    for source in (mapping, nested or {}):
+        for axis in ("roles", "brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids", "modules"):
+            if axis in source:
+                _as_str_set(source[axis])
+        if "tenant_id" in source and source["tenant_id"] is not None and not isinstance(source["tenant_id"], str):
+            raise ValueError("invalid configured tenant")
+        if "clearance" in source:
+            _parse_clearance(source["clearance"])
 
     def value(key: str) -> Any:
         if key in mapping:
             return mapping[key]
         scope_dict = mapping.get("scope")
-        if isinstance(scope_dict, dict) and key in scope_dict:
+        if isinstance(scope_dict, Mapping) and key in scope_dict:
             return scope_dict[key]
         return None
 

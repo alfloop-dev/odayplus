@@ -24,8 +24,10 @@ from shared.audit.integrity import (
     verify_audit_chain,
     verify_audit_event_integrity,
 )
-from shared.audit.worm import AuditWormSink
+from shared.audit.restore import committed_envelope_event, reject_unproven_ledger_replay
+from shared.audit.worm import AuditWormSink, committed_audit_checksum
 from shared.infrastructure.persistence.engine import SqliteEngine
+from shared.observability.correlation import validate_audit_correlation
 
 _INTEGRITY_COLUMNS: dict[str, str] = {
     "sequence": "INTEGER",
@@ -47,9 +49,17 @@ class DurableAuditLog:
         self._engine = engine
         self._worm_sink = worm_sink
         self._ensure_integrity_columns()
+        if worm_sink is not None:
+            if not callable(getattr(worm_sink, "write_committed_audit_event", None)):
+                raise ValueError("AUDIT_COMMITTED_WORM_SINK_REQUIRED")
+            try:
+                self._engine.query("SELECT event_id FROM durable_audit_worm_outbox LIMIT 0")
+            except Exception:
+                raise RuntimeError("AUDIT_WORM_OUTBOX_SCHEMA_REQUIRED") from None
 
     def record(self, event: AuditEvent) -> AuditEvent:
-        with self._engine.lock:
+        validate_audit_correlation(event.event_type, event.correlation_id)
+        with self._engine.lock, self._engine.transaction():
             existing = self._engine.query_one(
                 "SELECT * FROM durable_audit_events WHERE event_id = ?",
                 (event.event_id,),
@@ -72,8 +82,6 @@ class DurableAuditLog:
                 previous_hash=previous_hash,
                 sink_id=sink_id,
             )
-            if self._worm_sink is not None:
-                self._worm_sink.write_audit_event(event)
             self._engine.execute(
                 "INSERT INTO durable_audit_events("
                 "  event_id, event_type, actor, action, resource, outcome, "
@@ -101,7 +109,62 @@ class DurableAuditLog:
                     event.worm_sink_id,
                 ),
             )
+            if self._worm_sink is not None:
+                self._engine.execute(
+                    "INSERT INTO durable_audit_worm_outbox(event_id, sink_id, event_hash, state) VALUES (?, ?, ?, 'pending')",
+                    (event.event_id, self._worm_sink.sink_id, event.event_hash),
+                )
+                self._engine.after_commit(self.flush_worm)
             return event
+
+    def flush_worm(self, *, limit: int = 16) -> int:
+        """Bounded committed publication. Never called inside a business txn.
+
+        Persist intent BEFORE I/O. Lost reply/ack/claim receipt is UNKNOWN and
+        NEVER automatically retried, including after restart or another pool.
+        SQL commit success is not a WORM delivery receipt. No daemon/CLI/authority.
+        """
+        if self._engine.in_transaction or type(limit) is not int or not 1 <= limit <= 64:
+            raise RuntimeError("AUDIT_WORM_PUBLICATION_REFUSED")
+        if self._worm_sink is None:
+            return 0
+        delivered = 0
+        for _ in range(limit):
+            with self._engine.lock, self._engine.transaction():
+                row = self._engine.query_one(
+                    "SELECT o.event_id, o.event_hash FROM durable_audit_worm_outbox o "
+                    "JOIN durable_audit_events e ON e.event_id = o.event_id "
+                    "WHERE o.sink_id = ? AND o.state = 'pending' ORDER BY e.sequence LIMIT 1",
+                    (self._worm_sink.sink_id,),
+                )
+                if row is None:
+                    break
+                claimed = self._engine.execute(
+                    "UPDATE durable_audit_worm_outbox SET state = 'attempted' WHERE event_id = ? AND state = 'pending'",
+                    (row["event_id"],),
+                )
+                if claimed.rowcount != 1:
+                    continue
+                stored = self._engine.query_one("SELECT * FROM durable_audit_events WHERE event_id = ?", (row["event_id"],))
+            # Only a committed claim/row reaches external transport. Any claim
+            # commit failure escapes without sending; never infer rollback.
+            try:
+                event = self._row_to_event(stored)
+                if (event.event_hash != row["event_hash"] or event.worm_sink_id != self._worm_sink.sink_id
+                        or not verify_audit_event_integrity(event)):
+                    raise ValueError
+                receipt = self._worm_sink.write_committed_audit_event(event)
+                if (receipt.sink_id != self._worm_sink.sink_id or receipt.record_id != event.event_id
+                        or receipt.record_type != "audit-events"
+                        or receipt.checksum != committed_audit_checksum(event.to_dict())):
+                    raise ValueError
+                self._engine.execute("UPDATE durable_audit_worm_outbox SET state = 'delivered' WHERE event_id = ? AND state = 'attempted'",
+                                     (event.event_id,))
+                delivered += 1
+            except Exception:
+                self._engine.execute("UPDATE durable_audit_worm_outbox SET state = 'unknown' WHERE event_id = ? AND state = 'attempted'",
+                                     (row["event_id"],))
+        return delivered
 
     def list_events(
         self,
@@ -147,10 +210,19 @@ class DurableAuditLog:
     def replay(self, events: Iterable[AuditEvent]) -> list[AuditEvent]:
         """Append restored events while preserving the original chain order."""
 
+        values = reject_unproven_ledger_replay(events)
         replayed: list[AuditEvent] = []
-        for event in sorted(events, key=_audit_event_replay_key):
+        for event in sorted(values, key=_audit_event_replay_key):
             replayed.append(self.record(event))
         return replayed
+
+    def replay_committed_envelopes(self, envelopes: Iterable[dict[str, Any]]) -> list[AuditEvent]:
+        # Validate the ENTIRE supplied batch before any insert/publication. Caller
+        # must authenticate immutable-sink transport; checksum is not authority.
+        events = [committed_envelope_event(envelope) for envelope in envelopes]
+        verify_audit_chain(sorted(events, key=_audit_event_replay_key)).raise_for_tamper()
+        with self._engine.transaction():
+            return [self.record(event) for event in sorted(events, key=_audit_event_replay_key)]
 
     def delete_event(self, event_id: str) -> None:
         raise AuditImmutabilityError(

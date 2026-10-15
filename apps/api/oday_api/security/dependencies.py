@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from collections.abc import Iterable, Mapping
 from datetime import date
 from typing import TYPE_CHECKING, Any
@@ -56,6 +55,7 @@ from shared.auth import (
     default_registry,
     rbac_allows,
 )
+from shared.observability.correlation import request_correlation_id
 
 try:  # pragma: no cover - exercised only when FastAPI is installed
     from fastapi import HTTPException, Request
@@ -250,14 +250,17 @@ def principal_from_headers(
     credential yields an authenticated principal; any authentication failure
     raises HTTP 401.
 
-    When ODP_PRODUCT_MODE == "production", browser-supplied spoofable headers
-    are NEVER trusted under any circumstances (Contract §4.2, T16).
+    All authoritative production/staging/require-live controls use the same
+    runtime resolver as application composition; spoofable headers are NEVER
+    trusted in any such mode (Contract §4.2, T16).
 
     When no boundary is configured in non-production mode, the legacy
     header-trust stub is used so local dev and unit tests are unaffected.
     """
 
-    is_production = os.environ.get("ODP_PRODUCT_MODE") == "production"
+    from apps.api.oday_api.runtime_mode import live_data_required
+
+    is_production = live_data_required()
 
     boundary = boundary if boundary is not None else default_boundary()
     if boundary is not None:
@@ -306,7 +309,11 @@ def _enforce_password_rotation(principal: Principal, boundary: Any) -> None:
         raise
     if must_change:
         if HTTPException is not None:
-            raise HTTPException(status_code=403, detail=PASSWORD_CHANGE_REQUIRED)
+            refusal = HTTPException(status_code=403, detail=PASSWORD_CHANGE_REQUIRED)
+            # Private exception context preserves the already verified actor
+            # for request-aware denial recording, without re-authentication.
+            refusal._verified_principal = principal
+            raise refusal
         raise AuthorizationError(
             Decision.deny("password change required", policy_id="identity.password_rotation")
         )
@@ -763,7 +770,7 @@ def _select_operator_role(
 
 
 def _correlation_id_from_request(request: Request) -> str:  # type: ignore[name-defined]
-    return (
+    return request_correlation_id(
         getattr(request.state, "correlation_id", None)
         or request.headers.get("x-correlation-id")
         or "unknown"

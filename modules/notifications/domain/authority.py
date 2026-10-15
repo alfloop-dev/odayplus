@@ -37,6 +37,11 @@ def _validate_safe_canonical_id(val: Any, field_name: str) -> str:
         )
     if len(val) > 1024:
         raise ValueError(f"{field_name} exceeds maximum allowed length of 1024 characters")
+    # These adjacent signed fields use the existing v1 colon framing. Other
+    # fields (ISO timestamps and pinned issuer URNs) legitimately contain ':'.
+    # Refuse ambiguous IDs rather than reinterpret or re-sign old authority.
+    if field_name in {"delivery_id", "provider_receipt_id"} and ":" in val:
+        raise ValueError(f"Invalid {field_name}: delimiter ':' is not permitted in a signed identifier")
 
     if any(c in val for c in ["\x00", "\r", "\n", "\t"]):
         raise ValueError(f"Invalid non-canonical or unsafe {field_name}: contains control characters")
@@ -447,6 +452,8 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
 
     def _write_journal_intent(self, record: DeliveryAuthorityRecord) -> None:
         """Writes intent record to journal directory with full file and directory fsync (B30/B31/B32/B34)."""
+        _validate_safe_canonical_id(record.delivery_id, "delivery_id")
+        _validate_safe_canonical_id(record.provider_receipt_id, "provider_receipt_id")
         self.journal_dir.mkdir(parents=True, exist_ok=True)
         journal_dir_resolved = self.journal_dir.resolve()
 
@@ -623,10 +630,10 @@ class FileDeliveryAuthorityStore(IDeliveryAuthorityStore):
 
     def _store_authority_record_for_testing(self, record: DeliveryAuthorityRecord) -> None:
         """Internal test helper for populating test store fixtures."""
+        _validate_safe_canonical_id(record.delivery_id, "delivery_id")
+        _validate_safe_canonical_id(record.provider_receipt_id, "provider_receipt_id")
         with self._file_lock():
             data = self._read_store_data()
-            if record.delivery_id != record.delivery_id.strip():
-                raise ValueError("Record delivery_id contains non-canonical whitespace")
             data["records"][record.delivery_id] = record.to_dict()
             self._write_store_data_atomic(data)
 
@@ -859,6 +866,9 @@ class DeliveryAuthorityReadback:
                 rec = record
             else:
                 return False, "PENDING_VERIFICATION", "Invalid authority record type"
+            # Dataclass construction is not schema/identifier validation.
+            _validate_safe_canonical_id(rec.delivery_id, "delivery_id")
+            _validate_safe_canonical_id(rec.provider_receipt_id, "provider_receipt_id")
         except ValueError as err:
             return False, "PENDING_VERIFICATION", str(err)
 

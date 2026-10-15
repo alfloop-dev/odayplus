@@ -389,6 +389,8 @@ class GateConfig:
     dev_admin_bundle_account_id: str = ""
     dev_admin_bundle_tenant_id: str = ""
     dev_admin_bundle_execution_id: str = ""
+    dev_admin_bundle_schema_version: int = 1
+    dev_admin_bundle_recovery_lineage: Any = None
     dev_admin_denied_role: str = ""
     bootstrap_admin_username: str = ""
     bootstrap_admin_password: str = ""
@@ -458,6 +460,15 @@ class HttpResponse:
     # name -> value of every ``Set-Cookie`` on the response. An empty value is
     # a deletion. Cookies are only ever sent back explicitly by the caller.
     cookies: dict[str, str] = field(default_factory=dict)
+    # Every raw ``Set-Cookie`` as (name, value) in received order, captured
+    # BEFORE ``cookies`` above collapses duplicate names (last wins). A field
+    # without ``=`` or with an empty name is kept as ("", "") so malformed
+    # multiplicity stays visible. ``None`` means the response was constructed
+    # in-process, not parsed from raw headers. Memory-only; never in repr.
+    set_cookie_pairs: tuple[tuple[str, str], ...] | None = field(default=None, repr=False, compare=False)
+    # Transport could not fully inspect headers. No captured cookie is NOT
+    # evidence that a submitted request issued no authority. Memory only.
+    custody_uncertain: bool = field(default=False, repr=False, compare=False)
 
     @property
     def failed(self) -> bool:
@@ -601,17 +612,36 @@ class UrllibHttpClient:
             if follow_redirects
             else urllib.request.build_opener(_NoRedirect)
         )
+        received: HttpResponse | None = None
         try:
-            with opener.open(request, timeout=self._timeout) as response:
-                return _to_response(response.status, response.headers, response.read())
+            try:
+                stream = opener.open(request, timeout=self._timeout)
+            except urllib.error.HTTPError as exc:
+                # HTTPError is also a response with headers/body. Read it via
+                # the SAME custody path; exceptions in an except block would
+                # otherwise bypass the partial-response failure handler.
+                stream = exc
+            with stream as response:
+                # Capture raw multiplicity and safely known cookies BEFORE
+                # body I/O. A timeout/truncated body may follow a committed
+                # login: retain custody solely for bounded owned cleanup.
+                received = _to_response(response.status, response.headers, b"")
+                received = _to_response(response.status, response.headers, response.read())
+            return received
         except _CrossOriginRedirectRefused:
             return HttpResponse(
                 status=0, error=f"refused cross-origin redirect for {safe_path}"
             )
-        except urllib.error.HTTPError as exc:
-            return _to_response(exc.code, exc.headers, exc.read())
-        except (OSError, urllib.error.URLError, TimeoutError) as exc:
-            return HttpResponse(status=0, error=f"{type(exc).__name__} for {safe_path}")
+        except Exception as exc:
+            # Includes incomplete HTTP bodies and the caller's absolute timer.
+            # No payload/exception message is exposed and status=0 is NEVER an
+            # acknowledgement, even if headers carried a successful status.
+            return HttpResponse(
+                status=0, error=f"{type(exc).__name__} for {safe_path}",
+                cookies=received.cookies if received is not None else {},
+                set_cookie_pairs=received.set_cookie_pairs if received is not None else None,
+                custody_uncertain=received is None,
+            )
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -661,22 +691,33 @@ def _to_response(status: int, headers: Any, raw: bytes) -> HttpResponse:
             decoded = None
         if isinstance(decoded, dict):
             payload = decoded
+    pairs = _set_cookie_pairs(headers)
+    defective = bool(getattr(headers, "defects", ()))
+    # A returned partial header view is no more proof of custody than a parser
+    # exception. Preserve extracted values, but never acknowledge this response.
     return HttpResponse(
-        status=status, payload=payload, location=location, cookies=_set_cookies(headers)
+        status=0 if defective else status, payload={} if defective else payload,
+        location="" if defective else location,
+        error="HTTP response header inspection refused" if defective else "",
+        cookies={name: value for name, value in pairs if name}, set_cookie_pairs=pairs,
+        custody_uncertain=defective,
     )
 
 
-def _set_cookies(headers: Any) -> dict[str, str]:
+def _set_cookie_pairs(headers: Any) -> tuple[tuple[str, str], ...]:
     try:
         values = headers.get_all("set-cookie") or []
     except AttributeError:  # pragma: no cover - non-standard header container
         values = []
-    cookies: dict[str, str] = {}
+    pairs: list[tuple[str, str]] = []
     for value in values:
         name, sep, rest = str(value).split(";", 1)[0].partition("=")
-        if sep and name.strip():
-            cookies[name.strip()] = rest.strip()
-    return cookies
+        pairs.append((name.strip(), rest.strip()) if sep and name.strip() else ("", ""))
+    return tuple(pairs)
+
+
+def _set_cookies(headers: Any) -> dict[str, str]:
+    return {name: value for name, value in _set_cookie_pairs(headers) if name}
 
 
 class CloudRunWorkerDriver:
@@ -836,6 +877,26 @@ def _operator_source(payload: Mapping[str, Any]) -> str:
 
 def validate_config(config: GateConfig) -> list[CheckResult]:
     checks: list[CheckResult] = []
+    bundle_ids = (config.dev_admin_bundle_account_id, config.dev_admin_bundle_tenant_id,
+                  config.dev_admin_bundle_execution_id)
+    if any(bundle_ids) or config.dev_admin_bundle_schema_version != 1 or config.dev_admin_bundle_recovery_lineage is not None:
+        from shared.identity.dev_smoke_recovery import (
+            RecoveryBundleLineage,
+            recovery_bundle_lineage,
+        )
+        coherent = False
+        try:
+            coherent = (config.dev_admin and config.expected_deployment == "dev"
+                        and all(_canonical_uuid(v) is not None for v in bundle_ids)
+                        and type(config.dev_admin_bundle_schema_version) is int
+                        and ((config.dev_admin_bundle_schema_version == 1 and config.dev_admin_bundle_recovery_lineage is None)
+                             or (config.dev_admin_bundle_schema_version == 2
+                                 and type(config.dev_admin_bundle_recovery_lineage) is RecoveryBundleLineage
+                                 and recovery_bundle_lineage(vars(config.dev_admin_bundle_recovery_lineage))
+                                     == config.dev_admin_bundle_recovery_lineage)))
+        except Exception:
+            pass
+        _check(checks, coherent, "config:credential_bundle_lineage", "strict matched bundle expectations", "config")
     try:
         _normalize_origin(config.api_url, allow_http=config.allow_http)
         _check(checks, True, "config:api_url", "configured deployed API origin", "config")
@@ -1739,6 +1800,7 @@ def _check_dev_admin_session(
     correlation_id: str,
     checks: list[CheckResult],
     report: dict[str, Any],
+    session_cleanup_barrier: Callable[[Sequence[CheckResult]], None] | None = None,
 ) -> None:
     """Drive the real password sign-in and administration journey through the deployed Web.
 
@@ -1868,7 +1930,10 @@ def _check_dev_admin_session(
         users_probe = web.request(
             "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
         )
-        if not users_probe.failed and users_probe.status == 403 and _payload_mentions(users_probe, "PASSWORD_CHANGE_REQUIRED"):
+        if users_probe.failed:
+            _check(checks, False, "session:users_probe", "Authenticated preliminary read failed; stop before more login work", "session")
+            return
+        if users_probe.status == 403 and _payload_mentions(users_probe, "PASSWORD_CHANGE_REQUIRED"):
             _check(
                 checks,
                 False,
@@ -2119,10 +2184,11 @@ def _check_dev_admin_session(
         )
         acknowledged = credential_bundle_acknowledged(DevCredentialBundle(
             username, "", config.dev_admin_bundle_account_id, config.dev_admin_bundle_tenant_id,
-            config.dev_admin_bundle_execution_id,
-        ), events)
+            config.dev_admin_bundle_execution_id, config.dev_admin_bundle_schema_version,
+            config.dev_admin_bundle_recovery_lineage,
+        ), events, target_account=own_record)
         _check(checks, acknowledged, "admin:credential_bundle_durable_acknowledgement",
-               f"reservedIntentAcknowledgementWithoutQuarantine={acknowledged}", "audit")
+               f"strictVersionedLineageAcknowledged={acknowledged}", "audit")
         if not acknowledged:
             return
     bootstrap_events = [
@@ -2370,6 +2436,10 @@ def _check_dev_admin_session(
     )
     operations.append("admin_page")
 
+    # Trusted recovery may STOP on existing failures before releasing its own
+    # sessions. This adds a fail-stop boundary; it cannot waive/replace checks.
+    if session_cleanup_barrier is not None:
+        session_cleanup_barrier(tuple(checks))
     # 11. Logout and revocation.
     logout = web.request(
         "POST",
@@ -2482,6 +2552,8 @@ def _check_dev_admin_session(
             _failure_detail(form_page, expected="200 (not a /login redirect)"), "session",
         )
     finally:
+        if session_cleanup_barrier is not None:
+            session_cleanup_barrier(tuple(checks))
         form_logout = web.request(
             "POST", "/auth/logout", authenticated=False,
             headers=session_headers(form_cookies, origin=origin), follow_redirects=False,
@@ -2997,6 +3069,7 @@ def evaluate_gate(
     sleep: Callable[[float], None] = time.sleep,
     business_journey_receipt: Mapping[str, Any] | None = None,
     business_journey_receipt_note: str = "",
+    session_cleanup_barrier: Callable[[Sequence[CheckResult]], None] | None = None,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     redact = _redactor(
         config.bearer_token,
@@ -3102,6 +3175,7 @@ def evaluate_gate(
                 correlation_id=f"{correlation_id}-session",
                 checks=checks,
                 report=report,
+                session_cleanup_barrier=session_cleanup_barrier,
             )
 
     blockers = [
@@ -3389,6 +3463,8 @@ def main(argv: list[str] | None = None) -> int:
         dev_admin_bundle_account_id=bundle.account_id if bundle else "",
         dev_admin_bundle_tenant_id=bundle.tenant_id if bundle else "",
         dev_admin_bundle_execution_id=bundle.execution_id if bundle else "",
+        dev_admin_bundle_schema_version=bundle.schema_version if bundle else 1,
+        dev_admin_bundle_recovery_lineage=bundle.recovery_lineage if bundle else None,
         dev_admin_denied_role=os.environ.get(DEV_ADMIN_DENIED_ROLE_ENV, "").strip() or "cs-lead",
         bootstrap_admin_username="" if bundle else os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
         bootstrap_admin_password="" if bundle else os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),

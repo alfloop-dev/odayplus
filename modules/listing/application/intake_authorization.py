@@ -142,6 +142,7 @@ def authorize_intake_action(
     operator_role_id: str | None = None,
     audit_log: Any = None,
     correlation_id: str | None = None,
+    source_ip: str | None = None,
     waiver: TenantAccessWaiver | str | None = None,
     waiver_registry: TenantAccessWaiverRegistry | None = None,
     tenant_id: str | None = None,
@@ -213,7 +214,7 @@ def authorize_intake_action(
                 action=action_enum,
                 resource=desc,
                 environment=Environment(
-                    source_ip=None,
+                    source_ip=source_ip,
                     attributes={"correlation_id": correlation_id or "unknown"}
                 ),
             )
@@ -228,6 +229,10 @@ def authorize_intake_action(
     # 1. Authenticated check
     if not principal.authenticated:
         _raise_and_audit(status_code=401, detail="AUTHENTICATION_REQUIRED")
+
+    # Module restrictions are independent of role and every object axis.
+    if not principal.scope.permits_module("listing"):
+        _raise_and_audit(status_code=403, detail="MODULE_SCOPE_DENIED")
 
     # 2. Tenant Isolation (shared fail-closed guard)
     effective_waiver = waiver or (
@@ -452,7 +457,7 @@ def authorize_intake_action(
             action=action_enum,
             resource=desc,
             environment=Environment(
-                source_ip=None,
+                source_ip=source_ip,
                 attributes={"correlation_id": correlation_id or "unknown"},
             ),
         )
@@ -496,35 +501,50 @@ def mask_listing(principal: Principal, listing: dict[str, Any]) -> dict[str, Any
 def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
     """Mask fields based on principal clearance and field classification."""
     clearance = principal.scope.clearance if principal.authenticated else DataClassification.PUBLIC
-    if clearance >= DataClassification.RESTRICTED:
-        return intake
-
+    # Canonical field classifications may exceed RESTRICTED; never skip the
+    # per-field decision merely because the principal has a high clearance.
     masked = intake.copy()
 
     # Mask the canonical v1 FieldValue collection according to each field's
     # declared classification. Field names are not a safe substitute for the
     # classification carried by the contract.
+    if "fields" in masked and not isinstance(masked["fields"], list) and clearance < DataClassification.RESTRICTED:
+        masked["fields"] = None
     if "fields" in masked and isinstance(masked["fields"], list):
         fields = []
         masked_field_paths = list(masked.get("masked_fields") or [])
         for field_info in masked["fields"]:
             if not isinstance(field_info, dict):
-                fields.append(field_info)
+                # No classification contract: legacy malformed values stay
+                # restricted, just like other unknown import columns.
+                fields.append(field_info if clearance >= DataClassification.RESTRICTED else None)
                 continue
 
             field_info_copy = field_info.copy()
             raw_classification = field_info_copy.get("classification", "RESTRICTED")
-            try:
-                if isinstance(raw_classification, DataClassification):
-                    field_class = raw_classification
-                else:
-                    field_class = DataClassification[str(raw_classification).upper()]
-            except (KeyError, AttributeError):
-                # Unknown classifications fail closed so a schema drift cannot
-                # disclose values before policy support is deployed.
+            if isinstance(raw_classification, DataClassification):
+                field_class = raw_classification
+            elif isinstance(raw_classification, str):
+                field_class = DataClassification.__members__.get(
+                    raw_classification.upper(), DataClassification.HIGHLY_RESTRICTED
+                )
+            else:
+                # Never recursively stringify untrusted containers or coerce
+                # runtime types into a classification declaration.
                 field_class = DataClassification.HIGHLY_RESTRICTED
+            if "classification" in field_info_copy and not isinstance(
+                raw_classification, (str, DataClassification)
+            ):
+                # Container metadata must be safe even at maximum clearance;
+                # keep legitimate/unknown string labels at that clearance.
+                field_info_copy["classification"] = field_class.name
 
             if clearance < field_class:
+                # Classification/path metadata must not smuggle containers or
+                # unknown classification text around the value projection.
+                field_info_copy = {"field_path": field_info_copy["field_path"]} if isinstance(field_info_copy.get("field_path"), str) else {}
+                if "classification" in field_info:
+                    field_info_copy["classification"] = field_class.name
                 for value_key in ("parsed", "normalized", "corrected", "effective"):
                     field_info_copy[value_key] = None
                 field_info_copy["masked"] = True
@@ -541,6 +561,9 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
     if "parsedFields" in masked and isinstance(masked["parsedFields"], dict):
         parsed = {}
         for key, field_info in masked["parsedFields"].items():
+            if not isinstance(field_info, dict):
+                parsed[key] = field_info if clearance >= DataClassification.RESTRICTED else None
+                continue
             field_info_copy = field_info.copy()
 
             # Decide if this field is sensitive based on its name
@@ -556,6 +579,8 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
                 field_class = DataClassification.RESTRICTED
 
             if clearance < field_class:
+                # Unsupported legacy attributes are not public metadata.
+                field_info_copy = {}
                 field_info_copy["sourceValue"] = None
                 field_info_copy["normalizedValue"] = None
                 field_info_copy["correctedValue"] = None
@@ -564,6 +589,8 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
 
             parsed[key] = field_info_copy
         masked["parsedFields"] = parsed
+    elif "parsedFields" in masked and clearance < DataClassification.RESTRICTED:
+        masked["parsedFields"] = None
 
     # Mask top-level rawSnapshot/originalUrl if needed
     if clearance < DataClassification.CONFIDENTIAL:
@@ -587,49 +614,166 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
     the in-memory queue's authoritative record.
     """
     clearance = principal.scope.clearance if principal.authenticated else DataClassification.PUBLIC
-    if clearance >= DataClassification.RESTRICTED:
-        return job
-    masked = deepcopy(job)
-    masked["error_message"] = None
-    aliases = {
-        "address_raw": "address", "addressRaw": "address", "address": "address",
-        "rent_per_month": "rent", "rentPerMonth": "rent", "rent": "rent",
-        "area_ping": "areaPing", "areaPing": "areaPing", "floor": "floor",
-        "coordinates": "coordinates", "rawSnapshot": "rawSnapshot",
-        "brokerCompany": "brokerCompany", "contactEmail": "contactEmail",
-        "contactPhone": "contactPhone", "brokerEmail": "brokerEmail",
-        "privateNotes": "privateNotes",
-    }
-    payload = masked.get("payload")
-    if not isinstance(payload, dict):
-        return masked
-    for field, value in list(payload.items()):
-        if field in ("items", "rows") and isinstance(value, list):
-            rows = []
-            for row in value:
-                if not isinstance(row, dict):
-                    rows.append(None)
-                    continue
-                clean = {}
-                for key, raw in row.items():
-                    if key == "item_id":
-                        clean[key] = raw
-                    elif key in aliases:
-                        canonical = aliases[key]
-                        view = mask_intake(
-                            principal, {"parsedFields": {canonical: {"sourceValue": raw}}}
-                        )
-                        clean[key] = view["parsedFields"][canonical].get("sourceValue")
-                    else:
-                        clean[key] = None
-                rows.append(clean)
-            payload[field] = rows
-        elif field not in ("tenant_id", "submitter", "actor_role_id", "receipt", "summary"):
-            payload[field] = None
-    receipt = payload.get("receipt")
-    if isinstance(receipt, dict):
-        for item in receipt.get("items", []):
-            if isinstance(item, dict) and isinstance(item.get("error"), dict):
-                item["error"]["message"] = "Item processing failed; details are restricted"
-                item["error"]["details"] = None
+    # Clone JSON containers iteratively: deep canonical structures must not
+    # exhaust the Python stack, and no response mask may alter stored records.
+    masked: dict[str, Any] = {}
+    memo: dict[int, Any] = {id(job): masked}
+    pending: list[tuple[Any, Any]] = [(job, masked)]
+    while pending:
+        source, target = pending.pop()
+        entries = source.items() if isinstance(source, dict) else enumerate(source)
+        for key, value in entries:
+            if isinstance(value, (dict, list)):
+                if id(value) not in memo:
+                    memo[id(value)] = {} if isinstance(value, dict) else []
+                    pending.append((value, memo[id(value)]))
+                copied = memo[id(value)]
+            else:
+                copied = deepcopy(value)
+            if isinstance(target, dict):
+                target[key] = copied
+            else:
+                target.append(copied)
+    # Canonical fields can occur in rows, envelopes, receipts or summaries.
+    # Apply classifications even at RESTRICTED, before the legacy coarse mask.
+    # Compile constraints against the UNMODIFIED clone, then apply their union.
+    # Never apply an independently copied weaker view after a stricter one.
+    changes: dict[int, tuple[dict[str, Any], set[str], dict[str, Any]]] = {}
+    rejected_pending: list[Any] = []
+    rejected: set[int] = set()
+    replaced_edges: list[tuple[Any, Any]] = []
+    nodes = list(memo.values())
+
+    def require_projection(original: dict[str, Any], projected: dict[str, Any]) -> None:
+        _, drops, puts = changes.setdefault(id(original), (original, set(), {}))
+        for key in original.keys() - projected.keys():
+            drops.add(key)
+            if isinstance(original[key], (dict, list)):
+                rejected_pending.append(original[key])
+        for key, value in projected.items():
+            if key not in original or value is not original[key]:
+                if key in original and isinstance(original[key], (dict, list)):
+                    rejected_pending.append(original[key])
+                # Null/drop requirements dominate any metadata addition.
+                if key not in puts or value is None or puts[key] is not None:
+                    puts[key] = value
+
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        if "classification" in node:
+            require_projection(node, mask_intake(principal, {"fields": [node]})["fields"][0])
+        inputs = {key: node[key] for key in ("fields", "parsedFields", "rawSnapshot", "originalUrl") if key in node}
+        if not inputs:
+            continue
+        view = mask_intake(principal, inputs)
+        root_view = node.copy()
+        for collection, expected in (("fields", list), ("parsedFields", dict)):
+            if collection not in node:
+                continue
+            original, projected = node[collection], view[collection]
+            if isinstance(original, expected) and isinstance(projected, expected):
+                entries = original.items() if isinstance(original, dict) else enumerate(original)
+                for key, member in entries:
+                    replacement = projected[key]
+                    if isinstance(member, dict) and isinstance(replacement, dict):
+                        require_projection(member, replacement)
+                    elif replacement is not member:
+                        replaced_edges.append((original, key))
+                        if isinstance(member, (dict, list)):
+                            rejected_pending.append(member)
+            else:
+                root_view[collection] = projected
+        for key, value in view.items():
+            if key not in ("fields", "parsedFields"):
+                root_view[key] = value
+        require_projection(node, root_view)
+
+    # Compile the remaining coarse owning policies BEFORE applying anything.
+    # Replacing rows/diagnostics afterwards would leave retained aliases intact.
+    if clearance < DataClassification.RESTRICTED:
+        require_projection(masked, {**masked, "error_message": None})
+        aliases = {
+            "address_raw": "address", "addressRaw": "address", "address": "address",
+            "rent_per_month": "rent", "rentPerMonth": "rent", "rent": "rent",
+            "area_ping": "areaPing", "areaPing": "areaPing", "floor": "floor",
+            "coordinates": "coordinates", "rawSnapshot": "rawSnapshot",
+            "brokerCompany": "brokerCompany", "contactEmail": "contactEmail",
+            "contactPhone": "contactPhone", "brokerEmail": "brokerEmail", "privateNotes": "privateNotes",
+        }
+        payload = masked.get("payload")
+        if isinstance(payload, dict):
+            payload_view = payload.copy()
+            for field, value in payload.items():
+                if field in ("items", "rows") and isinstance(value, list):
+                    for index, row in enumerate(value):
+                        if not isinstance(row, dict):
+                            replaced_edges.append((value, index))
+                            if isinstance(row, (dict, list)):
+                                rejected_pending.append(row)
+                            continue
+                        clean = {}
+                        for key, raw in row.items():
+                            if key == "item_id" or (key == "fields" and isinstance(raw, list)):
+                                clean[key] = raw
+                            elif key in aliases:
+                                canonical = aliases[key]
+                                view = mask_intake(principal, {"parsedFields": {canonical: {"sourceValue": raw}}})
+                                clean[key] = view["parsedFields"][canonical].get("sourceValue")
+                            else:
+                                clean[key] = None
+                        require_projection(row, clean)
+                elif field not in ("tenant_id", "submitter", "actor_role_id", "receipt", "summary", "fields", "masked_fields"):
+                    payload_view[field] = None
+            require_projection(payload, payload_view)
+            receipt = payload.get("receipt")
+            if isinstance(receipt, dict) and "items" in receipt:
+                items = receipt["items"]
+                if not isinstance(items, list):
+                    require_projection(receipt, {**receipt, "items": None})
+                else:
+                    for index, item in enumerate(items):
+                        if not isinstance(item, dict):
+                            replaced_edges.append((items, index))
+                            if isinstance(item, (dict, list)):
+                                rejected_pending.append(item)
+                            continue
+                        if "error" not in item or item["error"] is None:
+                            continue
+                        error = item["error"]
+                        if not isinstance(error, dict):
+                            require_projection(item, {**item, "error": None})
+                            continue
+                        safe_error = {"message": "Item processing failed; details are restricted", "details": None}
+                        if isinstance(error.get("code"), str):
+                            safe_error["code"] = error["code"]
+                        if isinstance(error.get("retryable"), bool):
+                            safe_error["retryable"] = error["retryable"]
+                        require_projection(error, safe_error)
+
+    # A rejected container taints all its descendant containers as well: a
+    # separately retained deep alias cannot bypass removal of its ancestor.
+    while rejected_pending:
+        node = rejected_pending.pop()
+        if id(node) in rejected:
+            continue
+        rejected.add(id(node))
+        values = node.values() if isinstance(node, dict) else node
+        rejected_pending.extend(value for value in values if isinstance(value, (dict, list)))
+    for original, drops, puts in changes.values():
+        for key in drops:
+            original.pop(key, None)
+        original.update({key: value for key, value in puts.items() if key not in drops})
+    for parent, key in replaced_edges:
+        # A stronger dictionary projection may have removed this member key.
+        # Nulling an invalid edge must not recreate the excluded attribute.
+        if isinstance(parent, list) or key in parent:
+            parent[key] = None
+    for node in nodes:
+        entries = list(node.items()) if isinstance(node, dict) else enumerate(node)
+        for key, value in entries:
+            if isinstance(value, (dict, list)) and id(value) in rejected:
+                node[key] = None
+    if id(masked) in rejected:
+        raise HTTPException(status_code=422, detail="JOB_FIELDS_INVALID")
     return masked

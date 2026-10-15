@@ -38,6 +38,7 @@ _PRAGMA_TABLE_INFO = re.compile(
 )
 _REQUIRED_RELATIONS = (
     "odp_runtime.durable_audit_events",
+    "odp_runtime.durable_audit_worm_outbox",
     "odp_runtime.durable_documents",
     "odp_runtime.operator_comments",
     "odp_runtime.durable_manual_corrections",
@@ -184,6 +185,16 @@ class PostgresEngine:
         with self._pool.connection() as connection:
             yield connection
 
+    @property
+    def in_transaction(self) -> bool:
+        return getattr(self._local, "connection", None) is not None
+
+    def after_commit(self, callback) -> None:
+        if not self.in_transaction:
+            raise RuntimeError("post-commit callback requires transaction")
+        if callback not in self._local.commit_callbacks:
+            self._local.commit_callbacks.append(callback)
+
     @contextmanager
     def transaction(self) -> Iterator[PostgresEngine]:
         """Bind all calls on this thread to one pooled PostgreSQL transaction."""
@@ -197,10 +208,12 @@ class PostgresEngine:
                 self._local.depth -= 1
             return
 
+        callbacks = []
         with self._pool.connection() as connection:
             with connection.transaction():
                 self._local.connection = connection
                 self._local.depth = 1
+                self._local.commit_callbacks = callbacks
                 try:
                     connection.execute(
                         "SET LOCAL search_path TO odp_runtime, core, public"
@@ -209,6 +222,14 @@ class PostgresEngine:
                 finally:
                     self._local.connection = None
                     self._local.depth = 0
+                    self._local.commit_callbacks = None
+        # ONLY after commit AND returning the connection (including pool size1).
+        # Rollback/commit failure never reaches this block or publishes success.
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                pass  # committed SQL/outbox is authoritative; never fake rollback
 
     def execute(
         self,
@@ -263,6 +284,7 @@ class PostgresEngine:
         """Apply the PostgreSQL-only runtime migration inside one transaction."""
 
         ddl = _MIGRATION_PATH.read_text(encoding="utf-8")
+        ddl += "\n" + (_MIGRATION_PATH.parent / "000032_audit_worm_outbox.sql").read_text(encoding="utf-8")
         with self._pool.connection() as connection:
             with connection.transaction():
                 connection.execute(ddl)

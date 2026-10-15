@@ -24,6 +24,8 @@ denying :class:`AuthOutcome` whose ``principal`` is
 
 from __future__ import annotations
 
+import hashlib
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -52,8 +54,8 @@ from shared.observability import (
     MetricsRegistry,
     MetricType,
     StructuredLogger,
-    new_correlation_id,
 )
+from shared.observability.correlation import request_correlation_id
 
 AUTHENTICATION_EVENT_TYPE = "security.authentication"
 
@@ -82,6 +84,7 @@ class Credentials:
     service_secret: bytes | None = None
     correlation_id: str | None = None
     source_ip: str | None = None
+    oidc_session_reference: str | None = field(default=None, repr=False)
 
     @classmethod
     def from_headers(cls, headers: Mapping[str, str]) -> Credentials:
@@ -96,8 +99,9 @@ class Credentials:
             bearer_token=bearer,
             service_id=headers.get("x-service-id"),
             service_secret=secret.encode("utf-8") if secret else None,
-            correlation_id=headers.get("x-correlation-id"),
+            correlation_id=request_correlation_id(headers["x-correlation-id"]) if headers.get("x-correlation-id") else None,
             source_ip=None,
+            oidc_session_reference=headers.get("x-odp-oidc-session"),
         )
 
 
@@ -176,7 +180,7 @@ class AuthenticationBoundary:
     def authenticate(self, credentials: Credentials, *, now: datetime | None = None) -> AuthOutcome:
         """Authenticate ``credentials`` and record the decision."""
 
-        correlation_id = credentials.correlation_id or new_correlation_id()
+        correlation_id = request_correlation_id(credentials.correlation_id)
         moment = now or datetime.now(UTC)
 
         if credentials.bearer_token is not None:
@@ -190,7 +194,40 @@ class AuthenticationBoundary:
             token_type = "none"
             principal, reason = ANONYMOUS, AuthFailureReason.NO_CREDENTIALS
 
+        if reason is None and token_type == "oidc" and credentials.oidc_session_reference:
+            principal, reason = self._bind_oidc_session(principal, credentials, moment)
         return self._finalize(credentials, correlation_id, token_type, principal, reason)
+
+    def _bind_oidc_session(self, principal: Principal, credentials: Credentials, now: datetime) -> tuple[Principal, AuthFailureReason | None]:
+        # TWO independently authenticated bindings: original OIDC identity and
+        # BFF-signed reference to its server-owned durable session. Never trust
+        # a caller SID or permit local-password tokens to name OIDC sessions.
+        reference = credentials.oidc_session_reference
+        if not reference or len(reference) > 4096 or self._session_service is None:
+            return ANONYMOUS, AuthFailureReason.SESSION_NOT_FOUND
+        try:
+            header = decode_header(reference)
+            key = self._config.resolve_key(header.get("kid"), category="local")
+            if key is None or not self._config.local_issuer:
+                return ANONYMOUS, AuthFailureReason.BOUNDARY_NOT_CONFIGURED
+            claims = verify_compact_jwt(reference, key)
+            reason = self._validate_claims_generic(claims, now,
+                expected_issuer=self._config.local_issuer,
+                allowed_audiences=self._config.local_audiences or self._config.audiences)
+            if reason is not None:
+                return ANONYMOUS, reason
+            if (claims.get("purpose") != "oidc-web-session.v1"
+                    or claims.get("sub") != principal.subject_id
+                    or claims.get("tenant_id") != principal.tenant_id
+                    or claims.get("oidc_token_digest") != hashlib.sha256(credentials.bearer_token.encode()).hexdigest()):
+                return ANONYMOUS, AuthFailureReason.SESSION_NOT_FOUND
+            sid = UUID(claims["sid"])
+            session = self._session_service.validate_session(sid)
+            if (session is None or session.provider != "oidc" or str(session.account_id) != principal.subject_id):
+                return ANONYMOUS, AuthFailureReason.SESSION_REVOKED
+        except (JwtError, ValueError, TypeError, KeyError):
+            return ANONYMOUS, AuthFailureReason.MALFORMED_TOKEN
+        return replace(principal, attributes={**principal.attributes, "sid": str(sid)}), None
 
     # -- Token verification (multi-issuer) -----------------------------------
 
@@ -350,10 +387,14 @@ class AuthenticationBoundary:
         if account.tenant_id != tenant_uuid:
             return ANONYMOUS, AuthFailureReason.TENANT_MISMATCH, token_type
 
+        try:
+            scope = self._identity_store.get_account_scope(account.account_id)
+        except ValueError:
+            return ANONYMOUS, AuthFailureReason.BOUNDARY_NOT_CONFIGURED, token_type
         principal = Principal(
             subject_id=str(account.account_id),
             roles=self._identity_store.get_account_roles(account.account_id),
-            scope=self._identity_store.get_account_scope(account.account_id),
+            scope=scope,
             attributes={
                 "email": account.email,
                 "username": account.username,
@@ -411,7 +452,10 @@ class AuthenticationBoundary:
                 return ANONYMOUS, AuthFailureReason.ACCOUNT_INACTIVE, token_type
 
             roles = self._identity_store.get_account_roles(account.account_id)
-            scope = self._identity_store.get_account_scope(account.account_id)
+            try:
+                scope = self._identity_store.get_account_scope(account.account_id)
+            except ValueError:
+                return ANONYMOUS, AuthFailureReason.BOUNDARY_NOT_CONFIGURED, token_type
             principal = Principal(
                 subject_id=str(account.account_id),
                 roles=roles,
@@ -490,13 +534,16 @@ class AuthenticationBoundary:
         if declared_mapping is None and not bound_roles:
             return ANONYMOUS, AuthFailureReason.UNKNOWN_SERVICE, token_type
 
-        principal = principal_from_claims(
-            claims,
-            subject=subject,
-            # The mapping is the sole role/scope source; the token's own
-            # roles/tenant/scope claims are ignored.
-            principal_mapping=declared_mapping or {},
-        )
+        try:
+            principal = principal_from_claims(
+                claims,
+                subject=subject,
+                # Keep an invalid declaration visible; do not fall through to
+                # role-only or verified-email grants after scope validation fails.
+                principal_mapping=declared_mapping if declared_mapping is not None else {},
+            )
+        except ValueError:
+            return ANONYMOUS, AuthFailureReason.BOUNDARY_NOT_CONFIGURED, token_type
         if bound_roles:
             principal = replace(principal, roles=principal.roles | bound_roles)
         return principal, None, token_type
@@ -569,6 +616,8 @@ class AuthenticationBoundary:
             return AuthFailureReason.TOKEN_EXPIRED
 
         nbf = _as_epoch(claims.get("nbf"))
+        if "nbf" in claims and nbf is None:
+            return AuthFailureReason.MALFORMED_TOKEN
         if nbf is not None and epoch < nbf - leeway:
             return AuthFailureReason.TOKEN_NOT_YET_VALID
 
@@ -587,8 +636,8 @@ class AuthenticationBoundary:
             return False
         if isinstance(aud, str):
             presented = {aud}
-        elif isinstance(aud, (list, tuple, set, frozenset)):
-            presented = {str(item) for item in aud}
+        elif isinstance(aud, list) and all(isinstance(item, str) for item in aud):
+            presented = set(aud)
         else:
             return False
         return bool(presented & set(allowed))
@@ -672,5 +721,9 @@ def _as_epoch(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        try:
+            epoch = float(value)
+        except (OverflowError, ValueError):
+            return None
+        return epoch if math.isfinite(epoch) else None
     return None

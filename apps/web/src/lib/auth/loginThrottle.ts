@@ -112,7 +112,7 @@ function toHex(buffer: ArrayBuffer): string {
 }
 
 async function digest(
-  dimension: "account" | "ip",
+  dimension: "account" | "ip" | "resolved-account",
   value: string,
   pepper: string | null,
 ): Promise<string> {
@@ -240,6 +240,12 @@ export async function accountAttemptKey(
   pepper: string | null = null,
 ): Promise<string> {
   return `${ACCOUNT_KEY_PREFIX}${await digest("account", normalizeUsername(username), pepper)}`;
+}
+
+/** A separate immutable resolved-account dimension, never a username alias. */
+export async function resolvedAccountAttemptKey(accountId: string, pepper: string | null = null): Promise<string> {
+  if (!accountId.trim()) throw new Error("AUTH_ACCOUNT_REQUIRED");
+  return `${ACCOUNT_KEY_PREFIX}${await digest("resolved-account", accountId, pepper)}`;
 }
 
 /** Source IP dimension key (§2.2: the plaintext IP is never stored). */
@@ -737,6 +743,29 @@ export class LoginThrottle {
       maxFailures: this.config.accountMaxFailures,
       now,
     });
+  }
+
+  async beginAccountAttempt(accountId: string, clientIp: string | null, now: Date = new Date()): Promise<ThrottleDecision> {
+    const ipKey = await this.ipKey(clientIp);
+    if (ipKey) {
+      const decision = await this.store.beginAttempt({ attemptKey: ipKey, maxFailures: this.config.ipMaxFailures, now });
+      if (!decision.allowed) return decision;
+    }
+    return this.store.beginAttempt({ attemptKey: await resolvedAccountAttemptKey(accountId, this.pepper),
+      maxFailures: this.config.accountMaxFailures, now });
+  }
+
+  async recordAccountFailure(accountId: string, clientIp: string | null, now: Date = new Date()): Promise<void> {
+    await this.store.escalate({ attemptKey: await resolvedAccountAttemptKey(accountId, this.pepper),
+      maxFailures: this.config.accountMaxFailures, exponential: true, now });
+    const ipKey = await this.ipKey(clientIp);
+    if (ipKey) await this.store.escalate({ attemptKey: ipKey, maxFailures: this.config.ipMaxFailures, exponential: false, now });
+  }
+
+  async recordAccountSuccess(accountId: string, clientIp: string | null): Promise<void> {
+    await this.store.clearAttempts(await resolvedAccountAttemptKey(accountId, this.pepper));
+    const ipKey = await this.ipKey(clientIp);
+    if (ipKey) await this.store.releaseAttempt(ipKey);
   }
 
   /** A verified failure: escalate whichever dimension crossed its threshold. */

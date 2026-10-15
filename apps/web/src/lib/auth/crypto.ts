@@ -87,16 +87,38 @@ export async function openJson<T>(
     return null;
   }
 
+  let iv: Uint8Array;
+  let ciphertext: Uint8Array;
+  try {
+    iv = base64UrlDecode(ivValue);
+    ciphertext = base64UrlDecode(ciphertextValue);
+    // One wire spelling per authenticated envelope: standard-base64 aliases,
+    // explicit padding and nonzero pad bits must not get distinct migration
+    // digests/tombstones for the SAME authenticated legacy cookie.
+    if (base64UrlEncode(iv) !== ivValue || base64UrlEncode(ciphertext) !== ciphertextValue) return null;
+  } catch {
+    return null;
+  }
+
+  // Key/configuration/crypto setup failure is availability, not an invalid
+  // cookie. Keep it outside the untrusted-ciphertext decode catch so logout
+  // cannot acknowledge revocation while the authoritative session stays live.
+  let key: CryptoKey;
+  try {
+    key = await encryptionKey(purpose, explicitSecret);
+  } catch {
+    throw new Error("WEB_AUTH_UNAVAILABLE");
+  }
   try {
     const plaintext = await crypto.subtle.decrypt(
       {
         name: "AES-GCM",
-        iv: base64UrlDecode(ivValue),
+        iv,
         additionalData: encoder.encode(purpose),
         tagLength: 128,
       },
-      await encryptionKey(purpose, explicitSecret),
-      base64UrlDecode(ciphertextValue),
+      key,
+      ciphertext,
     );
     return JSON.parse(decoder.decode(plaintext)) as T;
   } catch {

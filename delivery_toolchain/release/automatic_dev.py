@@ -305,7 +305,21 @@ def dev_environment_deployed(run: dict[str, Any]) -> bool:
 
 
 def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
-    """Read actual successful dev deployment artifacts, never green build-only runs.
+    """Select and validate the current dev deployment (ordinary release caller)."""
+    found = previous_deployment_metadata()
+    if found is not None:
+        _validate_deployed_manifest(found[0])
+    return found
+
+
+def previous_deployment_metadata() -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """UNVALIDATED metadata only; callers MUST apply canonical admission separately.
+
+    This boundary reads GitHub/history/artifacts only, never manifest predicates
+    or Git. Native consumers can therefore remove the gh metadata token before
+    validating the returned manifest in their sanitized observer child.
+
+    Read actual successful dev deployment artifacts, never green build-only runs.
 
     Any dispatch ref may deploy dev manually with a signed lease, so the scan is
     not narrowed to ``branch=dev``; dev is proven by the run title, GitHub's dev
@@ -403,12 +417,19 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
             raise Refused("Successful dev deploy job lacks dev environment proof; "
                           "no safe predecessor selected.")
 
-    manifest = deployed_manifest(best_run, title)
+    manifest = deployed_manifest_metadata(best_run, title)
     return manifest, best_run
 
 
 def deployed_manifest(best_run: dict[str, Any], title: list[str]) -> dict[str, Any]:
     """The retained, admissible manifest of one successful dev deployment."""
+    manifest = deployed_manifest_metadata(best_run, title)
+    _validate_deployed_manifest(manifest)
+    return manifest
+
+
+def deployed_manifest_metadata(best_run: dict[str, Any], title: list[str]) -> dict[str, Any]:
+    """UNVALIDATED retained manifest; metadata retrieval never starts Git."""
     artifacts = api(f"actions/runs/{best_run['id']}/artifacts?per_page=100")["artifacts"]
     matches = [a for a in artifacts if a.get("name") == DEPLOYED_ARTIFACT]
     if not matches:
@@ -431,10 +452,13 @@ def deployed_manifest(best_run: dict[str, Any], title: list[str]) -> dict[str, A
     if (len(title) != 5 or title[3] not in {"deploy", "auto"}
             or title[4] != manifest.get("candidate_sha")):
         raise Refused("Previous dev deployment title does not match its manifest.")
+    return manifest
+
+
+def _validate_deployed_manifest(manifest: dict[str, Any]) -> None:
     errors = validate_release_admission(manifest, environment="dev")
     if errors:
         raise Refused("Previous dev manifest is not admissible: " + "; ".join(errors))
-    return manifest
 
 
 def output(**values: Any) -> None:

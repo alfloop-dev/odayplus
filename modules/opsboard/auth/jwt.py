@@ -118,6 +118,19 @@ def encode_compact_jwt(
     return f"{header_seg}.{payload_seg}.{_b64url_encode(signature)}"
 
 
+MAX_COMPACT_JWT_CHARS = 65536
+MAX_JWT_JSON_DEPTH = 64
+
+
+def _compact_parts(token: str) -> list[str]:
+    if not isinstance(token, str) or len(token) > MAX_COMPACT_JWT_CHARS or not token.isascii():
+        raise MalformedTokenError("compact JWS exceeds parser bounds")
+    parts = token.split(".", 3)
+    if len(parts) != 3:
+        raise MalformedTokenError("compact JWS must have three segments")
+    return parts
+
+
 def _b64url_decode(segment: str) -> bytes:
     padding = "=" * (-len(segment) % 4)
     try:
@@ -129,9 +142,7 @@ def _b64url_decode(segment: str) -> bytes:
 def decode_header(token: str) -> dict[str, Any]:
     """Decode the JOSE header without verifying (to read ``alg``/``kid``)."""
 
-    parts = token.split(".")
-    if len(parts) != 3:
-        raise MalformedTokenError("compact JWS must have three segments")
+    parts = _compact_parts(token)
     header = _decode_json(parts[0])
     if not isinstance(header, dict):
         raise MalformedTokenError("JOSE header must be an object")
@@ -141,9 +152,7 @@ def decode_header(token: str) -> dict[str, Any]:
 def decode_unverified_claims(token: str) -> dict[str, Any]:
     """Decode the JWT claims set without verifying (to read ``iss``/``aud``)."""
 
-    parts = token.split(".")
-    if len(parts) != 3:
-        raise MalformedTokenError("compact JWS must have three segments")
+    parts = _compact_parts(token)
     claims = _decode_json(parts[1])
     if not isinstance(claims, dict):
         raise MalformedTokenError("JWT claims set must be an object")
@@ -152,8 +161,29 @@ def decode_unverified_claims(token: str) -> dict[str, Any]:
 
 def _decode_json(segment: str) -> Any:
     try:
-        return json.loads(_b64url_decode(segment))
-    except (ValueError, UnicodeDecodeError) as exc:
+        raw = _b64url_decode(segment).decode("utf-8")
+        depth = 0
+        quoted = escaped = False
+        # Bound nesting BEFORE calling the parser, respecting string escapes.
+        # This does not change interpreter limits or trust a runtime stack size.
+        for char in raw:
+            if quoted:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    quoted = False
+            elif char == '"':
+                quoted = True
+            elif char in "[{":
+                depth += 1
+                if depth > MAX_JWT_JSON_DEPTH:
+                    raise MalformedTokenError("JWT JSON exceeds parser depth")
+            elif char in "]}":
+                depth -= 1
+        return json.loads(raw)
+    except (ValueError, UnicodeDecodeError, RecursionError) as exc:
         raise MalformedTokenError("segment is not valid JSON") from exc
 
 
@@ -165,10 +195,7 @@ def verify_compact_jwt(token: str, key: SigningKey) -> dict[str, Any]:
     boundary, not here -- this function only guarantees integrity/authenticity.
     """
 
-    parts = token.split(".")
-    if len(parts) != 3:
-        raise MalformedTokenError("compact JWS must have three segments")
-    header_seg, payload_seg, signature_seg = parts
+    header_seg, payload_seg, signature_seg = _compact_parts(token)
 
     header = _decode_json(header_seg)
     if not isinstance(header, dict):
