@@ -1397,7 +1397,11 @@ else:
                     outcome="accepted" if created else "idempotent_replay",
                     correlation_id=request.state.correlation_id,
                     job_id=job.job_id,
-                    metadata={"idempotency_key": effective_idempotency_key, "created": created},
+                    # The actual enqueued/replayed record has just passed
+                    # tenant authorization. Use the verified server tenant, not
+                    # an unchecked request field; never retrofit old events.
+                    metadata={"idempotency_key": effective_idempotency_key, "created": created,
+                              "tenant_id": idempotency_tenant_id},
                 )
             )
             return {
@@ -1708,7 +1712,8 @@ else:
                     outcome="accepted",
                     correlation_id=correlation_id,
                     job_id=job.job_id,
-                    metadata={"retry_scope": retry_scope, "retried_items_count": retried_count},
+                    metadata={"retry_scope": retry_scope, "retried_items_count": retried_count,
+                              "tenant_id": active_tenant_id},
                 )
             )
 

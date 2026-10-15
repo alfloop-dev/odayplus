@@ -18,7 +18,7 @@ from tests.security.test_opsboard_jwks_auth import _jwk, _token
 
 
 @pytest.mark.parametrize("alias", ["/jobs", "/api/v1/jobs"])
-def test_complete_scope_precedes_every_read_and_retry_mutation(monkeypatch, alias, job_app):
+def test_complete_scope_precedes_every_read_and_retry_mutation(monkeypatch, alias, job_app, offline_job_app):
     key, bundle, app = job_app
     boundary = AuthenticationBoundary(
         AuthBoundaryConfig(
@@ -99,6 +99,11 @@ def test_complete_scope_precedes_every_read_and_retry_mutation(monkeypatch, alia
                     after.payload["_retry_scope"] == "FAILED_ONLY"
                     and retry.json()["retried_items_count"] == 1
                 )
+                events = [event for event in offline_job_app[3].list_events(tenant_id=TENANT)
+                          if event.job_id == record.job_id and event.event_type == "job.retry"]
+                assert len(events) == 1 and events[0].metadata["tenant_id"] == TENANT
+                assert not [event for event in offline_job_app[3].list_events(tenant_id=OTHER)
+                            if event.job_id == record.job_id]
             else:
                 if retry.status_code != 403:
                     failures.append(f"{case} retry status {retry.status_code}")
