@@ -367,5 +367,8 @@ def test_product_seed_uses_supported_authorized_queue_and_real_fixture_inputs(
         foreign = client.get("/jobs/" + first["job_id"], headers={
             "x-subject-id": "foreign-fixture", "x-roles": "operations_manager", "x-tenant-id": "foreign-tenant",
         })
-        assert foreign.status_code == 403
+        # Durable tenant partition lookup hides the record before authorization.
+        assert foreign.status_code == 404
+        assert "payload" not in foreign.json()
+        assert seed.TENANT_ID not in foreign.text
     bundle.engine.close()
