@@ -150,6 +150,31 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     ]));
   });
 
+  it.each(["ready", "denied"])("withholds previous %s counts and failures when bootstrap revokes reads", async (previous) => {
+    const fetchMock = stubDeniedNetworkReads();
+    if (previous === "ready") {
+      fetchMock.mockImplementation(async () => new Response(JSON.stringify({
+        source: "api", heatZones: [], listingSources: [], candidates: [],
+        listings: [{ id: "L-PRIOR", status: "new", hardRuleFailures: [] }],
+        siteReviews: [], expansionSteps: [], assistedIntakes: [], reviews: [], stores: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    const view = render(<NetworkFindAreasWorkspace activeRoleId="platform-admin" selectedHeatZoneId="live-zone" />);
+    const summary = screen.getByLabelText("展店與店網摘要");
+    await waitFor(() => expect(summary).toHaveTextContent(previous === "ready" ? "1 今日新物件" : "今日新物件（未授權）"));
+    fetchMock.mockClear();
+    view.rerender(<NetworkFindAreasWorkspace activeRoleId="pm-audit" selectedHeatZoneId="live-zone" allowedTabIds={["rebalance"]} />);
+    await waitFor(() => expect(summary).toHaveTextContent("0 重配候選"));
+    for (const label of ["今日新物件", "進行中候選", "待審 Review"]) {
+      expect(within(summary).getByText(label, { exact: false })).toHaveAttribute("data-count-state", "withheld");
+      expect(summary).toHaveTextContent(`— ${label}（未授權）`);
+    }
+    expect(summary).not.toHaveTextContent("1 今日新物件");
+    expect(summary.querySelector('[data-count-state="pending"]')).toBeNull();
+    expect(screen.queryByTestId("operator-data-unavailable-correlation")).toBeNull();
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual(["/api/v1/operator/network-rebalance"]);
+  });
+
   it("fails closed without bootstrap tab metadata in production", () => {
     render(<Workspace activeRoleId="pm-audit" />);
     expect(screen.getByText("目前身分沒有可讀取的 Network 分頁。")).toBeInTheDocument();

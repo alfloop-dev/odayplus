@@ -221,8 +221,8 @@ describe("Network Find Areas in the production Operator Console composition", ()
     render(<OperatorConsole searchParams={{ ws: "network", tab: "review" }} />);
     await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(1));
     expect(screen.getByTestId("network-tab-6")).toHaveAttribute("aria-selected", "true");
-    const networkReads = fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/network-"));
-    expect(networkReads).toEqual(["/api/v1/operator/network-rebalance"]);
+    await waitFor(() => expect(fetchMock.mock.calls.map(([url]) => String(url))
+      .filter((url) => url.includes("/network-"))).toEqual(["/api/v1/operator/network-rebalance"]));
     expect(legacyDomainPaths).toEqual([]);
     const summary = screen.getByLabelText("展店與店網摘要");
     await waitFor(() => expect(summary).toHaveTextContent("0 重配候選"));

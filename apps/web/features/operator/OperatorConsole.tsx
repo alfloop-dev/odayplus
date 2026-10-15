@@ -1021,7 +1021,7 @@ export function OperatorConsole({
   function handleRoleSelect(roleId: OperatorRoleId) {
     const nextRole = rolesForShell.find((role) => role.id === roleId);
     if (!nextRole) return;
-    if (!fixturesAllowed) setShellDataStatus("loading");
+    if (!fixturesAllowed && nextRole.id !== activeRoleId) setShellDataStatus("loading");
     setActiveRoleId(nextRole.id);
     window.sessionStorage.setItem(roleStorageKey, nextRole.id);
     setIsRoleMenuOpen(false);
