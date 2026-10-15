@@ -1813,6 +1813,7 @@ class _OwnedGateSessions:
         self.username = config.dev_admin_username or config.bootstrap_admin_username
         self.login_passwords = {config.dev_admin_password or config.bootstrap_admin_password,
                                 config.dev_admin_initial_password} - {""}
+        self.rotation_password = config.dev_admin_password or config.bootstrap_admin_password
         self.sessions: dict[str, dict[str, bool]] = {}
         self.unknown = False
         self.cleaning = False
@@ -1839,12 +1840,13 @@ class _OwnedGateSessions:
                 self.unknown = True
                 continue
             if value in self.sessions:
-                if self.sessions[value]["attempted"]:
+                if self.sessions[value]["attempted"] or self.sessions[value]["rotation_acknowledged"]:
                     # Reissuing an already-released opaque value is ambiguous,
                     # not permission for a second logout of the same cookie.
                     self.unknown = True
             elif len(self.sessions) < self._max_sessions:
                 self.sessions[value] = {"attempted": False, "acknowledged": False,
+                                        "rotation_acknowledged": False,
                                         "session_denied": False, "api_denied": False,
                                         "session_denied_attempted": False, "api_denied_attempted": False}
             else:
@@ -1896,13 +1898,14 @@ class _OwnedGateSessions:
                 self.unknown = True
                 raise _SessionCustodyStopped
             owned["attempted"] = True  # Before transport, even if the reply is lost.
-        if method == "GET" and owned is not None and owned["attempted"]:
+        if method == "GET" and owned is not None and (owned["attempted"] or owned["rotation_acknowledged"]):
             key = {"/auth/session": "session_denied", "/api/v1/operator/users": "api_denied"}.get(path)
             if key:
                 if owned[key + "_attempted"]:
                     self.unknown = True
                     raise _SessionCustodyStopped
                 owned[key + "_attempted"] = True
+        observed_before = set(self.sessions)
         try:
             result = self.web.request(method, path, **kwargs)
         except Exception:
@@ -1917,6 +1920,27 @@ class _OwnedGateSessions:
                 valid_issuance = self._issuance_valid(path, headers, result, expected_login=expected_login)
             except (TypeError, ValueError):
                 valid_issuance = False
+            if path == "/auth/password":
+                replacement = result.cookies.get(self._cookie_name)
+                valid_rotation_request = valid_issuance and (
+                    owned is not None and not owned["attempted"] and not owned["rotation_acknowledged"]
+                    and headers.get("origin") == self.origin
+                    and body.get("currentPassword") in self.login_passwords
+                    and body.get("newPassword") == self.rotation_password
+                    and body.get("currentPassword") != body.get("newPassword")
+                    and replacement not in observed_before
+                )
+                valid_issuance = valid_issuance and valid_rotation_request
+                if valid_issuance and not self.unknown and result.payload == {
+                    "ok": True, "summary": "Password changed successfully.",
+                }:
+                    # Existing Web contract: create distinct B, durably revoke
+                    # prior sessions (including the consumed A), THEN send this
+                    # complete acknowledgement. Retain ONLY this specific A as
+                    # witnessed; never infer release of other observed cookies.
+                    # An abbreviated/partial reply is not this witness. A later
+                    # logout401 is not a witness either (AEAD failure also401s).
+                    owned["rotation_acknowledged"] = True
             if not valid_issuance:
                 self.unknown = True
         if logout and owned is not None:
@@ -1927,7 +1951,7 @@ class _OwnedGateSessions:
             )
             if not owned["acknowledged"]:
                 self.unknown = True
-        if method == "GET" and owned is not None and owned["attempted"]:
+        if method == "GET" and owned is not None and (owned["attempted"] or owned["rotation_acknowledged"]):
             if path == "/auth/session":
                 owned["session_denied"] = not result.failed and result.status == 401
                 if not owned["session_denied"]:
@@ -1960,12 +1984,15 @@ class _OwnedGateSessions:
                 if time.monotonic() >= deadline:
                     self.unknown = True
                     break
-                if not state["attempted"]:
+                if not state["attempted"] and not state["rotation_acknowledged"]:
                     self.request("POST", "/auth/logout", authenticated=False,
                                  headers=headers, follow_redirects=False)
+                # A full rotation acknowledgement releases its consumed cookie
+                # under the existing route contract, NOT via a fabricated logout.
+                # BOTH specific-cookie denied reads remain mandatory below.
                 # A lost/invalid logout is not retried. Continue only other
                 # specifically owned cookies, retaining UNKNOWN.
-                if not state["acknowledged"]:
+                if not (state["acknowledged"] or state["rotation_acknowledged"]):
                     self.unknown = True
                     continue
                 for key, path in (("session_denied", "/auth/session"),
@@ -1977,12 +2004,20 @@ class _OwnedGateSessions:
                         self.request("GET", path, authenticated=False, headers=headers)
             except _SessionCustodyStopped:
                 self.unknown = True
-        complete = not self.unknown and all(all(s.values()) for s in self.sessions.values())
+        def verified(state: Mapping[str, bool]) -> bool:
+            return (
+                (state["acknowledged"] or state["rotation_acknowledged"])
+                and state["session_denied"] and state["api_denied"]
+                and state["session_denied_attempted"] and state["api_denied_attempted"]
+            )
+
+        complete = not self.unknown and all(verified(s) for s in self.sessions.values())
         report["dev_admin"]["session_cleanup"] = {
             "outcome": "completed" if complete else "unknown",
             "retained_observed_sessions": len(self.sessions),
             "logout_attempts": sum(s["attempted"] for s in self.sessions.values()),
-            "verified_sessions": sum(all(s.values()) for s in self.sessions.values()),
+            "verified_sessions": sum(verified(s) for s in self.sessions.values()),
+            "rotation_release_witnesses": sum(s["rotation_acknowledged"] for s in self.sessions.values()),
             "specific_owned_sessions_only": True,
         }
         _check(checks, complete, "session:owned_cleanup",
