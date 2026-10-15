@@ -53,6 +53,7 @@ import type {
 } from "./network/HeatZoneMergeSplitPanel";
 import {
   buildNetworkTabHref,
+  NETWORK_TAB_IDS,
   parseNetworkTabIndex,
 } from "./network/networkUrlState";
 import type { ExpansionStep } from "./network/ExpansionStepper";
@@ -134,6 +135,8 @@ export type NetworkFindAreasWorkspaceProps = {
   selectedHeatZoneId?: string;
   activeLens?: NetworkFindAreasLens;
   initialTabId?: string;
+  /** Verified bootstrap projection; absent metadata fails closed outside fixtures. */
+  allowedTabIds?: readonly string[];
   trackedHeatZoneIds?: string[];
   /**
    * Active operator console role. Binds the Network Review read/decide security
@@ -548,6 +551,7 @@ export function isNetworkIntakeDetailRoute(
 export function NetworkFindAreasWorkspace({
   activeLens,
   activeRoleId = DEFAULT_OPERATOR_ROLE_ID,
+  allowedTabIds,
   callbacks,
   candidates: candidatesInput,
   heatZones: heatZonesInput,
@@ -565,6 +569,12 @@ export function NetworkFindAreasWorkspace({
   const router = useRouter();
   const searchParams = useSearchParams();
   const fixturesAllowed = operatorFixturesAllowed();
+  const allowedTabIndices = useMemo(() => NETWORK_TAB_IDS.flatMap((tab, index) =>
+    (allowedTabIds?.includes(tab) ?? fixturesAllowed) ? [index] : []), [allowedTabIds, fixturesAllowed]);
+  const canReadListings = allowedTabIndices.includes(0) || allowedTabIndices.includes(1);
+  const canReadScoring = allowedTabIndices.some((index) => index >= 2 && index <= 4);
+  const canReadReviews = allowedTabIndices.includes(5);
+  const canReadRebalance = allowedTabIndices.includes(6);
   const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId]);
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
@@ -602,7 +612,9 @@ export function NetworkFindAreasWorkspace({
   } | null>(null);
   const overrideApplies = tabOverride !== null && tabOverride.from === urlTab
     && tabOverride.fromZoneId === urlCandidateZoneId;
-  const activeTab = overrideApplies ? tabOverride.requested : urlTab;
+  const requestedTab = overrideApplies ? tabOverride.requested : urlTab;
+  const activeTab = allowedTabIndices.includes(requestedTab)
+    ? requestedTab : allowedTabIndices[0] ?? -1;
   // 「查看本區候選點」 scopes the Candidates tab to one HeatZone. The scope is
   // carried in the URL (`zone=<heatZoneId>`) so a reload or back/forward
   // restores it, and in the click-time override for the same reason the tab is.
@@ -749,6 +761,7 @@ export function NetworkFindAreasWorkspace({
   );
 
   const changeActiveTab = useCallback((tabIndex: number, extraParams?: Record<string, string>) => {
+    if (!allowedTabIndices.includes(tabIndex)) return;
     setTabOverride({
       from: urlTab,
       fromZoneId: urlCandidateZoneId,
@@ -767,7 +780,7 @@ export function NetworkFindAreasWorkspace({
       typeof window === "undefined" ? "" : window.location.hash,
     );
     router.push(href, { scroll: false });
-  }, [pathname, router, searchParams, urlTab, urlCandidateZoneId]);
+  }, [allowedTabIndices, pathname, router, searchParams, urlTab, urlCandidateZoneId]);
 
   const snapshotHeatZones = networkSnapshot?.heatZones?.length
     ? networkSnapshot.heatZones
@@ -834,6 +847,10 @@ export function NetworkFindAreasWorkspace({
   }, [heatZones, localSelectedId, selectedHeatZoneId]);
 
   useEffect(() => {
+    if (!canReadListings) {
+      setNetworkSnapshot(null);
+      return;
+    }
     let cancelled = false;
     async function load() {
       const read = await fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId);
@@ -880,9 +897,13 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, effectiveLens, effectiveSelectedId, fixturesAllowed]);
+  }, [activeRoleId, canReadListings, effectiveLens, effectiveSelectedId, fixturesAllowed]);
 
   useEffect(() => {
+    if (!canReadScoring) {
+      setScoringSnapshot(null);
+      return;
+    }
     let cancelled = false;
     async function loadScoring() {
       const read = await fetchNetworkScoringSnapshot(activeRoleId);
@@ -911,9 +932,13 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, fixturesAllowed]);
+  }, [activeRoleId, canReadScoring, fixturesAllowed]);
 
   useEffect(() => {
+    if (!canReadRebalance) {
+      setRebalanceSnapshot(null);
+      return;
+    }
     let cancelled = false;
     async function loadRebalance() {
       const read = await fetchNetworkRebalanceSnapshot(activeRoleId);
@@ -948,7 +973,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, fixturesAllowed]);
+  }, [activeRoleId, canReadRebalance, fixturesAllowed]);
 
   const applyReviewsSnapshot = useCallback((snapshot: NetworkReviewsSnapshot) => {
     const inspection = inspectNetworkReviewsSnapshot(snapshot);
@@ -966,6 +991,10 @@ export function NetworkFindAreasWorkspace({
   }, [fixturesAllowed]);
 
   useEffect(() => {
+    if (!canReadReviews) {
+      setReviewsSnapshot(null);
+      return;
+    }
     let cancelled = false;
     async function loadReviews() {
       const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders);
@@ -982,7 +1011,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [applyReviewsSnapshot, fixturesAllowed, reviewIdentity]);
+  }, [applyReviewsSnapshot, canReadReviews, fixturesAllowed, reviewIdentity]);
 
   // Decide a review as the active operator role's review identity. The decision
   // syncs Candidate + Review + Approval + Decision + Audit atomically
@@ -1578,6 +1607,10 @@ export function NetworkFindAreasWorkspace({
     );
   }
 
+  if (activeTab < 0) {
+    return <section role="status">目前身分沒有可讀取的 Network 分頁。</section>;
+  }
+
   return (
     <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
       {/* Package 10 S05: one row — title, flow summary, four truthful KPI chips. */}
@@ -1604,6 +1637,7 @@ export function NetworkFindAreasWorkspace({
 
       <NetworkShell
         activeTab={activeTab}
+        allowedTabIndices={allowedTabIndices}
         onTabChange={changeActiveTab}
         steps={expansionSteps}
         tabCounts={tabCounts}

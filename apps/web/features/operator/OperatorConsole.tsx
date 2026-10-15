@@ -27,6 +27,7 @@ import {
 } from "./governance/governanceEnvelope";
 import { GrowthWorkspace } from "./GrowthWorkspace";
 import { NetworkFindAreasWorkspace } from "./NetworkFindAreasWorkspace";
+import { NETWORK_TAB_IDS, parseNetworkTabIndex } from "./network/networkUrlState";
 import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
 import { ISSUE_FIXTURES } from "./fixtures";
 import {
@@ -509,10 +510,17 @@ export function OperatorConsole({
       : WORKSPACES;
   }, [shellEnvelope.navigation.workspaces]);
 
+  useEffect(() => {
+    if (shellDataStatus === "ready" && !isWorkspaceAllowed(activeRole, activeWorkspaceId)) {
+      setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
+    }
+  }, [activeRole, activeWorkspaceId, shellDataStatus]);
+
   const activeWorkspace = getWorkspace(activeWorkspaceId);
   const liveWorkQueue = shellEnvelope.workQueue;
   const liveDecisions = shellEnvelope.decisions;
-  const canRenderWorkspace = fixturesAllowed || shellDataStatus === "ready";
+  const canRenderWorkspace = (fixturesAllowed || shellDataStatus === "ready")
+    && isWorkspaceAllowed(activeRole, activeWorkspaceId);
   const canRenderDirectIntake =
     intakeDetailOpen && activeWorkspaceId === "network";
   const isTodayContent = canRenderWorkspace && activeWorkspaceId === "today";
@@ -726,7 +734,9 @@ export function OperatorConsole({
   }, [activeRoleId, fixturesAllowed, isTaskCenterOpen]);
 
   useEffect(() => {
-    if (activeWorkspaceId !== "network" || liveNetworkBindings !== null) return;
+    // Production uses the scope-projecting Operator snapshots. The legacy
+    // domain bindings are RBAC-only and are not readable by operator_viewer.
+    if (!fixturesAllowed || activeWorkspaceId !== "network" || liveNetworkBindings !== null) return;
     const client = createOdpApiClient({
       baseUrl: window.location.origin,
       defaultHeaders: getSecurityHeaders(activeRoleId),
@@ -734,7 +744,7 @@ export function OperatorConsole({
     loadNetworkFindAreasBindings(client)
       .then((bindings) => setLiveNetworkBindings(bindings))
       .catch(() => undefined);
-  }, [activeRoleId, activeWorkspaceId, liveNetworkBindings]);
+  }, [activeRoleId, activeWorkspaceId, fixturesAllowed, liveNetworkBindings]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -793,7 +803,9 @@ export function OperatorConsole({
     };
   }, [liveTasks]);
 
-  const workspaceCommands: CommandPaletteItem[] = WORKSPACES.map((workspace) => ({
+  const workspaceCommands: CommandPaletteItem[] = WORKSPACES
+    .filter((workspace) => isWorkspaceAllowed(activeRole, workspace.id))
+    .map((workspace) => ({
     id: `workspace-${workspace.id}`,
     group: "pages",
     title: workspace.label,
@@ -802,7 +814,12 @@ export function OperatorConsole({
     execute: () => handleWorkspaceClick(workspace.id),
   }));
 
-  const routeCommands: CommandPaletteItem[] = commandPageTargets.map((page) => ({
+  const routeCommands: CommandPaletteItem[] = commandPageTargets.filter((page) => {
+    const params = new URL(page.href, "https://operator.invalid").searchParams;
+    if (params.get("ws") !== "network") return true;
+    return fixturesAllowed || (shellEnvelope.navigation.allowedTabs?.network ?? [])
+      .includes(NETWORK_TAB_IDS[parseNetworkTabIndex(params)]);
+  }).map((page) => ({
     id: `route-${page.href}`,
     group: "pages",
     title: page.title,
@@ -1200,7 +1217,7 @@ export function OperatorConsole({
           </div>
 
           <nav className={styles.workspaceNav} aria-label="Operator workspaces">
-            {workspaceNavItems.map((workspace) => {
+            {workspaceNavItems.filter((workspace) => isWorkspaceAllowed(activeRole, workspace.id)).map((workspace) => {
               const workspaceId = isWorkspaceId(workspace.id) ? workspace.id : DEFAULT_WORKSPACE_ID;
               const isActive = activeWorkspaceId === workspaceId;
               const isLocked = !isWorkspaceAllowed(activeRole, workspaceId);
@@ -1526,6 +1543,7 @@ export function OperatorConsole({
         ) : activeWorkspaceId === "network" ? (
           <NetworkFindAreasWorkspace
             activeRoleId={activeRoleId}
+            allowedTabIds={fixturesAllowed ? undefined : shellEnvelope.navigation.allowedTabs?.network ?? []}
             initialTabId={activeTabId}
             liveCandidates={liveNetworkBindings?.candidates}
             liveHeatZones={liveNetworkBindings?.heatZones}
