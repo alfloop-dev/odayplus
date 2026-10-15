@@ -1811,6 +1811,8 @@ class _OwnedGateSessions:
         self.web = web
         self.origin = _web_origin(config.web_url)
         self.username = config.dev_admin_username or config.bootstrap_admin_username
+        self.login_passwords = {config.dev_admin_password or config.bootstrap_admin_password,
+                                config.dev_admin_initial_password} - {""}
         self.sessions: dict[str, dict[str, bool]] = {}
         self.unknown = False
         self.cleaning = False
@@ -1845,7 +1847,9 @@ class _OwnedGateSessions:
             if not issuance:
                 self.unknown = True
 
-    def _issuance_valid(self, path: str, headers: Mapping[str, str], result: HttpResponse) -> bool:
+    def _issuance_valid(
+        self, path: str, headers: Mapping[str, str], result: HttpResponse, *, expected_login: bool,
+    ) -> bool:
         cookies = {name: value for name, value in result.cookies.items() if value}
         single = set(cookies) == {self._cookie_name}
         if result.failed or result.custody_uncertain:
@@ -1854,14 +1858,14 @@ class _OwnedGateSessions:
             return result.status == 200 and result.payload.get("ok") is True and single
         if headers.get("content-type") != "application/x-www-form-urlencoded":
             return (
-                result.status == 200 and single and result.payload.get("ok") is True
+                expected_login and result.status == 200 and single and result.payload.get("ok") is True
                 and result.payload.get("subject") == self.username
             ) or (result.status == 401 and not cookies and _payload_mentions(result, "AUTH_INVALID_CREDENTIALS"))
         destination = urllib.parse.urlsplit(result.location)
         if result.status != 303 or _origin(result.location) != _origin(self.origin) or destination.fragment:
             return False
         return (
-            single and destination.path == "/operator" and destination.query == "view=admin"
+            expected_login and single and destination.path == "/operator" and destination.query == "view=admin"
         ) or (
             not cookies and destination.path == "/login"
             and urllib.parse.parse_qs(destination.query, keep_blank_values=True)
@@ -1899,7 +1903,10 @@ class _OwnedGateSessions:
         self._observe(result, issuance=issuance)
         if issuance:
             try:
-                valid_issuance = self._issuance_valid(path, headers, result)
+                body = kwargs.get("body") or {}
+                expected_login = (body.get("username") == self.username
+                                  and body.get("password") in self.login_passwords)
+                valid_issuance = self._issuance_valid(path, headers, result, expected_login=expected_login)
             except (TypeError, ValueError):
                 valid_issuance = False
             if not valid_issuance:
@@ -2000,6 +2007,9 @@ def _check_dev_admin_session(
         )
     except _SessionCustodyStopped:
         _check(checks, False, "session:custody", "session transport/issuance/cleanup UNKNOWN", "session")
+        if not any(c.name == "session:password_login" for c in checks):
+            _check(checks, False, "session:password_login",
+                   "password login not completed; stopped before further requests after custody uncertainty", "session")
     finally:
         custody.finish(checks, report, correlation_id)
 
