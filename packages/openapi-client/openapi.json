@@ -12171,6 +12171,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Claim Assignment",
@@ -12284,6 +12294,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Complete Assignment",
@@ -12389,6 +12409,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -19838,6 +19868,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Review Identity",
@@ -20208,6 +20248,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Submit Batch",
@@ -20285,6 +20335,16 @@
             "description": "Assisted intake API error"
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -20748,6 +20808,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Submit Url",
@@ -20914,6 +20984,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -21261,6 +21341,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Assign",
@@ -21361,6 +21451,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -34327,6 +34427,22 @@
             "schema": {
               "title": "Intake Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           },
           {
@@ -48385,6 +48501,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Pause Sla",
@@ -48490,6 +48616,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {

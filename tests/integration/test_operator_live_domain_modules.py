@@ -1005,7 +1005,9 @@ def test_live_intake_write_and_idempotency_survive_restart(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "operator-live-restart.sqlite3"
-    headers = _headers("tenant-live-a", idempotency_key="idem-live-a-1")
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+    headers = {**_headers(tenant_id, idempotency_key="idem-live-a-1"),
+               "x-subject-id":"00000000-0000-0000-0000-000000000101"}
     payload = {
         "url": "https://example.com/property/live-a-1",
         "heatZoneId": None,
@@ -1029,7 +1031,7 @@ def test_live_intake_write_and_idempotency_survive_restart(
         with TestClient(reopened_app) as client:
             detail = client.get(
                 f"{BASE}/network-listings/intake/{intake_id}",
-                headers=_headers("tenant-live-a"),
+                headers=headers,
             )
             replay = client.post(
                 f"{BASE}/network-listings/intake/submit",
@@ -1049,26 +1051,32 @@ def test_live_intake_write_and_idempotency_survive_restart(
 def test_live_domain_state_and_idempotency_are_tenant_isolated(
     tmp_path: Path,
 ) -> None:
+    tenant_a_id = "00000000-0000-0000-0000-000000000001"
+    tenant_b_id = "00000000-0000-0000-0000-000000000002"
+    headers_a = {**_headers(tenant_a_id, idempotency_key="shared-key"),
+                 "x-subject-id":"00000000-0000-0000-0000-000000000101"}
+    headers_b = {**_headers(tenant_b_id, idempotency_key="shared-key"),
+                 "x-subject-id":"00000000-0000-0000-0000-000000000102"}
     app, bundle = _live_app(tmp_path / "operator-live-tenants.sqlite3")
     try:
         with TestClient(app) as client:
             tenant_a = client.post(
                 f"{BASE}/network-listings/intake/submit",
-                headers=_headers("tenant-a", idempotency_key="shared-key"),
+                headers=headers_a,
                 json={"url": "https://example.com/property/tenant-a"},
             )
             tenant_b_list = client.get(
                 f"{BASE}/network-listings/intake",
-                headers=_headers("tenant-b"),
+                headers=headers_b,
             )
             tenant_b = client.post(
                 f"{BASE}/network-listings/intake/submit",
-                headers=_headers("tenant-b", idempotency_key="shared-key"),
+                headers=headers_b,
                 json={"url": "https://example.com/property/tenant-b"},
             )
             tenant_a_list = client.get(
                 f"{BASE}/network-listings/intake",
-                headers=_headers("tenant-a"),
+                headers=headers_a,
             )
 
         assert tenant_a.status_code == 200, tenant_a.text
@@ -1208,3 +1216,125 @@ def test_tenant_scoped_document_store_never_queries_unpartitioned_collections() 
     for coll in called_collections:
         assert coll.startswith(f"{base_coll}.tenant.")
         assert coll != base_coll
+
+
+def test_batch_worker_result_is_readable_by_live_operator_after_restart(tmp_path: Path) -> None:
+    """A worker receipt must identify a row the live tenant route can read."""
+    from apps.worker.oday_worker.handlers import BATCH_LISTING_INTAKE_JOB_TYPE
+    from apps.worker.oday_worker.main import ODayWorker
+    from shared.jobs.queue import JobRequest, JobStatus
+
+    path = tmp_path / "batch-operator-readback.sqlite3"
+    tenant = "batch-readback-tenant"
+    app, bundle = _live_app(path)
+    try:
+        job, _ = bundle.job_queue.enqueue(
+            JobRequest(
+                job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+                payload={
+                    "tenant_id": tenant,
+                    "items": [{"item_id": "one", "address_raw": "Synthetic address"}],
+                },
+            ),
+            correlation_id="synthetic-batch-readback",
+        )
+        assert ODayWorker(persistence=bundle).run_once()
+        completed = bundle.job_queue.get(job.job_id)
+        assert completed.status == JobStatus.SUCCEEDED
+        intake_id = completed.payload["receipt"]["items"][0]["result_ref"]
+        with TestClient(app) as client:
+            response = client.get(f"{BASE}/network-listings/intake/{intake_id}", headers=_headers(tenant))
+            assert response.status_code == 200, response.text
+            assert response.json()["id"] == intake_id
+    finally:
+        bundle.engine.close()
+
+    restarted_app, restarted = _live_app(path)
+    try:
+        with TestClient(restarted_app) as client:
+            same = client.get(f"{BASE}/network-listings/intake/{intake_id}", headers=_headers(tenant))
+            assert same.status_code == 200, same.text
+            assert same.json()["tenantId"] == tenant
+            assert same.json()["parsedFields"]["address"]["normalizedValue"] == "Synthetic address"
+            foreign = client.get(f"{BASE}/network-listings/intake/{intake_id}", headers=_headers("foreign-tenant"))
+            assert foreign.status_code == 404
+    finally:
+        restarted.engine.close()
+
+
+def test_tenant_atomic_intake_insert_preserves_first_record_and_separates_tenants(tmp_path: Path) -> None:
+    path = tmp_path / "tenant-atomic-intake.sqlite3"
+    bundle = _durable_bundle(path)
+    try:
+        first = {"id": "same-id", "tenantId": "tenant-a", "version": 7}
+        repo_a = bundle.operator_intake_repository_for_tenant("tenant-a")
+        assert repo_a.create_intake_if_absent(first) == (first, True)
+        replacement = {**first, "version": 1}
+        assert repo_a.create_intake_if_absent(replacement) == (first, False)
+        foreign = {**replacement, "tenantId": "tenant-b"}
+        repo_b = bundle.operator_intake_repository_for_tenant("tenant-b")
+        assert repo_b.get_intake("same-id") is None
+        assert repo_b.create_intake_if_absent(foreign) == (foreign, True)
+        # No unpartitioned document is created by either atomic write.
+        assert bundle.operator_intake_repository.get_intake("same-id") is None
+    finally:
+        bundle.engine.close()
+    reopened = _durable_bundle(path)
+    try:
+        assert reopened.operator_intake_repository_for_tenant("tenant-a").get_intake("same-id") == first
+        assert reopened.operator_intake_repository_for_tenant("tenant-b").get_intake("same-id") == foreign
+    finally:
+        reopened.engine.close()
+
+
+@pytest.mark.parametrize("dependency", ["operator_intake_repository", "listing_repository"])
+def test_durable_batch_missing_scoped_repository_fails_before_writes(tmp_path: Path, dependency: str) -> None:
+    from dataclasses import replace
+
+    from apps.worker.oday_worker.handlers import build_batch_listing_intake_service
+
+    bundle = _durable_bundle(tmp_path / "missing-batch-dependency.sqlite3")
+    try:
+        incomplete = replace(bundle, **{dependency: None})
+        with pytest.raises(RuntimeError, match="tenant-aware batch"):
+            build_batch_listing_intake_service("verified-tenant", incomplete)
+        assert bundle.engine.query_one("SELECT count(*) AS total FROM durable_documents")["total"] == 0
+    finally:
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("tenant", ["", " ", None])
+def test_batch_service_rejects_missing_tenant_before_repository_access(tenant: Any) -> None:
+    from types import SimpleNamespace
+
+    from apps.worker.oday_worker.handlers import build_batch_listing_intake_service
+
+    with pytest.raises(ValueError, match="verified tenant"):
+        build_batch_listing_intake_service(tenant, SimpleNamespace())
+
+
+@pytest.mark.parametrize("legacy_tenant", ["verified-tenant", "foreign-tenant"])
+def test_batch_legacy_row_requires_reconciliation_without_copy_or_disclosure(tmp_path: Path, legacy_tenant: str) -> None:
+    from apps.worker.oday_worker.handlers import (
+        _default_batch_listing_item_executor,
+        batch_listing_intake_id,
+    )
+
+    bundle = _durable_bundle(tmp_path / "legacy-batch-row.sqlite3")
+    tenant = "verified-tenant"
+    intake_id = batch_listing_intake_id(tenant, "job", "one")
+    legacy = {"id": intake_id, "tenantId": legacy_tenant, "version": 8, "private_note": "legacy correction"}
+    try:
+        bundle.operator_intake_repository.save_intake(legacy)
+        result, error = _default_batch_listing_item_executor(
+            {"item_id": "one", "address_raw": "Synthetic replacement"},
+            tenant, bundle, job_id="job", item_id="one",
+        )
+        assert result is None
+        assert error.code == "INTAKE_PARTITION_RECONCILIATION_REQUIRED"
+        assert error.retryable is False
+        assert "legacy correction" not in str(error)
+        assert bundle.operator_intake_repository.get_intake(intake_id) == legacy
+        assert bundle.operator_intake_repository_for_tenant(tenant).get_intake(intake_id) is None
+    finally:
+        bundle.engine.close()

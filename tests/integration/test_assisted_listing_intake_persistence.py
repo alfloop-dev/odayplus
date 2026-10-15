@@ -114,7 +114,8 @@ def test_duplicate_and_revision_contract_test() -> None:
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
-        headers=_write_headers("integration-revision-decide"),
+        headers={**MANAGER_HEADERS,"X-Correlation-Id":"corr-integration-revision-decide",
+                 "Idempotency-Key":"idem-integration-revision-decide"},
     )
     assert decide_resp.status_code == 200
     assert decide_resp.json()["stage"] == "READY"

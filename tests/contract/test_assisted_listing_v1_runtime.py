@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from apps.api.oday_api.main import create_app
 from apps.api.oday_api.security import dependencies as auth_dependencies
 from modules.opsboard.auth import SigningKey, encode_compact_jwt
+from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 
 HEADERS = {
     "X-Tenant-Id": "00000000-0000-0000-0000-000000000001",
@@ -26,7 +27,7 @@ def submit(client: TestClient, key: str = "url-idempotency-key-1"):
 
 
 def test_url_submission_replay_and_conflict() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy()))
     first = submit(client)
     assert first.status_code == 202
     assert first.headers["idempotency-replayed"] == "false"
@@ -39,7 +40,7 @@ def test_url_submission_replay_and_conflict() -> None:
 
 
 def test_batch_partial_success_and_cursor_failure() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy()))
     result = client.post("/api/v1/intake-batches", headers={**HEADERS, "Idempotency-Key": "batch-idempotency-key-1"}, json={
         "batch_id": "00000000-0000-0000-0000-000000000002", "method": "MANUAL",
         "scope": {"tenant_id": HEADERS["X-Tenant-Id"]},
@@ -51,7 +52,7 @@ def test_batch_partial_success_and_cursor_failure() -> None:
 
 
 def test_if_match_and_assignment_contract() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy()))
     intake = submit(client, "url-assignment-key-1").json()
     url = f'/api/v1/intakes/{intake["intake_id"]}/assignment'
     body = {"owner_subject_id": "00000000-0000-0000-0000-000000000003", "owner_role": "reviewer",
@@ -92,7 +93,7 @@ def _manager_only_listing_merge(
 
 def test_local_expansion_user_cannot_forge_manager_role() -> None:
     response = _manager_only_listing_merge(
-        TestClient(create_app()),
+        TestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())),
         headers={
             "X-Tenant-Id": "tenant-a",
             "X-Subject-Id": "operator-expansion-staff",
@@ -156,7 +157,7 @@ def test_live_expansion_user_cannot_forge_manager_role(monkeypatch) -> None:
     )
     try:
         response = _manager_only_listing_merge(
-            TestClient(create_app()),
+            TestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())),
             headers={
                 "Authorization": f"Bearer {token}",
             },
@@ -183,7 +184,7 @@ def test_all_intake_scope_axes_guard_create_read_mutate_and_list(
     header_name: str,
     scope_field: str,
 ) -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy()))
     allowed_id = str(uuid4())
     denied_id = str(uuid4())
     restricted_headers = {
@@ -278,8 +279,8 @@ def test_all_intake_scope_axes_guard_create_read_mutate_and_list(
 
 
 def test_tenant_scope_is_fail_closed() -> None:
-    assert TestClient(create_app()).get("/api/v1/intakes").status_code == 401
-    assert TestClient(create_app()).get(
+    assert TestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())).get("/api/v1/intakes").status_code == 401
+    assert TestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())).get(
         "/api/v1/intakes",
         headers={"X-Subject-Id": "00000000-0000-0000-0000-000000000101"},
     ).status_code == 403

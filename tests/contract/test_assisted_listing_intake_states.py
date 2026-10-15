@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -29,6 +30,7 @@ from modules.listing.domain.intake_states import (
     PromotionAggregate,
     PromotionState,
     PromotionStateMachine,
+    SlaSchedule,
     SlaState,
     TransitionContext,
 )
@@ -427,7 +429,21 @@ def test_assignment_lifecycle(base_context: TransitionContext) -> None:
 def test_sla_derived_and_pause_behavior() -> None:
     assignment_repo = InMemoryAssignmentRepository()
     sla_repo = InMemorySlaRepository()
-    service = AssignmentSlaService(assignment_repo, sla_repo)
+
+    class FixtureCalendar:
+        def permits_pause(self, schedule, reason, expected_resume_at):
+            return reason in {"waiting on broker", "waiting on broker again"}
+
+        def resume_schedule(self, schedule, interval, resumed_at):
+            excluded = resumed_at - interval.started_at
+            return replace(
+                schedule,
+                due_soon_at=schedule.due_soon_at + excluded,
+                due_at=schedule.due_at + excluded,
+                breach_at=schedule.breach_at + excluded,
+            )
+
+    service = AssignmentSlaService(assignment_repo, sla_repo, calendar=FixtureCalendar())
 
     due = datetime.now(UTC) + timedelta(hours=4)
     system_context = TransitionContext(
@@ -435,7 +451,16 @@ def test_sla_derived_and_pause_behavior() -> None:
     )
 
     # 1. Create SLA
-    sla = service.create_sla("SLA-1", "tenant-a", due, system_context)
+    schedule = SlaSchedule(
+        tenant_id="tenant-a",
+        policy_version="fixture-policy-v1",
+        calendar_version="fixture-24x7-v1",
+        started_at=due - timedelta(hours=4),
+        due_soon_at=due - timedelta(minutes=90),
+        due_at=due,
+        breach_at=due + timedelta(hours=4),
+    )
+    sla = service.create_sla("SLA-1", "tenant-a", schedule, system_context)
     assert sla.status == SlaState.ON_TRACK
 
     # 2. Derive State: still on track
@@ -464,7 +489,8 @@ def test_sla_derived_and_pause_behavior() -> None:
 
     # 5. Pause SLA
     manager_context = TransitionContext(
-        actor=Actor(actor_id="mgr-1", role=PrincipalRole.EXPANSION_MANAGER, tenant_id="tenant-a")
+        actor=Actor(actor_id="mgr-1", role=PrincipalRole.EXPANSION_MANAGER, tenant_id="tenant-a"),
+        current_time=due + timedelta(minutes=10),
     )
     service.pause_sla("SLA-1", "waiting on broker", due + timedelta(hours=2), manager_context)
     assert sla.status == SlaState.PAUSED
@@ -479,7 +505,7 @@ def test_sla_derived_and_pause_behavior() -> None:
     # Since current time is past due, should resume as OVERDUE
     assert sla.status == SlaState.OVERDUE
 
-    # 7. Pause again and resume after 24h+ -> BREACHED (Blocker 1)
+    # 7. A long pause is excluded by the fixture calendar, not counted as breach.
     service.pause_sla(
         "SLA-1", "waiting on broker again", due + timedelta(hours=26), manager_context
     )
@@ -490,6 +516,11 @@ def test_sla_derived_and_pause_behavior() -> None:
         current_time=due + timedelta(hours=25),
     )
     service.resume_sla("SLA-1", eval_context_breached)
+    assert sla.status == SlaState.OVERDUE
+    assert sla.paused_duration_seconds == int(timedelta(hours=24, minutes=50).total_seconds())
+    service.update_sla_derived_state(
+        "SLA-1", replace(eval_context_breached, current_time=sla.schedule.breach_at)
+    )
     assert sla.status == SlaState.BREACHED
 
 

@@ -234,6 +234,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Submit a URL intake"
@@ -302,6 +305,9 @@
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Submit a manual CSV or approved-feed batch"
@@ -398,6 +404,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Propose an intake correction"
@@ -669,6 +678,9 @@
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Assign an intake"
@@ -1031,6 +1043,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Cancel an intake"
@@ -1151,6 +1166,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Claim an assignment"
@@ -1198,6 +1216,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Transfer an assignment"
@@ -1238,6 +1259,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Complete an assignment"
@@ -1285,6 +1309,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Pause an SLA instance"
@@ -1325,6 +1352,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Resume an SLA instance"
@@ -1400,6 +1430,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Review an identity decision"
@@ -1820,6 +1853,16 @@
             }
           }
         },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "AuditUnavailable": {
+        "description": "Required audit policy/storage is unavailable; no command is committed.",
         "content": {
           "application/json": {
             "schema": {

@@ -290,20 +290,31 @@ def build_batch_listing_intake_service(tenant_id: str, persistence: PersistenceB
         NetworkListingService,
     )
 
-    intake_repo = getattr(persistence, "operator_intake_repository", None)
+    tenant_id = str(tenant_id or "").strip()
+    if not tenant_id:
+        raise ValueError("batch intake requires a verified tenant")
+
+    durable = bool(getattr(persistence, "is_durable", False))
+    intake_provider = getattr(persistence, "operator_intake_repository_for_tenant", None)
+    intake_repo = intake_provider(tenant_id) if callable(intake_provider) else None
     if intake_repo is None:
-        intake_repo = InMemoryAssistedIntakeRepository()
+        if durable:
+            raise RuntimeError("tenant-aware batch intake persistence is unavailable")
+        intake_repo = getattr(persistence, "operator_intake_repository", None)
+        if intake_repo is None:
+            intake_repo = InMemoryAssistedIntakeRepository()
 
     # Prefer this tenant's own listing corpus, the same way the operator API
     # resolves it: the unscoped repository would let a batch row be told it
-    # duplicates a listing belonging to somebody else. Fall back to the plain
-    # repository when the deployment has no scoped view, rather than silently
-    # matching against nothing.
+    # duplicates a listing belonging to somebody else. Durable deployments
+    # must resolve this boundary instead of reading the unpartitioned corpus.
     listing_repository = None
     scoped = getattr(persistence, "listing_repository_for_tenant", None)
     if scoped is not None:
         listing_repository = scoped(tenant_id)
     if listing_repository is None:
+        if durable:
+            raise RuntimeError("tenant-aware batch listing persistence is unavailable")
         listing_repository = getattr(persistence, "listing_repository", None)
 
     return NetworkListingService(
@@ -346,9 +357,27 @@ def _default_batch_listing_item_executor(
     if service is None:
         service = build_batch_listing_intake_service(tenant_id, persistence)
 
+    intake_id = batch_listing_intake_id(tenant_id, job_id, item_id)
+    if bool(getattr(persistence, "is_durable", False)):
+        scoped_repo = persistence.operator_intake_repository_for_tenant(tenant_id)
+        legacy_repo = getattr(persistence, "operator_intake_repository", None)
+        # Historical workers used the unpartitioned collection. A crash replay
+        # must not silently create a second row and discard corrections there.
+        # Reconciliation is explicit; no legacy record is copied or exposed.
+        if (
+            scoped_repo.get_intake(intake_id) is None
+            and legacy_repo is not None
+            and legacy_repo.get_intake(intake_id) is not None
+        ):
+            return None, ItemError(
+                code="INTAKE_PARTITION_RECONCILIATION_REQUIRED",
+                message="Existing batch intake requires authorized partition reconciliation",
+                retryable=False,
+            )
+
     try:
         intake = service.record_batch_assisted_entry(
-            intake_id=batch_listing_intake_id(tenant_id, job_id, item_id),
+            intake_id=intake_id,
             tenant_id=tenant_id,
             row=item,
             source_id=BATCH_LISTING_INTAKE_SOURCE_ID,
