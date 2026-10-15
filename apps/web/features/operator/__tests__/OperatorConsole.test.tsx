@@ -3,6 +3,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
 
+vi.mock("../GrowthWorkspace", () => ({
+  GrowthWorkspace: () => <div data-testid="granted-growth-workspace" />,
+}));
+vi.mock("../DesignAlignedWorkspaces", () => ({
+  DesignStoreOpsWorkspace: () => <div data-testid="granted-store-workspace" />,
+}));
+
 // Existing business assertions keep their transport premise: a current
 // canonical session precedes protected shell reads. No principal/grant is
 // derived from this unit-test response.
@@ -123,6 +130,59 @@ describe("OperatorConsole production data gate", () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ["pm-audit", "growth", "query"],
+    ["pm-audit", "growth", "stored"],
+    ["expansion-manager", "store", "query"],
+    ["expansion-manager", "store", "stored"],
+  ] as const)("restores %s's principal-granted %s workspace from %s on refresh", async (roleId, workspace, source) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    window.sessionStorage.setItem("oday.operator.role", roleId);
+    window.sessionStorage.setItem("oday.operator.workspace", source === "stored" ? workspace : "today");
+    const projectedRole = { ...liveEnvelope.meta.role, id: roleId, allowedWorkspaces: ["today", workspace] };
+    let resolveBootstrap!: (response: Response) => void;
+    stubAuthenticatedFetch(vi.fn(() => new Promise<Response>((resolve) => { resolveBootstrap = resolve; })));
+    render(<OperatorConsole searchParams={source === "query" ? { ws: workspace } : {}} />);
+    expect(screen.queryByTestId(`granted-${workspace}-workspace`)).toBeNull();
+    // No static-persona decision is allowed to overwrite the saved preference
+    // while waiting for the principal's verified bootstrap.
+    expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(source === "stored" ? workspace : "today");
+    await waitFor(() => expect(resolveBootstrap).toBeTypeOf("function"));
+    resolveBootstrap(new Response(JSON.stringify({
+      ...liveEnvelope,
+      meta: { ...liveEnvelope.meta, role: projectedRole },
+      navigation: { ...liveEnvelope.navigation, roles: [projectedRole], allowedWorkspaces: ["today", workspace] },
+    }), { status: 200 }));
+    expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
+    await waitFor(() => expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(workspace));
+  });
+
+  it.each([
+    ["pm-audit", "growth"],
+    ["expansion-manager", "store"],
+  ] as const)("keeps principal-granted %s %s when switching persona", async (roleId, workspace) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const granted = ["today", workspace];
+    const nextRole = { ...liveEnvelope.meta.role, id: roleId, label: `Verified ${roleId}`, allowedWorkspaces: granted };
+    stubAuthenticatedFetch(vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({
+      ...liveEnvelope,
+      meta: { ...liveEnvelope.meta, role: new Headers(init?.headers).get("x-operator-role") === roleId
+        ? nextRole : liveEnvelope.meta.role },
+      navigation: { ...liveEnvelope.navigation, roles: [liveEnvelope.meta.role, nextRole], allowedWorkspaces: granted },
+    }), { status: 200 })));
+    render(<OperatorConsole searchParams={{ ws: workspace }} />);
+    expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Live Operations"));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`Verified ${roleId} Production tenant`) }));
+    await waitFor(() => expect(screen.getByTitle(`Verified ${roleId}`)).toBeInTheDocument());
+    expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
+    expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(workspace);
+    expect(window.sessionStorage.getItem("oday.operator.role")).toBe(roleId);
+    window.history.replaceState(null, "", `/operator?ws=${workspace}`);
+    fireEvent.popState(window);
+    expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
   });
 
   it("blocks seed shell data instead of rendering a workspace fixture", async () => {

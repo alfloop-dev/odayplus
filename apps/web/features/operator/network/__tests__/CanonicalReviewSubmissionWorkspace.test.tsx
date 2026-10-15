@@ -2,7 +2,14 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OperatorRoleId } from "../../navigation";
-import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
+import { NetworkFindAreasWorkspace as Workspace } from "../../NetworkFindAreasWorkspace";
+import { NETWORK_TAB_IDS } from "../networkUrlState";
+
+// Explicit synthetic bootstrap tabs for these component controls. Backend
+// scope/role denials and read revalidation assertions remain authoritative.
+function NetworkFindAreasWorkspace(props: Parameters<typeof Workspace>[0]) {
+  return <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} />;
+}
 import { hasReviewSubmissionContext, reviewSubmissionReceiptMatches, reviewSubmissionReadbackMatches } from "../networkReviewSubmission";
 import { projectCandidateNativeWorkflow } from "../candidateNativeWorkflowProjection";
 import type { NetworkReviewsSnapshot } from "../networkReviewTypes";

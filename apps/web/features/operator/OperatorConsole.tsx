@@ -31,6 +31,7 @@ import { GrowthWorkspace } from "./GrowthWorkspace";
 import { readGovernanceViewState, serializeGovernanceViewState, type GovernanceViewState } from "./governance/governanceUrlState";
 import type { NetworkFindAreasWorkspaceProps } from "./NetworkFindAreasWorkspace";
 import type { ColdIntakeDetailProps } from "./network/intake/ColdIntakeDetail";
+import { NETWORK_TAB_IDS, parseNetworkTabIndex } from "./network/networkUrlState";
 import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
 import { ISSUE_FIXTURES } from "./fixtures";
 import {
@@ -518,7 +519,7 @@ export function OperatorConsole({
   };
 
   const rolesForShell = useMemo(() => {
-    return shellEnvelope.navigation.roles.length
+    const roles = shellEnvelope.navigation.roles.length
       ? shellEnvelope.navigation.roles.map((role) => ({
           allowedWorkspaces: role.allowedWorkspaces,
           id: isOperatorRoleId(role.id) ? role.id : DEFAULT_OPERATOR_ROLE_ID,
@@ -526,12 +527,17 @@ export function OperatorConsole({
           subtitle: role.subtitle,
         }))
       : OPERATOR_ROLES;
-  }, [shellEnvelope.navigation.roles]);
+    return !fixturesAllowed && shellDataStatus === "ready"
+      ? roles.map((role) => ({ ...role, allowedWorkspaces: shellEnvelope.navigation.allowedWorkspaces }))
+      : roles;
+  }, [fixturesAllowed, shellDataStatus, shellEnvelope.navigation]);
 
   const activeRole = useMemo(() => {
-    return rolesForShell.find((role) => role.id === activeRoleId) ??
-      getOperatorRole(activeRoleId);
-  }, [activeRoleId, rolesForShell]);
+    const role = rolesForShell.find((role) => role.id === activeRoleId) ?? getOperatorRole(activeRoleId);
+    return !fixturesAllowed && shellDataStatus === "ready"
+      ? { ...role, allowedWorkspaces: shellEnvelope.navigation.allowedWorkspaces }
+      : role;
+  }, [activeRoleId, fixturesAllowed, rolesForShell, shellDataStatus, shellEnvelope.navigation.allowedWorkspaces]);
 
   const workspaceNavItems = useMemo(() => {
     return shellEnvelope.navigation.workspaces.length
@@ -539,10 +545,22 @@ export function OperatorConsole({
       : WORKSPACES;
   }, [shellEnvelope.navigation.workspaces]);
 
+  useEffect(() => {
+    // Preferences express intent, not authority. Wait for bootstrap before
+    // validating them: principal grants can differ from the static persona.
+    if (!hasHydratedPreferences || (!fixturesAllowed && shellDataStatus !== "ready")) return;
+    const workspaceId = isWorkspaceAllowed(activeRole, activeWorkspaceId)
+      ? activeWorkspaceId
+      : DEFAULT_WORKSPACE_ID;
+    setActiveWorkspaceId(workspaceId);
+    window.sessionStorage.setItem(workspaceStorageKey, workspaceId);
+  }, [activeRole, activeWorkspaceId, fixturesAllowed, hasHydratedPreferences, shellDataStatus]);
+
   const activeWorkspace = getWorkspace(activeWorkspaceId);
   const liveWorkQueue = shellEnvelope.workQueue;
   const liveDecisions = shellEnvelope.decisions;
-  const canRenderWorkspace = shellDataStatus === "ready" || fixturesAllowed && bootstrapAuthMode === "fixture";
+  const canRenderWorkspace = (shellDataStatus === "ready" || fixturesAllowed && bootstrapAuthMode === "fixture")
+    && isWorkspaceAllowed(activeRole, activeWorkspaceId);
   const canRenderDirectIntake =
     intakeDetailOpen && activeWorkspaceId === "network";
   const canReadColdIntake = intakeDetailOpen && bootstrapAuthMode === "authenticated" && !canRenderWorkspace;
@@ -594,13 +612,9 @@ export function OperatorConsole({
     const entity = searchParams && typeof searchParams.entity === "string" ? searchParams.entity : null;
     const tab = searchParams && typeof searchParams.tab === "string" ? searchParams.tab : "overview";
 
-    if (isWorkspaceAllowed(storedRole, targetWorkspaceId)) {
-      setActiveWorkspaceId(targetWorkspaceId);
-      window.sessionStorage.setItem(workspaceStorageKey, targetWorkspaceId);
-    } else {
-      setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
-      window.sessionStorage.setItem(workspaceStorageKey, DEFAULT_WORKSPACE_ID);
-    }
+    // Do not erase a permitted deep link or stored workspace using the
+    // persona's fixture grants while the verified bootstrap is still loading.
+    setActiveWorkspaceId(targetWorkspaceId);
     setSelectedEntityId(entity);
     setActiveTabId(tab);
     setGovernanceView(readGovernanceViewState(searchParams));
@@ -611,8 +625,7 @@ export function OperatorConsole({
     function restoreLocation() {
       const params = new URLSearchParams(window.location.search);
       const requested = params.get("ws") ?? DEFAULT_WORKSPACE_ID;
-      const role = getOperatorRole(activeRoleId);
-      const workspace = isWorkspaceId(requested) && isWorkspaceAllowed(role, requested) ? requested : DEFAULT_WORKSPACE_ID;
+      const workspace = isWorkspaceId(requested) && isWorkspaceAllowed(activeRole, requested) ? requested : DEFAULT_WORKSPACE_ID;
       setActiveWorkspaceId(workspace);
       setSelectedEntityId(params.get("entity"));
       setActiveTabId(params.get("tab") ?? "overview");
@@ -621,7 +634,7 @@ export function OperatorConsole({
     }
     window.addEventListener("popstate", restoreLocation);
     return () => window.removeEventListener("popstate", restoreLocation);
-  }, [activeRoleId]);
+  }, [activeRole]);
 
   const clearAuthenticatedRows = useCallback(() => {
     setShellEnvelope(normalizeShellEnvelope(undefined, { allowFixtureFallback: false }));
@@ -860,9 +873,9 @@ export function OperatorConsole({
           if (resolvedRoleId !== activeRoleId) bootstrapAdoptedRole.current = { subject, roleId: resolvedRoleId, reloadToken: shellReloadToken };
           setActiveRoleId(resolvedRoleId);
           const requestedWorkspace = typeof searchParams?.ws === "string" ? searchParams.ws : activeWorkspaceId;
-          const actualRole = getRecord(getRecord(getRecord(payload)?.meta)?.role);
-          if (isWorkspaceId(requestedWorkspace) && Array.isArray(actualRole?.allowedWorkspaces)
-            && actualRole.allowedWorkspaces.includes(requestedWorkspace)) setActiveWorkspaceId(requestedWorkspace);
+          const actualNavigation = getRecord(getRecord(payload)?.navigation);
+          if (isWorkspaceId(requestedWorkspace) && Array.isArray(actualNavigation?.allowedWorkspaces)
+            && actualNavigation.allowedWorkspaces.includes(requestedWorkspace)) setActiveWorkspaceId(requestedWorkspace);
           else setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
         }
         // Explicit isolated POC may read a real admitted API envelope without
@@ -947,7 +960,9 @@ export function OperatorConsole({
   }, [activeRoleId, fixturesAllowed, isTaskCenterOpen, canRenderWorkspace, pinAuthenticatedRead]);
 
   useEffect(() => {
-    if (activeWorkspaceId !== "network" || liveNetworkBindings !== null
+    // Production uses the scope-projecting Operator snapshots. The legacy
+    // domain bindings are RBAC-only and are not readable by operator_viewer.
+    if (!fixturesAllowed || activeWorkspaceId !== "network" || liveNetworkBindings !== null
       || !canRenderWorkspace || bootstrapAuthMode === "authenticated" && bootstrapPersona.current?.roleId !== activeRoleId) return;
     let cancelled = false;
     const sequence = bootstrapSequence.current;
@@ -981,7 +996,7 @@ export function OperatorConsole({
       })
       .catch(async () => { await pinAuthenticatedRead(subject, current); });
     return () => { cancelled = true; };
-  }, [activeRoleId, activeWorkspaceId, liveNetworkBindings, canRenderWorkspace, bootstrapAuthMode, pinAuthenticatedRead]);
+  }, [activeRoleId, activeWorkspaceId, liveNetworkBindings, fixturesAllowed, canRenderWorkspace, bootstrapAuthMode, pinAuthenticatedRead]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -1040,7 +1055,9 @@ export function OperatorConsole({
     };
   }, [liveTasks]);
 
-  const workspaceCommands: CommandPaletteItem[] = WORKSPACES.map((workspace) => ({
+  const workspaceCommands: CommandPaletteItem[] = WORKSPACES
+    .filter((workspace) => isWorkspaceAllowed(activeRole, workspace.id))
+    .map((workspace) => ({
     id: `workspace-${workspace.id}`,
     group: "pages",
     title: workspace.label,
@@ -1049,7 +1066,12 @@ export function OperatorConsole({
     execute: () => handleWorkspaceClick(workspace.id),
   }));
 
-  const routeCommands: CommandPaletteItem[] = commandPageTargets.map((page) => ({
+  const routeCommands: CommandPaletteItem[] = commandPageTargets.filter((page) => {
+    const params = new URL(page.href, "https://operator.invalid").searchParams;
+    if (params.get("ws") !== "network") return true;
+    return fixturesAllowed || (shellEnvelope.navigation.allowedTabs?.network ?? [])
+      .includes(NETWORK_TAB_IDS[parseNetworkTabIndex(params)]);
+  }).map((page) => ({
     id: `route-${page.href}`,
     group: "pages",
     title: page.title,
@@ -1257,7 +1279,9 @@ export function OperatorConsole({
   }
 
   function handleRoleSelect(roleId: OperatorRoleId) {
-    const nextRole = getOperatorRole(roleId);
+    const nextRole = rolesForShell.find((role) => role.id === roleId);
+    if (!nextRole) return;
+    if (!fixturesAllowed && nextRole.id !== activeRoleId) setShellDataStatus("loading");
     if (bootstrapAccount.current) bootstrapRoleIntent.current = { subject: bootstrapAccount.current, roleId: nextRole.id };
     setActiveRoleId(nextRole.id);
     window.sessionStorage.setItem(roleStorageKey, nextRole.id);
@@ -1486,7 +1510,7 @@ export function OperatorConsole({
           </div>
 
           <nav className={styles.workspaceNav} aria-label="Operator workspaces">
-            {workspaceNavItems.map((workspace) => {
+            {workspaceNavItems.filter((workspace) => isWorkspaceAllowed(activeRole, workspace.id)).map((workspace) => {
               const workspaceId = isWorkspaceId(workspace.id) ? workspace.id : DEFAULT_WORKSPACE_ID;
               const isActive = activeWorkspaceId === workspaceId;
               const isLocked = !isWorkspaceAllowed(activeRole, workspaceId);
@@ -1815,6 +1839,7 @@ export function OperatorConsole({
         ) : activeWorkspaceId === "network" ? (
           <NetworkFindAreasWorkspace
             activeRoleId={activeRoleId}
+            allowedTabIds={fixturesAllowed ? undefined : shellEnvelope.navigation.allowedTabs?.network ?? []}
             initialTabId={activeTabId}
             liveCandidates={liveNetworkBindings?.candidates}
             liveHeatZones={liveNetworkBindings?.heatZones}

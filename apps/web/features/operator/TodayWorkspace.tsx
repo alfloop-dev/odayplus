@@ -126,6 +126,7 @@ export type OperatorShellEnvelope = {
     roles: ShellRole[];
     workspaces: ShellWorkspace[];
     allowedWorkspaces: WorkspaceId[];
+    allowedTabs?: { network: string[] };
   };
   header: {
     counts: ShellCounts;
@@ -435,6 +436,11 @@ export function normalizeShellEnvelope(
       source: isObject(payload.meta) && typeof payload.meta.source === "string" ? payload.meta.source : undefined,
     },
     navigation: {
+      allowedTabs: {
+        network: isObject(navigation.allowedTabs) && Array.isArray(navigation.allowedTabs.network)
+          ? navigation.allowedTabs.network.filter((tab: unknown): tab is string => typeof tab === "string")
+          : [],
+      },
       allowedWorkspaces: Array.isArray(navigation.allowedWorkspaces)
         ? (navigation.allowedWorkspaces.filter((item: unknown) => typeof item === "string") as WorkspaceId[])
         : role.allowedWorkspaces,

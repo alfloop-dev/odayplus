@@ -3,7 +3,14 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
+import { NetworkFindAreasWorkspace as Workspace } from "../../NetworkFindAreasWorkspace";
+import { NETWORK_TAB_IDS } from "../networkUrlState";
+
+// Explicit synthetic bootstrap tabs for these component controls. Backend
+// scope/role denials and read revalidation assertions remain authoritative.
+function NetworkFindAreasWorkspace(props: Parameters<typeof Workspace>[0]) {
+  return <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} />;
+}
 import { projectCandidateNativeWorkflow, resolveCandidateReviewTarget } from "../candidateNativeWorkflowProjection";
 import { candidateMatchesPipeline, candidatePipelineControls } from "../candidateDesignControls";
 import { inspectReviewsReadProjection } from "../networkReviewProjection";
@@ -18,7 +25,7 @@ vi.mock("../intake/AssistedIntakeSection", async (original) => ({
 // subprocess owns only explicit offline fixtures; it never loads or infers.
 const root = resolve(process.cwd(), "../..");
 const producer = resolve(root, "tests/integration/test_candidate_native_workflow_readback.py");
-const facts = JSON.parse(execFileSync(resolve(root, ".venv/bin/python"), [producer], { cwd: root,
+const facts = JSON.parse(execFileSync(process.env.ODP_TEST_PYTHON ?? resolve(root, ".venv/bin/python"), [producer], { cwd: root,
   env: { ...process.env, PYTHONPATH: root, ODP_REQUIRE_LIVE_DATA: "false", ODP_PRODUCT_MODE: "poc", ODAY_ENV: "test" }, encoding: "utf8" }));
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } }); }
 function mount(name: string, reviewStatus = 200) {

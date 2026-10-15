@@ -10,13 +10,25 @@ const roleHeaders = (roleId: string) => ({
   "x-tenant-id": "tenant-a",
 });
 
+// Non-Network APIs share operator_console VIEW; Network tabs follow their
+// own resource/intake guards rather than the display persona's old grants.
+const consoleWorkspaces = ["today", "store", "growth", "govern"];
+const allWorkspaces = ["today", "store", "growth", "network", "govern"];
 const expectedWorkspaces: Record<string, string[]> = {
-  "cs-lead": ["today", "store"],
-  "expansion-manager": ["today", "network"],
-  "field-lead": ["today", "store"],
-  "marketing-manager": ["today", "growth"],
-  "ops-lead": ["today", "store", "govern"],
-  "pm-audit": ["today", "network", "govern"],
+  "cs-lead": consoleWorkspaces,
+  "expansion-manager": allWorkspaces,
+  "field-lead": consoleWorkspaces,
+  "marketing-manager": consoleWorkspaces,
+  "ops-lead": consoleWorkspaces,
+  "pm-audit": allWorkspaces,
+};
+const expectedNetworkTabs: Record<string, string[]> = {
+  "cs-lead": [],
+  "expansion-manager": ["areas", "radar", "candidates", "score", "compare", "review", "rebalance", "composition"],
+  "field-lead": [],
+  "marketing-manager": [],
+  "ops-lead": [],
+  "pm-audit": ["areas", "radar", "rebalance"],
 };
 
 const expectedCards: Record<string, string[]> = {
@@ -62,6 +74,8 @@ test("bootstrap and today APIs return role-aware envelope data for all six roles
 
     expect(bootstrapBody.navigation.allowedWorkspaces).toEqual(allowedWorkspaces);
     expect(todayBody.navigation.allowedWorkspaces).toEqual(allowedWorkspaces);
+    expect(bootstrapBody.navigation.allowedTabs.network).toEqual(expectedNetworkTabs[roleId]);
+    expect(todayBody.navigation.allowedTabs.network).toEqual(expectedNetworkTabs[roleId]);
     expect(todayBody.meta.role.id).toBe(roleId);
     expect(todayBody.today.kpis.map((item: { label: string }) => item.label)).toEqual(expectedCards[roleId]);
     expect(todayBody.today.queue.length).toBeGreaterThan(0);
@@ -73,6 +87,40 @@ test("bootstrap and today APIs return role-aware envelope data for all six roles
   }
 
   expect(queueSignatures.size).toBe(Object.keys(expectedWorkspaces).length);
+
+  // Both principals display pm-audit, but their actual API grants differ.
+  // Keep the deployed auditor+admin regression and the scoped viewer in the
+  // browser-run API gate without trusting that shared persona as authority.
+  for (const [roles, tabs] of [
+    ["auditor,platform_admin", ["rebalance"]],
+    ["operator_viewer", ["areas", "radar", "candidates", "score", "compare", "review"]],
+  ] as const) {
+    const headers = { ...roleHeaders("pm-audit"), "x-roles": roles };
+    for (const endpoint of ["bootstrap", "today"]) {
+      const response = await api.get(`${API_BASE_URL}/api/v1/operator/${endpoint}`, { headers });
+      expect(response.status()).toBe(200);
+      const body = await response.json();
+      expect(body.navigation.allowedWorkspaces).toEqual(allWorkspaces);
+      expect(body.navigation.allowedTabs.network).toEqual(tabs);
+    }
+    for (const [tab, endpoint] of Object.entries({
+      areas: "/api/v1/operator/network-listings",
+      radar: "/api/v1/operator/network-listings/intake",
+      candidates: "/api/v1/operator/network-scoring",
+      score: "/api/v1/operator/network-scoring",
+      compare: "/api/v1/operator/network-scoring",
+      review: "/api/v1/operator/network-reviews",
+      rebalance: "/api/v1/operator/network-rebalance",
+      composition: "/api/v1/heatzones/merge-split/proposals",
+    })) {
+      const read = await api.get(`${API_BASE_URL}${endpoint}`, { headers });
+      if ((tabs as readonly string[]).includes(tab)) {
+        expect(read.ok(), `${roles} ${tab}: ${read.status()}`).toBe(true);
+      } else {
+        expect(read.status(), `${roles} ${tab}`).toBe(403);
+      }
+    }
+  }
   await api.dispose();
 });
 

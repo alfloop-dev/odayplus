@@ -74,6 +74,7 @@ import {
   parseCandidateSelection,
   parseReviewSelection,
   REVIEW_SELECTION_PARAM,
+  NETWORK_TAB_IDS,
   parseNetworkTabIndex,
 } from "./network/networkUrlState";
 import type { ExpansionStep } from "./network/ExpansionStepper";
@@ -155,6 +156,8 @@ export type NetworkFindAreasWorkspaceProps = {
   selectedHeatZoneId?: string;
   activeLens?: NetworkFindAreasLens;
   initialTabId?: string;
+  /** Verified bootstrap projection; absent metadata fails closed outside fixtures. */
+  allowedTabIds?: readonly string[];
   trackedHeatZoneIds?: string[];
   /**
    * Active operator console role. Binds the Network Review read/decide security
@@ -607,6 +610,7 @@ export function isNetworkIntakeDetailRoute(
 export function NetworkFindAreasWorkspace({
   activeLens,
   activeRoleId = DEFAULT_OPERATOR_ROLE_ID,
+  allowedTabIds,
   callbacks,
   candidates: candidatesInput,
   heatZones: heatZonesInput,
@@ -655,6 +659,12 @@ export function NetworkFindAreasWorkspace({
   const [reviewsNavigationGeneration, setReviewsNavigationGeneration] = useState<number | null>(null);
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId, navigationContextKey]);
+  const allowedTabIndices = useMemo(() => NETWORK_TAB_IDS.flatMap((tab, index) =>
+    (allowedTabIds?.includes(tab) ?? fixturesAllowed) ? [index] : []), [allowedTabIds, fixturesAllowed]);
+  const canReadListings = allowedTabIndices.includes(0) || allowedTabIndices.includes(1);
+  const canReadScoring = allowedTabIndices.some((index) => index >= 2 && index <= 4);
+  const canReadReviews = allowedTabIndices.includes(5);
+  const canReadRebalance = allowedTabIndices.includes(6);
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
   const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
@@ -702,7 +712,9 @@ export function NetworkFindAreasWorkspace({
     && tabOverride.fromZoneId === urlCandidateZoneId
     && tabOverride.fromCandidateQuery === JSON.stringify(searchParams.getAll(CANDIDATE_SELECTION_PARAM))
     && tabOverride.fromReviewQuery === JSON.stringify(searchParams.getAll(REVIEW_SELECTION_PARAM));
-  const activeTab = overrideApplies ? tabOverride.requested : urlTab;
+  const requestedTab = overrideApplies ? tabOverride.requested : urlTab;
+  const activeTab = allowedTabIndices.includes(requestedTab)
+    ? requestedTab : allowedTabIndices[0] ?? -1;
   const workflowCandidateId = isCandidateWorkflowTab(activeTab) && !intakeDetailOpen
     ? overrideApplies ? tabOverride.candidateId : urlCandidateSelection.id : null;
   // 「查看本區候選點」 scopes the Candidates tab to one HeatZone. The scope is
@@ -919,6 +931,7 @@ export function NetworkFindAreasWorkspace({
   );
 
   const changeActiveTab = useCallback((tabIndex: number, extraParams?: Record<string, string>) => {
+    if (!allowedTabIndices.includes(tabIndex)) return;
     navigationIntent.current += 1;
     setBusyListingId(null);
     setNavigationError(null);
@@ -944,7 +957,7 @@ export function NetworkFindAreasWorkspace({
       typeof window === "undefined" || exactCandidate && window.location.hash.startsWith("#intake/") ? "" : window.location.hash,
     );
     router.push(href, { scroll: false });
-  }, [pathname, router, searchParams, urlTab, urlCandidateZoneId, workflowCandidateId]);
+  }, [allowedTabIndices, pathname, router, searchParams, urlTab, urlCandidateZoneId, workflowCandidateId]);
 
   const snapshotHeatZones = networkSnapshot?.heatZones?.length
     ? networkSnapshot.heatZones
@@ -1005,6 +1018,13 @@ export function NetworkFindAreasWorkspace({
   }, [heatZones, localSelectedId, selectedHeatZoneId]);
 
   useEffect(() => {
+    if (!canReadListings) {
+      setNetworkSnapshot(null);
+      setNetworkLoadState("empty");
+      setNetworkLoadFailure(null);
+      setNetworkApiError(null);
+      return;
+    }
     let cancelled = false;
     const generation = navigationContext.current.generation;
     const sequence = ++networkReadSequence.current;
@@ -1056,9 +1076,15 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, effectiveLens, effectiveSelectedId, fixturesAllowed, navigationContextKey]);
+  }, [activeRoleId, canReadListings, effectiveLens, effectiveSelectedId, fixturesAllowed, navigationContextKey]);
 
   useEffect(() => {
+    if (!canReadScoring) {
+      setScoringSnapshot(null);
+      setScoringLoadState("empty");
+      setScoringLoadFailure(null);
+      return;
+    }
     let cancelled = false;
     const generation = navigationContext.current.generation;
     const sequence = ++scoringReadSequence.current;
@@ -1094,9 +1120,16 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, fixturesAllowed, navigationContextKey]);
+  }, [activeRoleId, canReadScoring, fixturesAllowed, navigationContextKey]);
 
   useEffect(() => {
+    if (!canReadRebalance) {
+      setRebalanceSnapshot(null);
+      setRebalanceLoadState("empty");
+      setRebalanceLoadFailure(null);
+      setRebalanceApiError(null);
+      return;
+    }
     let cancelled = false;
     async function loadRebalance() {
       const read = await fetchNetworkRebalanceSnapshot(activeRoleId);
@@ -1131,7 +1164,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, fixturesAllowed]);
+  }, [activeRoleId, canReadRebalance, fixturesAllowed]);
 
   const applyReviewsSnapshot = useCallback((snapshot: NetworkReviewsSnapshot, generation: number, sequence: number) => {
     if (!navigationLocation.current.mounted || generation !== navigationContext.current.generation
@@ -1157,6 +1190,12 @@ export function NetworkFindAreasWorkspace({
   }, [fixturesAllowed]);
 
   useEffect(() => {
+    if (!canReadReviews) {
+      setReviewsSnapshot(null);
+      setReviewsLoadState("empty");
+      setReviewsLoadFailure(null);
+      return;
+    }
     let cancelled = false;
     const generation = navigationContext.current.generation;
     const sequence = ++reviewsReadSequence.current;
@@ -1180,7 +1219,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [applyReviewsSnapshot, fixturesAllowed, reviewIdentity]);
+  }, [applyReviewsSnapshot, canReadReviews, fixturesAllowed, reviewIdentity]);
 
   // Decide using the current review identity and reload the authoritative queue.
   // Returns false so the dialog
@@ -2183,14 +2222,14 @@ export function NetworkFindAreasWorkspace({
   // binding), so a refused listings read is handed to the panel instead.
   const listingsReadFailure =
     !fixturesAllowed && networkLoadState === "error" ? networkLoadFailure : null;
-  const snapshotCountState = resolveNetworkCountState(networkLoadState, networkLoadFailure, fixturesAllowed);
+  const snapshotCountState = resolveNetworkCountState(networkLoadState, networkLoadFailure, fixturesAllowed, !canReadListings);
   // Package10 uses four workflow KPIs, not unauthorized HeatZone aggregates.
   // Match the count to its actual source: a refused dedicated reviews read
   // cannot erase known authorized reviews in the scoped network snapshot.
-  const reviewCountState = reviewsSnapshot !== null
-    ? resolveNetworkCountState(reviewsLoadState, reviewsLoadFailure, fixturesAllowed)
+  const reviewCountState = !canReadReviews || reviewsSnapshot !== null
+    ? resolveNetworkCountState(reviewsLoadState, reviewsLoadFailure, fixturesAllowed, !canReadReviews)
     : snapshotCountState;
-  const rebalanceCountState = resolveNetworkCountState(rebalanceLoadState, rebalanceLoadFailure, fixturesAllowed);
+  const rebalanceCountState = resolveNetworkCountState(rebalanceLoadState, rebalanceLoadFailure, fixturesAllowed, !canReadRebalance);
 
   const listingRadarPanel = (
     <ListingRadarPanel
@@ -2258,6 +2297,10 @@ export function NetworkFindAreasWorkspace({
     );
   }
 
+  if (activeTab < 0) {
+    return <section role="status">目前身分沒有可讀取的 Network 分頁。</section>;
+  }
+
   return (
     <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
       {/* Package 10 S05: one row — title, flow summary, four truthful KPI chips. */}
@@ -2284,6 +2327,7 @@ export function NetworkFindAreasWorkspace({
 
       <NetworkShell
         activeTab={activeTab}
+        allowedTabIndices={allowedTabIndices}
         onTabChange={changeActiveTab}
         steps={expansionSteps}
         workflowNotice={useFixtureWorkflow ? undefined : workflowProjection.notice}

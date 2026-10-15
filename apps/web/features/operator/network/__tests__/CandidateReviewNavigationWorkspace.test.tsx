@@ -3,14 +3,21 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
+import { NetworkFindAreasWorkspace as Workspace } from "../../NetworkFindAreasWorkspace";
+import { NETWORK_TAB_IDS } from "../networkUrlState";
+
+// Explicit synthetic bootstrap tabs for these component controls. Backend
+// scope/role denials and read revalidation assertions remain authoritative.
+function NetworkFindAreasWorkspace(props: Parameters<typeof Workspace>[0]) {
+  return <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} />;
+}
 import { candidateWorkflowNavigationParams, parseReviewSelection } from "../networkUrlState";
 
 const nav = vi.hoisted(() => ({ search: "", push: vi.fn() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/operator", useSearchParams: () => new URLSearchParams(nav.search), useRouter: () => ({ push: nav.push }) }));
 vi.mock("../intake/AssistedIntakeSection", async (original) => ({ ...await original<typeof import("../intake/AssistedIntakeSection")>(), AssistedIntakeSection: () => <div /> }));
 const root = resolve(process.cwd(), "../..");
-const facts = JSON.parse(execFileSync(resolve(root, ".venv/bin/python"), [resolve(root, "tests/integration/test_candidate_native_workflow_readback.py")], {
+const facts = JSON.parse(execFileSync(process.env.ODP_TEST_PYTHON ?? resolve(root, ".venv/bin/python"), [resolve(root, "tests/integration/test_candidate_native_workflow_readback.py")], {
   cwd: root, env: { ...process.env, PYTHONPATH: root, ODP_REQUIRE_LIVE_DATA: "false", ODP_PRODUCT_MODE: "poc", ODAY_ENV: "test" }, encoding: "utf8",
 }));
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } }); }
