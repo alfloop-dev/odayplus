@@ -119,6 +119,17 @@ class PersistenceBundle:
                 registry_repository=self.learninghub_repository, engine=self.engine)
         return SiteScoreExecutionService(ScoreExecutionJobRepository(self, model_admission=admission))
 
+    def canonical_identity_graph(self) -> Any:
+        """Use native canonical rows with the configured Intake audit policy."""
+        from shared.infrastructure.persistence.identity_graph_sql import (
+            CanonicalIdentityGraphRepository,
+        )
+
+        return CanonicalIdentityGraphRepository(
+            self.engine, self.job_queue,
+            getattr(self.assisted_intake_store, "_canonical_audit_sink", None),
+        )
+
     def network_review_resolver(self, *, hooks: Any = ()) -> Any:
         """Native aliases share the Operator review domain's durable owner."""
         from apps.api.app.routes.operator_modules.live_service import DurableTenantServiceResolver
