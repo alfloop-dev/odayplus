@@ -58,7 +58,10 @@ else:
     )
     from modules.priceops.domain.pricing import PlanAlreadyExistsError
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
-    from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionOptimizer
+    from modules.priceops.infrastructure.oss_optimizer import (
+        PriceOpsMissingSourceLineageError,
+        PriceOpsProductionOptimizer,
+    )
     from modules.priceops.workers.optimizer_worker import (
         PlanRequest,
         run_priceops_optimizer_batch,
@@ -627,6 +630,8 @@ else:
                         production_optimizer=production_optimizer,
                         runtime_mode=runtime_mode,
                     )
+                except PriceOpsMissingSourceLineageError as exc:
+                    raise _missing_source_lineage_error() from exc
                 except PlanAlreadyExistsError as exc:
                     raise HTTPException(status_code=409, detail="batch plan id already exists or is repeated") from exc
                 audit_event = _record_audit(
@@ -1419,6 +1424,8 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
+            except PriceOpsMissingSourceLineageError as exc:
+                raise _missing_source_lineage_error() from exc
             except RuntimeError as exc:
                 correlation_id = getattr(request.state, "correlation_id", None) or "unknown"
                 logger.exception(
@@ -1481,6 +1488,14 @@ else:
         except CommandReceiptPersistenceError as exc:
             raise _persistence_error(exc) from exc
         return apply_replay_marker(outcome.value, replayed=outcome.replayed)
+
+    def _missing_source_lineage_error() -> ApiError:
+        return ApiError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "價格輸入來源尚未備妥，無法執行正式最佳化。",
+            code=ErrorCode.UNPROCESSABLE,
+            next_action="請先確認價格資料的可追溯來源已備妥，再重試最佳化。",
+        )
 
     _durable_store_required = durable_store_required
 
