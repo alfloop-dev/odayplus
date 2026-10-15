@@ -784,7 +784,9 @@ def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, 
         return False
     loaded = load_claude_oauth_tokens(env)
     if not loaded:
-        return True
+        # `loggedIn` alone is not proof of credentials; the probe stays offline
+        # and reports not-ready, while delivery keeps letting the CLI decide.
+        return refresh_if_needed
     _, oauth, _ = loaded
     if not claude_oauth_token_expired(oauth):
         return True

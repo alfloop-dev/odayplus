@@ -512,6 +512,29 @@ class ClaudeAuthProbeRefreshTests(unittest.TestCase):
                 urlopen.assert_not_called()
                 write_json.assert_not_called()
 
+    def test_logged_in_status_without_stored_credentials_is_not_authenticated(self) -> None:
+        for credentials in (None, {"mcpOAuth": {}}):
+            with self.subTest(credentials=credentials), tempfile.TemporaryDirectory() as tmpdir:
+                home = Path(tmpdir)
+                credentials_path = home / ".claude" / ".credentials.json"
+                if credentials is not None:
+                    credentials_path.parent.mkdir(parents=True)
+                    credentials_path.write_text(json.dumps(credentials), encoding="utf-8")
+
+                capability, report, urlopen, write_json = self._probe(home)
+
+                self.assertFalse(capability.can_auto_deliver)
+                self.assertEqual(
+                    capability.notes,
+                    "Claude CLI is installed but not authenticated; inbox fallback is disabled for this provider.",
+                )
+                self.assertFalse(report["auth_ready"])
+                self.assertFalse(report["supports_auto_approve"])
+                urlopen.assert_not_called()
+                write_json.assert_not_called()
+                if credentials is None:
+                    self.assertFalse(credentials_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

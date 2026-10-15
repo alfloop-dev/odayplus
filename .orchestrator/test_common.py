@@ -451,6 +451,19 @@ class ClaudeAuthTests(unittest.TestCase):
 
                 refresh.assert_not_called()
 
+    def test_probe_rejects_logged_in_status_without_stored_credentials(self) -> None:
+        status = mock.Mock(returncode=0, stdout=json.dumps({"loggedIn": True}))
+        with (
+            mock.patch.object(common, "run_command", return_value=status),
+            mock.patch.object(common, "load_claude_oauth_tokens", return_value=None),
+            mock.patch.object(common, "refresh_claude_oauth_tokens") as refresh,
+        ):
+            self.assertFalse(common.claude_auth_ready("claude", env={"HOME": "/tmp/test-home"}, refresh_if_needed=False))
+            # Delivery still defers to the CLI's own login when no file is present.
+            self.assertTrue(common.claude_auth_ready("claude", env={"HOME": "/tmp/test-home"}))
+
+        refresh.assert_not_called()
+
     def test_claude_oauth_refreshable_treats_missing_refresh_expiry_as_valid(self) -> None:
         self.assertTrue(common.claude_oauth_refreshable({"refreshToken": "old-refresh"}))
         self.assertFalse(common.claude_oauth_refreshable({"refreshToken": "  "}))
