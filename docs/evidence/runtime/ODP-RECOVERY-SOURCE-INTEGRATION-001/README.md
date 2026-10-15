@@ -9,7 +9,80 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi base-advance scope checkpoint / NOT review-ready
+## Pi batch006 signed Store Ops fixture / current measurement freeze
+
+Manager run `pi-20261015T123359Z-cc7e31c0` verified its actual running isolated
+workspace/lease, admitted base `19562ad2a8773099db26366446b3488b446e630c`, live
+357-entry source scope and all14 materialized source documents before editing.
+The exact batch006 request SHA256 is
+`2b78ac07364a027b10a89d8c1785e3e5babde9e8bc5ecf2a20f8d3520f2d0e5d`.
+Human/Ops remains final/PENDING; Pi is an author and failed ORIGINAL owner, not
+an independent assessor or failed-epoch clearance.
+
+Source anchor `9d9f04df106cf6a5bfd4c7b0a6b97e12394266cd`, tree
+`2cdd23ef21e7617b67d6cebb0289e573cd94c0b8`, changes ONLY the newly leased
+`tests/integration/test_store_ops_state_materializer.py`. It retains ALL20
+original test members and their503/200/404, tenant state/audit/idempotency,
+CAS/interleavings, lifecycle, scheduler/worker and unscoped legacy assertions.
+The two live-mode fixtures now use ephemeral synthetic service JWTs through the
+real env-configured `config_from_env`/`default_boundary`, with server-declared
+separate tenant principals and the original fixture roles. Module-local cache
+reset/cleanup prevents boundary leakage; no injected accepted principal,
+dependency override, global auth helper or production auth/policy change exists.
+Three new credentialless/forged-header/invalid-token negatives require401 on
+read AND mutation with no private state leakage, state/audit/idempotency write
+or legacy-document mutation. A fourth new case verifies a signed tenant B
+credential cannot be rebound to tenant A by forged identity/role/tenant headers:
+B still sees its empty200 and cannot mutate A's issue (404).
+
+At that exact clean source anchor, the full module actually terminates native0
+in15.811343s under420,24 cases total, with kernel ECHILD and no owned descendants
+or accessible output writers before exact owned-container removal. Raw output,
+terminal/custody/PG guard and hash-verified seal are in the current run's canonical
+scratch `store-ops-signed/` and `store-ops-signed-seal.json`. The original module
+still uses PostgresDocumentStore over SQLite reporting PostgreSQL: this is NOT
+actual-PG runtime proof, even though the outer runner provisions real PG/PostGIS.
+Existing actual-PG owning selections remain separately required. The initial
+Ruff import-order refusal and its correction remain historical diagnostics.
+
+THIS documentation successor, not9d9/d410/ffb/1ac/e99, is the frozen measurement
+candidate. Resolve its exact head/tree from the commit introducing this section.
+The cumulative composition includes the original315-path source, batch001–005
+owning tenant/auth/audit/migration/MLflow changes, incoming PR1481 Store Ops
+materialization and this finite batch006 fixture repair. The six incoming
+non-inventory, non-leased-fixture paths remain base-byte-equal; the boundary
+inventory retains both admitted Store Ops and recovery entries. Human-decision
+files and the complete original blocked-six-reopen task record are unchanged.
+No prior-head pass is transferred to this new head.
+
+Obtain ALL fresh14 canonical commands, all17 unchanged supplemental selections
+(full serial-n0 workload1200; others420), all existing owning controls AND the
+full24-case incoming fixture, normal terminal hosted CI, then ONE sequential
+configured non-contributing Codex2 supplied-text assessment. Include full current
+production/test/import bodies, incoming paths, this README and actual FINAL
+terminal records; regenerate the old1ac corpus, explicitly inventory omitted
+bodies/transitive imports/late records and unresolved underlying account identity.
+Keep gpt-6-astra/ultra/read-only/ephemeral/no-tools/no-network/no-fallback and the
+1048576-character cap; bounded supplied-text reports are not whole-tree approval.
+
+Use the actual Manager-authorized temporary task-owned raw/native-custody evidence
+route, independently bounded execution and subreaper/pidfd/adopted-wait/ECHILD
+closure BEFORE fixture removal/sealing. Short15.8s completion does not prove long
+Manager activity recognition. No fake heartbeat, policy/provider/watchdog/cap
+change or detached launch. Keep all original infrastructure, frozen Node/uv,
+actualPG, Argon64MiB/time3, native480/540, Vitest5000ms, Web300kB,129 E2E and
+transport/lifetime/authority/numerical/SoD assertions. Preserve all interruptions,
+missing historical native exits, late growing logs, corrected prefix timing,
+quota/refusal epochs and external writer visibility gaps separately.
+
+Record later immutable receipts externally/canonically WITHOUT moving this head.
+Normal incremental branch push may update PR1478/CI, but this is NOT review-ready;
+no governed review submission before all owned proof/assessment is complete.
+Human/Ops/PENDING, original blocked6/failed-Pi/PR1459@a129, quarantine/bindingNULL/
+cleanupUNKNOWN/preflightHOLD/goalfalse remain. No approval, auto-merge arming,
+merge, done/finalization, deployment/recovery or live credential/account/data effect.
+
+## Pi base-advance scope checkpoint / historical, NOT review-ready
 
 The current documentation successor preserves the history-preserving base merge
 below, but does not transfer its measurements. At exact merge anchorffb269ba9a1e,
@@ -20,7 +93,7 @@ auth boundary. See [batch006 request](MANAGER-SCOPE-BATCH006-REQUEST.md) and
 [immutable diagnostic index](pi-base-advance-diagnostics.json). This module's
 PostgresDocumentStore-on-SQLite test double is NOT actual-PG runtime proof.
 
-The exact owning test path is absent from the current356-entry lease. No edit or
+At that historical checkpoint, the exact owning test path was absent from the356-entry lease. No edit or
 auth weakening is made. Manager must authorize a narrow supported synthetic-auth
 fixture repair and renew execution context before edits. Original20 members,
 503/200/404/isolation/CAS/idempotency assertions and independent anonymous/forged
@@ -67,8 +140,8 @@ interruptions and custody gaps remain preserved.
 ## Pi batch005 SAST successor / historical measurement freeze
 
 Run `pi-20261015T093946Z-24adc955`, same Manager356-path source lease, base and
-Human/Ops/PENDING boundary. This section's introducing commit is the CURRENT
-frozen measurement candidate; the preceding4a6 candidate is now historical.
+Human/Ops/PENDING boundary. This section's introducing commit was the1ac
+measurement candidate; both it and the preceding4a6 candidate are now historical.
 
 At `4a6e111af944c27598b368acae434418e00fbcf4` / tree
 `df7eea0aae63f5a1e465a0628142068d5fae997e`, original full2178 serial-n0 really
