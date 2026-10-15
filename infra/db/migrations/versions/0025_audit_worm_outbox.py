@@ -6,15 +6,16 @@ Task: ODP-DEV-SMOKE-CREDENTIAL-RECOVERY-IMPLEMENTATION-001
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0025"
-down_revision = "0024"
-branch_labels = None
-depends_on = None
+revision: str = "0025"
+down_revision: str = "0024"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
