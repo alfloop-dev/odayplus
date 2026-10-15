@@ -9,6 +9,30 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
+## Pi batch007 F1 contract STOP — disposition required, NOT a new source freeze
+
+Actual renewed Manager run `pi-20261015T153046Z-c8e7e4c0` verified the running
+allocated task workspace, admitted19562 base, live361-entry scope/17 documents
+and exact materialized/canonical batch007 hashes. Read-only F1 inspection at
+parent2b9148c0 found fifteen original owning-fixture descriptors, none declaring
+tenant or explicit abstract/global intent, including required positive outcomes
+and exact non-tenant denial-policy assertions. Default missing-ownership denial
+and preservation of those unchanged inputs cannot be composed by inferring
+missing-tenant/global status. No production/test source was edited or imported,
+no tests launched, no waiver or descriptor compatibility exemption invented.
+
+Per the finite disposition's STOP rule, request explicit authoritative descriptor
+semantics and permission to migrate ORIGINAL fixture inputs without changing ANY
+original assertion/member/policy outcome, or Human/Ops adjudication of the
+remaining conflict. See [exact clarification request](MANAGER-F1-CONTRACT-CLARIFICATION.md)
+and [static body/AST/Manager evidence](pi-batch007-f1-contract-inspection.json).
+This is NOT a new path lease, risk acceptance, HTTP exploit claim, runtime proof
+or independent assessment. F1/F3 remain OPEN; F2 is only the prior partial repair.
+This docs-only successor transfers no measurements. All fresh14/unchanged17/
+owning/terminalCI/configured full assessment remain owed after all repairs and
+final freeze. Human/Ops/PENDING, original blocked6/failedPi/PR1459@a129 and
+HOLD/goalfalse remain; no task_finalize/review submission/approval/merge/done/live.
+
 ## Pi batch007 F2 checkpoint — partial source repair, NOT a measurement freeze
 
 Actual Manager run `pi-20261015T151317Z-14a3807c` verified running allocation,

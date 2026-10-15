@@ -1,0 +1,256 @@
+{
+  "kind": "static-author-contract-inspection-not-runtime-proof",
+  "run_id": "pi-20261015T153046Z-c8e7e4c0",
+  "inspected_head": "2b9148c0fb49b4641fe3821263634a3503517b2a",
+  "inspected_tree": "5c9100d8bdf6e6771d4b7eebf923ee1c2c52399f",
+  "admitted_origin_dev": "19562ad2a8773099db26366446b3488b446e630c",
+  "manager": {
+    "run_id": "pi-20261015T153046Z-c8e7e4c0",
+    "task_id": "ODP-RECOVERY-SOURCE-INTEGRATION-001",
+    "status": "running",
+    "pid": 1425473,
+    "child_pid": 1425474,
+    "workspace_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-recovery-source-integration-001",
+    "workspace_branch": "task/ODP-RECOVERY-SOURCE-INTEGRATION-001",
+    "base_sha": "19562ad2a8773099db26366446b3488b446e630c",
+    "lease_acquired_at": "2026-10-15T15:30:46Z",
+    "lease_expires_at": "2026-10-15T16:00:51Z",
+    "queue_event_id": "evt-20261015T153044Z-02dca24c"
+  },
+  "scope_entries": 361,
+  "source_documents": 17,
+  "batch007_contexts": [
+    {
+      "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/REQUEST.actual-13c5fb2af.md",
+      "sha256": "79f4d6c05c4437185e5ec48eaf1fcfcace046fca14b0419b9fcf4924476dbb27",
+      "materialized_and_canonical_equal": true
+    },
+    {
+      "path": "support/handoffs/recovery-response-boundary-repair-20261012/source-scope-assessment-batch-007-20261015/MANAGER-CONTRACT-DISPOSITION.md",
+      "sha256": "7abbed1317e750197cf7e5a348bd0bf81ab68f45f71715cb24b38195e3fe62d7",
+      "materialized_and_canonical_equal": true
+    }
+  ],
+  "bodies": {
+    "shared/auth/abac.py": {
+      "head_sha256": "60c662138f60656ced2054eb97dd0d6fca1a08380217ce7d2e106457acb606f0",
+      "origin_dev_sha256": "60c662138f60656ced2054eb97dd0d6fca1a08380217ce7d2e106457acb606f0",
+      "base_equal": true,
+      "leased_for_edit": true
+    },
+    "shared/auth/engine.py": {
+      "head_sha256": "02f46cbb8069c16efb80aab0202b2c719cc1a6a441a8bc6a4b332887afdc5f04",
+      "origin_dev_sha256": "02f46cbb8069c16efb80aab0202b2c719cc1a6a441a8bc6a4b332887afdc5f04",
+      "base_equal": true,
+      "leased_for_edit": true
+    },
+    "shared/auth/tenant.py": {
+      "head_sha256": "5475469ba2e5ae1caadaa279359c8541a2f0e0a92a780d4f3edea371487f3729",
+      "origin_dev_sha256": "5475469ba2e5ae1caadaa279359c8541a2f0e0a92a780d4f3edea371487f3729",
+      "base_equal": true,
+      "leased_for_edit": false
+    },
+    "shared/auth/identity.py": {
+      "head_sha256": "8060a1bfaf3952b77cc6defb0f3d30004fd997dbbf07646f641974a2723b406c",
+      "origin_dev_sha256": "8060a1bfaf3952b77cc6defb0f3d30004fd997dbbf07646f641974a2723b406c",
+      "base_equal": true,
+      "leased_for_edit": false
+    },
+    "tests/security/test_rbac_abac.py": {
+      "head_sha256": "52685776e4f9e5c70f727898270983b9eb3b093eef2137b8c7e502eebcf1e21a",
+      "origin_dev_sha256": "52685776e4f9e5c70f727898270983b9eb3b093eef2137b8c7e502eebcf1e21a",
+      "base_equal": true,
+      "leased_for_edit": true
+    },
+    "tests/integration/test_auth_boundary_authz.py": {
+      "head_sha256": "b0002c5b267feb4724db12be432d5d6c0c48678d4d6cbfdcc815060f73ae3a11",
+      "origin_dev_sha256": "b0002c5b267feb4724db12be432d5d6c0c48678d4d6cbfdcc815060f73ae3a11",
+      "base_equal": true,
+      "leased_for_edit": false
+    },
+    "shared/audit/policy.py": {
+      "head_sha256": "c39cef81e3b324caa7505dfaf2b4ef5565d83eed1db359422e0a712c42b7c60f",
+      "origin_dev_sha256": "c39cef81e3b324caa7505dfaf2b4ef5565d83eed1db359422e0a712c42b7c60f",
+      "base_equal": true,
+      "leased_for_edit": false
+    }
+  },
+  "original_fixture_descriptor_functions": [
+    {
+      "function": "test_cross_region_supervisor_denied",
+      "line": 79,
+      "calls": [
+        {
+          "line": 83,
+          "expression": "ResourceDescriptor(type=\"forecastops\", region_id=\"south\")",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        }
+      ],
+      "assertion_count": 2
+    },
+    {
+      "function": "test_cross_brand_principal_denied",
+      "line": 89,
+      "calls": [
+        {
+          "line": 92,
+          "expression": "ResourceDescriptor(type=\"forecastops\", brand_id=\"brand-a\")",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        },
+        {
+          "line": 93,
+          "expression": "ResourceDescriptor(type=\"forecastops\", brand_id=\"brand-b\")",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        },
+        {
+          "line": 94,
+          "expression": "ResourceDescriptor(type=\"forecastops\", brand_id=None)",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        }
+      ],
+      "assertion_count": 8
+    },
+    {
+      "function": "test_module_outside_scope_denied",
+      "line": 112,
+      "calls": [
+        {
+          "line": 115,
+          "expression": "ResourceDescriptor(type=\"forecastops\", module=\"forecastops\")",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        },
+        {
+          "line": 116,
+          "expression": "ResourceDescriptor(type=\"forecastops\", module=\"netplan\")",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        },
+        {
+          "line": 117,
+          "expression": "ResourceDescriptor(type=\"forecastops\", module=None)",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        }
+      ],
+      "assertion_count": 8
+    },
+    {
+      "function": "test_franchisee_limited_to_own_store",
+      "line": 135,
+      "calls": [
+        {
+          "line": 139,
+          "expression": "ResourceDescriptor(type=\"forecastops\", store_id=\"store-1\")",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        },
+        {
+          "line": 140,
+          "expression": "ResourceDescriptor(type=\"forecastops\", store_id=\"store-2\")",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        }
+      ],
+      "assertion_count": 3
+    },
+    {
+      "function": "test_data_classification_visibility",
+      "line": 147,
+      "calls": [
+        {
+          "line": 154,
+          "expression": "ResourceDescriptor(type=\"audit\", data_classification=DataClassification.RESTRICTED)",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        }
+      ],
+      "assertion_count": 2
+    },
+    {
+      "function": "test_unauthenticated_denied_and_audited",
+      "line": 163,
+      "calls": [
+        {
+          "line": 166,
+          "expression": "ResourceDescriptor(type=\"priceops\")",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        }
+      ],
+      "assertion_count": 7
+    },
+    {
+      "function": "test_denied_action_writes_security_audit_event",
+      "line": 180,
+      "calls": [
+        {
+          "line": 184,
+          "expression": "ResourceDescriptor(type=\"netplan\")",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        }
+      ],
+      "assertion_count": 2
+    },
+    {
+      "function": "test_high_risk_denied_when_flag_disabled",
+      "line": 194,
+      "calls": [
+        {
+          "line": 198,
+          "expression": "ResourceDescriptor(type=\"priceops\")",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        }
+      ],
+      "assertion_count": 2
+    },
+    {
+      "function": "test_high_risk_allowed_when_flag_enabled_with_dual_approval",
+      "line": 204,
+      "calls": [
+        {
+          "line": 213,
+          "expression": "ResourceDescriptor(type=\"priceops\")",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        }
+      ],
+      "assertion_count": 3
+    },
+    {
+      "function": "test_separation_of_duties_blocks_self_approval",
+      "line": 221,
+      "calls": [
+        {
+          "line": 230,
+          "expression": "ResourceDescriptor(type=\"sitescore\", attributes={\"proposed_by\": \"rev-1\"})",
+          "tenant_keyword_supplied": false,
+          "resource_id_keyword_supplied": false
+        }
+      ],
+      "assertion_count": 2
+    }
+  ],
+  "descriptor_calls_in_original_fixture": 15,
+  "descriptor_calls_with_explicit_tenant": 0,
+  "production_or_test_imports_executed": false,
+  "tests_run": false,
+  "finding_status": {
+    "F1": "OPEN-contract-disposition-required",
+    "F2": "prior-increment-only-no-proof-transfer",
+    "F3": "OPEN-not-edited"
+  },
+  "limitations": [
+    "AST keyword inventory only, not semantic or dynamic reachability",
+    "No mounted HTTP exploit or cleanup result claimed",
+    "No default-global or resource-id/type/role exemption implemented",
+    "No waiver created or authority granted",
+    "Historical author/assessment receipts not transferred to this documentation successor"
+  ]
+}
