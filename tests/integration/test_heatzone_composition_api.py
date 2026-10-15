@@ -450,6 +450,7 @@ def test_durable_policy_resolution_and_proposal_persistence(
             parameters TEXT NOT NULL,
             declared_inputs TEXT NOT NULL,
             approved_by TEXT,
+            approved_at TEXT NOT NULL,
             owner_role TEXT
         )
         """
@@ -510,8 +511,8 @@ def test_durable_policy_resolution_and_proposal_persistence(
         """
         INSERT INTO workflow.decision_policies
         (policy_version_id, policy_label, policy_id, policy_version, policy_kind,
-         tenant_id, effective_from, parameters, declared_inputs)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         tenant_id, effective_from, approved_at, parameters, declared_inputs)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             policy_version_id,
@@ -521,6 +522,7 @@ def test_durable_policy_resolution_and_proposal_persistence(
             "heatzone_merge",
             TENANT_ID,
             "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:00+00:00",
             _json.dumps(DEFAULT_HEATZONE_MERGE_PARAMETERS),
             '["store_daily_performance", "heatzone_absorption_outcomes"]',
         ),
@@ -528,6 +530,7 @@ def test_durable_policy_resolution_and_proposal_persistence(
 
     policy_repository = SqlDecisionPolicyRepository(engine)
     assert policy_repository.find_version(policy_version_id) is not None
+    assert policy_repository.find_version(policy_version_id).approved_at == datetime(2026, 1, 1, tzinfo=UTC)
 
     durable_compositions = DurableHeatZoneCompositionRepository(
         SqliteDocumentStore(engine)
@@ -1728,6 +1731,5 @@ def test_recording_outcome_refuses_when_registered_cell_has_invalid_h3_index() -
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "HZ004_INPUT_REFUSED"
     assert "invalid H3 index" in response.json()["detail"]["message"]
-
 
 

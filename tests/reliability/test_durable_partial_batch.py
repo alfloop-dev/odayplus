@@ -110,11 +110,6 @@ def test_1_state_transition_and_itemized_receipt(db_path: str) -> None:
     from apps.worker.oday_worker.handlers import (
         _default_batch_listing_item_executor as orig_executor,
     )
-    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
-    from shared.infrastructure.persistence.operator_network_listings import (
-        DurableAssistedIntakeRepository,
-    )
-
     bundle = _durable_bundle(db_path)
     try:
         tenant_id = "tenant-tw-01"
@@ -213,7 +208,7 @@ def test_1_state_transition_and_itemized_receipt(db_path: str) -> None:
         assert trans_item.error.retryable is True
 
         # Assert real business path persistence in DurableAssistedIntakeRepository
-        repo = DurableAssistedIntakeRepository(SqliteDocumentStore(bundle.engine))
+        repo = bundle.operator_intake_repository_for_tenant(tenant_id)
         persisted_intakes = repo.list_intakes()
         assert len(persisted_intakes) == 8
         persisted_ids = {it["id"] for it in persisted_intakes}
@@ -225,7 +220,7 @@ def test_1_state_transition_and_itemized_receipt(db_path: str) -> None:
     # Reopened bundle check for full re-readability of business entities
     reopened = _durable_bundle(db_path)
     try:
-        repo2 = DurableAssistedIntakeRepository(SqliteDocumentStore(reopened.engine))
+        repo2 = reopened.operator_intake_repository_for_tenant(tenant_id)
         assert len(repo2.list_intakes()) == 8
     finally:
         reopened.engine.close()
@@ -934,7 +929,7 @@ def test_5_duplicate_delivery_and_out_of_order(db_path, caplog, delivery_order):
         expected_payload = settled.payload
         assert expected_payload["receipt"]["items"][0] == x_before
         assert calls == ["X", "Y", "Z", "Y", "Z"]
-        assert len(bundle.operator_intake_repository.list_intakes()) == 2
+        assert len(bundle.operator_intake_repository_for_tenant(tenant).list_intakes()) == 2
         duplicate, created = bundle.job_queue.enqueue(request, correlation_id="post-completion-duplicate")
         assert not created and duplicate.payload == expected_payload
         assert not worker.run_once()
@@ -1114,7 +1109,7 @@ def test_7_same_submitted_intake_id_cannot_cross_tenants(db_path: str) -> None:
             assert worker.run_once() is True
             records[tenant_id] = record
 
-        intakes = bundle.operator_intake_repository.list_intakes()
+        intakes = [row for tenant in records for row in bundle.operator_intake_repository_for_tenant(tenant).list_intakes()]
         assert len(intakes) == 2, (
             "one tenant's batch row overwrote the other's business record"
         )
@@ -1183,7 +1178,7 @@ def test_7_crash_between_business_write_and_receipt_leaves_one_record(db_path: s
         with pytest.raises(KeyboardInterrupt):
             worker.run_once()
 
-    assert len(bundle.operator_intake_repository.list_intakes()) == 1
+    assert len(bundle.operator_intake_repository_for_tenant(tenant_id).list_intakes()) == 1
     crashed = bundle.job_queue.get(record.job_id)
     crashed_item = crashed.payload["receipt"]["items"][0]
     assert crashed_item["item_status"] == ItemStatus.PENDING.value
@@ -1213,7 +1208,7 @@ def test_7_crash_between_business_write_and_receipt_leaves_one_record(db_path: s
         assert receipt.items[0].item_status == ItemStatus.SUCCEEDED.value
         assert receipt.items[0].attempt == 2
 
-        replayed = reopened.operator_intake_repository.list_intakes()
+        replayed = reopened.operator_intake_repository_for_tenant(tenant_id).list_intakes()
         assert len(replayed) == 1, (
             "the replayed attempt created a second business record for one row"
         )
@@ -1271,7 +1266,7 @@ def test_7_row_completeness_decides_stage_without_zero_fill(db_path: str) -> Non
             ItemStatus.SUCCEEDED.value,
         ]
 
-        by_id = {it["id"]: it for it in bundle.operator_intake_repository.list_intakes()}
+        by_id = {it["id"]: it for it in bundle.operator_intake_repository_for_tenant(tenant_id).list_intakes()}
         complete = by_id[receipt.items[0].result_ref]
         incomplete = by_id[receipt.items[1].result_ref]
 
@@ -1409,7 +1404,7 @@ def test_review_finding_2_forged_receipt_sanitization(db_path: str) -> None:
             assert worker.run_once() is True
 
             result = client.get(f"/api/v1/jobs/{job_id}", headers=headers).json()
-            intakes = bundle.operator_intake_repository.list_intakes()
+            intakes = bundle.operator_intake_repository_for_tenant("review-tenant").list_intakes()
 
             assert len(intakes) == 1
             assert result["status"] == "succeeded"
@@ -1748,7 +1743,7 @@ def test_review_finding_r1_checkpoint_failure_preserves_receipt(db_path: str) ->
     assert final.payload["receipt"]["items"][0]["attempt"] == 1
     assert final.payload["receipt"]["items"][1]["item_id"] == "b"
     assert final.payload["receipt"]["items"][1]["attempt"] == 2
-    assert len(restarted.operator_intake_repository.list_intakes()) == 2
+    assert len(restarted.operator_intake_repository_for_tenant("review-synthetic").list_intakes()) == 2
     restarted.engine.close()
 
 
@@ -1791,9 +1786,9 @@ def test_review_finding_r1_distinct_engine_stale_worker_cannot_overwrite_correct
 
         def delayed_old_put_if_absent(collection, doc_id, obj, **kwargs):
             nonlocal injected
-            if collection == "operator.assisted_intakes" and doc_id == intake_id and not injected:
+            if collection.startswith("operator.assisted_intakes.tenant.") and doc_id == intake_id and not injected:
                 injected = True
-                assert new_bundle.operator_intake_repository.get_intake(intake_id) is None
+                assert new_bundle.operator_intake_repository_for_tenant(tenant).get_intake(intake_id) is None
                 new_bundle.engine.execute(
                     "UPDATE durable_jobs SET lease_expires_at = ? WHERE job_id = ?",
                     ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), record.job_id),
@@ -1815,7 +1810,7 @@ def test_review_finding_r1_distinct_engine_stale_worker_cannot_overwrite_correct
                     idempotency_key="synthetic-review-r1-correction",
                     correlation_id="synthetic-review-r1-correction",
                 )
-                corrected = new_bundle.operator_intake_repository.get_intake(intake_id)
+                corrected = new_bundle.operator_intake_repository_for_tenant(tenant).get_intake(intake_id)
                 assert corrected["parsedFields"]["address"]["correctedValue"] == corrected_address
             return original_put_if_absent(collection, doc_id, obj, **kwargs)
 
@@ -1826,7 +1821,7 @@ def test_review_finding_r1_distinct_engine_stale_worker_cannot_overwrite_correct
                 heartbeat_interval_seconds=60.0,
             ).run_once()
 
-        final = new_bundle.operator_intake_repository.get_intake(intake_id)
+        final = new_bundle.operator_intake_repository_for_tenant(tenant).get_intake(intake_id)
         final_job = new_bundle.job_queue.get(record.job_id)
         assert injected is True
         assert old_worker_ran is True
@@ -2060,7 +2055,7 @@ def test_review_finding_r3_r4_scope_and_submitter_preservation(db_path: str) -> 
 
         # R2: Intake record contains all authorized scope fields
         intake_id = batch_listing_intake_id(tenant_id, job_id, "item-1")
-        intake = bundle.operator_intake_repository.get_intake(intake_id)
+        intake = bundle.operator_intake_repository_for_tenant(tenant_id).get_intake(intake_id)
         assert intake is not None
         assert intake["submitter"] == "scope-user"
         assert intake["owner"] == "scope-user"
@@ -2363,7 +2358,7 @@ def test_foreground_late_result_from_reclaimed_worker(db_path, caplog, deliver_b
         assert calls == [("X", "old"), ("Y", "old"), ("Y", "new")]
         assert finished.payload["receipt"]["items"][0] == first_success["X"]
         assert finished.payload["receipt"]["items"][1]["attempt"] == 2
-        assert len(replacement.operator_intake_repository.list_intakes()) == 2
+        assert len(replacement.operator_intake_repository_for_tenant("lease-tenant").list_intakes()) == 2
         assert any("Batch item result discarded" in rec.message and "execution ownership changed" in rec.message for rec in caplog.records)
         replacement.engine.close()
         replacement = _durable_bundle(db_path)
@@ -2449,7 +2444,7 @@ def test_foreground_cancellation_records_landed_intake_for_reconciliation(db_pat
             items = kwargs.get("payload", {}).get("receipt", {}).get("items", [])
             if not injected and status == JobStatus.RUNNING and any(item["item_status"] == "SUCCEEDED" for item in items):
                 injected = True
-                assert len(bundle.operator_intake_repository.list_intakes()) == 1
+                assert len(bundle.operator_intake_repository_for_tenant(tenant).list_intakes()) == 1
                 before = bundle.job_queue.get(job_id)
                 original(job_id, JobStatus.CANCELLED, expected_version=before.version, fence_token=before.fence_token)
             return original(job_id, status, **kwargs)
@@ -2466,7 +2461,7 @@ def test_foreground_cancellation_records_landed_intake_for_reconciliation(db_pat
         assert item["attempt"] == 1
         bundle.engine.close()
         bundle = _durable_bundle(db_path)
-        intakes = bundle.operator_intake_repository.list_intakes()
+        intakes = bundle.operator_intake_repository_for_tenant(tenant).list_intakes()
         assert len(intakes) == 1
         events = [event for event in bundle.audit_log.list_events(tenant_id=tenant) if event.event_type == "batch.item_result.uncheckpointed"]
         assert len(events) == 1
