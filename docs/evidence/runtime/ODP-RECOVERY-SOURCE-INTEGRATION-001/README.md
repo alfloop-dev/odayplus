@@ -9,7 +9,70 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi batch007 F1 contract STOP — disposition required, NOT a new source freeze
+## Pi batch007 F1 owning checkpoint — clarification applied, NOT final proof
+
+Actual renewed Manager run `pi-20261015T154802Z-6ffcf9c7` verified the running
+allocated branch/workspace, admitted19562 base,361-entry scope/18 source documents
+and every materialized context hash, including clarification
+`b9fa16515b8e1d7c279e0eb11bc4d5ceb47c25361e555aeeeba9c26e9597801b`, BEFORE edits.
+The historical contract STOP below was resolved by that finite clarification;
+it was not permission to infer global business records or migrate other callers.
+
+Source anchors `d2cb274a2d64`, `be58c8388b23`, `999083b56b7a` change ONLY leased
+`shared/auth/abac.py`, `shared/auth/engine.py`, `tests/security/test_rbac_abac.py`:
+
+- Ordinary descriptors are tenant-bound, including missing id/tenant. Mandatory
+  authentication, strict viewer evidence and owning tenant enforcement run even
+  for empty/custom ABAC chains. Missing/blank/non-string/noncanonical tenant
+  evidence denies; no principal fallback or admin/auditor bypass.
+- New typed server-owned `ResourceTarget.ABSTRACT_CAPABILITY` is solely a
+  type-level capability declaration, never object/list/business execution or
+  global-record authority. It cannot carry resource id, tenant or owner evidence;
+  string/generic-attribute declarations do not elevate. Scope/classification,
+  feature flags, SoD/two-person controls and the stricter viewer rule remain.
+  No production consumer was silently reclassified or migrated.
+- Existing tenant guard/registered-waiver authority is reused, not edited.
+  Unregistered/cloned/malformed objects and expired/unsigned/wrong-scope waivers
+  deny. Accepted waiver `audit`/`cross_tenant_waiver` obligations survive ABAC and
+  normal/high-risk engine merging; explicit audit obligations select auditing
+  even for PUBLIC VIEW. An early policy allow cannot skip a later veto.
+- ALL14 original test functions and ALL original assertion ASTs remain. Their
+  fifteen descriptor inputs independently declare the same named synthetic
+  server-owned fixture tenant, with matching principal Scope inputs. Removing
+  ONLY those added tenant inputs (including the explicit formerly-default Scope
+  on the SoD principal) restores every original function AST exactly. No helper
+  auto-retagging, custom-policy exemption, global fixture declaration, assertion
+  relaxation or original2178/178 member change exists. Separate owning controls
+  retain the now-DENIED old missing-both inputs and exercise foreign/own/missing/
+  invalid/spoofed/abstract/waiver/audit/high-risk behavior. See the exact input
+  expressions and immutable receipts in [F1 diagnostics](pi-batch007-f1-diagnostics.json).
+
+The first owning run at d2cb ACTUALLY exits1: seven NEW controls mistakenly used
+resource types not granted to platform_admin/operator_viewer. Only those NEW
+fixture inputs were corrected to existing `user`/`operator_console` grants;
+RBAC production permissions and original assertions were not changed. Raw failed
+output remains. Three-module owning checks (RBAC/ABAC, unchanged tenant guard,
+unchanged auth-boundary composition) at be58 exit0/15.444s and at9990 exit0/7.910s,
+all under420. Scoped Ruff at9990 exits0. These are direct primitive/offline author
+checks, NOT actual-PG application proof, canonical14, supplemental17, new-head
+normal CI, independent assessment or final F1 acceptance. Each native wait/
+adopted wait/ECHILD/accessible-owned-writer closure precedes exact own-PG removal
+and hash-verified evidence seal. External/non-owned/inaccessible visibility stays
+UNKNOWN; these short commands do not prove long-command Manager recognition.
+
+THIS documentation successor has a different identity: none of those passes
+transfers to it. F3 remains OPEN/next: every distinct observed rotation/login
+cookie, ALL-exit once-only bounded specific cleanup, partial/lost custody UNKNOWN,
+native quarantine-BEFORE-cleanup and delegated once-only custody. F2 remains the
+prior partial repair. After ALL source/docs repairs freeze ONE new identity for
+ALL fresh14/unchanged17/applicable owning/normal terminal CI/full configured
+sequential supplied-text assessment. No finalize/review submission before complete
+author proof. Original complete blocked-six-reopen object equals the previous
+run and current board; failed-Pi/PR1459@a129/human evidence/pinned roots remain.
+Human/Ops PENDING, account-independence UNRESOLVED, quarantine/bindingNULL/
+cleanupUNKNOWN/HOLD/goalfalse; no approval, merge arming, merge, done or live effect.
+
+## Historical Pi batch007 F1 contract STOP — resolved by finite clarification
 
 Actual renewed Manager run `pi-20261015T153046Z-c8e7e4c0` verified the running
 allocated task workspace, admitted19562 base, live361-entry scope/17 documents
