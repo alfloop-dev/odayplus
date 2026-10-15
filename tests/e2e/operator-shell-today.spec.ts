@@ -42,18 +42,19 @@ const expectedCards: Record<string, string[]> = {
 
 test.describe.configure({ mode: "serial" });
 
-test("expansion contributor keeps the server persona and its restricted navigation", async ({ page }) => {
+test("expansion contributor keeps the server persona and principal-derived navigation", async ({ page }) => {
+  await page.setExtraHTTPHeaders(roleHeaders("expansion-staff"));
   await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-staff"));
   await page.goto("/operator");
   await expect(page.getByTestId("operator-envelope-source")).toHaveText("operator-shell-api-envelope");
   await expect(page.getByTitle("展店專員", { exact: true })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /門市營運/ })).toHaveAttribute("aria-disabled", "true");
+  await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /門市營運/ })).toBeEnabled();
   const api = await playwrightRequest.newContext();
   const response = await api.get(`${API_BASE_URL}/api/v1/operator/bootstrap`, { headers: roleHeaders("expansion-staff") });
   expect(response.status()).toBe(200);
   const body = await response.json();
   expect(body.meta.role.id).toBe("expansion-staff");
-  expect(body.navigation.allowedWorkspaces).toEqual(["today", "network"]);
+  expect(body.navigation.allowedWorkspaces).toEqual(allWorkspaces);
   await api.dispose();
 });
 

@@ -1627,7 +1627,7 @@ describe("explicit fixture-only exact candidate Review compatibility",()=>{
     expect(screen.getByTestId("review-card-RV-701")).not.toHaveAttribute("data-active","true");fireEvent.click(screen.getByTestId("review-card-RV-701"));expect(screen.queryByTestId("review-btn-wait-RV-701")).not.toBeInTheDocument();
   });
   it("keeps production Workspace strict even when its API rows happen to be legacy-shaped",async()=>{
-    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE","true");reads();render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager"/>);await screen.findByTestId("review-card-RV-701");fireEvent.click(screen.getByTestId("review-card-RV-701"));expect(screen.queryByTestId("review-btn-wait-RV-701")).not.toBeInTheDocument();
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE","true");reads();render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" allowedTabIds={["review"]}/>);await screen.findByTestId("review-card-RV-701");fireEvent.click(screen.getByTestId("review-card-RV-701"));expect(screen.queryByTestId("review-btn-wait-RV-701")).not.toBeInTheDocument();
   });
   it.each(["DRAFT","SYSTEM_RECOMMENDED","PENDING_REVIEW","APPROVED","REJECTED"] as const)("does not relax canonical $0 without exact report context",status=>{
     const canonical={...row(),canonicalDecisionStatus:status};render(<ReviewPanel reviews={[canonical]} fallbackRows={[]} canDecide fixtureCandidateContext workflowCandidateId="CS-1002" expectedReport={null}/>);

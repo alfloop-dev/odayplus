@@ -613,12 +613,24 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
   test("a role without listing permission gets the permission-limited state, not an empty queue", async ({
     page,
   }) => {
+    const headers = {
+      "x-operator-role": "ops-lead",
+      "x-roles": "operations_manager",
+      "x-subject-id": "synthetic-denied-ops",
+      "x-tenant-id": "tenant-a",
+    };
+    await page.setExtraHTTPHeaders(headers);
     await page.addInitScript(() => {
       window.sessionStorage.setItem("oday.operator.role", "ops-lead");
     });
+    const bootstrap = page.waitForResponse((response) => response.url().includes("/api/v1/operator/bootstrap") && response.status() === 200);
     await page.goto("/operator?ws=network");
-    await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /展店與店網/ })).toHaveAttribute("aria-disabled", "true");
-    const denied = await page.request.get("/api/v1/operator/network-listings/intake", { headers: {"x-operator-role": "ops-lead", "x-roles": "operations_manager", "x-subject-id": "synthetic-denied-ops", "x-tenant-id": "tenant-a"} });
+    const envelope = await (await bootstrap).json();
+    expect(envelope.navigation.allowedWorkspaces).not.toContain("network");
+    expect(envelope.navigation.allowedTabs.network).toEqual([]);
+    await expect(page.getByTestId("operator-envelope-source")).toHaveText("operator-shell-api-envelope");
+    await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /展店與店網/ })).toHaveCount(0);
+    const denied = await page.request.get("/api/v1/operator/network-listings/intake", { headers });
     expect(denied.status()).toBe(403);
     // It must not imply "no submissions exist", and must offer no write action.
     await expect(page.getByTestId("intake-inbox-empty")).toHaveCount(0);

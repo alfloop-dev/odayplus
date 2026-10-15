@@ -688,6 +688,37 @@ export function OperatorConsole({
     return false;
   }, [clearAuthenticatedRows, fixturesAllowed]);
 
+  // Network now uses the scoped Operator endpoints. Keep their transport
+  // bound to the same live account/persona as bootstrap and legacy reads.
+  const networkFetch = useMemo<typeof fetch>(() => {
+    const sequence = bootstrapSequence.current;
+    const subject = bootstrapAccount.current;
+    const persona = bootstrapPersona.current;
+    const current = () => sequence === bootstrapSequence.current && subject === bootstrapAccount.current
+      && persona === bootstrapPersona.current
+      && (bootstrapAuthMode !== "authenticated" || persona?.roleId === activeRoleId)
+      && (shellDataStatus === "ready" || bootstrapAuthMode === "fixture")
+      && !(bootstrapRoleIntent.current?.subject === subject && bootstrapRoleIntent.current.roleId !== persona?.roleId);
+    const requireCurrent = async () => {
+      if (!await pinAuthenticatedRead(subject, current)) throw new Error("Network read account or persona changed");
+    };
+    const guardBody = (response: Response): Response => {
+      const json = response.json.bind(response);
+      const text = response.text.bind(response);
+      const clone = response.clone.bind(response);
+      response.json = async () => { await requireCurrent(); const body: unknown = await json(); await requireCurrent(); return body; };
+      response.text = async () => { await requireCurrent(); const body = await text(); await requireCurrent(); return body; };
+      response.clone = () => guardBody(clone());
+      return response;
+    };
+    return async (input, init) => {
+      await requireCurrent();
+      const response = await fetch(input, init);
+      await requireCurrent();
+      return guardBody(response);
+    };
+  }, [activeRoleId, bootstrapAuthMode, shellDataStatus, pinAuthenticatedRead]);
+
   useEffect(() => {
     if (!hasHydratedPreferences) return;
     const adopted = bootstrapAdoptedRole.current;
@@ -1839,6 +1870,7 @@ export function OperatorConsole({
         ) : activeWorkspaceId === "network" ? (
           <NetworkFindAreasWorkspace
             activeRoleId={activeRoleId}
+            fetchImpl={networkFetch}
             allowedTabIds={fixturesAllowed ? undefined : shellEnvelope.navigation.allowedTabs?.network ?? []}
             initialTabId={activeTabId}
             liveCandidates={liveNetworkBindings?.candidates}

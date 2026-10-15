@@ -1254,7 +1254,8 @@ describe("successful HTTP response body shape", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), {
       status: 200, headers: { "Content-Type": "application/json", "X-Correlation-Id": "corr-malformed-body" },
     })));
-    render(createElement(NetworkFindAreasWorkspace, { activeRoleId: "expansion-manager" }));
+    // Explicit synthetic bootstrap tab grant; payload validation remains strict.
+    render(createElement(NetworkFindAreasWorkspace, { activeRoleId: "expansion-manager", allowedTabIds: ["score"] }));
     const gate = await screen.findByTestId("operator-data-unavailable");
     await vi.waitFor(() => expect(gate).toHaveAttribute("data-status", "error"));
     expect(gate).not.toHaveAttribute("data-status", "empty");
