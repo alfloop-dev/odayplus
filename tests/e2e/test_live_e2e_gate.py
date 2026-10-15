@@ -2807,9 +2807,10 @@ def test_standalone_real_rotation_is_a_specific_release_witness_not_logout_401()
     assert set(logouts) == {f"{admin.SESSION_COOKIE}={v}" for v in
                             ("sealed-rotation-session-reference", admin.SESSION_VALUE, "sealed-form-session-reference")}
     assert len(logouts) == len(set(logouts)) == 3
+    rotation_index = next(i for i, (c, _) in enumerate(web.headers_seen) if c == "POST /auth/password")
     for path in ("/auth/session", "/api/v1/operator/users"):
         assert sum(c == "GET " + path and h.get("cookie") == f"{admin.SESSION_COOKIE}={admin.FRESH_SESSION_VALUE}"
-                   for c, h in web.headers_seen) == 1
+                   for c, h in web.headers_seen[rotation_index + 1:]) == 1
     assert not any(v in json.dumps(report) for v in web.issued_sessions)
 
 
