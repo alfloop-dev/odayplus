@@ -325,6 +325,17 @@ class SourceSnapshotService:
                 return tenant_meta.get("residency_mode", "TW_ONLY")
         return "TW_ONLY"
 
+    def _compensate_snapshot_objects(self, tenant_id: str, created: list[tuple[str, int]]) -> None:
+        """Remove only versions this attempt created; keep the primary failure."""
+        for uri, generation in created:
+            try:
+                self.object_store.delete_object(tenant_id, uri, if_generation_match=generation)
+            except Exception:
+                # A replacement generation must survive. Other failures need
+                # reconciliation and must remain visible without masking the
+                # upload/SQL exception that caused compensation.
+                logger.exception("Snapshot object compensation failed for generation %s", generation)
+
     def create_snapshot(
         self,
         tenant_id: str,
@@ -377,7 +388,7 @@ class SourceSnapshotService:
 
         # 3. Object Store Write Precedes SQL Metadata commit
         raw_key = f"tenants/{tenant_id}/snapshots/{snapshot_id}/raw"
-        raw_created = False
+        created_objects: list[tuple[str, int]] = []
         try:
             raw_uri, raw_gen = self.object_store.upload_object(
                 tenant_id=tenant_id,
@@ -387,7 +398,7 @@ class SourceSnapshotService:
                 content_type=media_type,
                 if_generation_match=0,
             )
-            raw_created = True
+            created_objects.append((raw_uri, raw_gen))
         except ValueError as exc:
             if "Precondition Failed" in str(exc):
                 # Object already uploaded in a previous attempt. Ignore.
@@ -398,25 +409,28 @@ class SourceSnapshotService:
             else:
                 raise exc
 
-        redacted_created = False
         redacted_uri = None
-        if redacted_data is not None:
-            redacted_key = f"tenants/{tenant_id}/snapshots/{snapshot_id}/redacted"
-            try:
-                redacted_uri, _ = self.object_store.upload_object(
-                    tenant_id=tenant_id,
-                    bucket=bucket,
-                    key=redacted_key,
-                    data=redacted_data,
-                    content_type=media_type,
-                    if_generation_match=0,
-                )
-                redacted_created = True
-            except ValueError as exc:
-                if "Precondition Failed" in str(exc):
-                    redacted_uri = f"gs://{bucket}/{redacted_key}"
-                else:
-                    raise exc
+        try:
+            if redacted_data is not None:
+                redacted_key = f"tenants/{tenant_id}/snapshots/{snapshot_id}/redacted"
+                try:
+                    redacted_uri, redacted_gen = self.object_store.upload_object(
+                        tenant_id=tenant_id,
+                        bucket=bucket,
+                        key=redacted_key,
+                        data=redacted_data,
+                        content_type=media_type,
+                        if_generation_match=0,
+                    )
+                    created_objects.append((redacted_uri, redacted_gen))
+                except ValueError as exc:
+                    if "Precondition Failed" in str(exc):
+                        redacted_uri = f"gs://{bucket}/{redacted_key}"
+                    else:
+                        raise
+        except Exception:
+            self._compensate_snapshot_objects(tenant_id, created_objects)
+            raise
 
         # 4. SQL Metadata Commit
         if self.db_conn is None:
@@ -522,19 +536,9 @@ class SourceSnapshotService:
                 }
                 return snapshot_id
 
-            # Only compensate for objects this call actually created
-            if raw_created:
-                try:
-                    self.object_store.delete_object(tenant_id, raw_uri)
-                except Exception:
-                    pass
-            if redacted_uri and redacted_created:
-                try:
-                    self.object_store.delete_object(tenant_id, redacted_uri)
-                except Exception:
-                    pass
+            self._compensate_snapshot_objects(tenant_id, created_objects)
             logger.error(
-                "Compensating delete executed on SQL insertion failure. "
+                "Snapshot object compensation attempted on SQL metadata failure. "
                 "Raw URI: %s, Redacted URI: %s. Error: %s",
                 raw_uri,
                 redacted_uri,
