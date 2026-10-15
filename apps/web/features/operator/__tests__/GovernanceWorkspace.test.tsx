@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GovernanceWorkspace, inspectGovernanceSnapshot } from "../GovernanceWorkspace";
 import { OperatorConsole } from "../OperatorConsole";
 import { normalizeGovernanceStatusBoard } from "../governance/governanceEnvelope";
-import type { GovernanceViewState } from "../governance/governanceUrlState";
+import { readGovernanceViewState, type GovernanceViewState } from "../governance/governanceUrlState";
 
 // Preserve the existing protected-read premise while the shell now rechecks
 // the canonical session. This is unit transport data, not a grant/principal.
@@ -153,6 +153,34 @@ describe("Governance URL target and decision ownership", () => {
 });
 
 describe("GovernanceWorkspace high-risk failures", () => {
+  it("labels an unsubmitted canonical PriceOps row without claiming a completed decision", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const unsubmitted = {
+      ...decidingSnapshot,
+      source: "canonical",
+      approvals: [{
+        ...snapshot.approvals[0], id: "PRICEOPS-UNSUBMITTED", module: "PriceOps",
+        title: "Canonical pricing revision", status: "not_submitted",
+      }],
+      decisions: [],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => new Response(
+      JSON.stringify(String(input).endsWith("/snapshot") ? unsubmitted : { items: [] }),
+      { status: 200 },
+    ));
+    stubAuthenticatedFetch(fetchMock);
+    render(<GovernanceWorkspace roleId="ops-lead" />);
+    await screen.findByRole("heading", { name: "Canonical pricing revision" });
+    expect(within(screen.getByLabelText("核准佇列")).getByText("尚未送審")).toBeInTheDocument();
+    expect(screen.getByLabelText("Governance state")).toHaveTextContent("0 件待核准");
+    const detail = within(screen.getByRole("article", { name: "Approval detail" }));
+    expect(detail.getByText("尚無本輪決策。")).toBeInTheDocument();
+    expect(detail.queryByText(/已完成決策/)).not.toBeInTheDocument();
+    expect(detail.queryByRole("button", { name: "核准" })).not.toBeInTheDocument();
+    expect(detail.queryByRole("button", { name: "退回修改" })).not.toBeInTheDocument();
+    expect(detail.queryByRole("button", { name: "駁回" })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.every(([, init]) => !(init as RequestInit | undefined)?.method || (init as RequestInit).method !== "POST")).toBe(true);
+  });
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
@@ -173,7 +201,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
     };
     expect(inspectGovernanceSnapshot(canonical)).toBe("ready");
     stubAuthenticatedFetch( vi.fn(async () => new Response(JSON.stringify(canonical), { status: 200 })));
-    render(<GovernanceWorkspace roleId="pm-audit" canDecide={false} />);
+    render(<GovernanceWorkspace roleId="pm-audit" canDecide={false} viewState={readGovernanceViewState(new URLSearchParams("ws=govern&tab=statusBoard"))} />);
     await screen.findByTestId("governance-workspace");
     fireEvent.click(screen.getByTestId("governance-tab-statusBoard"));
     expect(screen.getByTestId("governance-record-counts")).toHaveTextContent("非模型／來源就緒證明");
@@ -213,13 +241,14 @@ describe("GovernanceWorkspace high-risk failures", () => {
     });
     stubAuthenticatedFetch( fetchMock);
 
-    render(<GovernanceWorkspace roleId="ops-lead" />);
+    const view = render(<GovernanceWorkspace roleId="ops-lead" />);
     expect(await screen.findByTestId("governance-workspace")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "核准" }));
     expect(await screen.findByText("尚未確認決策結果，請重試相同內容以核對。")).toBeInTheDocument();
     expect(screen.queryByText(/已核准決策/)).not.toBeInTheDocument();
 
+    view.rerender(<GovernanceWorkspace roleId="ops-lead" viewState={readGovernanceViewState(new URLSearchParams("ws=govern&tab=evidencePackage"))} />);
     fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
     fireEvent.click(screen.getByTestId("governance-export-button"));
     await waitFor(() =>
@@ -289,8 +318,9 @@ describe("GovernanceWorkspace high-risk failures", () => {
       ? new Promise(resolve => { settle = resolve; })
       : Promise.resolve(new Response(JSON.stringify(decidingSnapshot))));
     stubAuthenticatedFetch( fetchMock);
-    render(<GovernanceWorkspace roleId="ops-lead" />);
+    const view = render(<GovernanceWorkspace roleId="ops-lead" />);
     await screen.findByRole("heading", { name: snapshot.approvals[0].title });
+    view.rerender(<GovernanceWorkspace roleId="ops-lead" viewState={readGovernanceViewState(new URLSearchParams("ws=govern&tab=evidencePackage"))} />);
     fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
     fireEvent.click(screen.getByTestId("governance-export-button"));
     expect(screen.getByLabelText("起始日")).toBeDisabled();
@@ -335,7 +365,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
     expect(screen.getAllByText("Close escalated service issue").length).toBeGreaterThan(0);
   });
 
-  it("matches the Package 10 approval center and switches selected evidence", async () => {
+  it("keeps the R7 default approvals structure and expands evidence only after explicit selection", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify(snapshot), {
@@ -348,9 +378,20 @@ describe("GovernanceWorkspace high-risk failures", () => {
 
     expect(await screen.findByText("治理稽核")).toBeInTheDocument();
     expect(screen.getByText("核准、決策、稽核與證據 — 所有處置的可追溯層")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "核准佇列" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "核准佇列" })).not.toBeInTheDocument();
+    for (const heading of ["申請摘要", "系統建議", "風險說明", "決策邊界"]) {
+      expect(within(screen.getByRole("article", { name: "Approval detail" })).queryByRole("heading", { name: heading })).not.toBeInTheDocument();
+    }
+    expect(screen.getByText("關聯：SITE-LIVE-1")).toBeInTheDocument();
+    expect(screen.getByLabelText(/決策理由/)).toHaveAttribute("rows", "2");
+    expect(within(screen.getByRole("navigation", { name: "Governance tabs" })).getAllByRole("button")).toHaveLength(3);
+    expect(screen.queryByTestId("governance-tab-evidencePackage")).not.toBeInTheDocument();
     expect(screen.getAllByText("風險 高")).toHaveLength(2);
     expect(screen.getAllByText("待核准")).toHaveLength(2);
+    expect(screen.queryByTestId("governance-selected-evidence")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("decision-comments-panel")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /SiteScore v4.8/ }));
     expect(screen.getByTestId("governance-selected-evidence")).toHaveTextContent("SiteScore v4.8");
 
     fireEvent.click(screen.getByRole("button", { name: /Dataset 2026-W30/ }));
@@ -375,9 +416,9 @@ describe("GovernanceWorkspace high-risk failures", () => {
     fireEvent.click(screen.getByRole("button", { name: "退回修改" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent("退回或駁回理由需至少 10 個字");
-    // Governance now also reads the attached comments sidecar for the
-    // selected approval.
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The R7 default does not mount the optional comments extension. The
+    // invalid decision stays client-side and does not issue a write.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("renders dense decision, audit, evidence package and status surfaces", async () => {
@@ -389,7 +430,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
       }),
     ));
 
-    render(<GovernanceWorkspace roleId="ops-lead" />);
+    const view = render(<GovernanceWorkspace roleId="ops-lead" />);
     await screen.findByTestId("governance-workspace");
 
     fireEvent.click(screen.getByTestId("governance-tab-decisions"));
@@ -400,6 +441,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
     expect(screen.getByText("隱私敏感")).toBeInTheDocument();
     expect(screen.getByText("corr-live-1")).toBeInTheDocument();
 
+    view.rerender(<GovernanceWorkspace roleId="ops-lead" viewState={readGovernanceViewState(new URLSearchParams("ws=govern&tab=evidencePackage"))} />);
     fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
     expect(screen.getByRole("button", { name: "產生 Evidence Package" })).toBeInTheDocument();
 
@@ -490,7 +532,7 @@ describe("Governance decision authority in the production Operator Console mount
   it("defers the dormant workspace until navigation, then preserves read-admin authority and config access", async () => {
     nav.search = "ws=today";
     const { fetchMock, writes } = stubConsoleGovernance(readAdminSnapshot);
-    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    const view = render(<OperatorConsole searchParams={{ ws: "today" }} />);
 
     const navigation = await screen.findByRole("navigation", { name: "Operator workspaces" });
     await waitFor(() => expect(within(navigation).getByRole("button", { name: /Today/ })).toHaveAttribute("aria-current", "page"));
@@ -502,6 +544,9 @@ describe("Governance decision authority in the production Operator Console mount
     expect(authority).toHaveAttribute("data-authority", "denied");
     expect(screen.getAllByText("Review candidate").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "核准" })).toBeNull();
+    nav.search = "ws=govern&tab=userManagement";
+    view.rerender(<OperatorConsole searchParams={{ ws: "govern", tab: "userManagement" }} />);
+    await screen.findByTestId("governance-tab-featureFlags");
     expect(screen.getByTestId("governance-tab-userManagement")).toBeEnabled();
     expect(screen.getByTestId("governance-tab-featureFlags")).toBeEnabled();
     expect(writes).toEqual([]);
@@ -510,7 +555,7 @@ describe("Governance decision authority in the production Operator Console mount
   it("keeps the 營運主管 persona from claiming decisions for a server-verified auditor+platform_admin", async () => {
     const { writes } = stubConsoleGovernance(readAdminSnapshot);
 
-    render(<OperatorConsole searchParams={{ ws: "govern" }} />);
+    const view = render(<OperatorConsole searchParams={{ ws: "govern" }} />);
 
     const authority = await screen.findByTestId("governance-decision-authority", {}, { timeout: 5000 });
     expect(authority).toHaveAttribute("data-authority", "denied");
@@ -527,6 +572,9 @@ describe("Governance decision authority in the production Operator Console mount
     expect(readOnly).toHaveTextContent("auditor、platform_admin");
     expect(readOnly).toHaveTextContent("不代表決策權限");
 
+    nav.search = "ws=govern&tab=evidencePackage";
+    view.rerender(<OperatorConsole searchParams={{ ws: "govern", tab: "evidencePackage" }} />);
+    await screen.findByTestId("governance-export-button");
     fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
     expect(screen.getByTestId("governance-export-button")).toBeDisabled();
     expect(screen.getByTestId("governance-export-readonly")).toBeInTheDocument();
@@ -540,7 +588,7 @@ describe("Governance decision authority in the production Operator Console mount
   it("presents decision controls for a server-verified decision actor", async () => {
     stubConsoleGovernance(decidingSnapshot);
 
-    render(<OperatorConsole searchParams={{ ws: "govern" }} />);
+    const view = render(<OperatorConsole searchParams={{ ws: "govern" }} />);
 
     const authority = await screen.findByTestId("governance-decision-authority", {}, { timeout: 5000 });
     expect(authority).toHaveAttribute("data-authority", "granted");
@@ -548,6 +596,9 @@ describe("Governance decision authority in the production Operator Console mount
     expect(screen.getByRole("button", { name: "核准" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "退回修改" })).toBeEnabled();
     expect(screen.queryByTestId("governance-decision-readonly")).toBeNull();
+    nav.search = "ws=govern&tab=evidencePackage";
+    view.rerender(<OperatorConsole searchParams={{ ws: "govern", tab: "evidencePackage" }} />);
+    await screen.findByTestId("governance-export-button");
     fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
     expect(screen.getByTestId("governance-export-button")).toBeEnabled();
   });

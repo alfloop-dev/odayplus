@@ -458,7 +458,7 @@ export function GovernanceWorkspace({
   const [activeTab, setActiveTab] = useState<GovernanceTab>(viewState?.tab ?? "approvals");
   const [selectedApprovalId, setSelectedApprovalId] = useState(viewState?.approvalId ?? localApprovals[0]?.id ?? "");
   const [selectedEvidenceId, setSelectedEvidenceId] = useState(
-    viewState?.evidenceId ?? localApprovals[0]?.evidence?.[0]?.id ?? "",
+    viewState?.evidenceId ?? "",
   );
   const [reasonEntry, setReasonEntry] = useState({ approvalId:"", value:"" });
   const [reasonError, setReasonError] = useState("");
@@ -599,6 +599,9 @@ export function GovernanceWorkspace({
     setLocalAuditRows(auditRows ?? []);
   }, [auditRows, apiActive]);
 
+  // The approved R7 surface exposes three tabs. The five existing extensions
+  // retain their established deep links and full navigation once entered.
+  const visibleTabs = ["approvals", "decisions", "audit"].includes(activeTab) ? tabs.slice(0, 3) : tabs;
   const pendingCount = localApprovals.filter((approval) => approval.status === "pending").length;
   const decisionAuthority = resolveGovernanceDecisionAuthority({
     callerAllows: callerAllowsDecision,
@@ -621,7 +624,7 @@ export function GovernanceWorkspace({
     : localApprovals[0];
   const selectedEvidence = selectedEvidenceId
     ? selectedApproval?.evidence?.find((evidence) => evidence.id === selectedEvidenceId)
-    : selectedApproval?.evidence?.[0];
+    : undefined;
   const reason = reasonEntry.approvalId === selectedApproval?.id ? reasonEntry.value : "";
   function setReason(value: string) {
     setReasonEntry({ approvalId:selectedApproval?.id ?? "", value });
@@ -639,14 +642,10 @@ export function GovernanceWorkspace({
 
   useEffect(() => {
     if (decisionRunning || viewState?.evidenceId) return;
-    if (!selectedApproval) {
-      setSelectedEvidenceId("");
-      return;
-    }
+    // An evidence detail is an explicit extension, not the default approval
+    // surface. Never select the first evidence record merely to fill the UI.
     setSelectedEvidenceId((current) =>
-      selectedApproval.evidence?.some((evidence) => evidence.id === current)
-        ? current
-        : selectedApproval.evidence?.[0]?.id ?? "",
+      selectedApproval?.evidence?.some((evidence) => evidence.id === current) ? current : "",
     );
   }, [selectedApproval, decisionRunning, viewState?.evidenceId]);
 
@@ -791,12 +790,12 @@ export function GovernanceWorkspace({
   function selectApproval(approval: GovernanceApproval) {
     if (decisionRunning) return;
     setSelectedApprovalId(approval.id);
-    setSelectedEvidenceId(approval.evidence?.[0]?.id ?? "");
+    setSelectedEvidenceId("");
     setReason("");
     setReasonError("");
     setLastAction("");
     callbacks?.onSelectApproval?.(approval);
-    onViewStateChange?.({ tab:activeTab, approvalId:approval.id, evidenceId:approval.evidence?.[0]?.id ?? null, auditCategory });
+    onViewStateChange?.({ tab:activeTab, approvalId:approval.id, evidenceId:null, auditCategory });
   }
 
   function changeView(patch: Partial<GovernanceViewState>) {
@@ -1003,13 +1002,13 @@ export function GovernanceWorkspace({
   ]);
 
   return (
-    <section className={styles.workspace} data-testid="governance-workspace" data-screen-label="Govern 治理稽核">
+    <section className={`${styles.workspace} ${activeTab === "approvals" ? styles.approvalView : ""}`} data-testid="governance-workspace" data-screen-label="Govern 治理稽核">
       <header className={styles.header}>
         <div className={styles.headerTitle}>
           <h1>治理稽核</h1>
           <p>核准、決策、稽核與證據 — 所有處置的可追溯層</p>
         </div>
-        <div className={styles.headerStats} aria-label="Governance state">
+        <div className={activeTab === "approvals" ? styles.visuallyHidden : styles.headerStats} aria-label="Governance state">
           <span>{pendingCount} 件待核准</span>
           <span data-testid="governance-workspace-persona" title="工作台視角，不代表決策權限">
             視角：{role}
@@ -1029,7 +1028,7 @@ export function GovernanceWorkspace({
       </header>
 
       <nav className={styles.tabs} aria-label="Governance tabs">
-        {tabs.map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             aria-current={activeTab === tab.id ? "page" : undefined}
             className={styles.tab}
@@ -1050,10 +1049,6 @@ export function GovernanceWorkspace({
       {activeTab === "approvals" ? (
         <section className={styles.approvalGrid} aria-label="Approval center">
           <div className={styles.queuePanel} aria-label="核准佇列">
-            <div className={styles.queueHeader}>
-              <h3>核准佇列</h3>
-              <span>{pendingCount} 待處理 · {localApprovals.length} 全部</span>
-            </div>
             <div className={styles.queueList}>
               {sortedApprovals.map((approval) => (
                 <button
@@ -1091,7 +1086,6 @@ export function GovernanceWorkspace({
             {selectedApproval ? (
               <>
                 <div className={styles.detailHeader}>
-                  <div className={styles.detailIdentity}>
                     <span className={styles.approvalId}>{selectedApproval.id}</span>
                     <span className={moduleClass(selectedApproval.module)}>
                       {selectedApproval.module}
@@ -1102,7 +1096,6 @@ export function GovernanceWorkspace({
                         ? priorityLabel(selectedApproval.priority)
                         : FIELD_UNAVAILABLE}
                     </span>
-                  </div>
                   <span className={statusClass(selectedApproval.status)}>
                     {approvalStatusLabel(selectedApproval.status)}
                   </span>
@@ -1124,30 +1117,8 @@ export function GovernanceWorkspace({
                   </div>
                 </dl>
 
-                <div className={styles.summaryGrid}>
-                  <section>
-                    <h4>申請摘要</h4>
-                    <p>{selectedApproval.summary ?? "未提供申請摘要。"}</p>
-                  </section>
-                  <section>
-                    <h4>系統建議</h4>
-                    <p>{selectedApproval.systemRecommendation ?? "未提供系統建議。"}</p>
-                  </section>
-                  <section>
-                    <h4>風險說明</h4>
-                    <p>{selectedApproval.risk ?? "未提供風險說明。"}</p>
-                  </section>
-                  <section>
-                    <h4>決策邊界</h4>
-                    <p>{selectedApproval.roleNote ?? "未提供決策邊界。"}</p>
-                  </section>
-                </div>
-
                 <section className={styles.evidenceBlock} aria-label="隨附證據">
-                  <div className={styles.sectionHeading}>
-                    <h4>隨附證據</h4>
-                    <span>{selectedApproval.evidence?.length ?? 0} 項</span>
-                  </div>
+                  <h4>隨附證據</h4>
                   <div className={styles.evidenceChips}>
                     {(selectedApproval.evidence ?? []).map((evidence) => (
                         <button
@@ -1159,7 +1130,7 @@ export function GovernanceWorkspace({
                           type="button"
                         >
                           <span>{evidence.label}</span>
-                          <small>{evidence.state ?? FIELD_UNAVAILABLE}</small>
+                          <small className={styles.visuallyHidden}>狀態：{evidence.state ?? FIELD_UNAVAILABLE}</small>
                         </button>
                       ))}
                     {selectedApproval.evidence?.length ? null : (
@@ -1172,18 +1143,15 @@ export function GovernanceWorkspace({
                     <p className={styles.emptyState} data-testid="governance-evidence-unavailable">指定證據未取得，請選擇此核准項目可用的證據。</p>
                   ) : null}
                   <div className={styles.referenceRow}>
-                    <span>關聯</span>
-                    <strong>{selectedApproval.entityRef ?? selectedApproval.id}</strong>
-                    <span>送出 {selectedApproval.submittedAt ?? FIELD_UNAVAILABLE}</span>
+                    關聯：{selectedApproval.entityRef ?? FIELD_UNAVAILABLE}
                   </div>
                 </section>
 
-                <section className={styles.decisionBox} aria-label="Decision reason">
+                <section className={selectedApproval.status === "pending" ? styles.decisionBox : undefined} aria-label="Decision reason">
                   {selectedApproval.status === "pending" ? (
                     <>
                       <label htmlFor="governance-reason">
-                        決策理由
-                        <span>核准選填；退回／駁回必填，寫入 Decision Log</span>
+                        決策理由（核准選填；退回／駁回必填，寫入 Decision Log）
                       </label>
                       <textarea
                         readOnly={decisionRunning}
@@ -1201,7 +1169,7 @@ export function GovernanceWorkspace({
                         value={reason}
                       />
                       <div className={styles.reasonRow}>
-                        <span id="governance-reason-help">退回或駁回理由至少 10 個字</span>
+                        <span className={styles.visuallyHidden} id="governance-reason-help">退回或駁回理由至少 10 個字</span>
                         {reasonError ? (
                           <strong className={styles.errorText} id="governance-reason-error" role="alert">
                             {reasonError}
@@ -1232,19 +1200,24 @@ export function GovernanceWorkspace({
                     </>
                   ) : (
                     <div className={styles.decidedNotice}>
-                      <strong>已完成決策 ({selectedApproval.status})</strong>
-                      <p>決策理由：{selectedApproval.reason || FIELD_UNAVAILABLE}</p>
+                      <strong>{selectedApproval.status === "not_submitted" ? "尚未送審" : `已完成決策 (${selectedApproval.status})`}</strong>
+                      <p>{selectedApproval.status === "not_submitted" ? "尚無本輪決策。" : `決策理由：${selectedApproval.reason || FIELD_UNAVAILABLE}`}</p>
                     </div>
                   )}
                   {lastAction ? <p className={styles.lastAction}>{lastAction}</p> : null}
                 </section>
 
-                <DecisionCommentsPanel
-                  canComment={canComment}
-                  roleId={roleId}
-                  targetId={selectedApproval.id}
-                  targetType="approval"
-                />
+                {selectedEvidence ? (
+                  // Existing evidence and approval-comment extensions remain
+                  // available after an explicit chip/deep-link selection.
+                  // They are not part of the original R7 default approvals view.
+                  <DecisionCommentsPanel
+                    canComment={canComment}
+                    roleId={roleId}
+                    targetId={selectedApproval.id}
+                    targetType="approval"
+                  />
+                ) : null}
               </>
             ) : (
               <div className={styles.emptyState} data-testid="governance-approval-unavailable">
@@ -1785,6 +1758,7 @@ function approvalStatusLabel(value: unknown) {
   const raw = badgeText(value);
   const labels: Record<string, string> = {
     pending: "待核准",
+    not_submitted: "尚未送審",
     approved: "已核准",
     returned: "退回修改",
     rejected: "已駁回",

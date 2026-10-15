@@ -235,6 +235,7 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
 
   // Test 1: Evidence Package produces mock file entry + audit event
   // Go to Evidence Package 匯出 tab
+  await page.goto("/operator?ws=govern&tab=evidencePackage");
   await page.getByTestId("governance-tab-evidencePackage").click();
   await expect(
     page.getByRole("button", { name: "產生 Evidence Package", exact: true }),
@@ -269,6 +270,7 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
 
   // Test 2: Status board renders DQ/Model/Connector/Runbook from fixtures
   // Go to 系統狀態盤 tab
+  await page.goto("/operator?ws=govern&tab=statusBoard");
   await page.getByTestId("governance-tab-statusBoard").click();
   await expect(
     page.locator('[aria-label="System status board"]'),

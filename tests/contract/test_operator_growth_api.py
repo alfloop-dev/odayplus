@@ -283,6 +283,12 @@ def test_submit_creates_govern_item_and_approval_advances_state() -> None:
     assert approval["status"] == "pending"
     assert submit.json()["status"] == "PENDING_APPROVAL"
 
+    assert approval["risk"] == "低"
+    governed = client.get("/api/v1/operator/governance/snapshot", headers=_headers())
+    assert governed.status_code == 200, governed.text
+    governed_approval = next(row for row in governed.json()["approvals"] if row["id"] == approval["id"])
+    assert governed_approval["priority"] == "low"
+
     # The Govern item is listed on the growth approvals surface.
     approvals = client.get(f"{BASE}/approvals", headers=WRITE_HEADERS).json()["items"]
     assert any(a["id"] == approval["id"] and a["module"] == "Growth" for a in approvals)

@@ -180,7 +180,7 @@ describe("ModelReleaseController Component (ODP-CAP-MODEL-RELEASE-UI-001)", () =
   });
 
   it("renders ModelReleaseController inside GovernanceWorkspace under learningHub tab", async () => {
-    render(<GovernanceWorkspace roleId="ops-lead" />);
+    render(<GovernanceWorkspace roleId="ops-lead" viewState={{ tab:"learningHub", approvalId:null, evidenceId:null, auditCategory:"all" }} />);
 
     fireEvent.click(screen.getByTestId("governance-tab-learningHub"));
 

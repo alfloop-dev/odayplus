@@ -685,12 +685,20 @@ class PriceOpsService:
 
         approvals = self.repository.list_approvals(plan_id)
         latest_approval = approvals[-1] if approvals else None
-        if latest_approval is not None:
+        # A new submission or unsubmitted revision must not inherit the prior
+        # round's decision; approval records remain available as full history.
+        if plan.status is PlanStatus.PENDING_APPROVAL:
+            approval_status = "pending_review"
+        elif plan.status in {
+            PlanStatus.CANDIDATE,
+            PlanStatus.SIMULATED,
+            PlanStatus.OPTIMIZED,
+        }:
+            approval_status = "not_submitted"
+        elif latest_approval is not None:
             approval_status = (
                 "approved" if latest_approval.is_approved else latest_approval.decision
             )
-        elif plan.status is PlanStatus.PENDING_APPROVAL:
-            approval_status = "pending_review"
         elif plan.status in {
             PlanStatus.APPROVED_FOR_PILOT,
             PlanStatus.ACTIVE,

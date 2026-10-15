@@ -42,6 +42,8 @@ for (const width of [1440, 1024, 390]) {
     await detail.getByRole("button", { name: "核准", exact: true }).click();
     await expect.poll(() => decisionKeys.length).toBe(3);
     expect(new Set(decisionKeys).size).toBe(1);
+    await expect(detail).toContainText("Approved submitted for ap-store-1042");
+    await page.goto("/operator?ws=govern&tab=evidencePackage&entity=ap-store-1042");
     await page.getByTestId("governance-tab-evidencePackage").click();
     const exportPanel = page.getByRole("region", { name: "Evidence Package export" });
     await exportPanel.getByTestId("governance-export-button").click();

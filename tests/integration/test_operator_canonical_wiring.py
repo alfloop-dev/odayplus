@@ -34,6 +34,7 @@ from modules.opsboard.application.operator_live_repository import (
     OperatorLiveRepository,
 )
 from modules.priceops import (
+    PlanStatus,
     PriceConstraints,
     PriceElasticityEstimate,
     PriceOpsService,
@@ -377,7 +378,12 @@ def _seed_rebalance_inputs(
     return store_id, scenario.scenario_id
 
 
-def _seed_priceops(harness: CanonicalHarness, tenant_id: str) -> str:
+def _seed_priceops(
+    harness: CanonicalHarness,
+    tenant_id: str,
+    *,
+    stage: PlanStatus = PlanStatus.OPTIMIZED,
+) -> str:
     service = PriceOpsService(repository=harness.priceops(tenant_id))
     plan = service.create_plan(
         tenant_id=tenant_id,
@@ -402,7 +408,12 @@ def _seed_priceops(harness: CanonicalHarness, tenant_id: str) -> str:
         ],
         correlation_id="corr-priceops-live",
     )
+    if stage is PlanStatus.CANDIDATE:
+        return plan.plan_id
     service.simulate(plan.plan_id)
+    if stage is PlanStatus.SIMULATED:
+        return plan.plan_id
+    assert stage is PlanStatus.OPTIMIZED
     service.optimize(plan.plan_id)
     return plan.plan_id
 
@@ -870,6 +881,139 @@ def test_durable_rebalance_card_cannot_outlive_the_quality_claim_it_was_written_
         assert row["avmQualityDisposition"] == "unverifiable_report_reference"
     finally:
         unverifiable.close()
+
+
+@pytest.mark.parametrize(
+    "stage", [PlanStatus.CANDIDATE, PlanStatus.SIMULATED, PlanStatus.OPTIMIZED],
+)
+def test_governance_unsubmitted_priceops_keeps_overview_row_without_pending_count(
+    tmp_path: Path, stage: PlanStatus,
+) -> None:
+    harness = CanonicalHarness(tmp_path / f"priceops-unsubmitted-{stage.value}.sqlite3")
+    try:
+        plan_id = _seed_priceops(harness, "tenant-a", stage=stage)
+        with TestClient(harness.app()) as client:
+            response = client.get(f"{BASE}/governance/snapshot", headers=_headers("tenant-a"))
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        rows = [row for row in payload["approvals"] if row["module"] == "PriceOps"]
+        assert len(rows) == 1
+        assert rows[0]["id"] == plan_id
+        assert rows[0]["status"] == "not_submitted"
+        assert payload["counts"]["pendingApprovals"] == 0
+        assert harness.priceops("tenant-a").get_plan(plan_id).status is stage
+        assert harness.priceops("tenant-a").list_approvals(plan_id) == []
+        assert payload["decisions"] == []
+    finally:
+        harness.close()
+
+
+def test_governance_submitted_priceops_has_one_pending_without_fabricated_decision(
+    tmp_path: Path,
+) -> None:
+    harness = CanonicalHarness(tmp_path / "priceops-first-submission.sqlite3")
+    try:
+        plan_id = _seed_priceops(harness, "tenant-a")
+        service = PriceOpsService(repository=harness.priceops("tenant-a"))
+        service.submit_for_approval(plan_id, actor="pricing-maker")
+        with TestClient(harness.app()) as client:
+            response = client.get(f"{BASE}/governance/snapshot", headers=_headers("tenant-a"))
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        rows = [row for row in payload["approvals"] if row["module"] == "PriceOps"]
+        assert [(row["id"], row["status"]) for row in rows] == [(plan_id, "pending")]
+        assert payload["counts"]["pendingApprovals"] == 1
+        assert service.get_plan_comparison(plan_id).approval_status == "pending_review"
+        assert service.repository.list_approvals(plan_id) == []
+        assert payload["decisions"] == []
+    finally:
+        harness.close()
+
+
+def test_governance_priceops_new_review_round_keeps_prior_decision_as_history(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "priceops-new-review-round.sqlite3"
+    harness = CanonicalHarness(database_path)
+    try:
+        plan_id = _seed_priceops(harness, "tenant-a")
+        service = PriceOpsService(repository=harness.priceops("tenant-a"))
+        service.submit_for_approval(plan_id, actor="pricing-maker")
+        prior = service.approve(plan_id, actor_id="pricing-reviewer", reason="first pilot approved")
+        prior_record = prior.to_dict()
+        service.activate(plan_id, executor="pricing-runner")
+        service.start_observation(plan_id)
+        simulation = service.repository.get_simulation(plan_id)
+        optimization = service.repository.get_optimization(plan_id)
+        assert simulation is not None and optimization is not None
+        assert optimization.total_incremental_gross_margin > 0
+        evaluated = service.evaluate(
+            plan_id,
+            actual_gross_margin=(
+                simulation.expected_gross_margin + optimization.total_incremental_gross_margin / 4
+            ),
+        )
+        assert evaluated.plan.status is PlanStatus.ADJUST
+        with TestClient(harness.app()) as client:
+            for advance, expected_status, pending_count in [
+                (service.simulate, "not_submitted", 0),
+                (service.optimize, "not_submitted", 0),
+                (service.submit_for_approval, "pending", 1),
+            ]:
+                advance(plan_id)
+                response = client.get(f"{BASE}/governance/snapshot", headers=_headers("tenant-a"))
+                assert response.status_code == 200, response.text
+                payload = response.json()
+                rows = [row for row in payload["approvals"] if row["module"] == "PriceOps"]
+                assert [(row["id"], row["status"]) for row in rows] == [(plan_id, expected_status)]
+                assert payload["counts"]["pendingApprovals"] == pending_count
+                history = [row for row in payload["decisions"] if row["module"] == "PriceOps"]
+                assert len(history) == 1
+                assert history[0]["id"] == prior.decision_id
+                assert history[0]["finalDecision"] == "APPROVED"
+                assert history[0]["actor"] == prior.actor_id
+                assert history[0]["reason"] == prior.decision_reason
+                assert [record.to_dict() for record in service.repository.list_approvals(plan_id)] == [prior_record]
+    finally:
+        harness.close()
+
+    reopened = CanonicalHarness(database_path)
+    try:
+        assert reopened.priceops("tenant-a").get_plan(plan_id).status is PlanStatus.PENDING_APPROVAL
+        assert [record.to_dict() for record in reopened.priceops("tenant-a").list_approvals(plan_id)] == [prior_record]
+        with TestClient(reopened.app()) as client:
+            response = client.get(f"{BASE}/governance/snapshot", headers=_headers("tenant-a"))
+        assert response.status_code == 200, response.text
+        assert response.json()["counts"]["pendingApprovals"] == 1
+        assert [row["id"] for row in response.json()["decisions"] if row["module"] == "PriceOps"] == [prior.decision_id]
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("decision", ["approved", "rejected"])
+def test_governance_priceops_final_decision_preserves_original_mapping(
+    tmp_path: Path, decision: str,
+) -> None:
+    harness = CanonicalHarness(tmp_path / f"priceops-decision-{decision}.sqlite3")
+    try:
+        plan_id = _seed_priceops(harness, "tenant-a")
+        service = PriceOpsService(repository=harness.priceops("tenant-a"))
+        service.submit_for_approval(plan_id, actor="pricing-maker")
+        record = service.approve(
+            plan_id, actor_id="pricing-reviewer", reason=f"pilot {decision}", decision=decision,
+        )
+        with TestClient(harness.app()) as client:
+            response = client.get(f"{BASE}/governance/snapshot", headers=_headers("tenant-a"))
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        rows = [row for row in payload["approvals"] if row["module"] == "PriceOps"]
+        assert [(row["id"], row["status"]) for row in rows] == [(plan_id, decision)]
+        assert payload["counts"]["pendingApprovals"] == 0
+        assert service.get_plan_comparison(plan_id).approval_status == decision
+        assert [row["id"] for row in payload["decisions"] if row["module"] == "PriceOps"] == [record.decision_id]
+        assert [stored.to_dict() for stored in service.repository.list_approvals(plan_id)] == [record.to_dict()]
+    finally:
+        harness.close()
 
 
 def test_growth_and_governance_aggregate_canonical_priceops_and_decisions(

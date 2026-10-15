@@ -15,11 +15,17 @@ for(const width of [1440,1024,390]){
     await page.goto(`/operator?ws=govern&tab=approvals&entity=${target}&evidence=ev-score&trace=local-governance-check`);
     const detail=page.getByRole("article",{name:"Approval detail"});
     await expect(detail.getByRole("heading",{name:"Approve SiteScore override"})).toBeVisible();
+    await expect(page.getByRole("navigation",{name:"Governance tabs"}).getByRole("button")).toHaveCount(3);
     await expect(page.getByTestId("governance-selected-evidence")).toContainText("ev-score");
     await page.reload();
     await expect(detail.getByRole("heading",{name:"Approve SiteScore override"})).toBeVisible();
     const states=[];
     for(const tab of tabs){
+      if(tab === "userManagement") {
+        // Enter the existing non-R7 extension via its established deep link;
+        // preserve every tab/URL/history assertion after that entry.
+        await page.goto(`/operator?ws=govern&tab=userManagement&entity=${target}&evidence=ev-score&trace=local-governance-check`);
+      }
       await page.getByTestId(`governance-tab-${tab}`).click();
       await expect(page.getByTestId(`governance-tab-${tab}`)).toHaveAttribute("aria-current","page");
       await expect(page).toHaveURL(new RegExp(`tab=${tab}(?:&|$)`));

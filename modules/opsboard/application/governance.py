@@ -256,7 +256,7 @@ class GovernanceService:
                     "requestor": item.get("requester", "Growth Manager"),
                     "submittedAt": item.get("createdAt", ""),
                     "status": "pending",
-                    "priority": "medium",
+                    "priority": {"高": "high", "中": "medium", "低": "low"}.get(str(item.get("risk", ""))),
                     "owner": item.get("approver", "行銷經理"),
                     "sla": item.get("due", ""),
                     "entityRef": item.get("ref", item["id"]),
@@ -495,16 +495,33 @@ class GovernanceService:
         ]
         for plan in plans:
             plan_approvals = self._priceops_repository.list_approvals(plan.plan_id)
+            # Current-round state takes precedence over retained prior decisions,
+            # matching PriceOpsService.get_plan_comparison's approval projection.
+            plan_status = plan.status.value
+            if plan_status == "pending_approval":
+                approval_status = "pending"
+            elif plan_status in {"candidate", "simulated", "optimized"}:
+                approval_status = "not_submitted"
+            elif plan_approvals:
+                approval_status = plan_approvals[-1].decision
+            elif plan_status in {
+                "approved_for_pilot",
+                "active",
+                "observing",
+                "evaluated",
+                "continue",
+                "adjust",
+                "rollback",
+            }:
+                approval_status = "approved"
+            else:
+                approval_status = "not_submitted"
             approvals.append(
                 {
                     "id": plan.plan_id,
                     "module": "PriceOps",
                     "title": plan.plan_id,
-                    "status": (
-                        plan_approvals[-1].decision
-                        if plan_approvals
-                        else "pending"
-                    ),
+                    "status": approval_status,
                     "entityRef": plan.plan_id,
                     "submittedAt": plan.created_at.isoformat(),
                     "_canonical": True,
