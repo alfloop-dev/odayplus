@@ -11,6 +11,7 @@ import json
 import logging
 import uuid
 from collections.abc import Mapping
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -118,25 +119,55 @@ class SourceSnapshotService:
                     columns = [col[0] for col in cur.description]
                     return [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
                 return []
-        else:
-            # PostgreSQL
-            cur = self.db_conn.cursor()
-            if tenant_id:
-                cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
+        # Native repositories use the runtime engine's public interface. Its
+        # transaction joins a caller-owned root instead of committing it.
+        if getattr(self.db_conn, "dialect", None) == "postgresql":
+            with self.db_conn.transaction():
+                if tenant_id is not None:
+                    current = self.db_conn.query_one("SELECT current_setting('app.tenant_id',true) AS tenant")
+                    tenant = self._native_tenant(tenant_id, current["tenant"])
+                    self.db_conn.query_one("SELECT set_config('app.tenant_id',?,true)", (tenant,))
+                statement = sql.lstrip().split(None, 1)[0].upper()
+                query = sql.replace("%s", "?")
+                if statement == "SELECT":
+                    return self.db_conn.query(query, params)
+                if statement not in {"INSERT", "UPDATE", "DELETE"}:
+                    raise SnapshotProvenanceError("SNAPSHOT_SQL_STATEMENT_UNSUPPORTED")
+                self.db_conn.execute(query, params)
+                return []
+
+        # Autocommit connections need a short transaction so SET LOCAL and
+        # the statement share the tenant. Other raw transactions belong to
+        # their caller: leave commit, rollback and failures with that owner.
+        transaction = nullcontext()
+        if getattr(self.db_conn, "autocommit", False):
+            factory = getattr(self.db_conn, "transaction", None)
+            if not callable(factory):
+                raise SnapshotProvenanceError("SNAPSHOT_TRANSACTION_UNAVAILABLE")
+            transaction = factory()
+        with transaction, self.db_conn.cursor() as cur:
+            if tenant_id is not None:
+                cur.execute("SELECT current_setting('app.tenant_id',true) AS tenant")
+                current = cur.fetchone()
+                tenant = self._native_tenant(tenant_id, current["tenant"] if isinstance(current, Mapping) else current[0])
+                cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
             cur.execute(sql, params)
-            try:
-                if hasattr(self.db_conn, "commit"):
-                    if getattr(self.db_conn, "autocommit", False) is False:
-                        self.db_conn.commit()
-            except Exception:
-                pass
-            try:
-                if cur.description:
-                    columns = [col[0] for col in cur.description]
-                    return [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
-            except Exception:
-                pass
+            if cur.description:
+                columns = [col[0] for col in cur.description]
+                return [dict(row) if isinstance(row, Mapping) else dict(zip(columns, row, strict=True))
+                        for row in cur.fetchall()]
             return []
+
+    @staticmethod
+    def _native_tenant(tenant_id: str, current: Any) -> str:
+        """Never replace an already-bound foreign native transaction tenant."""
+        try:
+            tenant = str(uuid.UUID(str(tenant_id)))
+            if current and str(uuid.UUID(str(current))) != tenant:
+                raise ValueError
+            return tenant
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise SnapshotProvenanceError("SNAPSHOT_TENANT_CONTEXT_CONFLICT") from exc
 
     def register_source(
         self,
@@ -416,7 +447,8 @@ class SourceSnapshotService:
             }
             return snapshot_id
 
-        # Make the insert genuinely idempotent: check if it exists first
+        # Lookup and insertion failures share compensation. A failed lookup
+        # cannot become an empty success or skip cleanup of new objects.
         try:
             existing = self._execute(
                 "SELECT source_snapshot_id FROM intake.source_snapshots WHERE source_snapshot_id = %s",
@@ -425,10 +457,6 @@ class SourceSnapshotService:
             )
             if existing:
                 return snapshot_id
-        except Exception:
-            pass
-
-        try:
             sql = """
                 INSERT INTO intake.source_snapshots (
                     source_snapshot_id, tenant_id, intake_id, source_id,
@@ -467,7 +495,7 @@ class SourceSnapshotService:
                 tenant_id=tenant_id,
             )
         except Exception as exc:
-            if "no such table" in str(exc).lower() and "source_snapshots" in str(exc).lower():
+            if self._is_sqlite() and "no such table" in str(exc).lower() and "source_snapshots" in str(exc).lower():
                 self._in_memory_snapshots[snapshot_id] = {
                     "source_snapshot_id": snapshot_id,
                     "tenant_id": tenant_id,
