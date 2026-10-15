@@ -151,7 +151,7 @@ class _StaticLiveRepository:
                         "recordCount": 1,
                     },
                     "approvals": {
-                        "state": "live",
+                        "state": "available",
                         "source": "operator-shell-live-test",
                         "recordCount": 0,
                     },
@@ -217,6 +217,7 @@ def _live_app(
     allow_test_reset: bool = False,
     live_repository: Any | None = None,
     bundle: Any | None = None,
+    with_priceops_masters: bool = False,
 ) -> tuple[FastAPI, Any]:
     bundle = bundle if bundle is not None else _durable_bundle(database_path)
     workflow_store = getattr(bundle, "assisted_intake_store", None)
@@ -257,6 +258,8 @@ def _live_app(
                 scoped(tenant_id)
             ),
             model_runtime=_UnusedModelRuntime(),
+            priceops_store_repository=(bundle.store_repository if with_priceops_masters else None),
+            priceops_brand_repository=(bundle.brand_repository if with_priceops_masters else None),
             intake_workflow_store=workflow_store,
             intake_workflow_policy=getattr(bundle, "assisted_intake_workflow_policy", None),
             live_repository=live_repository or OperatorLiveRepository(bundle),
@@ -1403,3 +1406,136 @@ def test_batch_legacy_row_requires_reconciliation_without_copy_or_disclosure(tmp
         assert bundle.operator_intake_repository_for_tenant(tenant).get_intake(intake_id) is None
     finally:
         bundle.engine.close()
+
+
+
+def _persist_synthetic_franchisee_native_stores(bundle: Any, tenant_id: str) -> None:
+    """Owned SQLite input only; no source/model/production approval is implied."""
+    from shared.domain import AddressLocation, Brand, Store, Tenant
+
+    bundle.tenant_repository.save_tenant(Tenant(
+        tenant_id=tenant_id, tenant_name="Explicit synthetic franchisee tenant",
+    ))
+    bundle.brand_repository.save_brand(Brand(
+        brand_id="synthetic-franchisee-brand", tenant_id=tenant_id,
+        brand_code="synthetic-franchisee", brand_name="Explicit synthetic brand",
+    ))
+    for store_id in ("STORE-001", "STORE-002"):
+        address_id = "synthetic-address-" + store_id
+        bundle.address_location_repository.save_address(AddressLocation(
+            address_id=address_id, tenant_id=tenant_id, raw_address="Explicit local test address",
+        ))
+        bundle.store_repository.save_store(Store(
+            store_id=store_id, tenant_id=tenant_id, brand_id="synthetic-franchisee-brand",
+            store_name="Explicit synthetic " + store_id, store_status="open",
+            address_id=address_id, region_code="north",
+        ))
+
+
+def test_live_native_franchisee_empty_does_not_read_operator_pending_owners(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    app, bundle = _live_app(tmp_path / "franchisee-empty-native.sqlite3")
+    pending_owner_reads: list[str] = []
+    for owner_class in (DurableAVMRepository, DurableNetPlanRepository, DurablePriceOpsRepository):
+        original_init = owner_class.__init__
+
+        def observe_init(self: Any, *args: Any, _original: Any = original_init,
+                         _name: str = owner_class.__name__, **kwargs: Any) -> None:
+            pending_owner_reads.append(_name)
+            _original(self, *args, **kwargs)
+
+        monkeypatch.setattr(owner_class, "__init__", observe_init)
+    original_list_plans = DurablePriceOpsRepository.list_plans
+
+    def observe_list_plans(self: Any, *args: Any, **kwargs: Any) -> Any:
+        pending_owner_reads.append("DurablePriceOpsRepository.list_plans")
+        return original_list_plans(self, *args, **kwargs)
+
+    monkeypatch.setattr(DurablePriceOpsRepository, "list_plans", observe_list_plans)
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                f"{BASE}/shell/franchisee", headers=_franchisee_headers("tenant-franchisee-empty"),
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["store"]["id"] == "STORE-001"
+        assert response.json()["tasks"] == []
+        assert response.json()["notifications"] == []
+        assert pending_owner_reads == []
+    finally:
+        bundle.engine.close()
+
+
+def test_live_native_franchisee_tasks_are_self_store_only_without_operator_grants(
+    tmp_path: Path,
+) -> None:
+    from datetime import UTC, datetime
+
+    from modules.forecastops.domain.forecasting import Alert, AlertLevel
+
+    tenant_id = "tenant-franchisee-native-tasks"
+    app, bundle = _live_app(tmp_path / "franchisee-populated-native.sqlite3")
+    try:
+        _persist_synthetic_franchisee_native_stores(bundle, tenant_id)
+        # Persist actual typed native inputs, not a mocked live projection.
+        # These declared local alerts are not generated model/financial evidence.
+        for store_id in ("STORE-001", "STORE-002"):
+            alert = Alert(
+                alert_id="synthetic-franchisee-alert-" + store_id, tenant_id=tenant_id,
+                store_id=store_id, alert_level=AlertLevel.RED,
+                alert_reason_code="EXPLICIT_SYNTHETIC_STORE_TASK_" + store_id,
+                evidence_json={"input_kind": "explicit_local_test_not_model_inference"},
+                opened_at=datetime(2026, 10, 15, tzinfo=UTC),
+                policy_id="explicit-synthetic-test-policy", policy_version="local-test-input-v1",
+            )
+            bundle.forecastops_repository.save_alert(alert)
+            assert bundle.forecastops_repository.get_alert(tenant_id, alert.alert_id) == alert
+        headers = _franchisee_headers(tenant_id)
+        assert headers["x-roles"] == "franchisee"
+        with TestClient(app) as client:
+            response = client.get(f"{BASE}/shell/franchisee", headers=headers)
+            denied_store = client.get(
+                f"{BASE}/shell/franchisee", headers=headers, params={"storeId": "STORE-002"},
+            )
+            denied_operator = client.get(f"{BASE}/bootstrap", headers=headers)
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["meta"]["scope"]["storeId"] == "STORE-001"
+        assert [row["id"] for row in payload["tasks"]] == ["synthetic-franchisee-alert-STORE-001"]
+        assert set(payload["tasks"][0]) == {"id", "title", "status", "time"}
+        assert [row["notificationId"] for row in payload["notifications"]] == [
+            "notification-synthetic-franchisee-alert-STORE-001",
+        ]
+        assert "STORE-002" not in response.text
+        assert not {"approvals", "decisions", "kpis", "riskRows", "auditFeed"} & set(payload)
+        assert denied_store.status_code == 403
+        assert denied_operator.status_code == 403
+    finally:
+        bundle.engine.close()
+
+
+def test_live_operator_shell_missing_masters_or_native_owner_still_returns_503(
+    tmp_path: Path,
+) -> None:
+    for missing in ("pricing_masters", "native_intervention_owner"):
+        bundle = _durable_bundle(tmp_path / f"operator-missing-{missing}.sqlite3")
+        _persist_synthetic_franchisee_native_stores(bundle, "tenant-operator-unavailable")
+        if missing == "native_intervention_owner":
+            bundle = replace(bundle, intervention_repository=None)
+        app, _ = _live_app(
+            None, bundle=bundle, with_priceops_masters=missing == "native_intervention_owner",
+        )
+        headers = {**_ops_headers("tenant-operator-unavailable"), "x-store-ids": "STORE-001"}
+        expected_code = (
+            "PRICEOPS_STORE_BINDING_UNAVAILABLE" if missing == "pricing_masters"
+            else "OPERATOR_PENDING_OWNER_UNAVAILABLE"
+        )
+        try:
+            with TestClient(app) as client:
+                for endpoint in ("/shell/tasks", "/today", "/bootstrap"):
+                    response = client.get(BASE + endpoint, headers=headers)
+                    assert response.status_code == 503, response.text
+                    assert response.json()["detail"]["code"] == expected_code
+        finally:
+            bundle.engine.close()

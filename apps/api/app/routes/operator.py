@@ -514,8 +514,16 @@ def create_operator_router(
                 def search(self, query: str, **kwargs: Any) -> dict[str, Any]:
                     return svc.search(query, **kwargs, read_projection=lambda state: pending_state_for_request(request, state))
 
+            # Only franchisee routes supply this already-authorized store.
+            # Their store-task portal reads the original native state and has
+            # no dependency on Operator-only pending review owners.
+            state_reader = (
+                svc
+                if effective_store_id is not None
+                else cast(OperatorStateService, RequestProjectedState())
+            )
             scoped_state = TenantBoundOperatorStateService(
-                cast(OperatorStateService, RequestProjectedState()),
+                state_reader,
                 tenant_id=tenant_id,
                 brand_ids=cast(tuple[str, ...], context["brand_ids"]),
                 region_ids=cast(tuple[str, ...], context["region_ids"]),
