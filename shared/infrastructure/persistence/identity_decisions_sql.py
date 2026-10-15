@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from modules.listing.domain.identity_graph import IdentityConflictError
+from modules.listing.domain.identity_graph import IdentityConflictError, IdentityNotFoundError
 from shared.domain.events import DomainEvent
 from shared.infrastructure.persistence.identity_cases_sql import (
     _version,
@@ -126,6 +126,73 @@ class CanonicalIdentityDecisionRepository:
             raise IdentityConflictError("IDENTITY_CASE_NOT_AWAITING_REVIEW")
         self.graph._no_hold(tenant, "intake", intake["intake_id"], held=intake["legal_hold"])
         return case, intake
+
+    def planning_context(self, tenant: str, case_id: str, *, expected_case_version: int) -> dict:
+        """Read a complete bounded native closure; the caller authorizes every row.
+
+        The surrounding route holds this same serializable transaction while
+        authorizing/projecting the rows. No plan, disposition or eligibility is
+        inferred, and no missing version is synthesized from matching evidence.
+        """
+        with self.graph.transaction(tenant):
+            case, intake = self._context(tenant, _uuid(case_id), expected_case_version)
+            anchors = self.engine.query(
+                "SELECT match_candidate_id,property_id,listing_id FROM identity.match_candidates "
+                "WHERE tenant_id=? AND match_case_id=? ORDER BY rank,match_candidate_id LIMIT 101",
+                (tenant, case["match_case_id"]),
+            )
+            if len(anchors) > 100:
+                raise IdentityConflictError("IDENTITY_PLANNING_CONTEXT_TOO_LARGE")
+            if not anchors:
+                raise IdentityConflictError("IDENTITY_PLANNING_ANCHORS_REQUIRED")
+            bindings, anchor_listings = [], {}
+            for row in anchors:
+                property_id = row["property_id"]
+                listing_version = None
+                if row["listing_id"] is not None:
+                    listing = self.graph._one("SELECT * FROM expansion.listings WHERE tenant_id=? AND listing_id=?",
+                        (tenant, row["listing_id"]))
+                    anchor_listings[listing["listing_id"]] = listing
+                    resolved = self.graph.resolve_listing(tenant, row["listing_id"])
+                    property_id, listing_version = resolved["effective_property_id"], resolved["listing_version"]
+                if property_id is None:
+                    raise IdentityConflictError("MATCH_CANDIDATE_IDENTITY_UNAVAILABLE")
+                bindings.append({"match_candidate_id": row["match_candidate_id"],
+                    "effective_property_id": _uuid(property_id), "listing_id": row["listing_id"],
+                    "listing_version": listing_version})
+            property_ids = sorted({row["effective_property_id"] for row in bindings})
+            properties = self.engine.query(
+                "SELECT * FROM identity.properties WHERE tenant_id=? "
+                "AND property_id=ANY(?::uuid[]) ORDER BY property_id LIMIT 101", (tenant, property_ids),
+            )
+            if {row["property_id"] for row in properties} != set(property_ids):
+                raise IdentityNotFoundError("CANONICAL_IDENTITY_RESOURCE_NOT_FOUND")
+            # Identical closure predicate to _resources: immutable Listing
+            # parents and current source edges both bind actual Listing versions.
+            listings = self.engine.query(
+                "SELECT * FROM expansion.listings WHERE tenant_id=? AND (property_id=ANY(?::uuid[]) "
+                "OR listing_id IN (SELECT listing_id FROM identity.source_identity_edges WHERE tenant_id=? "
+                "AND property_id=ANY(?::uuid[]) AND effective_to IS NULL)) "
+                "ORDER BY listing_id LIMIT 1001", (tenant, property_ids, tenant, property_ids),
+            )
+            edges = self.engine.query(
+                "SELECT edge_id,property_id,listing_id,edge_version FROM identity.source_identity_edges "
+                "WHERE tenant_id=? AND property_id=ANY(?::uuid[]) AND effective_to IS NULL "
+                "ORDER BY edge_id LIMIT 1001", (tenant, property_ids),
+            )
+            candidates = self.engine.query(
+                "SELECT * FROM expansion.candidate_sites WHERE tenant_id=? "
+                "AND property_id=ANY(?::uuid[]) ORDER BY candidate_site_id LIMIT 1001", (tenant, property_ids),
+            )
+            if any(len(rows) > 1000 for rows in (listings, edges, candidates)):
+                raise IdentityConflictError("IDENTITY_PLANNING_CONTEXT_TOO_LARGE")
+            listing_ids = {row["listing_id"] for row in listings}
+            if any(row["listing_id"] is not None and row["listing_id"] not in listing_ids
+                   for row in edges):
+                raise IdentityConflictError("IDENTITY_PLANNING_CONTEXT_INCOMPLETE")
+            return {"match_case": case, "intake": intake, "anchors": bindings,
+                    "properties": properties, "listings": listings, "source_identity_edges": edges,
+                    "candidate_sites": candidates, "anchor_listings": list(anchor_listings.values())}
 
     def _snapshot(self, tenant: str, case: dict, intake: dict, kind: str, plan: dict) -> dict:
         properties = self.graph._resources(tenant, plan, intake)

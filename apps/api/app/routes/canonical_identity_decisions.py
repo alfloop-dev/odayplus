@@ -142,6 +142,53 @@ class CanonicalIdentitySummary(BaseModel):
     job_version: NativeVersion | None
 
 
+class IdentityPlanningAnchor(BaseModel):
+    match_candidate_id: UUID
+    effective_property_id: UUID
+    listing_id: UUID | None
+    listing_version: NativeVersion | None
+
+
+class IdentityPlanningProperty(BaseModel):
+    property_id: UUID
+    version: NativeVersion
+    status: str
+
+
+class IdentityPlanningListing(BaseModel):
+    listing_id: UUID
+    property_id: UUID | None
+    version: NativeVersion
+    lifecycle_state: str
+
+
+class IdentityPlanningEdge(BaseModel):
+    edge_id: UUID
+    property_id: UUID
+    listing_id: UUID | None
+    edge_version: NativeVersion
+
+
+class IdentityPlanningCandidate(BaseModel):
+    candidate_site_id: UUID
+    property_id: UUID
+    version: NativeVersion
+    status: str
+    target_format_code: str
+
+
+class CanonicalIdentityPlanningContext(BaseModel):
+    match_case_id: UUID
+    match_case_version: NativeVersion
+    intake_id: UUID
+    intake_version: NativeVersion
+    anchors: list[IdentityPlanningAnchor] = Field(max_length=100)
+    properties: list[IdentityPlanningProperty] = Field(max_length=100)
+    listings: list[IdentityPlanningListing] = Field(max_length=1000)
+    source_identity_edges: list[IdentityPlanningEdge] = Field(max_length=1000)
+    candidate_sites: list[IdentityPlanningCandidate] = Field(max_length=1000)
+
+
 class IdentityJobCancelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -321,6 +368,38 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
                     store.flush()
                 response.headers["ETag"] = f'W/"{receipt["version"]}"'
         return receipt
+
+    @router.get("/match-cases/{match_case_id}/identity-context", operation_id="getCanonicalIdentityPlanningContext",
+                response_model=CanonicalIdentityPlanningContext, responses=errors)
+    def planning_context(match_case_id: UUID, request: Request, response: Response) -> dict:
+        with _identity_errors(request):
+            principal, repo = context(request)
+            with repo.graph.transaction(principal.tenant_id):
+                case, parent = repo.graph._case(principal.tenant_id, str(match_case_id))
+                authorize(request, principal, parent)
+                selected = repo.planning_context(principal.tenant_id, str(match_case_id),
+                    expected_case_version=case["version"])
+                seen_listings = set()
+                for kind in ("properties", "listings", "anchor_listings", "candidate_sites"):
+                    for row in selected[kind]:
+                        if kind in {"listings", "anchor_listings"}:
+                            if row["listing_id"] in seen_listings:
+                                continue
+                            seen_listings.add(row["listing_id"])
+                        authorize(request, principal, row)
+                response.headers["ETag"] = f'W/"{case["version"]}"'
+                # Project bounded metadata only after the entire closure is
+                # authorized. Original URL, source identity and evidence stay private.
+                return {"match_case_id": case["match_case_id"], "match_case_version": case["version"],
+                    "intake_id": parent["intake_id"], "intake_version": parent["version"],
+                    "anchors": selected["anchors"],
+                    "properties": [{key: row[key] for key in ("property_id", "version", "status")}
+                                   for row in selected["properties"]],
+                    "listings": [{key: row[key] for key in ("listing_id", "property_id", "version", "lifecycle_state")}
+                                 for row in selected["listings"]],
+                    "source_identity_edges": selected["source_identity_edges"],
+                    "candidate_sites": [{key: row[key] for key in ("candidate_site_id", "property_id", "version", "status", "target_format_code")}
+                                        for row in selected["candidate_sites"]]}
 
     @router.post("/match-cases/{match_case_id}/identity-decisions", operation_id="proposeCanonicalIdentity",
                  response_model=CanonicalIdentityReceipt, status_code=201, responses=errors)

@@ -341,6 +341,19 @@ export type CanonicalIdentityJobSummary = {
   version: number;
 };
 
+/** CanonicalIdentityPlanningContext */
+export type CanonicalIdentityPlanningContext = {
+  anchors: IdentityPlanningAnchor[];
+  candidate_sites: IdentityPlanningCandidate[];
+  intake_id: string;
+  intake_version: number;
+  listings: IdentityPlanningListing[];
+  match_case_id: string;
+  match_case_version: number;
+  properties: IdentityPlanningProperty[];
+  source_identity_edges: IdentityPlanningEdge[];
+};
+
 /** CanonicalIdentityReceipt */
 export type CanonicalIdentityReceipt = {
   audit_event_id: string;
@@ -932,6 +945,46 @@ export type IdentityJobCancelRequest = {
 export type IdentityPartition = {
   source_identity_edge_ids: string[];
   target_property_id: string | null;
+};
+
+/** IdentityPlanningAnchor */
+export type IdentityPlanningAnchor = {
+  effective_property_id: string;
+  listing_id: string | null;
+  listing_version: number | null;
+  match_candidate_id: string;
+};
+
+/** IdentityPlanningCandidate */
+export type IdentityPlanningCandidate = {
+  candidate_site_id: string;
+  property_id: string;
+  status: string;
+  target_format_code: string;
+  version: number;
+};
+
+/** IdentityPlanningEdge */
+export type IdentityPlanningEdge = {
+  edge_id: string;
+  edge_version: number;
+  listing_id: string | null;
+  property_id: string;
+};
+
+/** IdentityPlanningListing */
+export type IdentityPlanningListing = {
+  lifecycle_state: string;
+  listing_id: string;
+  property_id: string | null;
+  version: number;
+};
+
+/** IdentityPlanningProperty */
+export type IdentityPlanningProperty = {
+  property_id: string;
+  status: string;
+  version: number;
 };
 
 /** IdentityReviewRequest */
@@ -2546,6 +2599,7 @@ export const API_PATHS = {
   "/api/v1/market-intelligence/sites/context/batch": ["POST"],
   "/api/v1/market-intelligence/sites/{site_id}/context": ["GET"],
   "/api/v1/match-cases/{match_case_id}/decisions": ["POST"],
+  "/api/v1/match-cases/{match_case_id}/identity-context": ["GET"],
   "/api/v1/match-cases/{match_case_id}/identity-decisions": ["POST"],
   "/api/v1/netplan/scenarios": ["GET", "POST"],
   "/api/v1/netplan/scenarios/{scenario_id}": ["GET", "PUT"],

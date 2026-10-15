@@ -1771,6 +1771,83 @@
         "title": "CanonicalIdentityJobSummary",
         "type": "object"
       },
+      "CanonicalIdentityPlanningContext": {
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityPlanningAnchor"
+            },
+            "maxItems": 100,
+            "title": "Anchors",
+            "type": "array"
+          },
+          "candidate_sites": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityPlanningCandidate"
+            },
+            "maxItems": 1000,
+            "title": "Candidate Sites",
+            "type": "array"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_version": {
+            "minimum": 1.0,
+            "title": "Intake Version",
+            "type": "integer"
+          },
+          "listings": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityPlanningListing"
+            },
+            "maxItems": 1000,
+            "title": "Listings",
+            "type": "array"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "match_case_version": {
+            "minimum": 1.0,
+            "title": "Match Case Version",
+            "type": "integer"
+          },
+          "properties": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityPlanningProperty"
+            },
+            "maxItems": 100,
+            "title": "Properties",
+            "type": "array"
+          },
+          "source_identity_edges": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityPlanningEdge"
+            },
+            "maxItems": 1000,
+            "title": "Source Identity Edges",
+            "type": "array"
+          }
+        },
+        "required": [
+          "match_case_id",
+          "match_case_version",
+          "intake_id",
+          "intake_version",
+          "anchors",
+          "properties",
+          "listings",
+          "source_identity_edges",
+          "candidate_sites"
+        ],
+        "title": "CanonicalIdentityPlanningContext",
+        "type": "object"
+      },
       "CanonicalIdentityReceipt": {
         "properties": {
           "audit_event_id": {
@@ -4620,6 +4697,190 @@
           "source_identity_edge_ids"
         ],
         "title": "IdentityPartition",
+        "type": "object"
+      },
+      "IdentityPlanningAnchor": {
+        "properties": {
+          "effective_property_id": {
+            "format": "uuid",
+            "title": "Effective Property Id",
+            "type": "string"
+          },
+          "listing_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Id"
+          },
+          "listing_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Version"
+          },
+          "match_candidate_id": {
+            "format": "uuid",
+            "title": "Match Candidate Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "match_candidate_id",
+          "effective_property_id",
+          "listing_id",
+          "listing_version"
+        ],
+        "title": "IdentityPlanningAnchor",
+        "type": "object"
+      },
+      "IdentityPlanningCandidate": {
+        "properties": {
+          "candidate_site_id": {
+            "format": "uuid",
+            "title": "Candidate Site Id",
+            "type": "string"
+          },
+          "property_id": {
+            "format": "uuid",
+            "title": "Property Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "target_format_code": {
+            "title": "Target Format Code",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidate_site_id",
+          "property_id",
+          "version",
+          "status",
+          "target_format_code"
+        ],
+        "title": "IdentityPlanningCandidate",
+        "type": "object"
+      },
+      "IdentityPlanningEdge": {
+        "properties": {
+          "edge_id": {
+            "format": "uuid",
+            "title": "Edge Id",
+            "type": "string"
+          },
+          "edge_version": {
+            "minimum": 1.0,
+            "title": "Edge Version",
+            "type": "integer"
+          },
+          "listing_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Id"
+          },
+          "property_id": {
+            "format": "uuid",
+            "title": "Property Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edge_id",
+          "property_id",
+          "listing_id",
+          "edge_version"
+        ],
+        "title": "IdentityPlanningEdge",
+        "type": "object"
+      },
+      "IdentityPlanningListing": {
+        "properties": {
+          "lifecycle_state": {
+            "title": "Lifecycle State",
+            "type": "string"
+          },
+          "listing_id": {
+            "format": "uuid",
+            "title": "Listing Id",
+            "type": "string"
+          },
+          "property_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Property Id"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "listing_id",
+          "property_id",
+          "version",
+          "lifecycle_state"
+        ],
+        "title": "IdentityPlanningListing",
+        "type": "object"
+      },
+      "IdentityPlanningProperty": {
+        "properties": {
+          "property_id": {
+            "format": "uuid",
+            "title": "Property Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "property_id",
+          "version",
+          "status"
+        ],
+        "title": "IdentityPlanningProperty",
         "type": "object"
       },
       "IdentityReviewRequest": {
@@ -31548,6 +31809,57 @@
           }
         },
         "summary": "Decide Match Case",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/match-cases/{match_case_id}/identity-context": {
+      "get": {
+        "operationId": "getCanonicalIdentityPlanningContext",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Match Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIdentityPlanningContext"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Planning Context",
         "tags": [
           "assisted-listing-intake"
         ]
