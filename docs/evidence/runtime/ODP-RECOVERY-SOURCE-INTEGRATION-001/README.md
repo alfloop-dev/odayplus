@@ -9,7 +9,79 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pinned identities
+## Pi continuation checkpoint — 2026-10-15 (incremental, NOT acceptance)
+
+Worker Manager allocated Pi run `pi-20261015T041654Z-d24c3830` to the existing
+successor workspace; canonical owner is Pi, final reviewer remains **Human/Ops**.
+Pi also appears in the ORIGINAL task's failed-owner history: this allocation is
+not failed-epoch clearance or independent execution from every previous account.
+The quota interruption, refused Codex owner request, previous Antigravity author
+contributions and initial overwritten Vitest raw-log gap remain historical facts.
+
+- Current admitted base at this dispatch: `c0c8c8226acaab3cbe8bb76e79f01e5e6694abb3`.
+  Two-parent merge `cf8eafd7a826a1a11f86d7a38e3d41d4b426d2fa` preserves local
+  `1c4c3c55f9d9fb96f30d628d834e7108a0a11c9a` (Antigravity scanner fixture fix)
+  and the current base. No conflict, reset, rebase or discarded task history.
+  Incoming `.orchestrator/common.py`, `test_common.py` and
+  `test_adapter_fallback_policy.py` remain byte-identical to that base; no new
+  control-plane policy/authentication change was authored by this continuation.
+- Focused base controls and diff check both exited 0 at **cf8eafd7a826 only**.
+  Normal push updated existing PR1478 without review submission or merge arming.
+  Readback at cf8 showed `autoMergeRequest=null`, `task-review-gate=FAILURE`,
+  and normal CI [38680820149](https://github.com/alfloop-dev/odayplus/actions/runs/38680820149)
+  still IN_PROGRESS. These are NOT terminal CI acceptance or later-head proof.
+- Code anchor `68bd4ab038c92a16ac970dccf60e0974a4e98af3` changes ONLY typed
+  revision/parent/branch metadata in Alembic 0025/0026, matching the repository
+  convention consumed by the existing single-head tripwire. Revision IDs,
+  parents, SQL, upgrade/downgrade behavior and all test assertions are unchanged.
+  Existing `test_migration_revisions_have_one_head` genuinely failed at cf8
+  (`0025_audit_worm_outbox.py declares no revision`); its whole owning module
+  exits 0 at 68bd. `tests/ops/test_migration_backfill.py -q -n 2` also exits 0
+  at 68bd. This does NOT fix or prove the missing runtime audit FK prerequisite.
+- Only the metadata portion of the previous Antigravity DB helper's frozen
+  `peer-3.uncommitted.patch` was adopted manually. Snapshot SHA256 checked:
+  `b0d19150579bf810331ac299cf507b67a55f77f9227ba42189794956ca96990b`.
+  No old helper workspace/process was edited, cleaned, signalled or resumed.
+  No added repair path outside the existing allocated source scope was modified.
+
+Author diagnostic logs and terminal records are retained under the canonical
+run scratch root
+`$PANTHEON_STATUS_ROOT/.orchestrator/worker-runtime/scratch/pi-20261015T041654Z-d24c3830/`.
+Each selection directory has `raw.log` and `terminal.json` binding actual command,
+head/tree, exit code, duration, 420s cap, environment sanitation, NODE_ENV=test,
+checkout cleanliness and raw-log SHA256. These records are explicitly
+**author-diagnostic-not-canonical**, never copied into canonical receipt storage.
+
+| Directory | Measured head | Exit | Raw-log SHA256 |
+|---|---|---:|---|
+| `base-composition-controls` | cf8eafd7a826 | 0 | `30a6af55cf4b3ea108e20d227f8aa2880bc480b2f41d4c708ef0b8b3d1c0d91a` |
+| `base-diff-check` | cf8eafd7a826 | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `migration-metadata-before` | cf8eafd7a826 | 1 | `314b98581b94abe771679d16bc259b4ef7199cce9fd9d8c0b5b8a5760618677c` |
+| `migration-metadata-after` | 68bd4ab038c9 | 0 | `06955fb47f16312e5d13266c774a2aa4648c46e423cbe6564a92e25b68e39131` |
+| `migration-plan-after` | 68bd4ab038c9 | 0 | `314a40cae7f36ed2b46bbee5f41bb6ad134f2acb05f07aab92bf77e55571e87c` |
+
+**Still in progress, not ready for review:** full retained failed-job logs have
+not all been inspected in this continuation; the runtime migration prerequisite,
+verified future audit-producer tenant attribution, authenticated performance/E2E
+fixtures, GO/expiry fixtures and other CI findings remain to be repaired/verified.
+Inventory/justify any additional paths with Manager before modifying them. Preserve
+all authentication/tenant/FK/GO/expiry denials, actual PostgreSQL controls, performance
+150 requests and waves10/20/50, P95 3s/three-run gate, and all E2E members.
+Before review submission, finish owned author work and obtain fresh final-head
+canonical14, all17 bounded selections, actual terminal hosted CI and independent
+configured Codex2 supplied-text assessment with explicit coverage gaps. No previous
+553/dcf1/cf8/68bd evidence transfers to a later head. No approval, merge arming,
+merge, done or live effect is authorized. Original blocked six-reopen history,
+absent-original UNKNOWN, operational HOLD and goalfalse persist.
+
+## Original composition checkpoint (historical, not current-head equivalence)
+
+The identities and equality observations below describe the original 553-era
+composition against base 7f4abcce80c7, not the changed continuation head or moving
+`origin/dev`. The scanner fix and metadata repair above intentionally differ
+from pinned dcf1; the current base also includes PR1479's three auth-probe paths.
+
+### Pinned identities
 
 | Item | Value |
 |---|---|
@@ -28,7 +100,7 @@ composition was applied by restoring exactly the 315 repair-side paths from
 `dcf1f258f` onto the admitted base, then committing in three scoped,
 private-index, trailered commits.
 
-## Scope inventory and justification
+### Original scope inventory and justification
 
 All 315 paths are those changed by `359e480a4..dcf1f258f` (258 added, 57
 modified, 0 deleted). Mainline-only changes are the seven
