@@ -9,10 +9,31 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi base-advance composition / current measurement freeze
+## Pi base-advance scope checkpoint / NOT review-ready
+
+The current documentation successor preserves the history-preserving base merge
+below, but does not transfer its measurements. At exact merge anchorffb269ba9a1e,
+the incoming20-member Store Ops module really exits1:18 pass and2 fail401 where
+the live-mode fixture expected503. Its development-only headers no longer reach
+the intended tenant/materialization assertions under the correctly fail-closed
+auth boundary. See [batch006 request](MANAGER-SCOPE-BATCH006-REQUEST.md) and
+[immutable diagnostic index](pi-base-advance-diagnostics.json). This module's
+PostgresDocumentStore-on-SQLite test double is NOT actual-PG runtime proof.
+
+The exact owning test path is absent from the current356-entry lease. No edit or
+auth weakening is made. Manager must authorize a narrow supported synthetic-auth
+fixture repair and renew execution context before edits. Original20 members,
+503/200/404/isolation/CAS/idempotency assertions and independent anonymous/forged
+credential denials must remain. Current successor is an incremental source-scope
+checkpoint, not a frozen accepted composition; all new-head14/17/owning/CI/review
+proof remains required after the repair. Preserve native1/22.094073s/420, real
+owned wait/ECHILD/closed-writer seal and exact fixture removal, without calling
+short-command completion proof of long Manager activity recognition.
+
+### History-preserving composition anchor (historical measurement head)
 
 Manager run `pi-20261015T122146Z-d2046e81` received an explicit base-advance
-requirement. The commit introducing this section preserves BOTH the prior task
+requirement. Merge anchor `ffb269ba9a1e8ba5d3a3caa05c3091a018430c58` preserves BOTH the prior task
 head `1ac806841ffce14014df81a89970bb59a4474342` and admitted
 `origin/dev` `19562ad2a8773099db26366446b3488b446e630c` as merge parents.
 No reset, rebase, amendment, discarded task history or force push is used.
