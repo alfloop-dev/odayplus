@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import secrets
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +24,7 @@ from modules.external_data.application.market_data_facade import (
     CUTOVER_MODE_LEGACY_ONLY,
     FACADE_MODE_ENV,
 )
+from modules.opsboard.auth import SigningKey, encode_compact_jwt
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
 from tests.integration._authz import EXTERNAL_DATA_HEADERS
 
@@ -412,20 +416,41 @@ def test_production_routes_gate_only_the_dependency_they_use(
     # only observable while the ingestion trigger still exists: under the
     # post-cutover default it answers 410 before reaching the provider gate.
     monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_LEGACY_ONLY)
+    # Real production authentication boundary; trusted-dev headers are not auth.
+    issuer = "https://production-composition.offline.invalid"
+    secret = secrets.token_urlsafe(48)
+    signing_key = SigningKey(kid="composition", algorithm="HS256", secret=secret.encode())
+    monkeypatch.setenv("ODP_AUTH_MODE", "local")
+    monkeypatch.setenv("ODP_AUTH_SERVICE_ISSUER", issuer)
+    monkeypatch.setenv("ODP_AUTH_SERVICE_AUDIENCES", "oday-api")
+    monkeypatch.setenv("ODP_AUTH_HS256_KEYS", "composition:" + secret)
+    monkeypatch.setenv("ODP_AUTH_PRINCIPAL_MAP", json.dumps({
+        "production-operator": {"roles": ["operations_manager"], "scope": {"tenant_id": "tenant-a"}},
+        "test-operator": {"roles": ["data_owner"], "scope": {"tenant_id": "tenant-a"}},
+    }))
+
+    def signed(headers: dict[str, str]) -> dict[str, str]:
+        now = time.time()
+        token = encode_compact_jwt({"iss": issuer, "sub": headers["x-subject-id"], "aud": "oday-api", "iat": now, "exp": now + 300}, signing_key)
+        return {**headers, "authorization": "Bearer " + token}
+
+    external_headers = signed(EXTERNAL_DATA_HEADERS)
     bundle = _production_backed_bundle(tmp_path / "scoped-gate.sqlite3")
     app = create_app(
         persistence=bundle,
         external_provider_validation=_unavailable_provider(),
     )
-    operator_headers = {
+    operator_headers = signed({
         "x-subject-id": "production-operator",
         "x-roles": "operations_manager",
         "x-tenant-id": "tenant-a",
         "x-operator-role": "ops-lead",
-    }
+    })
 
     try:
         with TestClient(app) as client:
+            forged = client.get("/api/v1/operator/bootstrap", headers={k: v for k, v in operator_headers.items() if k != "authorization"})
+            assert forged.status_code == 401, forged.text
             operator = client.get(
                 "/api/v1/operator/bootstrap",
                 headers=operator_headers,
@@ -436,14 +461,14 @@ def test_production_routes_gate_only_the_dependency_they_use(
 
             history = client.get(
                 "/api/v1/external-data/ingestion-runs",
-                headers=EXTERNAL_DATA_HEADERS,
+                headers=external_headers,
             )
-            assert history.status_code == 200
+            assert history.status_code == 200, history.text
             assert history.json() == {"items": [], "count": 0}
 
             provider_route = client.post(
                 "/api/v1/external-data/ingestion-runs",
-                headers=EXTERNAL_DATA_HEADERS,
+                headers=external_headers,
                 json={"provider_id": "listing.partner_feed"},
             )
             assert provider_route.status_code == 503

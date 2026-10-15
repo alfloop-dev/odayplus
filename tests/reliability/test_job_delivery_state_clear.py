@@ -34,10 +34,12 @@ from shared.jobs.queue import (
 )
 from shared.jobs.registry import JobRegistry
 
-# Neutral synthetic type: not in JOB_FEATURE_FLAG_MAP (so no kill-switch is
-# consulted), not a ``.receipt`` suffix (so the worker will actually claim it),
-# and not ``forecast`` (so the read route applies no tenant scoping).
-PROBE_JOB_TYPE = "delivery-state-clear-probe"
+# Supported ForecastOps type with an explicit owning tenant. The registry
+# still installs the synthetic transient handler: the real worker loop drives
+# retry/delivery state, without granting unknown types an HTTP read waiver.
+PROBE_JOB_TYPE = "forecast"
+TENANT = "delivery-fixture-tenant"
+JOB_HEADERS = {"x-subject-id": "delivery-reader", "x-roles": "operations_manager", "x-tenant-id": TENANT}
 
 
 class _TransientHandlerError(RuntimeError):
@@ -69,7 +71,7 @@ def _drive_job_to_retrying(bundle, *, idempotency_key: str) -> str:
     job, created = bundle.job_queue.enqueue(
         JobRequest(
             job_type=PROBE_JOB_TYPE,
-            payload={"probe": idempotency_key},
+            payload={"tenant_id": TENANT, "store_id": "delivery-fixture-store", "probe": idempotency_key},
             idempotency_key=idempotency_key,
         ),
         correlation_id=f"corr-{idempotency_key}",
@@ -275,7 +277,9 @@ def test_job_read_api_serializes_cleared_and_retained_delivery_state(db_path) ->
     """The existing job read endpoint must publish the cleared value, not a stale one."""
     bundle = _durable_bundle(db_path)
     try:
-        client = TestClient(create_app(persistence=bundle))
+        app = create_app(persistence=bundle)
+        client = TestClient(app, headers=JOB_HEADERS)
+        assert TestClient(app).get("/api/v1/jobs/missing").status_code == 401
 
         # One job at a time: ``claim_next`` orders by ``created_at``, so a job
         # left sitting in QUEUED+RETRYING would be re-claimed instead of the

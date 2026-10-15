@@ -7,6 +7,19 @@ from shared.auth import Role
 
 # External-data freshness is an integration-domain read guarded by RBAC
 # (ODP-GAP-API-001); DATA_OWNER holds the integration view grant.
+_JOB_HEADERS = {"x-subject-id": "job-operator", "x-roles": Role.OPERATIONS_MANAGER.value, "x-tenant-id": "tenant-test"}
+_AUDIT_HEADERS = {"x-subject-id": "job-auditor", "x-roles": Role.AUDITOR.value, "x-tenant-id": "tenant-test"}
+
+
+def _forecast_payload(client: TestClient) -> dict:
+    persisted = client.post("/forecastops/timeseries", headers=_JOB_HEADERS, json={
+        "observations": [{"store_id": "site-123", "business_date": "2026-06-27", "actual_revenue": 95000, "source_snapshot_ids": ["offline-job-pos"]}],
+    })
+    assert persisted.status_code == 202, persisted.text
+    assert persisted.json()["count"] == 1
+    return {"job_type": "forecast", "payload": {"tenant_id": "tenant-test", "store_id": "site-123", "prediction_origin_time": "2026-06-28T00:00:00Z"}}
+
+
 _EXTERNAL_DATA_HEADERS = {
     "x-subject-id": "test-operator",
     "x-roles": Role.DATA_OWNER.value,
@@ -81,8 +94,8 @@ def test_platform_version_prefers_deployment_release_sha(monkeypatch) -> None:
 
 def test_job_enqueue_is_idempotent_and_audited() -> None:
     client = TestClient(create_app())
-    headers = {"x-correlation-id": "corr-job-1", "Idempotency-Key": "idem-1"}
-    payload = {"job_type": "forecastops.score", "payload": {"site_id": "site-123"}}
+    headers = {**_JOB_HEADERS, "x-correlation-id": "corr-job-1", "Idempotency-Key": "idem-1"}
+    payload = _forecast_payload(client)
 
     first = client.post("/jobs", json=payload, headers=headers)
     second = client.post("/jobs", json=payload, headers=headers)
@@ -100,9 +113,11 @@ def test_job_enqueue_is_idempotent_and_audited() -> None:
     assert first_body["job"]["job_id"] == second_body["job"]["job_id"]
     assert first_body["job"]["status"] == "queued"
     assert first_body["job"]["correlation_id"] == "corr-job-1"
-    assert first_body["job"]["idempotency_key"] == "idem-1"
+    # Supported jobs store a length-framed tenant/type key while the envelope
+    # retains the caller key. Keep both exact contract assertions.
+    assert first_body["job"]["idempotency_key"] == "forecast:v2:11:tenant-test:6:idem-1"
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-job-1"})
+    audit = client.get("/audit/events", headers=_AUDIT_HEADERS, params={"correlation_id": "corr-job-1"})
 
     assert audit.status_code == 200
     events = audit.json()["events"]
@@ -114,10 +129,16 @@ def test_job_enqueue_is_idempotent_and_audited() -> None:
 def test_job_lookup_and_openapi_contract() -> None:
     client = TestClient(create_app())
 
-    enqueue = client.post("/jobs", json={"job_type": "netplan.solve", "payload": {}})
+    payload = _forecast_payload(client)
+    assert client.post("/jobs", json=payload).status_code == 401
+    unsupported = client.post("/jobs", headers=_JOB_HEADERS, json={"job_type": "netplan.solve", "payload": {"tenant_id": "tenant-test"}})
+    assert unsupported.status_code == 403, unsupported.text
+    enqueue = client.post("/jobs", headers=_JOB_HEADERS, json=payload)
+    assert enqueue.status_code == 202, enqueue.text
     job_id = enqueue.json()["job"]["job_id"]
 
-    lookup = client.get(f"/jobs/{job_id}")
+    assert client.get(f"/jobs/{job_id}").status_code == 401
+    lookup = client.get(f"/jobs/{job_id}", headers=_JOB_HEADERS)
     openapi = client.get("/openapi.json")
 
     assert lookup.status_code == 200
