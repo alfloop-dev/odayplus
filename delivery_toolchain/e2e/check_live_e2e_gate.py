@@ -2801,18 +2801,14 @@ def _await_terminal_status(
     return status_value, last_detail
 
 
-def _check_worker_and_audit(
+def _check_worker_preflight(
     *,
-    http: HttpClient,
     config: GateConfig,
-    worker_driver: WorkerDriver,
-    correlation_id: str,
     checks: list[CheckResult],
     report: dict[str, Any],
     provider: Mapping[str, Any],
-    monotonic: Callable[[], float],
-    sleep: Callable[[float], None],
-) -> None:
+) -> bool:
+    """Read-only dispatch prerequisites, also reported when execution is held."""
     runtime_provider_mode = str(provider.get("mode") or "").strip().lower()
     configured_provider_mode = config.external_provider_mode.strip().lower()
     if runtime_provider_mode != configured_provider_mode:
@@ -2828,7 +2824,7 @@ def _check_worker_and_audit(
             "worker",
         )
         report["worker"] = {"skipped": False, "dispatched": False}
-        return
+        return False
 
     providers_disabled = _disabled_provider_runtime_confirmed(config, provider)
     if not config.required_provider_ids and not providers_disabled:
@@ -2840,8 +2836,27 @@ def _check_worker_and_audit(
             "worker",
         )
         report["worker"] = {"skipped": False, "dispatched": False}
-        return
+        return False
+    return True
 
+
+def _check_worker_and_audit(
+    *,
+    http: HttpClient,
+    config: GateConfig,
+    worker_driver: WorkerDriver,
+    correlation_id: str,
+    checks: list[CheckResult],
+    report: dict[str, Any],
+    provider: Mapping[str, Any],
+    monotonic: Callable[[], float],
+    sleep: Callable[[float], None],
+) -> None:
+    if not _check_worker_preflight(
+        config=config, checks=checks, report=report, provider=provider
+    ):
+        return
+    providers_disabled = _disabled_provider_runtime_confirmed(config, provider)
     idempotency_key = f"live-e2e-{config.expected_sha[:12]}-{correlation_id}"
     body = _enqueue_body(config, idempotency_key)
     headers = {"idempotency-key": idempotency_key}
@@ -3134,6 +3149,11 @@ def evaluate_gate(
                 f"no usable web origin for {config.web_url or '<missing>'}",
                 "config",
             )
+            if config.dev_admin:
+                _check(
+                    checks, False, "session:web_client",
+                    f"no usable web origin for {config.web_url or '<missing>'}", "config",
+                )
         else:
             _check_web_login(http=web_http, checks=checks)
         models_response = http.request("GET", "/api/v1/learninghub/models")
@@ -3151,6 +3171,9 @@ def evaluate_gate(
         # scheduled path, and the ingestion runs it persists are exactly what
         # ``_check_source_data`` reads back. Reading the history first meant the
         # gate asserted evidence that only a manual POST could ever have created.
+        _check_worker_preflight(
+            config=config, checks=checks, report=report, provider=runtime_provider
+        )
         # These probes POST jobs and invoke the worker. A final blocked report
         # cannot undo those effects: all read-only prerequisites, including the
         # serving release binding, must positively pass BEFORE entering them.
