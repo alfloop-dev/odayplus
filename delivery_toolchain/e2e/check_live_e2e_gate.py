@@ -1793,7 +1793,179 @@ def _payload_mentions(response: HttpResponse, code: str) -> bool:
     return code in json.dumps(response.payload, sort_keys=True)
 
 
+class _SessionCustodyStopped(Exception):
+    """Stop standalone probes after ambiguous issuance or cleanup; no retry."""
+
+
+class _OwnedGateSessions:
+    """Memory-only specific-cookie custody, never the native recovery owner.
+
+    Native recovery supplies its own barrier: quarantine MUST precede delegated
+    cleanup. No cookie value or exception text is included in reports.
+    """
+
+    _cookie_name = "__Host-oday_web_session"
+    _max_sessions = 8
+
+    def __init__(self, web: HttpClient, config: GateConfig) -> None:
+        self.web = web
+        self.origin = _web_origin(config.web_url)
+        self.sessions: dict[str, dict[str, bool]] = {}
+        self.unknown = False
+        self.cleaning = False
+
+    def _observe(self, result: HttpResponse, *, issuance: bool) -> None:
+        pairs = result.set_cookie_pairs
+        if pairs is None:
+            pairs = tuple(result.cookies.items())
+        if result.custody_uncertain or (issuance and result.failed):
+            self.unknown = True
+        if len(pairs) > 1 or any(not name for name, _ in pairs):
+            self.unknown = True
+        for name, value in pairs:
+            if not value:
+                continue
+            if (name != self._cookie_name or type(value) is not str
+                    or len(value) > 8192
+                    or any(ord(c) < 33 or ord(c) >= 127 or c in ';,="\\' for c in value)):
+                self.unknown = True
+                continue
+            if value in self.sessions:
+                if self.sessions[value]["attempted"]:
+                    # Reissuing an already-released opaque value is ambiguous,
+                    # not permission for a second logout of the same cookie.
+                    self.unknown = True
+            elif len(self.sessions) < self._max_sessions:
+                self.sessions[value] = {"attempted": False, "acknowledged": False,
+                                        "session_denied": False, "api_denied": False,
+                                        "session_denied_attempted": False, "api_denied_attempted": False}
+            else:
+                self.unknown = True
+            if not issuance:
+                self.unknown = True
+
+    def request(self, method: str, path: str, **kwargs: Any) -> HttpResponse:
+        if self.unknown and not self.cleaning:
+            raise _SessionCustodyStopped
+        headers = kwargs.get("headers") or {}
+        raw_cookie = headers.get("cookie", "")
+        value = raw_cookie.removeprefix(self._cookie_name + "=")
+        owned = self.sessions.get(value) if raw_cookie == self._cookie_name + "=" + value else None
+        logout = method == "POST" and path == "/auth/logout"
+        issuance = method == "POST" and path in {"/login", "/auth/password"}
+        if logout:
+            if owned is None or owned["attempted"]:
+                self.unknown = True
+                raise _SessionCustodyStopped
+            owned["attempted"] = True  # Before transport, even if the reply is lost.
+        if method == "GET" and owned is not None and owned["attempted"]:
+            key = {"/auth/session": "session_denied", "/api/v1/operator/users": "api_denied"}.get(path)
+            if key:
+                if owned[key + "_attempted"]:
+                    self.unknown = True
+                    raise _SessionCustodyStopped
+                owned[key + "_attempted"] = True
+        try:
+            result = self.web.request(method, path, **kwargs)
+        except Exception:
+            self.unknown = True
+            raise _SessionCustodyStopped from None
+        self._observe(result, issuance=issuance)
+        if logout and owned is not None:
+            owned["acknowledged"] = (
+                not result.failed and not result.custody_uncertain and result.status == 200
+                and result.payload.get("ok") is True
+                and result.cookies.get(self._cookie_name, "missing") == ""
+            )
+            if not owned["acknowledged"]:
+                self.unknown = True
+        if method == "GET" and owned is not None and owned["attempted"]:
+            if path == "/auth/session":
+                owned["session_denied"] = not result.failed and result.status == 401
+                if not owned["session_denied"]:
+                    self.unknown = True
+            elif path == "/api/v1/operator/users":
+                owned["api_denied"] = not result.failed and result.status in DENIED_STATUSES
+                if not owned["api_denied"]:
+                    self.unknown = True
+        # Let the owning journey retain the exact failed observation/check;
+        # stop BEFORE its next request, rather than hiding that diagnostic.
+        return result
+
+    def finish(self, checks: list[CheckResult], report: dict[str, Any], correlation_id: str) -> None:
+        # <=8 distinct cookies, <=3 cleanup calls each, no login/rotation/retry
+        # or compensation. Calls retain the configured transport timeout. This
+        # outer deadline is NOT an extension of any native work/cleanup budget.
+        self.cleaning = True
+        deadline = time.monotonic() + 540.0
+        for value, state in tuple(self.sessions.items()):
+            headers = {"accept": "application/json", "origin": self.origin,
+                       "x-correlation-id": correlation_id,
+                       "cookie": self._cookie_name + "=" + value}
+            try:
+                if time.monotonic() >= deadline:
+                    self.unknown = True
+                    break
+                if not state["attempted"]:
+                    self.request("POST", "/auth/logout", authenticated=False,
+                                 headers=headers, follow_redirects=False)
+                # A lost/invalid logout is not retried. Continue only other
+                # specifically owned cookies, retaining UNKNOWN.
+                if not state["acknowledged"]:
+                    self.unknown = True
+                    continue
+                for key, path in (("session_denied", "/auth/session"),
+                                  ("api_denied", "/api/v1/operator/users")):
+                    if not state[key + "_attempted"]:
+                        if time.monotonic() >= deadline:
+                            self.unknown = True
+                            break
+                        self.request("GET", path, authenticated=False, headers=headers)
+            except _SessionCustodyStopped:
+                self.unknown = True
+        complete = not self.unknown and all(all(s.values()) for s in self.sessions.values())
+        report["dev_admin"]["session_cleanup"] = {
+            "outcome": "completed" if complete else "unknown",
+            "observed_sessions": len(self.sessions),
+            "logout_attempts": sum(s["attempted"] for s in self.sessions.values()),
+            "verified_sessions": sum(all(s.values()) for s in self.sessions.values()),
+            "specific_owned_sessions_only": True,
+        }
+        _check(checks, complete, "session:owned_cleanup",
+               "specific observed sessions released" if complete else "session custody/cleanup UNKNOWN",
+               "session")
+
+
 def _check_dev_admin_session(
+    *,
+    web: HttpClient | None,
+    config: GateConfig,
+    correlation_id: str,
+    checks: list[CheckResult],
+    report: dict[str, Any],
+    session_cleanup_barrier: Callable[[Sequence[CheckResult]], None] | None = None,
+) -> None:
+    if web is None or session_cleanup_barrier is not None:
+        # NEVER finally-logout around native recovery's barrier, including when
+        # it or its transport raises: the native owner quarantines FIRST.
+        _check_dev_admin_session_journey(
+            web=web, config=config, correlation_id=correlation_id, checks=checks,
+            report=report, session_cleanup_barrier=session_cleanup_barrier,
+        )
+        return
+    custody = _OwnedGateSessions(web, config)
+    try:
+        _check_dev_admin_session_journey(
+            web=custody, config=config, correlation_id=correlation_id,
+            checks=checks, report=report,
+        )
+    except _SessionCustodyStopped:
+        _check(checks, False, "session:custody", "session transport/issuance/cleanup UNKNOWN", "session")
+    finally:
+        custody.finish(checks, report, correlation_id)
+
+
+def _check_dev_admin_session_journey(
     *,
     web: HttpClient | None,
     config: GateConfig,

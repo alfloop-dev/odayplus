@@ -211,7 +211,10 @@ class AdminWeb(base.FakeHttp):
         super().__init__(routes)
         self.is_fresh = is_fresh
         self.revoke_on_logout = revoke_on_logout
-        self.logged_out = False
+        self.logged_out = False  # Compatibility diagnostic, never revocation authority.
+        self.revoked_sessions: set[str] = set()
+        self.issued_sessions = {SESSION_VALUE, FRESH_SESSION_VALUE, "sealed-form-session-reference",
+                                "sealed-rotation-session-reference"}
         self.password_rotated = not is_fresh
         self.headers_seen: list[tuple[str, dict[str, str]]] = []
 
@@ -221,10 +224,11 @@ class AdminWeb(base.FakeHttp):
         assert kwargs.get("authenticated") is False, "web requests never inject app identity"
         assert "authorization" not in headers and "x-tenant-id" not in headers
         cookie = headers.get("cookie", "")
-        has_session = f"{SESSION_COOKIE}={SESSION_VALUE}" in cookie
-        has_fresh_session = f"{SESSION_COOKIE}={FRESH_SESSION_VALUE}" in cookie
+        session_value = cookie.removeprefix(f"{SESSION_COOKIE}=")
+        has_fresh_session = session_value == FRESH_SESSION_VALUE
+        has_session = session_value in self.issued_sessions and not has_fresh_session
 
-        if self.revoke_on_logout and (has_session or has_fresh_session) and self.logged_out:
+        if self.revoke_on_logout and session_value in self.revoked_sessions:
             return base.response(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
 
         # POST /login
@@ -240,7 +244,7 @@ class AdminWeb(base.FakeHttp):
                 if body.get("username") == USERNAME and body.get("password") == PASSWORD and self.password_rotated:
                     self.logged_out = False
                     return base.response(303, location=f"{base.WEB_URL}/operator?view=admin",
-                                         cookies={SESSION_COOKIE: SESSION_VALUE})
+                                         cookies={SESSION_COOKIE: "sealed-form-session-reference"})
                 return base.response(303, location=f"{base.WEB_URL}/login?error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin")
             if "anon POST /login" in self.routes:
                 route = self.routes["anon POST /login"]
@@ -282,13 +286,15 @@ class AdminWeb(base.FakeHttp):
             new_p = body.get("newPassword")
             if (curr == INITIAL_PASSWORD or (curr == PASSWORD and not self.password_rotated)) and new_p == PASSWORD:
                 self.password_rotated = True
-                return base.response(200, {"ok": True})
+                return base.response(200, {"ok": True},
+                                     cookies={SESSION_COOKIE: "sealed-rotation-session-reference"})
             return base.response(400, {"error": {"code": "INVALID_PASSWORD"}})
 
         # POST /auth/logout
         if method == "POST" and path == "/auth/logout":
             assert headers.get("origin") == base.WEB_URL, "logout must carry Web origin"
             self.logged_out = True
+            self.revoked_sessions.add(session_value)
             if "POST /auth/logout [session]" in self.routes:
                 route = self.routes["POST /auth/logout [session]"]
                 if callable(route):

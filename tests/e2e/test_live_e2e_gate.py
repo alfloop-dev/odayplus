@@ -2575,3 +2575,134 @@ def test_api_client_still_follows_a_same_origin_redirect(redirecting_api: Any) -
     assert result.status == 200
     assert result.payload == {"landed": True}
     assert collected == []
+
+
+@pytest.mark.parametrize("fresh", [False, True])
+def test_standalone_cleans_every_distinct_observed_session_once(fresh: bool) -> None:
+    from tests.e2e import test_live_e2e_gate_dev_admin as admin
+
+    web = admin.AdminWeb(admin.web_routes(), is_fresh=fresh)
+    _, report, _ = admin.run_dev_admin(
+        web=web, cfg=admin.dev_admin_config(dev_admin_initial_password=admin.INITIAL_PASSWORD if fresh else ""),
+    )
+    assert report["ok"] is True, report["blockers"]
+    logouts = [headers["cookie"] for call, headers in web.headers_seen if call == "POST /auth/logout"]
+    expected = {admin.SESSION_VALUE, "sealed-form-session-reference"}
+    if fresh:
+        expected |= {admin.FRESH_SESSION_VALUE, "sealed-rotation-session-reference"}
+    assert set(logouts) == {f"{admin.SESSION_COOKIE}={value}" for value in expected}
+    assert len(logouts) == len(expected)
+    assert report["dev_admin"]["session_cleanup"]["outcome"] == "completed"
+    assert report["dev_admin"]["session_cleanup"]["verified_sessions"] == len(expected)
+    assert not any(value in json.dumps(report) for value in expected)
+
+
+@pytest.mark.parametrize("failure", [
+    "preliminary_transport", "must_change", "initial_login", "rotation", "after_rotation_login",
+    "identity_read", "unknown_tenant", "foreign_probe", "foreign_readback", "form_read",
+])
+def test_standalone_all_early_exits_release_observed_cookies(failure: str) -> None:
+    from tests.e2e import test_live_e2e_gate_dev_admin as admin
+
+    class FailingWeb(admin.AdminWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Any:
+            result = super().request(method, path, **kwargs)
+            cookie = (kwargs.get("headers") or {}).get("cookie", "")
+            if method == "GET" and path == "/api/v1/operator/users" and cookie not in {
+                f"{admin.SESSION_COOKIE}={v}" for v in self.revoked_sessions
+            }:
+                if failure == "preliminary_transport":
+                    return response(0, error="transport unavailable")
+                if failure == "must_change":
+                    return response(403, {"error": {"code": "PASSWORD_CHANGE_REQUIRED"}})
+                if failure == "identity_read":
+                    return response(200, {"users": []})
+                if failure == "unknown_tenant":
+                    data = admin.admin_users()
+                    data["users"][0]["scope"]["tenant_id"] = "not-a-tenant"
+                    return response(200, data)
+                if failure == "foreign_readback" and any(c == "POST /api/v1/operator/users" for c, _ in self.headers_seen):
+                    return response(200, {"users": []})
+            if method == "POST" and path == "/api/v1/operator/users" and failure == "foreign_probe":
+                return response(500)
+            if method == "POST" and path == "/login" and failure == "initial_login" and (kwargs.get("body") or {}).get("password") == admin.INITIAL_PASSWORD:
+                return response(500, cookies=result.cookies)
+            if method == "POST" and path == "/auth/password" and failure == "rotation":
+                return response(500, cookies=result.cookies)
+            if method == "POST" and path == "/login" and failure == "after_rotation_login" and self.password_rotated:
+                return response(500, cookies=result.cookies)
+            if method == "GET" and path == "/auth/session" and "sealed-form-session-reference" in cookie and failure == "form_read" and "sealed-form-session-reference" not in self.revoked_sessions:
+                raise OSError("do not disclose raw exception")
+            return result
+
+    fresh = failure in {"initial_login", "rotation", "after_rotation_login"}
+    web = FailingWeb(admin.web_routes(), is_fresh=fresh)
+    _, report, _ = admin.run_dev_admin(
+        web=web, cfg=admin.dev_admin_config(dev_admin_initial_password=admin.INITIAL_PASSWORD if fresh else ""),
+    )
+    assert report["ok"] is False
+    logouts = [h["cookie"] for c, h in web.headers_seen if c == "POST /auth/logout"]
+    assert logouts and len(logouts) == len(set(logouts))
+    expected = {admin.FRESH_SESSION_VALUE, "sealed-rotation-session-reference"} if fresh else {admin.SESSION_VALUE}
+    if failure == "initial_login":
+        expected = {admin.FRESH_SESSION_VALUE}
+    if failure == "after_rotation_login":
+        expected.add(admin.SESSION_VALUE)
+    if failure == "form_read":
+        expected.add("sealed-form-session-reference")
+    assert set(logouts) == {f"{admin.SESSION_COOKIE}={v}" for v in expected}
+    assert "do not disclose raw exception" not in json.dumps(report)
+
+
+@pytest.mark.parametrize("failure", ["lost_login", "partial_login", "duplicate_cookies", "lost_logout", "invalid_logout", "live_replay"])
+def test_standalone_partial_lost_custody_remains_unknown_without_retry(failure: str) -> None:
+    from tests.e2e import test_live_e2e_gate_dev_admin as admin
+
+    class UncertainWeb(admin.AdminWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Any:
+            result = super().request(method, path, **kwargs)
+            if method == "POST" and path == "/login" and result.cookies:
+                if failure == "lost_login":
+                    return response(0, error="lost reply", custody_uncertain=True)
+                if failure == "partial_login":
+                    return response(0, error="lost body", cookies=result.cookies)
+                if failure == "duplicate_cookies":
+                    return response(200, result.payload, cookies=result.cookies,
+                                    set_cookie_pairs=((admin.SESSION_COOKIE, admin.SESSION_VALUE),
+                                                      (admin.SESSION_COOKIE, "sealed-rotation-session-reference")))
+            if method == "POST" and path == "/auth/logout":
+                if failure == "lost_logout":
+                    raise OSError("lost acknowledgement")
+                if failure == "invalid_logout":
+                    return response(500)
+            return result
+
+    web = UncertainWeb(admin.web_routes(), revoke_on_logout=failure != "live_replay")
+    _, report, _ = admin.run_dev_admin(web=web)
+    assert report["ok"] is False
+    assert report["dev_admin"]["session_cleanup"]["outcome"] == "unknown"
+    logouts = [h["cookie"] for c, h in web.headers_seen if c == "POST /auth/logout"]
+    assert len(logouts) == len(set(logouts))
+    assert len(logouts) == (0 if failure == "lost_login" else 2 if failure == "duplicate_cookies" else 1)
+    assert not any("sealed-form-session-reference" in h.get("cookie", "") for _, h in web.headers_seen)
+
+
+def test_native_cleanup_barrier_remains_delegated_without_finally_logout() -> None:
+    from tests.e2e import test_live_e2e_gate_dev_admin as admin
+
+    web = admin.AdminWeb(admin.web_routes())
+    checks: list[Any] = []
+    report: dict[str, Any] = {}
+
+    class NativeStop(Exception):
+        pass
+
+    def quarantine_first(checks: Any) -> None:
+        raise NativeStop
+
+    with pytest.raises(NativeStop):
+        gate._check_dev_admin_session(web=web, config=admin.dev_admin_config(),
+                                      correlation_id=CORRELATION_ID, checks=checks,
+                                      report=report, session_cleanup_barrier=quarantine_first)
+    assert not any(c == "POST /auth/logout" for c, _ in web.headers_seen)
+    assert "session_cleanup" not in report["dev_admin"]
