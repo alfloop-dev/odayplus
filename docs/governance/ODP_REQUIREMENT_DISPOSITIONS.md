@@ -208,22 +208,24 @@ stateDiagram-v2
 ### 4.4 `ODP-FR-INTV-006`：介入處置生命週期
 
 #### 成員：`ADJUST`（調整中途狀態）
-- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已交付 stop-plus-recreate 技術準備與 durable lineage 實作；待門市營運實務確認或正式業務決策）
-- **Evidence Needed**: 依據 `docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md` 項目 16，需確認門市營運端目前針對進行中介入之實際調整做法（直接就地調整或停舊開新），並由業務權責人做成具備適用範圍與日期之正式業務決策。
-- **Evidence Owner**: Operations Lead / Product Lead
-- **Next Review Date**: 2026-10-01
+- **處置狀態**：`VERIFIED`（`status: satisfied`；stop-plus-recreate 與 durable lineage 已實作；原先待查的營運實務已由具名權責人確認）。本次對帳於 2026-10-15 記錄 `BLOCKED_BY_EVIDENCE → IMPLEMENTATION_READY → VERIFIED`，未回填一個不存在的 2026-10-09 registry 轉移。
+- **已取得的營運實務確認**：[issue #1446](https://github.com/alfloop-dev/odayplus/issues/1446)，由蔡尚志（GitHub `ajoe734`，`github:169176954`）以 Operations Lead / Product Lead 身分於 2026-10-09 確認：全部門市、全部介入類型採「停止原介入、另開新介入並記錄兩者關聯」，不採原地直接修改。收據複審日為 2027-10-09。
+- **可追溯收據**：`c0c8c8226acaab3cbe8bb76e79f01e5e6694abb3:docs/evidence/human-decisions/HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001/requirement-disposition-approval-receipt.json`；SHA-256 `cecb881659ba0f3542a99af63fcce48317cdbabe4756cc9109b6349b2c4e5be0`，與 #1446 內嵌 JSON 相同。該收據自身不更改任何需求狀態；本節與 manifest 是經工程證據對帳的後續變更。
 - **實作證據 (Evidence)**:
   - `modules/intervention/application/workflow.py::InterventionWorkflow.adjust_case`
   - `modules/intervention/infrastructure/repositories.py::InMemoryInterventionRepository`
   - `shared/infrastructure/persistence/repositories.py::DurableInterventionRepository`
   - `infra/db/migrations/000004_durable_product_domain.sql`
   - `infra/db/migrations/000025_intervention_adjust_lineage.sql`
+  - `infra/db/migrations/versions/0019_intervention_adjust_lineage.py`（實際執行 lineage SQL 的 Alembic revision）
 - **驗證證據 (Verification Evidence)**:
   - `tests/integration/test_intervention_workflow.py`（涵蓋 production-entry API、storage CAS、concurrent barrier、SQLite commit failure rollback、pre-upgrade relational backfill、explicit rollback plan consistency）
   - `tests/integration/test_official_real_estate_postgresql.py`（涵蓋 PostgreSQL 雙引擎受控交錯、API 409 STALE_UPDATE_CONFLICT、雙向 lineage 一致性與 audit 斷言）
-- **理由 (Rationale)**: 依循 ODP Remediation Plan 之工程條件建議實作具 lineage 之 stop-plus-recreate replacement/adjust action，停止前置介入並建立繼承/調整之新介入案例，具備 predecessor_id、replacement_id 與 adjustment_json 之 durable lineage，保留原介入參數、理由、actor、policy version 與 rollback plan；未誤用 AdLift Change Channel 詞彙；透過 storage-level CAS、row lock、RLock 與引擎級 transaction 提供 API、In-Memory、SQLite 與 PostgreSQL 交易原子性、並行衝突拒絕（STALE_UPDATE_CONFLICT）、回滾一致性與既有 document 資料庫升級 backfill 保證。
-- **實務決策缺口說明 (Open Decision Gap)**: 依據 `docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md` 項目 16（「先問實務：現在要調整的介入人是怎麼做的」）與 `docs/plans/ODP_REMEDIATION_PLAN_2026-09-03.md` 第 247 行（「若是『停掉再開一個』，可能只需要把兩者關聯記下來」），目前僅有工程條件建議，尚無可追溯之門市營運實務確認或正式業務決策（缺乏正式決策人、決策日期、適用門市/介入範圍與可追溯來源證據）。在取得正式實務確認前，此實作係作為條件建議之技術準備，誠實記錄 open decision gap，不虛構決策人、日期或來源，亦不將條件建議改述為已獲確認之現行門市營運實務。
-
+  - `tests/governance/test_remediation_truth_reconciliation.py`（引用原始收據 bytes/hash，拒絕失去確認來源、倒退為未確認或跳過合法狀態轉移）；當前變更仍須通過 CI，不以歷史執行替代新 commit 的結果。
+- **理由 (Rationale)**: `adjust_case` 停止前置介入並建立 replacement，透過原子寫入與 CAS 保留雙向 predecessor_id／replacement_id 及 adjustment_json，保存原參數、理由、actor、policy version 與 rollback plan；與 #1446 確認的實務一致。後端 lineage 與 API 可查得關聯的工程驗證，不宣稱操作者介面或真實業務 UAT 已驗收。
+- **原缺口與關閉依據**：2026-10-09 確認出現前，Item 16（「先問實務：現在要調整的介入人是怎麼做的」）及 Remediation Plan 第 247 行（「若是『停掉再開一個』，可能只需要把兩者關聯記下來」）仍缺權責人、日期、適用範圍與可追溯來源。#1446 已逐項提供，實作亦保存兩案關聯；舊 note、Evidence Needed、Evidence Owner、Next Review Date 與 rationale 完整保留於 manifest 歷史，不再當成現況。`VERIFIED` 依 §2 僅表示該成員已實作、符號可解析並受 CI 驗證。
+- **為何不是其他狀態**：原 `BLOCKED_BY_EVIDENCE` 索取的營運確認已存在；這是實務確認與實作對帳，並非不實作裁決或需求豁免，因此不採 `DECIDED`，也不新增法定裁決欄位。
+- **獨立驗收邊界**：九道 human release authority、`canonical_live_runtime_register_recorded: false`、真實業務 UAT、資料／模型與 staging 准入均各自維持原狀；本成員的工程驗證不構成發布授權。AVM `DEPRECIATION` 亦仍為 `BLOCKED_BY_EVIDENCE`，其 production 技術條件不因這份共用收據而消失。
 ---
 
 ### 4.5 `ODP-FR-SHARED-001`：工作狀態回報

@@ -5,6 +5,11 @@ still said "absent / to be implemented" after the implementation had merged,
 and corrected the `ODP-SA-06` provenance record that said the source bytes
 could not be found while they sat in a ZIP at the repository root.
 
+2026-10-15: ADJUST's separate operational question was answered by the human
+approval issued on 2026-10-09 (#1446). Pin that receipt and the lawful engineering
+transition instead of preserving the now-stale claim that no confirmation exists.
+The four implementation/live gaps above and all release gates stay independent.
+
 Each correction can go wrong in two directions, and this module pins both:
 
 * **Back to stale.** A member flipped back to ``absent`` or to its old
@@ -39,6 +44,7 @@ import zipfile
 from collections.abc import Callable
 from datetime import date
 from functools import cache
+from itertools import pairwise
 from typing import Any
 
 import pytest
@@ -49,6 +55,7 @@ from delivery_toolchain.governance.check_requirement_members import (
     WAIVER_SIGNAL_FIELDS,
     check,
     resolve,
+    validate_transition,
 )
 
 ZIP_PATH = REPO_ROOT / "oday_plus_batch_02_sa_documents.zip"
@@ -67,6 +74,17 @@ AVM001_ROW_PREFIX = (
 HISTORICAL_OBSERVED_REF = "75d25f653aa12c21a3f9627f29af2ed4def73153"
 GOVERNANCE_DOC = REPO_ROOT / "docs" / "governance" / "ODP_REQUIREMENT_DISPOSITIONS.md"
 PROVENANCE_DOC = REPO_ROOT / "docs" / "evidence" / "ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md"
+ADJUST_APPROVAL_REF = "c0c8c8226acaab3cbe8bb76e79f01e5e6694abb3"
+ADJUST_APPROVAL_PATH = (
+    "docs/evidence/human-decisions/HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001/"
+    "requirement-disposition-approval-receipt.json"
+)
+ADJUST_APPROVAL_SHA256 = "cecb881659ba0f3542a99af63fcce48317cdbabe4756cc9109b6349b2c4e5be0"
+ADJUST_CONFIRMATION_REF = {
+    "issue": "https://github.com/alfloop-dev/odayplus/issues/1446",
+    "receipt": f"github://alfloop-dev/odayplus@{ADJUST_APPROVAL_REF}/{ADJUST_APPROVAL_PATH}",
+    "sha256": ADJUST_APPROVAL_SHA256,
+}
 
 # (requirement, member) -> what the merged tree actually delivers.
 #   symbol: importable dotted path, then attribute chain.
@@ -108,7 +126,6 @@ RECONCILED: dict[tuple[str, str], dict[str, Any]] = {
 # each must keep. A green offline test or a decided H07/H08 does not close them.
 PRESERVED_GAPS: dict[tuple[str, str], tuple[str, str]] = {
     ("ODP-FR-SHARED-001", "PARTIAL"): ("satisfied", "BLOCKED_BY_EVIDENCE"),
-    ("ODP-FR-INTV-006", "ADJUST"): ("satisfied", "BLOCKED_BY_EVIDENCE"),
     ("ODP-FR-SITE-001", "BRAND_TRANSFER"): ("absent", "BLOCKED_BY_EVIDENCE"),
     ("ODP-FR-SITE-001", "FORMAT_CONVERSION"): ("absent", "BLOCKED_BY_EVIDENCE"),
     ("ODP-FR-NET-002", "LEASE"): ("absent", "BLOCKED_BY_EVIDENCE"),
@@ -190,6 +207,51 @@ def _member(manifest: dict[str, Any], requirement: str, name: str) -> dict[str, 
     raise AssertionError(f"{requirement}::{name} missing from manifest")
 
 
+@cache
+def _adjust_approval_bytes() -> bytes | None:
+    # This human receipt is on the independently published dev base, which need
+    # not be an ancestor of the feature head. Read that exact immutable commit;
+    # neither working-tree bytes nor a moving branch can supply the authority.
+    result = subprocess.run(
+        ["git", "cat-file", "blob", f"{ADJUST_APPROVAL_REF}:{ADJUST_APPROVAL_PATH}"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    return result.stdout if result.returncode == 0 else None
+
+
+def _adjust_confirmation_violations(
+    manifest: dict[str, Any], approval_bytes: bytes | None
+) -> list[str]:
+    where = "ODP-FR-INTV-006::ADJUST"
+    problems: list[str] = []
+    member = _member(manifest, "ODP-FR-INTV-006", "ADJUST")
+    disposition = member.get("disposition") or {}
+    if (member.get("status"), disposition.get("state")) != ("satisfied", "VERIFIED"):
+        problems.append(f"{where} regressed despite the recorded operational confirmation")
+    if disposition.get("operational_confirmation_ref") != ADJUST_CONFIRMATION_REF:
+        problems.append(f"{where} lost its independently pinned operational confirmation reference")
+    if approval_bytes is None or hashlib.sha256(approval_bytes).hexdigest() != ADJUST_APPROVAL_SHA256:
+        problems.append(f"{where} operational confirmation bytes are missing or differ from #1446")
+    history = disposition.get("history") or []
+    states = [h.get("state") for h in history] + [disposition.get("state")]
+    if (
+        states != ["BLOCKED_BY_EVIDENCE", "IMPLEMENTATION_READY", "VERIFIED"]
+        or disposition.get("previous_state") != "IMPLEMENTATION_READY"
+        or any(not validate_transition(a, b) for a, b in pairwise(states))
+    ):
+        problems.append(f"{where} lost its lawful evidence-to-implementation transition")
+    if not history or not all(
+        history[0].get(field)
+        for field in ("note", "evidence_needed", "evidence_owner", "next_review_date", "rationale")
+    ):
+        problems.append(f"{where} lost the original operational gap history")
+    if any(disposition.get(field) for field in WAIVER_SIGNAL_FIELDS):
+        problems.append(f"{where} operational confirmation became a waiver")
+    return problems
+
+
 def reconciliation_violations(
     manifest: dict[str, Any], read_blob: BlobReader = git_blob_at
 ) -> list[str]:
@@ -199,6 +261,7 @@ def reconciliation_violations(
     provenance record's ``location`` declares -- never the working-tree ZIP.
     """
     problems: list[str] = []
+    problems.extend(_adjust_confirmation_violations(manifest, _adjust_approval_bytes()))
 
     for (requirement, name), expected in RECONCILED.items():
         where = f"{requirement}::{name}"
@@ -329,6 +392,36 @@ def test_the_live_manifest_has_no_reconciliation_violation() -> None:
     assert reconciliation_violations(_load_manifest()) == []
 
 
+def test_adjust_confirmation_is_the_pinned_human_operational_answer() -> None:
+    raw = _adjust_approval_bytes()
+    assert raw is not None
+    assert hashlib.sha256(raw).hexdigest() == ADJUST_APPROVAL_SHA256
+    receipt = json.loads(raw)
+    assert receipt["decision"] == "approved"
+    assert receipt["approved_by"]["principal_id"] == "github:169176954"
+    confirmation = receipt["decisions"]["ODP-ADJUST-OPERATIONAL-CONFIRMATION"]
+    assert confirmation["requirement_ref"] == "ODP-FR-INTV-006::ADJUST"
+    assert confirmation["operational_practice"] == "stop_plus_recreate"
+    assert confirmation["decision_date"] == "2026-10-09"
+    assert confirmation["applicable_scope"] == "全部門市、全部介入類型"
+    assert confirmation["authority"] == {"operations_lead": "蔡尚志", "product_lead": "蔡尚志"}
+    member = _member(_load_manifest(), "ODP-FR-INTV-006", "ADJUST")
+    assert resolve(REPO_ROOT, member["evidence"]) is None
+
+
+def test_adjust_keeps_the_prior_evidence_gap_verbatim() -> None:
+    raw = git_blob_at(
+        "269433a6a71409967dc174ab1a5134b2f01f4751",
+        str(MANIFEST_PATH.relative_to(REPO_ROOT)),
+    )
+    assert raw is not None
+    old = _member(json.loads(raw), "ODP-FR-INTV-006", "ADJUST")
+    history = _member(_load_manifest(), "ODP-FR-INTV-006", "ADJUST")["disposition"]["history"]
+    for field, value in old["disposition"].items():
+        assert history[0][field] == value, field
+    assert old["note"] in history[0]["note"]
+
+
 def test_the_located_ref_is_the_independently_pinned_commit() -> None:
     records = _load_manifest()["_source_provenance"]["records"]
     for record_id in ("ODP-SA-06", "ODP-FR-AVM-001"):
@@ -407,6 +500,38 @@ def test_the_docs_mirror_the_corrected_states() -> None:
 
 
 # --------------------------------------------------------------------- negative
+
+
+def test_reverting_adjust_to_the_answered_operational_gap_is_refused() -> None:
+    manifest = _load_manifest()
+    member = _member(manifest, "ODP-FR-INTV-006", "ADJUST")
+    member["disposition"] = copy.deepcopy(member["disposition"]["history"][0])
+    problems = reconciliation_violations(manifest)
+    assert any("ADJUST regressed" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("approval_bytes", [None, b'{"decision":"approved"}\n'])
+def test_adjust_without_the_actual_human_receipt_is_refused(approval_bytes: bytes | None) -> None:
+    problems = _adjust_confirmation_violations(_load_manifest(), approval_bytes)
+    assert any("confirmation bytes" in p for p in problems), problems
+
+
+def test_adjust_with_a_fabricated_confirmation_reference_is_refused() -> None:
+    manifest = _load_manifest()
+    reference = _member(manifest, "ODP-FR-INTV-006", "ADJUST")["disposition"]["operational_confirmation_ref"]
+    reference["sha256"] = "0" * 64
+    problems = reconciliation_violations(manifest)
+    assert any("pinned operational confirmation reference" in p for p in problems), problems
+
+
+def test_adjust_cannot_skip_the_implementation_ready_transition() -> None:
+    manifest = _load_manifest()
+    disposition = _member(manifest, "ODP-FR-INTV-006", "ADJUST")["disposition"]
+    disposition["history"].pop()
+    disposition["previous_state"] = "BLOCKED_BY_EVIDENCE"
+    problems = reconciliation_violations(manifest)
+    assert any("lawful evidence-to-implementation transition" in p for p in problems), problems
+    assert not validate_transition("BLOCKED_BY_EVIDENCE", "VERIFIED")
 
 
 @pytest.mark.parametrize("key", sorted(RECONCILED), ids=lambda k: f"{k[0]}::{k[1]}")
