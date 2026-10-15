@@ -30,7 +30,10 @@ applying the effect twice.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -43,6 +46,17 @@ class IntakeIdempotencyRecord:
     action: str
     key: str
     response: dict[str, Any]
+    actor_subject_id: str | None = None
+    request_sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class OperatorWrite:
+    action: str
+    key: str | None
+    actor_subject_id: str
+    request_sha256: str
+    replayed_response: dict[str, Any] | None = None
 
 
 class AssistedIntakeRepository(Protocol):
@@ -476,11 +490,73 @@ class NetworkListingService:
             else _empty_state()
         )
         self._idempotency_cache = _copy(state.pop("idempotencyCache", {}))
+        self._idempotency_bindings: dict[tuple[str, str], tuple[str | None, str | None]] = {}
         self._state = state
         self._load_intakes()
         self._load_idempotency_cache()
         self._load_listings()
         self._load_candidates()
+
+    def _require_actor(self, actor_name: str | None, actor_role_id: str) -> str:
+        if not isinstance(actor_name, str) or not actor_name.strip():
+            raise NetworkListingPolicyError("AUTHENTICATED_ACTOR_REQUIRED")
+        if not self._seed_fixtures:
+            try:
+                actor_name = str(uuid.UUID(actor_name))
+                uuid.UUID(self._tenant_id or "")
+            except ValueError as exc:
+                raise NetworkListingPolicyError("CANONICAL_ACTOR_TENANT_REQUIRED") from exc
+            if actor_role_id not in {"expansion_user", "site_reviewer", "executive", "data_owner", "finance_legal"}:
+                raise NetworkListingPolicyError("VERIFIED_PLATFORM_ROLE_REQUIRED")
+        return actor_name
+
+    def _require_tenant(self, tenant_id: str | None) -> str:
+        value = tenant_id or self._tenant_id
+        if not value:
+            if self._seed_fixtures:
+                return "tenant-a"
+            raise NetworkListingPolicyError("TENANT_SCOPE_REQUIRED")
+        if self._tenant_id and value != self._tenant_id:
+            raise NetworkListingPolicyError("TENANT_SCOPE_DENIED")
+        if not self._seed_fixtures:
+            try:
+                if str(uuid.UUID(value)) != value:
+                    raise ValueError("tenant identity is not canonical")
+            except ValueError as exc:
+                raise NetworkListingPolicyError("CANONICAL_TENANT_REQUIRED") from exc
+        return value
+
+    def _prepare_write(self, action: str, key: str | None, actor: str,
+                       request_value: dict[str, Any], correlation_id: str | None) -> OperatorWrite:
+        if not self._seed_fixtures:
+            key = _require_governed_write_context(
+                idempotency_key=key, correlation_id=correlation_id, action_label=action,
+            )
+        try:
+            encoded = json.dumps(request_value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise NetworkListingPolicyError("INVALID_REQUEST_CONTEXT") from exc
+        request_sha = hashlib.sha256(encoded.encode()).hexdigest()
+        if not key:
+            return OperatorWrite(action, None, actor, request_sha)
+        scoped_key = hashlib.sha256(actor.encode()).hexdigest() + ":" + key
+        pair = (action, scoped_key)
+        cached = self._idempotency_cache.get(pair)
+        if cached is not None:
+            if self._idempotency_bindings.get(pair) != (actor, request_sha):
+                raise NetworkListingConflict("IDEMPOTENCY_CONFLICT")
+            return OperatorWrite(action, scoped_key, actor, request_sha, _copy(cached))
+        if (action, key) in self._idempotency_cache:
+            # Legacy receipts cannot be attributed from a display name. Stop
+            # for governed reconciliation instead of replaying or reapplying.
+            raise NetworkListingConflict("UNBOUND_LEGACY_REPLAY")
+        return OperatorWrite(action, scoped_key, actor, request_sha)
+
+    def _save_write(self, write: OperatorWrite, response: dict[str, Any]) -> None:
+        if write.key:
+            self._save_idempotency(write.action, write.key, response,
+                                   actor_subject_id=write.actor_subject_id,
+                                   request_sha256=write.request_sha256)
 
     def export_state(self) -> dict[str, Any]:
         return {
@@ -806,15 +882,24 @@ class NetworkListingService:
         self._state["assistedIntakes"] = self._intakes.list_intakes()
 
     def _load_idempotency_cache(self) -> None:
+        records = self._intakes.list_idempotency_records()
         self._idempotency_cache = {
             (record.action, record.key): record.response
-            for record in self._intakes.list_idempotency_records()
+            for record in records
+        }
+        self._idempotency_bindings = {
+            (record.action, record.key): (getattr(record, "actor_subject_id", None),
+                                         getattr(record, "request_sha256", None))
+            for record in records
         }
 
-    def _save_idempotency(self, action: str, key: str, response: dict[str, Any]) -> None:
+    def _save_idempotency(self, action: str, key: str, response: dict[str, Any], *,
+                          actor_subject_id: str | None = None, request_sha256: str | None = None) -> None:
         self._idempotency_cache[(action, key)] = _copy(response)
+        self._idempotency_bindings[(action, key)] = (actor_subject_id, request_sha256)
         self._intakes.save_idempotency_record(
-            IntakeIdempotencyRecord(action=action, key=key, response=_copy(response))
+            IntakeIdempotencyRecord(action=action, key=key, response=_copy(response),
+                                    actor_subject_id=actor_subject_id, request_sha256=request_sha256)
         )
 
     def _save_intake_to_state(self, intake: dict[str, Any]) -> None:
@@ -849,6 +934,7 @@ class NetworkListingService:
             else _empty_state()
         )
         self._idempotency_cache = {}
+        self._idempotency_bindings = {}
         self._intakes.clear()
         self._state["assistedIntakes"] = []
 
@@ -925,13 +1011,15 @@ class NetworkListingService:
         correlation_id: str | None,
     ) -> dict[str, Any]:
         # Server-side role check
-        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "executive", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to convert listing")
 
-        cache_key = ("convert", idempotency_key or "")
-        if idempotency_key and cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        write = self._prepare_write("convert", idempotency_key, actor_name,
+                                    {"listing_id": listing_id}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
 
         listing = self._listing(listing_id)
         if listing.get("hardRuleFailures"):
@@ -1019,8 +1107,7 @@ class NetworkListingService:
             "correlationId": correlation_id,
             "expansionSteps": self._expansion_steps(selected_id=listing["heatZoneId"]),
         }
-        if idempotency_key:
-            self._save_idempotency("convert", idempotency_key, result)
+        self._save_write(write, result)
         return result
 
     def merge_listing(
@@ -1037,7 +1124,8 @@ class NetworkListingService:
         correlation_id: str | None,
     ) -> dict[str, Any]:
         # Server-side role check
-        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "executive", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to merge listing")
 
@@ -1057,9 +1145,10 @@ class NetworkListingService:
             action_label="merge listing",
         )
 
-        cache_key = ("merge", governed_key)
-        if cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        write = self._prepare_write("merge", governed_key, actor_name,
+                                    {"source_listing_id": source_listing_id, "target_listing_id": target_listing_id, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
 
         source = self._listing(source_listing_id)
         target = self._listing(target_listing_id)
@@ -1129,7 +1218,7 @@ class NetworkListingService:
             "correlationId": correlation_id,
             "expansionSteps": self._expansion_steps(selected_id=target["heatZoneId"]),
         }
-        self._save_idempotency("merge", governed_key, result)
+        self._save_write(write, result)
         return result
 
     def archive_listing(
@@ -1143,7 +1232,8 @@ class NetworkListingService:
         correlation_id: str | None,
     ) -> dict[str, Any]:
         # Server-side role check
-        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "executive", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to archive listing")
 
@@ -1151,9 +1241,10 @@ class NetworkListingService:
         if not reason:
             raise NetworkListingPolicyError("archive reason is required")
 
-        cache_key = ("archive", idempotency_key or "")
-        if idempotency_key and cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        write = self._prepare_write("archive", idempotency_key, actor_name,
+                                    {"listing_id": listing_id, "reason": reason}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
 
         listing = self._listing(listing_id)
         before_status = listing.get("status")
@@ -1188,8 +1279,7 @@ class NetworkListingService:
             "correlationId": correlation_id,
             "expansionSteps": self._expansion_steps(selected_id=listing["heatZoneId"]),
         }
-        if idempotency_key:
-            self._save_idempotency("archive", idempotency_key, result)
+        self._save_write(write, result)
         return result
 
     def submit_intake(
@@ -1204,10 +1294,19 @@ class NetworkListingService:
         job_queue: Any | None = None,
         async_intake: bool = False,
         tenant_id: str | None = None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        cache_key = ("submit_intake", idempotency_key or "")
-        if idempotency_key and cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        tenant_id = self._require_tenant(tenant_id)
+        write = self._prepare_write("submit_intake", idempotency_key, actor_name,
+                                    {"url": url.strip(), "heat_zone_id": heat_zone_id, "async_intake": async_intake}, correlation_id)
+        if write.replayed_response is not None:
+            current = self._listing_intake(write.replayed_response["id"])
+            if authorize_existing is not None:
+                authorize_existing(_copy(current))
+            elif not self._seed_fixtures:
+                raise NetworkListingPolicyError("INTAKE_SCOPE_CONTEXT_REQUIRED")
+            return write.replayed_response
 
         from modules.external_data.application.assisted_intake import (
             PARSER_VERSION,
@@ -1230,7 +1329,12 @@ class NetworkListingService:
         for intake in self._state["assistedIntakes"]:
             if intake.get("canonicalUrl") == canon_url:
                 if intake.get("stage") in {"NEEDS_REVIEW", "READY", "QUARANTINED", "FAILED", "AWAITING_ASSISTED_ENTRY"}:
+                    if authorize_existing is not None:
+                        authorize_existing(_copy(intake))
+                    elif not self._seed_fixtures:
+                        raise NetworkListingPolicyError("INTAKE_SCOPE_CONTEXT_REQUIRED")
                     # Exact duplicate before retrieval (terminal state idempotency)
+                    self._save_write(write, intake)
                     return _copy(intake)
                 else:
                     raise NetworkListingConflict(f"URL {url} is already being processed (intake {intake['id']})")
@@ -1244,11 +1348,11 @@ class NetworkListingService:
 
         intake = {
             "id": intake_id,
-            "tenantId": tenant_id or "tenant-a",
+            "tenantId": tenant_id,
             "originalUrl": url,
             "canonicalUrl": canon_url,
-            "submitter": actor_name or "林曉青（展店）",
-            "owner": actor_name or "林曉青",
+            "submitter": actor_name,
+            "owner": actor_name,
             "heatZoneId": heat_zone_id,
             "intakeMethod": "URL",
             "stage": "SUBMITTED",
@@ -1307,7 +1411,7 @@ class NetworkListingService:
                 snapshot_service = self._get_snapshot_service()
                 gate = self._get_security_gate(snapshot_service)
                 
-                resolved_tenant_id = tenant_id or "00000000-0000-0000-0000-000000000001"
+                resolved_tenant_id = self._require_tenant(tenant_id)
                 retrieval_res = gate.fetch(
                     canon_url,
                     tenant_id=resolved_tenant_id,
@@ -1402,7 +1506,7 @@ class NetworkListingService:
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),
             "actorRoleId": actor_role_id,
-            "actorName": actor_name or "Expansion Manager",
+            "actorName": actor_name,
             "action": "intake.create",
             "targetId": intake_id,
             "message": f"Intake record {intake_id} created for {url}.",
@@ -1416,8 +1520,7 @@ class NetworkListingService:
         intake["auditEvents"].append(audit_evt)
         self._save_intake(intake)
 
-        if idempotency_key:
-            self._save_idempotency("submit_intake", idempotency_key, intake)
+        self._save_write(write, intake)
         return _copy(intake)
 
     def list_intakes(
@@ -1458,7 +1561,8 @@ class NetworkListingService:
         correlation_id: str | None,
     ) -> dict[str, Any]:
         # Server-side role check
-        allowed_roles = {"expansionStaff", "expansion_user", "expansionManager", "expansion-manager", "dataSteward", "data_owner"}
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        allowed_roles = {"expansionStaff", "expansion_user", "expansionManager", "expansion-manager", "dataSteward", "data_owner", "site_reviewer", "executive"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to correct intake")
 
@@ -1467,9 +1571,10 @@ class NetworkListingService:
             correlation_id=correlation_id,
             action_label="correct intake",
         )
-        cache_key = ("correct_intake", governed_key)
-        if cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        write = self._prepare_write("correct_intake", governed_key, actor_name,
+                                    {"intake_id": intake_id, "fields": fields, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
 
         risk_summary_text = _require_acknowledged_risk(
             risk_summary=risk_summary,
@@ -1543,7 +1648,7 @@ class NetworkListingService:
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),
             "actorRoleId": actor_role_id,
-            "actorName": actor_name or "Expansion Manager",
+            "actorName": actor_name,
             "action": "intake.correct",
             "targetId": intake_id,
             "message": f"Fields corrected: {'; '.join(corrections_made)}. Reason: {reason}",
@@ -1560,7 +1665,7 @@ class NetworkListingService:
         }
         intake["auditEvents"].append(audit_evt)
         self._save_intake(intake)
-        self._save_idempotency("correct_intake", governed_key, intake)
+        self._save_write(write, intake)
         return _copy(intake)
 
     # A batch import row carries operator-supplied values, so it enters the
@@ -1779,7 +1884,8 @@ class NetworkListingService:
         target_listing_id: str | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
-        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "dataSteward", "data_owner"}
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "dataSteward", "data_owner", "executive"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to decide intake")
 
@@ -1788,9 +1894,10 @@ class NetworkListingService:
             correlation_id=correlation_id,
             action_label="decide intake",
         )
-        cache_key = ("decide_intake", governed_key)
-        if cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        write = self._prepare_write("decide_intake", governed_key, actor_name,
+                                    {"intake_id": intake_id, "action": action, "target_listing_id": target_listing_id, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
 
         reason_text = (reason or "").strip()
         if not reason_text:
@@ -1946,7 +2053,7 @@ class NetworkListingService:
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),
             "actorRoleId": actor_role_id,
-            "actorName": actor_name or "Expansion Manager",
+            "actorName": actor_name,
             "action": f"intake.decide.{action}",
             "targetId": intake_id,
             "message": f"Intake decision '{action}' recorded. Reason: {reason_text}",
@@ -1964,7 +2071,7 @@ class NetworkListingService:
         }
         intake["auditEvents"].append(audit_evt)
         self._save_intake(intake)
-        self._save_idempotency("decide_intake", governed_key, intake)
+        self._save_write(write, intake)
         return _copy(intake)
 
     def retry_intake(
@@ -1976,7 +2083,14 @@ class NetworkListingService:
         correlation_id: str | None,
         job_queue: Any | None = None,
         tenant_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        tenant_id = self._require_tenant(tenant_id)
+        write = self._prepare_write("retry_intake", idempotency_key, actor_name,
+                                    {"intake_id": intake_id}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
         intake = self._listing_intake(intake_id)
         if intake["stage"] not in {"FAILED", "READY", "NEEDS_REVIEW", "AWAITING_ASSISTED_ENTRY"}:
             raise NetworkListingConflict(f"intake {intake_id} is in stage {intake['stage']} and cannot be retried")
@@ -1990,7 +2104,7 @@ class NetworkListingService:
                     "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
                     "occurredAt": _now(),
                     "actorRoleId": actor_role_id,
-                    "actorName": actor_name or "Expansion Manager",
+                    "actorName": actor_name,
                     "action": "intake.retry",
                     "targetId": intake_id,
                     "message": f"Replayed async intake job for {intake['originalUrl']}.",
@@ -2002,6 +2116,7 @@ class NetworkListingService:
                 }
                 intake["auditEvents"].append(audit_evt)
                 self._save_intake(intake)
+                self._save_write(write, intake)
                 return _copy(intake)
 
 
@@ -2037,7 +2152,7 @@ class NetworkListingService:
             snapshot_service = self._get_snapshot_service()
             gate = self._get_security_gate(snapshot_service)
             
-            resolved_tenant_id = tenant_id or "00000000-0000-0000-0000-000000000001"
+            resolved_tenant_id = self._require_tenant(tenant_id)
             retrieval_res = gate.fetch(
                 intake["canonicalUrl"],
                 tenant_id=resolved_tenant_id,
@@ -2093,7 +2208,7 @@ class NetworkListingService:
                 "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
                 "occurredAt": _now(),
                 "actorRoleId": actor_role_id,
-                "actorName": actor_name or "Expansion Manager",
+                "actorName": actor_name,
                 "action": "intake.retry",
                 "targetId": intake_id,
                 "message": f"Retried URL retrieval for {intake['originalUrl']}.",
@@ -2106,6 +2221,7 @@ class NetworkListingService:
             }
             intake["auditEvents"].append(audit_evt)
             self._save_intake(intake)
+            self._save_write(write, intake)
             return _copy(intake)
 
         intake["stage"] = "RETRIEVING"
@@ -2181,7 +2297,7 @@ class NetworkListingService:
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),
             "actorRoleId": actor_role_id,
-            "actorName": actor_name or "Expansion Manager",
+            "actorName": actor_name,
             "action": "intake.retry",
             "targetId": intake_id,
             "message": f"Retried URL retrieval for {intake['originalUrl']}.",
@@ -2193,6 +2309,7 @@ class NetworkListingService:
         }
         intake["auditEvents"].append(audit_evt)
         self._save_intake(intake)
+        self._save_write(write, intake)
         return _copy(intake)
 
     # Adapter methods for PromotionService
@@ -2266,9 +2383,10 @@ class NetworkListingService:
         idempotency_key: str | None,
         correlation_id: str | None,
     ) -> dict[str, Any]:
+        actor_name = self._require_actor(actor_name, actor_role_id)
         allowed_roles = {
             "expansionManager", "expansion-manager", "siteReviewer", "site_reviewer",
-            "expansionUser", "expansion-user", "expansion_user"
+            "expansionUser", "expansion-user", "expansion_user", "executive", "data_owner"
         }
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to promote intake")
@@ -2278,9 +2396,10 @@ class NetworkListingService:
             correlation_id=correlation_id,
             action_label="promote intake",
         )
-        cache_key = ("promote_intake", governed_key)
-        if cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        write = self._prepare_write("promote_intake", governed_key, actor_name,
+                                    {"intake_id": intake_id, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
 
         reason_text = (reason or "").strip()
         if not reason_text:
@@ -2300,9 +2419,8 @@ class NetworkListingService:
         listing = self._listing(target_listing_id)
 
         # Enforce segregation of duties & run reviewed promotion saga
-        proposer_id = actor_name or intake.get("submitter") or "operator-expansion-staff"
+        proposer_id = actor_name
 
-        import hashlib
         gate_snap = str(listing.get("fitScore", 0))
         gate_snapshot_sha256 = hashlib.sha256(gate_snap.encode()).hexdigest()
 
@@ -2317,10 +2435,16 @@ class NetworkListingService:
         )
 
         # 1. Propose
+        if actor_role_id in {"site_reviewer", "executive", "expansionManager", "expansion-manager", "siteReviewer"}:
+            proposer_role = PrincipalRole.EXPANSION_MANAGER
+        elif actor_role_id in {"data_owner", "dataSteward"}:
+            proposer_role = PrincipalRole.DATA_STEWARD
+        else:
+            proposer_role = PrincipalRole.EXPANSION_STAFF
         proposer_actor = Actor(
             actor_id=proposer_id,
-            role=PrincipalRole.EXPANSION_STAFF,
-            tenant_id=listing.get("tenantId") or "tenant-a",
+            role=proposer_role,
+            tenant_id=self._require_tenant(listing.get("tenantId")),
         )
         proposer_context = TransitionContext(
             actor=proposer_actor,
@@ -2371,7 +2495,7 @@ class NetworkListingService:
             "created": False,
         }
 
-        self._save_idempotency("promote_intake", governed_key, result)
+        self._save_write(write, result)
         return result
 
     def _get_match_listings(self) -> list[dict[str, Any]]:
@@ -2476,7 +2600,7 @@ class NetworkListingService:
             "id": f"AUD-NET-{uuid.uuid4().hex[:10]}",
             "occurredAt": _now(),
             "actorRoleId": actor_role_id,
-            "actorName": actor_name or "Expansion Manager",
+            "actorName": actor_name,
             "category": "workflow",
             "action": action,
             "targetType": "listing",

@@ -1504,12 +1504,13 @@ export class OdpApiClient {
   retryIntake(
     intakeId: string,
     payload: NetworkListingActorPayload,
-    options: { correlationId?: string } = {},
+    options: { correlationId?: string; idempotencyKey?: string } = {},
   ): Promise<AssistedIntake> {
     return this.request<AssistedIntake>(`/api/v1/operator/network-listings/intake/${intakeId}/retry`, {
       method: "POST",
       body: payload,
       correlationId: options.correlationId,
+      idempotencyKey: options.idempotencyKey,
     });
   }
 

@@ -1,0 +1,16 @@
+<!doctype html><html lang="zh-Hant"><meta charset="utf-8">
+<title>Intake 更正證據工程契約</title>
+<style>body{max-width:980px;margin:32px auto;font:16px/1.7 sans-serif;color:#173148}code{overflow-wrap:anywhere}table{border-collapse:collapse;width:100%}td,th{border:1px solid #cad6df;padding:10px;text-align:left}</style>
+<h1>Intake 更正、獨立審核與保存證據</h1>
+<p>此修補處理 v1 command 的資料流失、未保存稽核 ID、缺少 correction version 與部分提交問題。它是待審來源修正，不能當作全系統驗收或正式上線證明。</p>
+<table><tr><th>命令</th><th>實際行為</th></tr>
+<tr><td>一般更正</td><td>保存完整 correction record；原欄位 parsed、normalized、classification、confidence 和 lineage 保留，更新 corrected/effective。parent Intake 與 Correction 各有實際保存的 before/after audit。</td></tr>
+<tr><td>身分相關更正提案</td><td>保存 PENDING_REVIEW correction 與 decision；不修改 effective 值，保存提交時來源、完整欄位和 parent version。</td></tr>
+<tr><td>另一位授權者審核</td><td>拒絕自行審核。批准前核對當前父 scope/version、欄位及 snapshot/parser lineage，套用更正後分別保存 Intake、Correction、Decision audit。拒絕可關閉過期提案而不套用欄位。</td></tr>
+<tr><td>資料保護</td><td>不降低既有分類。masked/RESTRICTED 欄位不經此通用更正命令修改；沒有欄位分類的任意新增路徑拒絕。已宣告 parser input 的缺少欄位可建立 INTERNAL 欄位。</td></tr>
+<tr><td>並行與重播</td><td>Optional expected_effective_value_sha256 以 shared.audit.integrity.sha256_hex 的 canonical JSON 驗證。更正／審核／成功收據位於同一 rollback boundary；失敗不留下部分資料或成功 replay。actor、tenant、operation、path、key 仍依既有 scoped replay 綁定。</td></tr></table>
+<p><strong>Receipt version 是收據所指 Correction 的版本。</strong>新 Correction version = 1；Parent Intake 的 version 另由 fresh GET 取得，不能把 correction ETag 用於 Intake 命令。審核收據指向 Decision，其 version 與 audit before/after 對應。</p>
+<p>審核批准的 Decision 保持 APPROVED。真正 Identity owner 的執行、graph transaction 與 EXECUTED 證據未由此命令完成；completion verifier 仍拒絕把批准當執行完成。此修補不新增未編目的 HumanCorrection outbox event。</p>
+<p>Audit worm_state 保持 worm_pending；本地 PostgreSQL 提交／重啟可證明資料保存，不能證明外部 WORM 已送達。現有 DurableAssistedIntakeStore 是 tenant envelope，尚未等同 canonical intake.human_corrections 的 physical owner、FK、RLS 或 IN-ID/UUID 歷史對帳。</p>
+<p>測試使用明示的 synthetic UUID actors、tenant、workflow policy 與受控 NEEDS_REVIEW parser 前置資料。HTTP fresh GET、actual PG16 restart 與故障注入屬工程驗證；正式登入、六角色真實 UAT、發布 Gate 及獨立審查仍須另有當前來源證據。</p>
+</html>
