@@ -9,7 +9,47 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi actual-CI native-custody follow-up — new frozen candidate, NOT acceptance
+## Pi batch009 credential initialization — current candidate, NOT acceptance
+
+Actual renewed Manager run `pi-20261015T194453Z-69af02ab` verified clean aa918/
+treee628/base810, canonical364 paths/25 explicit docs/ALL26 materialized hashes,
+actual running allocation/lease and complete original-task equality BEFORE edits.
+ONLY the two newly admitted credential owning files changed. Anchor34fa84d62b52
+retains one immutable nonsecret timing-dummy PHC keyed by full policy and stock
+backend/builder semantics, fresh per-service hasher construction, eager both-path
+initialization, bounded concurrency and fork reset. EVERY dummy verification
+still executes full genuine Argon2; user hash/verify/rehash/fresh salts unchanged.
+All31 original credential methods/setup/full old-file byte prefix are unchanged.
+New real owning policy/backend/concurrency/fork/failure controls are separate
+from original2178/178. No fake PHC, absent-only lazy init or credential/result cache.
+
+At exact34fa the complete credential module has native0/34.748s under420. Initial
+scoped Ruff has genuine native1/I001; its import ordering repair and THIS docs
+freeze create a NEW identity, so no initial pass transfers. Full raw/native waits/
+ECHILD/accessible owned-writer closure/own-PG removal/seals and the fork warning
+remain. Outer PG guard is not primitive-test actual-PG application proof.
+See [batch009 implementation, terminals and cohort plan](pi-batch009-credential-initialization.md).
+
+Resolve original extended-auth membership explicitly:14 original RBAC functions
+versus16 NEW F1 FUNCTIONS, not parametrized case counts. Preserve expanded-module
+proof separately; final original-cohort command expands only the original14 at
+its original module position and keeps other modules/order/parameters/420 cap;
+new F1 controls are separate owning proof with real collection/JUnit provenance.
+Do not change source for count bookkeeping or split2178 into fake acceptance.
+
+THIS final code/docs/README candidate needs ALL fresh14/original17 (2178 serial-n0/
+1200, other420)/178/applicable+new owning/normal hostedCI/full configured sequential
+Codex2 ALL packets+synthesis at ONE identity. No aa/34fa/old-head transfer. Genuine
+mitigation is not a unique timeout-cause or under-cap guarantee. Preserve both
+aa1200 NULL/rootwait-9/UNKNOWN and invalid cProfile collection-error history.
+Sustained actual Manager/native observations precede long commands; all custody,
+crypto, timeout, fixture, authority and review-cap guards remain. Human/Ops final
+PENDING/account independence UNRESOLVED/original blocked6/failedPi/a129PR1459/
+quarantine/bindingNULL/cleanupUNKNOWN/HOLD/goalfalse unchanged. NOT review-ready;
+no task_finalize/review submission before complete author proof; no approval/
+auto-merge arming/enqueue/merge/done/deployment/recovery/live effects.
+
+## Historical Pi actual-CI native-custody follow-up — NOT current acceptance
 
 Actual Manager run `pi-20261015T170912Z-ded8d170` verified running allocation,
 workspace/base810,362-entry serialized lease,22 materialized source documents

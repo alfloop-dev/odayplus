@@ -15,8 +15,7 @@ import threading
 from typing import Any
 
 try:
-    from argon2 import PasswordHasher, Type  # type: ignore[import-untyped]
-    from argon2 import _password_hasher, low_level  # type: ignore[import-untyped]
+    from argon2 import PasswordHasher, Type, _password_hasher, low_level  # type: ignore[import-untyped]
     from argon2.exceptions import VerifyMismatchError  # type: ignore[import-untyped]
 
     _ARGON2_AVAILABLE = True
