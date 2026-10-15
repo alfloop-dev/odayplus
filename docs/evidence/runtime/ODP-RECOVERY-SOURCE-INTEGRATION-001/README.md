@@ -9,7 +9,89 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi batch006 signed Store Ops fixture / current measurement freeze
+## Pi batch007 F2 checkpoint — partial source repair, NOT a measurement freeze
+
+Actual Manager run `pi-20261015T151317Z-14a3807c` verified running allocation,
+leased task branch/workspace, base `19562ad2a8773099db26366446b3488b446e630c`,
+361 scoped entries/17 source documents and BOTH exact batch007 materialized
+request/contract hashes before edits. Human/Ops remains final/PENDING.
+
+Only F2 of the rejected13c assessment is addressed in this checkpoint:
+
+- Read-only release, readiness, operator, protected-Web, model and worker
+  dispatch prerequisites must ALL positively pass before any job POST or worker
+  driver invocation. Final failure reporting is not a substitute for that barrier.
+- Read-only source-data diagnostics remain available on HOLD. Admin login,
+  rotation and session journeys also require all preceding checks to pass.
+- Worker mode-alignment and missing-Web session diagnostics remain visible even
+  when execution is held. No probe/member or original assertion was removed.
+- Two new owning test functions in the newly leased base gate module add sixteen
+  offline cases: full/dev-admin wrong, unavailable, failed-status, missing,
+  malformed and surrogate version observations, plus four other preflight
+  failures. They assert zero mutating requests and zero driver calls. All129
+  original top-level functions in that module are AST-identical to13c; the
+  dev-admin test module is entirely unchanged. These are separate owning controls,
+  not additions to/replacements for the original2178/178 selections.
+
+Source anchors: `2dad9845f996049667cfa84399ec547ed69e2c2e`,
+`a14c1a6245a5dfc7847044b798783833bf62b039`, then
+`b1f85cb209441d6c75cfbd3a3d176976e9ad6954` /
+tree `81421fb5f71f22a0a536d1f9c1b62c3a9814f6f1`.
+The first two owning runs genuinely exit1: first two retained diagnostic
+assertions were missing, then one NEW assertion incorrectly required no worker
+report rather than the explicit read-only `dispatched=false` diagnostic. All
+original assertions remain unchanged; both failed runs and their raw logs remain.
+At exact b1f, full base+dev-admin owning command exits0/33.970s, native recovery
+boundary module exits0/19.129s, scoped Ruff0 and diff-check0. See
+[exact diagnostic receipts](pi-batch007-f2-diagnostics.json). These are author
+incremental checks, NOT canonical14, supplemental17, complete new-head CI or
+independent assessment. THIS documentation successor is a different head: none
+of the b1f measurements transfers to it.
+
+The foreground runner preserves original420 caps, actual waits/adopted waits/
+kernel ECHILD and owned-writer checks. Exact owned PG/PostGIS containers are
+removed only after closure, and generated evidence is SHA-verified into scratch
+before removing closed temporary evidence. The Web/offline doubles are NOT
+actual-PG application proof. External/non-owned/inaccessible fd visibility remains
+UNKNOWN. These short commands do not prove sustained Manager recognition for
+long1200 commands. No plugin, fake heartbeat, background launch or policy change.
+
+### Required next source work, before any final freeze/publication for review
+
+F1 remains OPEN and `shared/auth/abac.py` / `engine.py` are untouched. Read-only
+callsite inspection at origin/dev confirms the descriptor currently has NO
+explicit tenant-bound/global/abstract discriminator. Existing tenantless RBAC/
+ABAC fixture positives exercise brand/module/store/high-risk behavior, while
+actual missing ownership must deny. Do not infer abstract/global from a missing
+tenant, missing resource id, role or client attributes, or retag original tests
+to hide a broken contract. Implement only the adjudicated default primitive
+contract with explicit authoritative descriptor semantics, existing registered
+waiver guard, obligation merging and auditing, preserving original assertions.
+If identifying a genuine global/abstract caller requires another path or business
+contract decision, STOP and request the finite additional disposition first.
+The static44 origin/dev ResourceDescriptor call sites and49 task AccessRequest/
+evaluate_abac call sites are recorded in this run's scratch; this is syntax
+inventory, not dynamic reachability or proof of an HTTP leak.
+
+F3 remains OPEN: standalone rotation-issued distinct-cookie custody and all-exit,
+bounded once-only per-owned-session cleanup still require their source repair
+and separate owning regressions. Do not replace or bypass native recovery's
+quarantine-before-cleanup barrier or infer durable cleanup from one global
+logged_out fixture bit. Native recovery compatibility passed only for this F2
+increment at b1f; it is not F3 closure or a transferable future result.
+
+AFTER all F1/F2/F3 source/docs are complete, freeze a NEW exact identity and obtain
+ALL fresh14 canonical/unchanged17 supplemental/new owning controls/terminal normal
+CI (all129 E2E and strict3x150 performance)/configured sequential full-body whole-
+composition assessment. Rejected13c packet1 remains rejected; remaining16 were
+prepared but never inspected. Account independence and omitted/transitive/late
+coverage gaps remain explicit. No task_finalize/review submission before complete
+owned author proof. Original blocked6/failedPi/PR1459@a129/human evidence/pinned
+roots remain unchanged; quarantine/bindingNULL/cleanupUNKNOWN/HOLD/goalfalse.
+No approval, auto-merge arming, merge, done/finalization, deployment, recovery or
+live credential/account/session/cloud/data/model/F11 effects.
+
+## Pi batch006 signed Store Ops fixture / historical measurement freeze
 
 Manager run `pi-20261015T123359Z-cc7e31c0` verified its actual running isolated
 workspace/lease, admitted base `19562ad2a8773099db26366446b3488b446e630c`, live
