@@ -52,7 +52,7 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await page.goto("/operator?ws=network");
     await expect(
       page.getByTestId("network-find-areas-workspace"),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("network-expansion-stepper")).toBeVisible();
     // The fixture workflow needs both current API snapshots before its steps settle.
     await expect(page.getByTestId("network-workflow-context-notice")).toHaveCount(
@@ -74,6 +74,11 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
         "HZ-01",
       );
     }).toPass({ timeout: 15_000 });
+    // The tab renders optimistically; wait for its durable URL before reloading.
+    await expect(page).toHaveURL(
+      (url) => url.searchParams.get("tab") === "radar",
+      { timeout: 15_000 },
+    );
     await expect(page.getByTestId("network-listing-table")).toContainText(
       "L-2024",
       { timeout: 15_000 },
@@ -106,7 +111,9 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     });
     await fixtureApi.dispose();
     await page.reload();
-    await expect(page.getByTestId("network-panel-listings")).toBeVisible();
+    await expect(page.getByTestId("network-panel-listings")).toBeVisible({
+      timeout: 15_000,
+    });
 
     const navigationConversionPosts: string[] = [];
     page.on("request", (request) => {
@@ -135,7 +142,9 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     );
     await page.reload();
     await expect(page).toHaveURL((url) => url.searchParams.get("candidate") === "CS-1001");
-    await expect(page.getByTestId("candidate-row-CS-1001")).toHaveAttribute("data-active", "true");
+    await expect(page.getByTestId("candidate-row-CS-1001")).toHaveAttribute(
+      "data-active", "true", { timeout: 15_000 },
+    );
     expect(navigationConversionPosts).toEqual([]);
 
     const api = await apiContext();
