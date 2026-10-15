@@ -6,6 +6,7 @@ import { ExpansionStepper, type ExpansionStep } from "./ExpansionStepper";
 
 export function NetworkShell({
   activeTab,
+  allowedTabIndices,
   children,
   onTabChange,
   steps,
@@ -13,6 +14,7 @@ export function NetworkShell({
   tabs,
 }: {
   activeTab: number;
+  allowedTabIndices?: readonly number[];
   children: ReactNode;
   onTabChange: (tabIndex: number) => void;
   steps: ExpansionStep[];
@@ -22,9 +24,11 @@ export function NetworkShell({
 }) {
   return (
     <>
-      <ExpansionStepper activeTab={activeTab} onStepSelect={onTabChange} steps={steps} />
+      <ExpansionStepper activeTab={activeTab} onStepSelect={onTabChange}
+        steps={steps.filter((step) => !allowedTabIndices || allowedTabIndices.includes(step.tabIndex))} />
       <nav className={styles.tabs} aria-label="Network tabs" role="tablist">
         {tabs.map((tab, index) => {
+          if (allowedTabIndices && !allowedTabIndices.includes(index)) return null;
           const [label, englishLabel] = tab.split(" / ");
           const count = tabCounts?.[index] ?? 0;
           return (

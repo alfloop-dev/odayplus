@@ -14,6 +14,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole } from "../OperatorConsole";
 import { resolveNetworkCountState } from "../NetworkFindAreasWorkspace";
+import { NETWORK_TAB_IDS } from "../network/networkUrlState";
 
 const nav = vi.hoisted(() => ({ search: "ws=network" }));
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
@@ -46,6 +47,7 @@ const liveEnvelope = {
       { id: "network", label: "Network", shortLabel: "Network", description: "Network", allowed: true },
     ],
     allowedWorkspaces: ["today", "network"],
+    allowedTabs: { network: [...NETWORK_TAB_IDS] },
   },
   header: {
     counts: { approvals: 0, critical: 0, notifications: 0, search: 0, taskCenter: 0 },
@@ -164,12 +166,18 @@ function forbiddenResponse(correlationId: string, resource: string) {
 
 const DENIED = Symbol("denied");
 
-function stubProductionFetch(snapshot: unknown, denyScoring = false, reviews?: unknown) {
+function stubProductionFetch(snapshot: unknown, denyScoring = false, reviews?: unknown, allowedTabs: readonly string[] = NETWORK_TAB_IDS, persona = "platform-admin") {
   const networkListingUrls: URL[] = [];
   const legacyDomainPaths: string[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input instanceof Request ? input.url : input), "http://localhost");
-    if (url.pathname === "/api/v1/operator/bootstrap") return jsonResponse(liveEnvelope);
+    if (url.pathname === "/api/v1/operator/bootstrap") {
+      const allowedWorkspaces = allowedTabs.length ? ["today", "network"] : ["today"];
+      const projectedRole = { ...role, id: persona, allowedWorkspaces };
+      return jsonResponse({ ...liveEnvelope, meta: { ...liveEnvelope.meta, role: projectedRole },
+        navigation: { ...liveEnvelope.navigation, roles: [projectedRole], allowedWorkspaces,
+          allowedTabs: { network: allowedTabs } } });
+    }
     if (url.pathname === "/api/v1/operator/network-listings") {
       networkListingUrls.push(url);
       return snapshot === DENIED ? forbiddenResponse("corr-listings-403", "operator_network") : jsonResponse(snapshot);
@@ -190,7 +198,7 @@ function stubProductionFetch(snapshot: unknown, denyScoring = false, reviews?: u
     return jsonResponse({ detail: "not routed" }, 503);
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { legacyDomainPaths, networkListingUrls };
+  return { fetchMock, legacyDomainPaths, networkListingUrls };
 }
 
 describe("Network Find Areas in the production Operator Console composition", () => {
@@ -208,14 +216,58 @@ describe("Network Find Areas in the production Operator Console composition", ()
     vi.unstubAllGlobals();
   });
 
-  it("initialises from the scoped operator snapshot while legacy domain reads are denied", async () => {
+  it("consumes auditor+admin bootstrap tab grants without requesting denied Network reads", async () => {
+    const { fetchMock, legacyDomainPaths } = stubProductionFetch(DENIED, true, undefined, ["rebalance"]);
+    render(<OperatorConsole searchParams={{ ws: "network", tab: "review" }} />);
+    await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(1));
+    expect(screen.getByTestId("network-tab-6")).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => expect(fetchMock.mock.calls.map(([url]) => String(url))
+      .filter((url) => url.includes("/network-"))).toEqual(["/api/v1/operator/network-rebalance"]));
+    expect(legacyDomainPaths).toEqual([]);
+    const summary = screen.getByLabelText("展店與店網摘要");
+    await waitFor(() => expect(summary).toHaveTextContent("0 重配候選"));
+    for (const label of ["今日新物件", "進行中候選", "待審 Review"]) {
+      expect(within(summary).getByText(label, { exact: false })).toHaveAttribute("data-count-state", "withheld");
+      expect(summary).toHaveTextContent(`— ${label}（未授權）`);
+    }
+    expect(summary.querySelector('[data-count-state="pending"]')).toBeNull();
+  });
+
+  it("settles viewer summary chips and never requests withheld Rebalance or composition", async () => {
+    window.sessionStorage.setItem("oday.operator.role", "pm-audit");
+    const tabs = ["areas", "radar", "candidates", "score", "compare", "review"];
+    const { fetchMock, legacyDomainPaths } = stubProductionFetch(scopedSnapshot, false,
+      { source: "api", reviews: [] }, tabs, "pm-audit");
+    render(<OperatorConsole searchParams={{ ws: "network", tab: "rebalance" }} />);
+    const summary = await screen.findByLabelText("展店與店網摘要");
+    await waitFor(() => expect(summary).toHaveTextContent("1 今日新物件"));
+    await waitFor(() => expect(summary).toHaveTextContent("0 待審 Review"));
+    expect(within(summary).getByText("重配候選", { exact: false })).toHaveAttribute("data-count-state", "withheld");
+    expect(summary).toHaveTextContent("— 重配候選（未授權）");
+    expect(summary.querySelector('[data-count-state="pending"]')).toBeNull();
+    expect(fetchMock.mock.calls.map(([url]) => String(url)).filter((url) =>
+      /network-rebalance|merge-split/.test(url))).toEqual([]);
+    expect(legacyDomainPaths).toEqual([]);
+    expect(screen.getAllByRole("tab")).toHaveLength(6);
+  });
+
+  it("hides a workspace with no readable tabs even when a stored deep link requests it", async () => {
+    const { fetchMock } = stubProductionFetch(DENIED, true, undefined, []);
+    render(<OperatorConsole searchParams={{ ws: "network" }} />);
+    await waitFor(() => expect(screen.getByTestId("operator-console").querySelector('[data-data-status="ready"]')).not.toBeNull());
+    expect(within(screen.getByRole("navigation", { name: "Operator workspaces" })).queryByText("Network")).toBeNull();
+    expect(screen.queryByRole("tab", { name: /Rebalance/ })).toBeNull();
+    expect(fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/network-"))).toEqual([]);
+  });
+
+  it("initialises from the scoped operator snapshot without requesting denied legacy domains", async () => {
     const { legacyDomainPaths, networkListingUrls } = stubProductionFetch(scopedSnapshot);
 
     render(<OperatorConsole searchParams={{ ws: "network" }} />);
 
     expect(await screen.findByTestId("network-panel-find-areas")).toBeInTheDocument();
-    // The legacy domain bindings really were requested and denied.
-    await waitFor(() => expect(legacyDomainPaths.some((path) => path.endsWith("/heatzones"))).toBe(true));
+    // Production no longer preloads RBAC-only domain bindings.
+    expect(legacyDomainPaths).toEqual([]);
     // First read carries no injected selection; the API-named zone is then used.
     expect(networkListingUrls[0].searchParams.has("selectedHeatZoneId")).toBe(false);
     await waitFor(() =>
@@ -352,7 +404,7 @@ describe("Network Find Areas in the production Operator Console composition", ()
     render(<OperatorConsole searchParams={{ ws: "network" }} />);
 
     await waitFor(() => expect(networkListingUrls.length).toBeGreaterThan(0));
-    await waitFor(() => expect(legacyDomainPaths.some((path) => path.endsWith("/heatzones"))).toBe(true));
+    expect(legacyDomainPaths).toEqual([]);
     await waitFor(() =>
       expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty"),
     );
@@ -361,7 +413,7 @@ describe("Network Find Areas in the production Operator Console composition", ()
     expect(screen.queryByText("fixture data")).toBeNull();
   });
 
-  it("presents the deployed auditor+platform_admin 403 reads as a denial, not a network failure or zero", async () => {
+  it("still presents a received 403 after bootstrap as a denial, not a network failure or zero", async () => {
     const { legacyDomainPaths } = stubProductionFetch(DENIED);
 
     const { unmount } = render(<OperatorConsole searchParams={{ ws: "network" }} />);

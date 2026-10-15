@@ -541,18 +541,20 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
     expect(denied.status()).toBe(403);
 
     await setOperatorSession(page, role, `qa-${role}`);
-    await page.reload();
-    const networkWorkspace = page.getByRole("button", { name: /展店與店網/ });
-    if (role === "ops-lead") {
-      await expect(networkWorkspace).toHaveAttribute("aria-disabled", "false");
-      await networkWorkspace.click();
-      await page.getByTestId("network-tab-1").click();
-      await expect(page.getByTestId("intake-no-access")).toBeVisible({
-        timeout: 15_000,
-      });
-      await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
-    } else {
-      await expect(networkWorkspace).toHaveAttribute("aria-disabled", "true");
-    }
+    const [bootstrap] = await Promise.all([
+      page.waitForResponse((response) =>
+        response.url().includes("/api/v1/operator/bootstrap") &&
+        response.request().headers()["x-operator-role"] === role,
+      ),
+      page.reload(),
+    ]);
+    expect(bootstrap.status()).toBe(200);
+    const body = await bootstrap.json();
+    expect(body.navigation.allowedWorkspaces).not.toContain("network");
+    expect(body.navigation.allowedTabs.network).toEqual([]);
+    // Even ops-lead must not advertise an unreadable Network workspace.
+    // No disabled placeholder or clickable link to a predictable 403 remains.
+    await expect(page.getByRole("button", { name: /展店與店網/ })).toHaveCount(0);
+    await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
   }
 });
