@@ -29,8 +29,8 @@ class EvidenceArtifact:
     media_type: str = "application/zip"
 
 
-def render_evidence_archive(record: RetainedEvidence) -> EvidenceArtifact:
-    """Use only the persisted, integrity-verified bundle; never rebuild evidence."""
+def validate_retained_evidence_artifact(record: RetainedEvidence) -> None:
+    """Check retained artifact content without rendering bytes or admitting it."""
     verify_retained_evidence(record)
     if record.purged_at is not None:
         raise EvidenceArtifactUnavailable("retained evidence has been purged")
@@ -38,6 +38,16 @@ def render_evidence_archive(record: RetainedEvidence) -> EvidenceArtifact:
     governance = bundle.get("export_governance")
     if not isinstance(governance, dict) or governance.get("masking_profile") != "masked":
         raise EvidenceArtifactUnavailable("masked evidence bundle is required")
+    for key in ("decision_cards", "audit_events", "subsidy_matrix"):
+        rows = bundle.get(key)
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise EvidenceArtifactUnavailable(f"invalid retained {key}")
+
+
+def render_evidence_archive(record: RetainedEvidence) -> EvidenceArtifact:
+    """Use only the persisted, integrity-verified bundle; never rebuild evidence."""
+    validate_retained_evidence_artifact(record)
+    bundle = record.bundle
     files = {
         "bundle.json": _json_bytes(bundle),
         "retained-evidence.json": _json_bytes(record.to_dict()),
@@ -48,8 +58,6 @@ def render_evidence_archive(record: RetainedEvidence) -> EvidenceArtifact:
         ("subsidy_matrix", "subsidy-matrix.csv"),
     ):
         rows = bundle.get(key)
-        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-            raise EvidenceArtifactUnavailable(f"invalid retained {key}")
         files[filename] = _csv_bytes(rows)
     files["manifest.json"] = _json_bytes(
         {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from math import isfinite
 from typing import Any
 
 from models.shared_ml.artifact_store import (
@@ -28,7 +29,7 @@ from shared.audit import AuditEvent, InMemoryAuditLog
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Request, status
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, field_validator
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
@@ -137,6 +138,39 @@ else:
         warning_max_relative_degradation: float | None = None
         higher_is_better: bool | None = None
 
+        @field_validator(
+            "min_value", "max_value", "warning_min_value", "warning_max_value",
+            "max_degradation", "max_relative_degradation",
+            "warning_max_degradation", "warning_max_relative_degradation",
+            mode="before",
+        )
+        @classmethod
+        def require_raw_finite_bound(cls, value: Any) -> Any:
+            if value is None:
+                return value
+            try:
+                valid = isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
+            except (TypeError, ValueError, OverflowError):
+                valid = False
+            if not valid:
+                # Never echo a nonfinite input through validation errors: the
+                # common JSON error response cannot serialize NaN/Infinity.
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="release monitoring bounds must be finite JSON numbers",
+                )
+            return value
+
+        @field_validator("higher_is_better", mode="before")
+        @classmethod
+        def require_raw_boolean_direction(cls, value: Any) -> Any:
+            if value is not None and not isinstance(value, bool):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="release monitoring direction must be a JSON boolean",
+                )
+            return value
+
 
     class ReleaseMonitorPayload(BaseModel):
         observed_metrics: dict[str, float] = Field(min_length=1)
@@ -148,6 +182,30 @@ else:
         guardrails: list[MonitorGuardrailPayload] = Field(min_length=1)
         # Bound from the authenticated principal, like release actors.
         evaluated_by: str | None = None
+
+        @field_validator("observed_metrics", "baseline_metrics", mode="before")
+        @classmethod
+        def require_raw_finite_metrics(cls, value: Any) -> Any:
+            # None is valid only for baseline_metrics; the original required
+            # observed_metrics field still rejects None after this validator.
+            if value is None:
+                return value
+            if not isinstance(value, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="release monitoring metrics must be JSON objects of finite numbers",
+                )
+            for metric in value.values():
+                try:
+                    valid = isinstance(metric, (int, float)) and not isinstance(metric, bool) and isfinite(metric)
+                except (TypeError, ValueError, OverflowError):
+                    valid = False
+                if not valid:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="release monitoring metrics must be finite JSON numbers",
+                    )
+            return value
 
 
     class ReleasePayload(BaseModel):

@@ -729,6 +729,7 @@ class GrowthService:
                 "featureSnapshotTime": self._state["freshness"]["featureSnapshotTime"],
             },
         }
+        new_action["audit"]["sourceSnapshotIds"] = self._action_source_snapshot_ids(new_action)
         self._state["actions"].append(new_action)
 
         audit = self._append_audit_event(
@@ -1056,6 +1057,7 @@ class GrowthService:
         if action["status"] != "PENDING_APPROVAL":
             raise GrowthConflict("linked action is not PENDING_APPROVAL")
 
+        decision_provenance = self._decision_source_provenance(action)
         now = _now_iso()
         approval["status"] = normalized
         approval["reason"] = reason
@@ -1075,6 +1077,9 @@ class GrowthService:
             recommendation="送主管核准",
             verdict="核准" if normalized == "approved" else "駁回",
             reason=reason or ("核准通過" if normalized == "approved" else "退回修改"),
+            actor_name=actor_name,
+            approval_id=approval_id,
+            source_provenance=decision_provenance,
         )
 
         audit = self._append_audit_event(
@@ -1260,6 +1265,7 @@ class GrowthService:
         # rung is refused here rather than stored, and omitting the field leaves
         # the existing claim alone instead of overwriting it with a default.
         rated_evidence_level = coerce_evidence_level(evidence_level, field="evidenceLevel")
+        decision_provenance = self._decision_source_provenance(action)
 
         if observed_lift is not None:
             action["observedLift"] = observed_lift
@@ -1294,6 +1300,9 @@ class GrowthService:
             recommendation="成效判斷",
             verdict=_verdict_label,
             reason=rationale,
+            actor_name=actor_name,
+            approval_id=action.get("approvalId"),
+            source_provenance=decision_provenance,
         )
 
         audit = self._append_audit_event(
@@ -1477,6 +1486,48 @@ class GrowthService:
                 return approval
         raise GrowthNotFound(f"growth approval {approval_id!r} not found")
 
+    def _action_source_snapshot_ids(self, action: dict[str, Any]) -> list[str] | None:
+        """Capture this canonical item's existing references at action CREATE.
+
+        A plan is updateable; a later read of the same item must not rebind the
+        action's input. This server-owned metadata is never accepted from body.
+        """
+        if not self._require_canonical or self._priceops_repository is None:
+            return None
+        segment = next((row for row in self._state["segments"]
+                        if row.get("id") == action.get("segmentId")), None)
+        if segment is None or not isinstance(segment.get("planId"), str):
+            return None
+        plan = self._priceops_repository.get_plan(segment["planId"])
+        if plan is None or plan.tenant_id != self._tenant_id:
+            return None
+        item = next((row for row in plan.items
+                     if action.get("segmentId") == f"priceops:{plan.plan_id}:{row.item_id}"
+                     and row.store_id == segment.get("storeId")
+                     and row.machine_type == segment.get("machineType")), None)
+        if item is None:
+            return None
+        recommendation_id = action.get("sourceRecommendationId")
+        if recommendation_id is not None and recommendation_id != f"priceops-rec:{plan.plan_id}:{item.item_id}":
+            return None
+        ids = item.source_snapshot_ids
+        if not isinstance(ids, (list, tuple)) or not ids or not all(isinstance(value, str) and value.strip() for value in ids):
+            return None
+        return list(ids)
+
+    def _decision_source_provenance(self, action: dict[str, Any]) -> dict[str, Any]:
+        """Freeze only the action's captured input, never a current plan read.
+
+        PriceElasticityEstimate.model_version has an engineering default; no
+        verified model-owner port is available here, so modelVersion is unknown.
+        """
+        audit = action.get("audit")
+        ids = audit.get("sourceSnapshotIds") if isinstance(audit, dict) else None
+        snapshots = (list(ids) if isinstance(ids, (list, tuple)) and ids
+                     and all(isinstance(value, str) and value.strip() for value in ids)
+                     else None)
+        return {"modelVersion": None, "sourceSnapshotIds": snapshots}
+
     def _append_decision_log(
         self,
         *,
@@ -1486,6 +1537,9 @@ class GrowthService:
         recommendation: str,
         verdict: str,
         reason: str,
+        actor_name: str | None = None,
+        approval_id: str | None = None,
+        source_provenance: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ordinal = self._state.get("nextDecisionOrdinal", 9001)
         entry: dict[str, Any] = {
@@ -1498,6 +1552,9 @@ class GrowthService:
             "recommendation": recommendation,
             "verdict": verdict,
             "reason": reason,
+            "decidedBy": actor_name,
+            "approvalId": approval_id,
+            **_clone(source_provenance or {"modelVersion": None, "sourceSnapshotIds": None}),
         }
         self._state.setdefault("decisions", []).insert(0, entry)
         self._state["nextDecisionOrdinal"] = ordinal + 1

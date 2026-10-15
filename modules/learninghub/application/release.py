@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from hashlib import sha256
+from math import isfinite
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -1992,6 +1993,73 @@ class LearningHubService:
             model_ver = self.repository.get_model_version(model_name, version)
             if model_ver is not None and model_ver.metrics:
                 resolved_baseline = model_ver.metrics
+
+        # An incomplete observation is not a healthy release. Reject before
+        # recording any assessment/audit; callers may supply an explicit real
+        # policy, but missing signals must never pass by being silently skipped.
+        if not guardrails:
+            raise LearningHubError("release monitoring requires explicit guardrails")
+        for guardrail in guardrails:
+            name = guardrail.metric_name
+            if not isinstance(name, str) or not name.strip():
+                raise LearningHubError("release monitoring metric name must be nonblank")
+            bound_names = (
+                "min_value", "max_value", "warning_min_value", "warning_max_value",
+                "max_degradation", "max_relative_degradation",
+                "warning_max_degradation", "warning_max_relative_degradation",
+            )
+            bounds = {key: getattr(guardrail, key) for key in bound_names}
+            if not any(value is not None for value in bounds.values()):
+                raise LearningHubError(f"release monitoring comparison bound missing: {name}")
+            for key, bound in bounds.items():
+                if bound is None:
+                    continue
+                try:
+                    finite_bound = isinstance(bound, (int, float)) and not isinstance(bound, bool) and isfinite(bound)
+                except (TypeError, ValueError, OverflowError):
+                    finite_bound = False
+                if not finite_bound:
+                    raise LearningHubError(f"release monitoring bound is not finite numeric: {name}.{key}")
+                if "degradation" in key and bound < 0:
+                    raise LearningHubError(f"release monitoring degradation bound must be nonnegative: {name}.{key}")
+            if guardrail.higher_is_better is not None and not isinstance(guardrail.higher_is_better, bool):
+                raise LearningHubError(f"release monitoring metric direction must be boolean: {name}")
+            # Same-comparator ordering follows MetricThreshold.evaluate's hard
+            # band first, warning band second; no policy values are invented.
+            for lower, upper in (
+                ("min_value", "max_value"), ("warning_min_value", "warning_max_value"),
+                ("min_value", "warning_min_value"), ("warning_max_value", "max_value"),
+                ("warning_max_degradation", "max_degradation"),
+                ("warning_max_relative_degradation", "max_relative_degradation"),
+            ):
+                if bounds[lower] is not None and bounds[upper] is not None and bounds[lower] > bounds[upper]:
+                    raise LearningHubError(f"release monitoring comparison bounds are inconsistent: {name}.{lower}/{upper}")
+            if name not in observed_metrics:
+                raise LearningHubError(f"release monitoring metric missing: {name}")
+            value = observed_metrics[name]
+            try:
+                finite_observation = isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
+            except (TypeError, ValueError, OverflowError):
+                finite_observation = False
+            if not finite_observation:
+                raise LearningHubError(f"release monitoring metric is not finite: {name}")
+            needs_baseline = any(bound is not None for bound in (
+                guardrail.max_degradation, guardrail.max_relative_degradation,
+                guardrail.warning_max_degradation, guardrail.warning_max_relative_degradation,
+            ))
+            if needs_baseline:
+                baseline_value = resolved_baseline.get(name) if resolved_baseline is not None else None
+                try:
+                    finite_baseline = isinstance(baseline_value, (int, float)) and not isinstance(baseline_value, bool) and isfinite(baseline_value)
+                except (TypeError, ValueError, OverflowError):
+                    finite_baseline = False
+                if not finite_baseline:
+                    raise LearningHubError(f"release monitoring baseline missing or not finite: {name}")
+                if baseline_value == 0 and (
+                    guardrail.max_relative_degradation is not None
+                    or guardrail.warning_max_relative_degradation is not None
+                ):
+                    raise LearningHubError(f"release monitoring relative baseline is zero: {name}")
 
         breaches = evaluate_guardrails(
             observed_metrics, guardrails, baseline_metrics=resolved_baseline

@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelReleaseController } from "../governance/ModelReleaseController";
-import { fallbackLearningHubModels } from "../governance/learningHubLoader";
+import { fallbackLearningHubModels, monitorRelease } from "../governance/learningHubLoader";
 import { GovernanceWorkspace } from "../GovernanceWorkspace";
 
 describe("ModelReleaseController Component (ODP-CAP-MODEL-RELEASE-UI-001)", () => {
@@ -419,6 +419,9 @@ describe("ModelReleaseController production data admission", () => {
   });
 
   it.each(["card", "release", "monitor"])("rejects a completed old-role %s result after the current role is ready", async (command) => {
+    // Production has no defined release-monitor policy yet. The existing
+    // monitor async/context contract remains exercised in explicit POC mode.
+    if (command === "monitor") vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
     const model = registeredModel();
     const otherModel = { ...model, model_name: "owned-role-b-model", version: "owned-role-b-version",
       model_card: { ...model.model_card, model_name: "owned-role-b-model", model_version: "owned-role-b-version" } };
@@ -432,6 +435,7 @@ describe("ModelReleaseController production data admission", () => {
     vi.stubGlobal("fetch", fetchMock);
     const view = render(<ModelReleaseController roleId="ops-lead" />);
     await screen.findByTestId("model-release-controller");
+    if (command === "monitor") await waitFor(() => expect(screen.getAllByText("owned-version-1").length).toBeGreaterThan(0));
     if (command === "card") {
       fireEvent.click(screen.getByRole("button", { name: "Model Card" }));
       fireEvent.click(screen.getByRole("button", { name: "Approve Model Card" }));
@@ -522,18 +526,21 @@ describe("ModelReleaseController production data admission", () => {
       return new Response(JSON.stringify({ items: String(input).includes("/releases") ? [{ release_id: "owned-release", model_name: model.model_name }] : [model] }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<ModelReleaseController roleId="ops-lead" actor="DisplayPersona" />);
-    await screen.findByTestId("model-release-controller");
-    fireEvent.click(screen.getByRole("button", { name: "評估 Guardrails" }));
-    fireEvent.change(screen.getByLabelText("Observed Metrics (JSON format):"), { target: { value: '{"mape":0.12}' } });
-    fireEvent.click(screen.getByRole("button", { name: "Evaluated Guardrails (POST /monitor)" }));
+    // The adapter retains trusted-actor omission for an explicit policy caller;
+    // the production controller separately refuses an unbound policy below.
+    const result = await monitorRelease({
+      release_id: "owned-release", observed_metrics: { mape: 0.12 },
+      guardrails: [{ metric_name: "mape", max_value: 0.1 }],
+      evaluated_by: "DisplayPersona", roleId: "ops-lead",
+    });
+    expect(result.ok).toBe(true);
     await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
     const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")!;
     const body = JSON.parse(String(post[1]?.body));
     expect(String(post[0])).toContain("/releases/owned-release/monitor");
     expect(body).not.toHaveProperty("evaluated_by");
     expect(body.observed_metrics).toEqual({ mape: 0.12 });
-    expect(await screen.findByText("verified-server-subject")).toBeInTheDocument();
+    if (result.ok) expect(result.assessment.evaluated_by).toBe("verified-server-subject");
   });
 
   it.each([0, 7])("submits an explicit production ROLLBACK with the real revision %s and shared governance fields", async (revision) => {
@@ -592,6 +599,54 @@ describe("ModelReleaseController production data admission", () => {
     expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
     expect(screen.getByLabelText(/Rollback Target Version:/)).toHaveValue("");
     expect(screen.queryByText("v2.0.4")).not.toBeInTheDocument();
+  });
+
+
+  it("keeps a production release readable but refuses to turn validation thresholds into a monitoring policy", async () => {
+    const model = registeredModel();
+    const fetchMock = stubReads({ items: [model] }, { items: [{
+      release_id: "owned-release-with-text-criteria", model_name: model.model_name,
+      to_version: model.version, monitoring_window: "owned-monitoring-window",
+      fail_criteria: ["Actual recorded condition is not a structured policy"],
+    }] });
+    render(<ModelReleaseController roleId="ops-lead" />);
+    await screen.findByTestId("model-release-controller");
+    fireEvent.click(screen.getByRole("button", { name: "評估 Guardrails" }));
+    expect(screen.getByRole("status")).toHaveTextContent("發布監控政策未提供，無法評估");
+    expect(screen.getByText("監控窗：owned-monitoring-window")).toBeInTheDocument();
+    expect(screen.getByText("失敗條件：Actual recorded condition is not a structured policy")).toBeInTheDocument();
+    expect(screen.getByLabelText("Observed Metrics (JSON format):")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Evaluated Guardrails (POST /monitor)" })).toBeDisabled();
+    // A direct form event must still fail closed rather than trust disabled UI.
+    fireEvent.submit(screen.getByLabelText("Observed Metrics (JSON format):").closest("form")!);
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+    expect(screen.getAllByText("owned-version-1").length).toBeGreaterThan(0);
+    expect(screen.queryByText("HEALTHY")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+  });
+
+  it("retains the explicit POC monitor demo without representing it as a production policy", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const model = registeredModel();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return new Response(JSON.stringify({
+        release_id: "owned-poc-release", status: "HEALTHY", audit_event_id: "unit-poc-monitor-audit",
+      }), { status: 201 });
+      return new Response(JSON.stringify({ items: String(input).includes("/releases")
+        ? [{ release_id: "owned-poc-release", model_name: model.model_name }] : [model] }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ModelReleaseController roleId="ops-lead" />);
+    await waitFor(() => expect(screen.getAllByText("owned-version-1").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("button", { name: "評估 Guardrails" }));
+    fireEvent.click(screen.getByRole("button", { name: "Evaluated Guardrails (POST /monitor)" }));
+    await screen.findByText("unit-poc-monitor-audit");
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")!;
+    expect(JSON.parse(String(post[1]?.body)).guardrails).toEqual([
+      { metric_name: "mape", max_value: 0.10, warning_max_value: 0.09 },
+      { metric_name: "rmse", max_value: 1500.0, warning_max_value: 1450.0 },
+    ]);
+    expect(screen.queryByText(/發布監控政策未提供/)).not.toBeInTheDocument();
   });
 
 });

@@ -293,6 +293,12 @@ export function ModelReleaseController({
     e.preventDefault();
     if (!monitorReleaseId || !isCurrentContext()) return;
     setError(null);
+    if (!fixturesAllowed) {
+      // No structured release-monitor policy is defined by the current read
+      // contract. Validation thresholds and free-text criteria are not one.
+      setError("發布監控政策未提供，無法評估。");
+      return;
+    }
 
     let observed: Record<string, number> = {};
     try {
@@ -971,18 +977,29 @@ export function ModelReleaseController({
             <button className={styles.secondaryButton} onClick={() => setActiveDrawer(null)}>關閉</button>
           </div>
 
+          {!fixturesAllowed ? (
+            <div>
+              <p role="status">發布監控政策未提供，無法評估。驗證門檻不等同發布監控政策。</p>
+              <p>監控窗：{releases.find((release) => release.release_id === monitorReleaseId)?.monitoring_window || "未提供"}</p>
+              <p>失敗條件：{(() => {
+                const criteria = releases.find((release) => release.release_id === monitorReleaseId)?.fail_criteria;
+                return Array.isArray(criteria) && criteria.length > 0 ? criteria.join("、") : "未提供";
+              })()}</p>
+            </div>
+          ) : null}
           <form onSubmit={handleMonitorRelease}>
             <label htmlFor="observed-metrics-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>
               Observed Metrics (JSON format):
             </label>
             <textarea
               id="observed-metrics-input"
+              disabled={!fixturesAllowed}
               value={observedMetricsText}
               onChange={(e) => setObservedMetricsText(e.target.value)}
               rows={3}
               style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px", marginBottom: "12px" }}
             />
-            <button type="submit" className={styles.primaryButton}>
+            <button type="submit" className={styles.primaryButton} disabled={!fixturesAllowed}>
               Evaluated Guardrails (POST /monitor)
             </button>
           </form>

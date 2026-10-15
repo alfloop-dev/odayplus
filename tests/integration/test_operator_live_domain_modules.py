@@ -273,6 +273,33 @@ def _live_app(
     return app, bundle
 
 
+@pytest.mark.parametrize(("roles", "tabs"), [
+    ("auditor,platform_admin", ["rebalance"]),
+    ("operator_viewer", ["areas", "radar", "candidates", "score", "compare", "review"]),
+])
+def test_live_bootstrap_and_today_project_verified_navigation(tmp_path, roles, tabs) -> None:
+    app, bundle = _live_app(tmp_path / "nav.sqlite3", live_repository=_StaticLiveRepository())
+    try:
+        client = TestClient(app)
+        headers = {
+            "X-Subject-Id": "nav-probe", "X-Roles": roles,
+            "X-Tenant-Id": "tenant-a", "X-Operator-Role": "pm-audit",
+        }
+        for path in ("bootstrap", "today"):
+            response = client.get(f"{BASE}/{path}", headers=headers)
+            assert response.status_code == 200, response.text
+            assert response.json()["meta"]["dataMode"] == "live"
+            assert response.json()["navigation"]["allowedTabs"]["network"] == tabs
+        for endpoint, tab in [
+            ("network-listings", "radar"), ("network-scoring", "score"),
+            ("network-reviews", "review"), ("network-rebalance", "rebalance"),
+        ]:
+            response = client.get(f"{BASE}/{endpoint}", headers=headers)
+            assert (response.status_code != 403) == (tab in tabs), response.text
+    finally:
+        bundle.engine.close()
+
+
 def _postgres_live_app(database, monkeypatch):
     """Production workflow dependencies use a real isolated PostgreSQL engine."""
     return _live_app(None, bundle=_postgres_bundle(database, monkeypatch))

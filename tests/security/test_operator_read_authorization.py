@@ -252,9 +252,9 @@ def test_operator_routes_select_verified_read_persona_and_refuse_business_writes
     ("roles", "decide", "export"),
     [
         # The deployed dev account: server-verified, but no business decision grant.
-        ("auditor,platform_admin", False, False),
+        ("auditor,platform_admin", False, True),
         ("platform_admin,operator_viewer", False, False),
-        ("operations_manager", True, True),
+        ("operations_manager", True, False),
     ],
 )
 def test_governance_snapshot_reports_the_write_guards_verdict_not_the_persona(roles, decide, export) -> None:
@@ -278,6 +278,63 @@ def test_governance_snapshot_reports_the_write_guards_verdict_not_the_persona(ro
         json={"approvalId": "APR-AUTHORITY-PROBE", "action": "approve"},
     )
     assert (decision.status_code == 403) is not decide, decision.text
+
+
+@pytest.mark.parametrize(("roles", "tabs"), [
+    ("auditor,platform_admin", {"rebalance"}),
+    ("auditor", {"areas", "radar", "rebalance"}),
+    ("operator_viewer", {"areas", "radar", "candidates", "score", "compare", "review"}),
+    ("platform_admin,operator_viewer", {"areas", "radar", "candidates", "score", "compare", "review"}),
+    ("operations_manager", set()),
+    ("site_reviewer", {"areas", "radar", "candidates", "score", "compare", "review", "rebalance", "composition"}),
+    ("executive", {"candidates", "score", "compare", "review", "composition"}),
+])
+def test_bootstrap_navigation_matches_real_read_endpoints(real_app_client, roles, tabs) -> None:
+    headers = {"X-Subject-Id": "nav-probe", "X-Roles": roles, "X-Tenant-Id": "tenant-a"}
+    for path in ("bootstrap", "today"):
+        response = real_app_client.get(f"/api/v1/operator/{path}", headers=headers)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        nav = body["navigation"]
+        assert set(nav["allowedTabs"]["network"]) == tabs
+        assert ("network" in nav["allowedWorkspaces"]) == bool(tabs)
+        assert next(w["allowed"] for w in nav["workspaces"] if w["id"] == "network") == bool(tabs)
+        # Every persona in the response is bounded by the same verified principal.
+        for role in [body["meta"]["role"], *nav["roles"]]:
+            assert role["allowedWorkspaces"] == nav["allowedWorkspaces"]
+    for tab, endpoint in {
+        "areas": "/api/v1/operator/network-listings",
+        "radar": "/api/v1/operator/network-listings/intake",
+        "candidates": "/api/v1/operator/network-scoring",
+        "score": "/api/v1/operator/network-scoring",
+        "compare": "/api/v1/operator/network-scoring",
+        "review": "/api/v1/operator/network-reviews",
+        "rebalance": "/api/v1/operator/network-rebalance",
+        "composition": "/api/v1/heatzones/merge-split/proposals",
+    }.items():
+        read = real_app_client.get(endpoint, headers=headers)
+        assert (read.status_code != 403) == (tab in tabs), (roles, tab, read.text)
+
+
+def test_navigation_uses_shared_resource_gate_and_unchanged_intake_policy(real_app_client, monkeypatch) -> None:
+    from apps.api.oday_api.security import dependencies
+    from shared.auth import Decision
+
+    headers = {"X-Subject-Id": "nav-probe", "X-Roles": "operator_viewer", "X-Tenant-Id": "tenant-a"}
+    original = dependencies.operator_permission_decision
+
+    def deny_sitescore(principal, resource, action, **kwargs):
+        if resource.type == "sitescore":
+            return Decision.deny("test policy", policy_id="test.sitescore")
+        return original(principal, resource, action, **kwargs)
+
+    # The projection and route guard must both consume the same live predicate.
+    # shell imports the function directly, so patch its reference too.
+    monkeypatch.setattr(dependencies, "operator_permission_decision", deny_sitescore)
+    monkeypatch.setattr("apps.api.app.routes.operator_modules.shell.operator_permission_decision", deny_sitescore)
+    body = real_app_client.get("/api/v1/operator/bootstrap", headers=headers).json()
+    assert body["navigation"]["allowedTabs"]["network"] == ["areas", "radar"]
+    assert real_app_client.get("/api/v1/operator/network-scoring", headers=headers).status_code == 403
 
 
 def test_scoped_read_resource_admits_only_view_on_opted_in_guards() -> None:

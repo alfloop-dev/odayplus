@@ -249,7 +249,10 @@ def create_operator_router(
         create_network_scoring_sub_router,
     )
     from apps.api.app.routes.operator_modules.seed import create_seed_sub_router
-    from apps.api.app.routes.operator_modules.shell import create_shell_sub_router
+    from apps.api.app.routes.operator_modules.shell import (
+        create_shell_sub_router,
+        project_operator_navigation,
+    )
     from modules.opsboard.application.comments import CommentsService
     from modules.opsboard.application.network_listings import NetworkListingService
     from modules.opsboard.application.network_rebalance import NetworkRebalanceService
@@ -400,7 +403,7 @@ def create_operator_router(
             x_roles: str | None = Header(default=None, alias="X-Roles"),
             x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
         ) -> dict[str, Any]:
-            return _live_read(
+            envelope = _live_read(
                 "operator.envelope",
                 svc.get_today,
                 read_projection=lambda state: pending_state_for_request(request, state),
@@ -412,6 +415,8 @@ def create_operator_router(
                     x_correlation_id=x_correlation_id,
                 ),
             )
+
+            return project_operator_navigation(envelope, request)
 
         @router.get("/search", dependencies=[Depends(operator_view_guard)])
         def live_search(
@@ -1199,7 +1204,7 @@ def create_operator_router(
                     "intervention", Action.APPROVE, engine=authz_engine
                 ),
                 require_export_permission_fn=require_operator_permission(
-                    "intervention", Action.CREATE, engine=authz_engine
+                    "audit", Action.EXPORT, engine=authz_engine
                 ),
                 service_resolver=governance_resolver,
                 read_service_resolver=governance_read_service,
@@ -1438,7 +1443,7 @@ def create_operator_router(
                 "intervention", Action.APPROVE, engine=authz_engine
             ),
             require_export_permission_fn=require_operator_permission(
-                "intervention", Action.CREATE, engine=authz_engine
+                "audit", Action.EXPORT, engine=authz_engine
             ),
         )
     )

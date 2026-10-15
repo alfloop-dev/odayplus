@@ -160,7 +160,11 @@ else:
         # Defaults come from the persistence factory, including the production
         # PostgreSQL runtime. Explicit arguments still win so tests can inject
         # hand-built doubles. See ODP-PV-009.
-        from apps.api.oday_api.security.dependencies import bind_audit_log, bind_persistence
+        from apps.api.oday_api.security.dependencies import (
+            bind_audit_log,
+            bind_persistence,
+            default_boundary,
+        )
         from shared.infrastructure.persistence import build_persistence
         from shared.observability import (
             RouteTemplateResolver,
@@ -2131,7 +2135,10 @@ else:
             ),
         )
         mount_versioned(
-            api, create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
+            api, create_audit_router(
+                audit_log=audit_log, evidence_store=evidence_store,
+                boundary=default_boundary(),
+            )
         )
         mount_versioned(
             api,

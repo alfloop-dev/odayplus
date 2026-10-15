@@ -1679,3 +1679,353 @@ def test_release_api_binds_actors_and_matches_the_409_428_contract() -> None:
 
     anonymous = client.post("/learninghub/releases", json=_release_body())
     assert anonymous.status_code == 403
+
+
+# Explicit Memory engineering controls; no registry/model promotion is executed.
+def _monitor_input_fixture():
+    repository = InMemoryLearningHubRepository()
+    audit_log = InMemoryAuditLog()
+    decision = ModelReleaseDecision(
+        release_id="unit-monitor-existing-release", model_name="unit-owned-model",
+        from_version="unit-prior", to_version="unit-current", release_type=ReleaseType.FULL,
+        reason="Unit-only existing release record, not a model release operation",
+        approval_id="unit-recorded-approval", rollback_target="unit-prior",
+        monitoring_window="unit-window", success_criteria=("recorded owner criterion",),
+        fail_criteria=("recorded owner criterion breached",),
+    )
+    repository.save_release_decision(decision)
+    service = LearningHubService(repository=repository, audit_log=audit_log, recover_on_startup=False)
+    return repository, audit_log, service, decision
+
+
+@pytest.mark.parametrize(
+    ("guardrails", "observed", "baseline"),
+    [
+        ((), {"unit_metric": 0.1}, None),
+        ((MetricThreshold("unit_metric", max_value=0.2),), {"unrelated": 0.1}, None),
+        ((MetricThreshold("unit_metric", max_value=0.2), MetricThreshold("missing", max_value=0.2)), {"unit_metric": 0.1}, None),
+        ((MetricThreshold("unit_metric", max_value=0.2),), {"unit_metric": float("nan")}, None),
+        ((MetricThreshold("unit_metric", max_value=0.2),), {"unit_metric": float("inf")}, None),
+        ((MetricThreshold("unit_metric", max_value=0.2),), {"unit_metric": True}, None),
+        ((MetricThreshold("unit_metric", max_value=0.2),), {"unit_metric": "0.1"}, None),
+        ((MetricThreshold("unit_metric", max_degradation=0.1),), {"unit_metric": 0.1}, {"unit_metric": "0"}),
+        ((MetricThreshold("unit_metric", max_degradation=0.1),), {"unit_metric": 0.1}, None),
+        ((MetricThreshold("unit_metric", max_degradation=0.1),), {"unit_metric": 0.1}, {"unit_metric": float("nan")}),
+        ((MetricThreshold("unit_metric", max_relative_degradation=0.1),), {"unit_metric": 0.1}, {"unit_metric": 0}),
+    ],
+    ids=["no-policy", "zero-matched", "partial-required", "nan", "infinity", "boolean", "string-observation", "string-baseline", "missing-baseline", "nan-baseline", "zero-relative-baseline"],
+)
+def test_release_monitor_incomplete_metrics_cannot_be_healthy_or_write_audit(
+    guardrails, observed, baseline,
+) -> None:
+    repository, audit_log, service, decision = _monitor_input_fixture()
+    with pytest.raises(LearningHubError, match="release monitoring"):
+        service.monitor_release(
+            release_id=decision.release_id, observed_metrics=observed,
+            guardrails=guardrails, baseline_metrics=baseline,
+        )
+    assert tuple(audit_log.list_events()) == ()
+    assert repository.get_release_decision(decision.release_id) == decision
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) is None
+
+
+@pytest.mark.parametrize(
+    ("observed", "expected_status", "expected_action"),
+    [(0.05, MonitorStatus.HEALTHY, RecommendedAction.NONE),
+     (0.15, MonitorStatus.HEALTHY, RecommendedAction.NONE),
+     (0.25, MonitorStatus.BREACHED, RecommendedAction.ROLLBACK)],
+)
+def test_release_monitor_complete_explicit_policy_preserves_warning_and_recommendation_only(
+    observed, expected_status, expected_action,
+) -> None:
+    repository, audit_log, service, decision = _monitor_input_fixture()
+    assessment = service.monitor_release(
+        release_id=decision.release_id, observed_metrics={"unit_metric": observed},
+        guardrails=(MetricThreshold("unit_metric", max_value=0.2, warning_max_value=0.1),),
+    )
+    assert assessment.status is expected_status
+    assert assessment.recommended_action is expected_action
+    assert len(audit_log.list_events()) == 1
+    assert repository.get_release_decision(decision.release_id) == decision
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) is None
+
+
+def test_release_monitor_http_missing_required_metric_returns_422_without_model_change() -> None:
+    from shared.auth import Role
+    from tests.integration._authz import auth_headers
+
+    repository, _audit_log, _service, decision = _monitor_input_fixture()
+    client = _release_api_client(repository, MlflowRegistryAdapter(repository))
+    response = client.post(
+        f"/learninghub/releases/{decision.release_id}/monitor",
+        json={"observed_metrics": {"unrelated_metric": 0.1},
+              "guardrails": [{"metric_name": "unit_metric", "max_value": 0.2}]},
+        headers=auth_headers(Role.MODEL_OWNER, subject="unit-monitor-owner"),
+    )
+    assert response.status_code == 422, response.text
+    assert "release monitoring metric missing" in response.json()["detail"]
+    assert repository.get_release_decision(decision.release_id) == decision
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) is None
+
+
+@pytest.mark.parametrize(
+    "guardrail",
+    [
+        MetricThreshold("unit_metric"),
+        MetricThreshold("", max_value=0.2),
+        MetricThreshold("  ", max_value=0.2),
+        MetricThreshold("unit_metric", max_value=float("nan")),
+        MetricThreshold("unit_metric", max_value=float("inf")),
+        MetricThreshold("unit_metric", min_value=float("-inf")),
+        MetricThreshold("unit_metric", warning_max_value=float("nan")),
+        MetricThreshold("unit_metric", max_value=True),
+        MetricThreshold("unit_metric", max_value="0.2"),
+        MetricThreshold("unit_metric", max_degradation=-0.1),
+        MetricThreshold("unit_metric", max_relative_degradation=-0.1),
+        MetricThreshold("unit_metric", warning_max_degradation=-0.1),
+        MetricThreshold("unit_metric", warning_max_relative_degradation=-0.1),
+        MetricThreshold("unit_metric", min_value=0.3, max_value=0.2),
+        MetricThreshold("unit_metric", warning_min_value=0.3, warning_max_value=0.2),
+        MetricThreshold("unit_metric", min_value=0.2, warning_min_value=0.1),
+        MetricThreshold("unit_metric", warning_max_value=0.3, max_value=0.2),
+        MetricThreshold("unit_metric", warning_max_degradation=0.2, max_degradation=0.1),
+        MetricThreshold("unit_metric", warning_max_relative_degradation=0.2, max_relative_degradation=0.1),
+        MetricThreshold("unit_metric", max_value=0.2, higher_is_better="false"),
+    ],
+    ids=["no-bound", "empty-name", "blank-name", "nan-hard", "inf-hard", "negative-inf-hard", "nan-warning",
+         "bool-bound", "string-bound", "negative-absolute-degradation", "negative-relative-degradation",
+         "negative-warning-absolute", "negative-warning-relative", "reversed-hard-range", "reversed-warning-range",
+         "warning-min-below-hard-min", "warning-max-above-hard-max", "warning-degradation-above-hard",
+         "warning-relative-above-hard", "nonboolean-direction"],
+)
+def test_release_monitor_invalid_comparison_policy_cannot_be_healthy_or_write_audit(guardrail) -> None:
+    repository, audit_log, service, decision = _monitor_input_fixture()
+    with pytest.raises(LearningHubError, match="release monitoring"):
+        service.monitor_release(
+            release_id=decision.release_id, observed_metrics={"unit_metric": 0.1},
+            guardrails=(guardrail,), baseline_metrics={"unit_metric": 0.1},
+        )
+    assert tuple(audit_log.list_events()) == ()
+    assert repository.get_release_decision(decision.release_id) == decision
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) is None
+
+
+@pytest.mark.parametrize(
+    ("guardrail", "observed", "baseline"),
+    [(MetricThreshold("unit_metric", min_value=0), 0, None),
+     (MetricThreshold("unit_metric", max_value=0), 0, None),
+     (MetricThreshold("unit_metric", max_degradation=0, higher_is_better=False), 0.1, {"unit_metric": 0.1}),
+     (MetricThreshold("unit_metric", max_relative_degradation=0, higher_is_better=False), 0.1, {"unit_metric": 0.1}),
+     (MetricThreshold("unit_metric", max_value=0.2, warning_max_value=0), 0.1, None)],
+    ids=["zero-min", "zero-max", "zero-absolute-degradation", "zero-relative-degradation", "warning-only-no-hard-breach"],
+)
+def test_release_monitor_zero_bounds_and_existing_warning_policy_remain_valid(
+    guardrail, observed, baseline,
+) -> None:
+    repository, audit_log, service, decision = _monitor_input_fixture()
+    assessment = service.monitor_release(
+        release_id=decision.release_id, observed_metrics={"unit_metric": observed},
+        guardrails=(guardrail,), baseline_metrics=baseline,
+    )
+    assert assessment.status is MonitorStatus.HEALTHY
+    assert assessment.recommended_action is RecommendedAction.NONE
+    assert len(audit_log.list_events()) == 1
+    assert repository.get_release_decision(decision.release_id) == decision
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) is None
+
+
+def test_release_monitor_http_no_comparison_bound_returns_422_without_model_change() -> None:
+    from shared.auth import Role
+    from tests.integration._authz import auth_headers
+
+    repository, _audit_log, _service, decision = _monitor_input_fixture()
+    client = _release_api_client(repository, MlflowRegistryAdapter(repository))
+    response = client.post(
+        f"/learninghub/releases/{decision.release_id}/monitor",
+        json={"observed_metrics": {"unit_metric": 0.1}, "guardrails": [{"metric_name": "unit_metric"}]},
+        headers=auth_headers(Role.MODEL_OWNER, subject="unit-monitor-owner"),
+    )
+    assert response.status_code == 422, response.text
+    assert "release monitoring comparison bound missing" in response.json()["detail"]
+    assert repository.get_release_decision(decision.release_id) == decision
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) is None
+
+
+def _monitor_raw_http_fixture():
+    """Owned Memory input only; no model operation or production policy claim."""
+    from fastapi import FastAPI, Request
+    from fastapi.testclient import TestClient
+
+    from apps.api.app.routes.learninghub import create_learninghub_router
+    from shared.auth import Role
+    from tests.integration._authz import auth_headers
+
+    repository, audit_log, _service, decision = _monitor_input_fixture()
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _correlation_id(request: Request, call_next):
+        request.state.correlation_id = "corr-monitor-raw-wire"
+        return await call_next(request)
+
+    app.include_router(create_learninghub_router(
+        repository=repository, registry=MlflowRegistryAdapter(repository), audit_log=audit_log,
+    ))
+    return (
+        TestClient(app, raise_server_exceptions=False), repository, audit_log, decision,
+        auth_headers(Role.MODEL_OWNER, subject="unit-monitor-wire-owner"),
+    )
+
+
+def _monitor_http_assessments_after_allow(audit_log):
+    from shared.audit.policy import SECURITY_EVENT_TYPE
+
+    events = audit_log.list_events()
+    allows = [event for event in events if event.event_type == SECURITY_EVENT_TYPE]
+    assessments = [event for event in events if event.event_type == "learninghub.release_monitor.v1"]
+    assert len(allows) == 1
+    assert allows[0].actor == "unit-monitor-wire-owner"
+    assert allows[0].action == "publish" and allows[0].resource == "model"
+    assert allows[0].outcome == "allow"
+    assert allows[0].correlation_id == "corr-monitor-raw-wire"
+    assert len(events) == len(allows) + len(assessments)
+    return assessments
+
+
+def _post_raw_monitor_json(client, release_id, body, headers):
+    import json
+
+    # Explicit content also exercises nonstandard NaN/Infinity tokens. Sending
+    # json= would let the HTTP client's encoder reject them before the server.
+    return client.post(
+        f"/learninghub/releases/{release_id}/monitor", content=json.dumps(body),
+        headers={**headers, "content-type": "application/json"},
+    )
+
+
+@pytest.mark.parametrize("field", ["observed_metrics", "baseline_metrics"])
+@pytest.mark.parametrize(
+    "value", [True, "0.1", float("nan"), float("inf"), float("-inf")],
+    ids=["boolean", "numeric-string", "nonstandard-NaN", "nonstandard-Infinity", "nonstandard-negative-Infinity"],
+)
+def test_monitor_http_raw_metric_values_rejected_before_float_coercion(field, value) -> None:
+    client, repository, audit_log, decision, headers = _monitor_raw_http_fixture()
+    body = {
+        "observed_metrics": {"unit_metric": 0.1},
+        "baseline_metrics": {"unit_metric": 0.1},
+        "guardrails": [{"metric_name": "unit_metric", "max_degradation": 0.2}],
+    }
+    body[field] = {"unit_metric": value}
+    response = _post_raw_monitor_json(client, decision.release_id, body, headers)
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "release monitoring metrics must be finite JSON numbers"
+    assert "NaN" not in response.text and "Infinity" not in response.text
+    assert _monitor_http_assessments_after_allow(audit_log) == []
+    assert repository.get_release_decision(decision.release_id) == decision
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) is None
+
+
+@pytest.mark.parametrize(
+    "bound_name",
+    ["min_value", "max_value", "warning_min_value", "warning_max_value",
+     "max_degradation", "max_relative_degradation", "warning_max_degradation", "warning_max_relative_degradation"],
+)
+@pytest.mark.parametrize(
+    "value", [True, "0.1", float("nan"), float("inf"), float("-inf")],
+    ids=["boolean", "numeric-string", "nonstandard-NaN", "nonstandard-Infinity", "nonstandard-negative-Infinity"],
+)
+def test_monitor_http_all_raw_bounds_rejected_before_float_coercion(bound_name, value) -> None:
+    client, repository, audit_log, decision, headers = _monitor_raw_http_fixture()
+    body = {
+        "observed_metrics": {"unit_metric": 0.1}, "baseline_metrics": {"unit_metric": 0.1},
+        "guardrails": [{"metric_name": "unit_metric", bound_name: value}],
+    }
+    response = _post_raw_monitor_json(client, decision.release_id, body, headers)
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "release monitoring bounds must be finite JSON numbers"
+    assert "NaN" not in response.text and "Infinity" not in response.text
+    assert _monitor_http_assessments_after_allow(audit_log) == []
+    assert repository.get_release_decision(decision.release_id) == decision
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) is None
+
+
+@pytest.mark.parametrize("value", [0, 1, "false", "true"])
+def test_monitor_http_raw_direction_requires_an_actual_boolean(value) -> None:
+    client, repository, audit_log, decision, headers = _monitor_raw_http_fixture()
+    body = {
+        "observed_metrics": {"unit_metric": 0.1},
+        "guardrails": [{"metric_name": "unit_metric", "max_value": 0.2, "higher_is_better": value}],
+    }
+    response = _post_raw_monitor_json(client, decision.release_id, body, headers)
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "release monitoring direction must be a JSON boolean"
+    assert _monitor_http_assessments_after_allow(audit_log) == []
+    assert repository.get_release_decision(decision.release_id) == decision
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) is None
+
+
+@pytest.mark.parametrize("field", ["observed_metrics", "baseline_metrics", "bound"])
+def test_monitor_http_valid_json_numeric_overflow_is_422_without_assessment(field) -> None:
+    client, repository, audit_log, decision, headers = _monitor_raw_http_fixture()
+    # 1e309 is a JSON number, unlike the nonstandard NaN/Infinity controls above.
+    values = {"observed_metrics": "0.1", "baseline_metrics": "0.1", "bound": "0.2"}
+    values[field] = "1e309"
+    wire = (
+        '{"observed_metrics":{"unit_metric":' + values["observed_metrics"] + '},'
+        '"baseline_metrics":{"unit_metric":' + values["baseline_metrics"] + '},'
+        '"guardrails":[{"metric_name":"unit_metric","max_value":' + values["bound"] + '}]}'
+    )
+    response = client.post(
+        f"/learninghub/releases/{decision.release_id}/monitor", content=wire,
+        headers={**headers, "content-type": "application/json"},
+    )
+    assert response.status_code == 422, response.text
+    assert "finite JSON numbers" in response.json()["detail"]
+    assert "Infinity" not in response.text
+    assert _monitor_http_assessments_after_allow(audit_log) == []
+    assert repository.get_release_decision(decision.release_id) == decision
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) is None
+
+
+@pytest.mark.parametrize("field,omit", [
+    ("observed_metrics", True), ("observed_metrics", False),
+    ("guardrails", True), ("guardrails", False),
+])
+def test_monitor_http_original_required_inputs_remain_required(field, omit) -> None:
+    client, repository, audit_log, decision, headers = _monitor_raw_http_fixture()
+    body = {
+        "observed_metrics": {"unit_metric": 0.1},
+        "guardrails": [{"metric_name": "unit_metric", "max_value": 0.2}],
+    }
+    if omit:
+        del body[field]
+    else:
+        body[field] = {} if field == "observed_metrics" else []
+    response = _post_raw_monitor_json(client, decision.release_id, body, headers)
+    assert response.status_code == 422, response.text
+    assert _monitor_http_assessments_after_allow(audit_log) == []
+    assert repository.get_release_decision(decision.release_id) == decision
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) is None
+
+
+@pytest.mark.parametrize("observed,baseline,guardrail", [
+    (0, None, {"metric_name": "unit_metric", "max_value": 0, "higher_is_better": None}),
+    (0, {"unit_metric": 0}, {"metric_name": "unit_metric", "max_degradation": 0, "higher_is_better": False}),
+    (0.1, None, {"metric_name": "unit_metric", "max_value": 0.2, "higher_is_better": True}),
+])
+def test_monitor_http_real_numeric_zero_and_optional_baseline_keep_trusted_actor(
+    observed, baseline, guardrail,
+) -> None:
+    client, repository, audit_log, decision, headers = _monitor_raw_http_fixture()
+    response = _post_raw_monitor_json(client, decision.release_id, {
+        "observed_metrics": {"unit_metric": observed}, "baseline_metrics": baseline,
+        "guardrails": [guardrail],
+    }, headers)
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == MonitorStatus.HEALTHY.value
+    assert response.json()["observed_metrics"] == {"unit_metric": observed}
+    events = _monitor_http_assessments_after_allow(audit_log)
+    assert len(events) == 1 and events[0].actor == "unit-monitor-wire-owner"
+    assert events[0].correlation_id == "corr-monitor-raw-wire"
+    assert repository.get_release_decision(decision.release_id) == decision
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) is None

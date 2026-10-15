@@ -204,7 +204,9 @@ def test_evidence_package_export_records_full_metadata() -> None:
             "role": "PM／稽核",
             "retentionPolicy": "7 天簽章 URL，actor 欄位遮罩",
         },
-        headers=_headers(correlation="corr-export-1"),
+        # This principal holds both the original decision role and the
+        # existing audit-export role; a workspace persona grants neither.
+        headers={**_headers(correlation="corr-export-1"), "X-Roles": "operations_manager,auditor"},
     )
     assert resp.status_code == 200
     pkg = resp.json()["package"]
@@ -285,7 +287,7 @@ def test_governance_decision_uses_verified_actor_and_binds_request(action, reaso
 
 def test_governance_fixture_export_receipt_is_scope_actor_and_operation_bound():
     client = _client()
-    headers = _headers(idem="synthetic-export-bound")
+    headers = {**_headers(idem="synthetic-export-bound"), "X-Roles": "operations_manager,auditor"}
     body = {"dateFrom": "2026-07-01", "dateTo": "2026-07-24", "modules": ["Growth"], "contents": ["Audit Trail"], "format": "PDF", "actorName": "forged", "role": "forged"}
     accepted = client.post(f"{BASE}/evidence-package", json=body, headers=headers)
     assert accepted.status_code == 200
@@ -390,3 +392,74 @@ def test_governance_commands_deny_unconfigured_authority():
         response = client.post("/governance/" + endpoint, json=body)
         assert response.status_code == 403 and "GOVERNANCE_COMMAND_AUTHORITY_UNCONFIGURED" in response.text
     assert service.export_state() == before
+
+
+@pytest.mark.parametrize(
+    ("roles", "expected_status", "export_allowed"),
+    [
+        ("operations_manager", 403, False),
+        ("platform_admin,operator_viewer", 403, False),
+        ("auditor", 200, True),
+        ("operations_manager,auditor", 200, True),
+    ],
+)
+def test_governance_export_requires_existing_audit_grant_not_workspace_persona(
+    roles, expected_status, export_allowed,
+):
+    client = _client()
+    headers = {**_headers(), "X-Roles": roles}
+    snapshot = client.get(f"{BASE}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    assert snapshot.json()["actionAuthority"]["exportEvidence"] is export_allowed
+    before = snapshot.json()["evidencePackages"]
+    response = client.post(
+        f"{BASE}/evidence-package",
+        headers=headers,
+        json={"dateFrom": "2026-07-01", "dateTo": "2026-07-24",
+              "modules": ["Growth"], "contents": ["Audit Trail"],
+              "role": "auditor", "actorName": "forged-auditor"},
+    )
+    assert response.status_code == expected_status, response.text
+    after = client.get(f"{BASE}/snapshot", headers=headers).json()["evidencePackages"]
+    if export_allowed:
+        assert response.json()["package"]["actor"] == WRITE_HEADERS["X-Subject-Id"]
+        assert len(after) == len(before) + 1
+    else:
+        assert after == before
+
+
+def test_governance_audit_export_grant_still_requires_operator_console_access():
+    client = _client()
+    # Compliance has audit:EXPORT, but no Operator Console grant. This route
+    # cannot be used to bypass the workspace entry permission.
+    response = client.post(
+        f"{BASE}/evidence-package",
+        headers={**_headers(), "X-Roles": "compliance_officer"},
+        json={"dateFrom": "2026-07-01", "dateTo": "2026-07-24"},
+    )
+    assert response.status_code == 403, response.text
+
+
+def test_durable_governance_export_checks_same_grant_then_retains_canonical_hold(tmp_path):
+    from shared.infrastructure.persistence.factory import _durable_bundle
+
+    bundle = _durable_bundle(tmp_path / "synthetic-govern-export-permission.sqlite")
+    try:
+        client = TestClient(create_app(persistence=bundle, external_provider_validation=lambda: None))
+        payload = {"dateFrom": "2026-07-01", "dateTo": "2026-07-24",
+                   "modules": ["Growth"], "contents": ["Audit Trail"]}
+        for roles, expected_status, allowed in [
+            ("operations_manager", 403, False), ("auditor", 503, True),
+        ]:
+            headers = {**_headers(), "X-Roles": roles}
+            snapshot = client.get(f"{BASE}/snapshot", headers=headers)
+            assert snapshot.status_code == 200, snapshot.text
+            assert snapshot.json()["actionAuthority"]["exportEvidence"] is allowed
+            before = snapshot.json()["evidencePackages"]
+            response = client.post(f"{BASE}/evidence-package", headers=headers, json=payload)
+            assert response.status_code == expected_status, response.text
+            if allowed:
+                assert response.json()["detail"] == "CANONICAL_EVIDENCE_EXPORT_REQUIRED"
+            assert client.get(f"{BASE}/snapshot", headers=headers).json()["evidencePackages"] == before
+    finally:
+        bundle.engine.close()

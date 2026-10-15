@@ -3,7 +3,14 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 import type { ApiBinding } from "../../../../src/lib/api/binding";
-import { NetworkFindAreasWorkspace } from "../../NetworkFindAreasWorkspace";
+import { NetworkFindAreasWorkspace as Workspace } from "../../NetworkFindAreasWorkspace";
+import { NETWORK_TAB_IDS } from "../networkUrlState";
+
+// Existing route/data-gate cases explicitly model all read grants. The
+// principal-projection cases below provide their exact bootstrap metadata.
+function NetworkFindAreasWorkspace(props: ComponentProps<typeof Workspace>) {
+  return <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} />;
+}
 import type { Candidate, OperatorHeatZone } from "../../types";
 
 const navigation = vi.hoisted(() => ({
@@ -168,6 +175,66 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it("shows only auditor+admin readable tabs and never preloads the three refused endpoints", async () => {
+    navigation.search = "ws=network&tab=review";
+    render(<NetworkFindAreasWorkspace activeRoleId="pm-audit" allowedTabIds={["rebalance"]} />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe("/api/v1/operator/network-rebalance");
+    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    expect(screen.getByTestId("network-tab-6")).toHaveAttribute("aria-selected", "true");
+    for (const index of [0, 1, 2, 3, 4, 5, 7]) {
+      expect(screen.queryByTestId(`network-tab-${index}`)).toBeNull();
+    }
+    expect(screen.queryByTestId("review-authority")).toBeNull();
+  });
+
+  it("keeps the viewer's six readable tabs but hides unscoped Rebalance and composition", async () => {
+    navigation.search = "ws=network&tab=rebalance";
+    render(<NetworkFindAreasWorkspace activeRoleId="pm-audit" selectedHeatZoneId="live-zone"
+      allowedTabIds={["areas", "radar", "candidates", "score", "compare", "review"]} />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    expect(screen.getAllByRole("tab")).toHaveLength(6);
+    expect(screen.getByTestId("network-tab-0")).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByTestId("network-tab-6")).toBeNull();
+    expect(screen.queryByTestId("network-tab-7")).toBeNull();
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual(expect.arrayContaining([
+      expect.stringContaining("network-listings?"), "/api/v1/operator/network-scoring",
+      "/api/v1/operator/network-reviews",
+    ]));
+  });
+
+  it.each(["ready", "denied"])("withholds previous %s counts and failures when bootstrap revokes reads", async (previous) => {
+    const fetchMock = stubDeniedNetworkReads();
+    if (previous === "ready") {
+      fetchMock.mockImplementation(async () => new Response(JSON.stringify({
+        source: "api", heatZones: [], listingSources: [], candidates: [],
+        listings: [{ id: "L-PRIOR", status: "new", hardRuleFailures: [] }],
+        siteReviews: [], expansionSteps: [], assistedIntakes: [], reviews: [], stores: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    const view = render(<NetworkFindAreasWorkspace activeRoleId="platform-admin" selectedHeatZoneId="live-zone" />);
+    const summary = screen.getByLabelText("展店與店網摘要");
+    await waitFor(() => expect(summary).toHaveTextContent(previous === "ready" ? "1 今日新物件" : "今日新物件（未授權）"));
+    fetchMock.mockClear();
+    view.rerender(<NetworkFindAreasWorkspace activeRoleId="pm-audit" selectedHeatZoneId="live-zone" allowedTabIds={["rebalance"]} />);
+    await waitFor(() => expect(summary).toHaveTextContent("0 重配候選"));
+    for (const label of ["今日新物件", "進行中候選", "待審 Review"]) {
+      expect(within(summary).getByText(label, { exact: false })).toHaveAttribute("data-count-state", "withheld");
+      expect(summary).toHaveTextContent(`— ${label}（未授權）`);
+    }
+    expect(summary).not.toHaveTextContent("1 今日新物件");
+    expect(summary.querySelector('[data-count-state="pending"]')).toBeNull();
+    expect(screen.queryByTestId("operator-data-unavailable-correlation")).toBeNull();
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual(["/api/v1/operator/network-rebalance"]);
+  });
+
+  it("fails closed without bootstrap tab metadata in production", () => {
+    render(<Workspace activeRoleId="pm-audit" />);
+    expect(screen.getByText("目前身分沒有可讀取的 Network 分頁。")).toBeInTheDocument();
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("uses the active verified persona for every Network read without false fixture labels", async () => {

@@ -10,9 +10,10 @@ Routes (all under /operator/governance):
   POST /evidence-package     — export an Evidence Package, recording scope,
                               range, format, actor, correlation, retention
 
-Auth: write endpoints require the intervention guards passed from operator.py
-(decisions → APPROVE, export → CREATE); read endpoints are open (oversight
-surface).  Idempotency-Key is handled by the service; X-Correlation-Id is read
+Auth: operator.py requires Operator Console access plus the existing domain
+permission (decisions → intervention:APPROVE, export → audit:EXPORT). Reads
+require the supplied Operator view guard. Idempotency-Key is handled by the
+service; X-Correlation-Id is read
 from request.state.correlation_id.
 
 The snapshot also carries ``actionAuthority``: what the authenticated principal
@@ -46,7 +47,7 @@ from shared.auth import Action, Principal, rbac_allows
 # The resource/action pairs the operator.py write guards demand for
 # POST /decisions and POST /evidence-package.
 DECISION_PERMISSION = ("intervention", Action.APPROVE)
-EVIDENCE_EXPORT_PERMISSION = ("intervention", Action.CREATE)
+EVIDENCE_EXPORT_PERMISSION = ("audit", Action.EXPORT)
 
 
 def action_authority(request: Request) -> dict[str, Any]:
@@ -193,6 +194,7 @@ def create_governance_sub_router(
     ) -> dict[str, Any]:
         try:
             principal, role = verified_actor(request)
+            replay_only = False
             if snapshot_reader is not None or read_service_resolver is not None:
                 visible = snapshot_reader(request) if snapshot_reader is not None else resolve_service(request, service, read_service_resolver).snapshot()
                 # Native owner rows are a read projection, not a Govern
@@ -202,7 +204,18 @@ def create_governance_sub_router(
                        for row in visible["approvals"]):
                     raise GovernanceNotFound("approval unavailable")
                 if not any(row["id"] == body.approvalId for row in visible["approvals"]):
-                    raise GovernanceNotFound("approval unavailable")
+                    # Only the actual scoped read owner may prove historical
+                    # Growth parent visibility and an exact prior command. A
+                    # snapshot callback or unscoped command receipt cannot.
+                    if read_service_resolver is None or not resolve_service(
+                        request, service, read_service_resolver
+                    ).has_visible_growth_decision_receipt(
+                        approval_id=body.approvalId, action=body.action, reason=body.reason,
+                        role=role, actor_name=principal.subject_id, tenant_id=principal.tenant_id,
+                        idempotency_key=idempotency_key,
+                    ):
+                        raise GovernanceNotFound("approval unavailable")
+                    replay_only = True
             return resolve_service(request, service, service_resolver).decide(
                 approval_id=body.approvalId,
                 action=body.action,
@@ -212,6 +225,7 @@ def create_governance_sub_router(
                 tenant_id=principal.tenant_id,
                 idempotency_key=idempotency_key,
                 correlation_id=request.state.correlation_id,
+                **({"replay_only": True} if replay_only else {}),
             )
         except GovernancePolicyError as exc:
             raise HTTPException(

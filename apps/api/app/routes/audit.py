@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -11,14 +11,17 @@ from modules.opsboard.audit import AuditEvidenceExportError, AuditEvidenceExport
 from modules.opsboard.audit.application.evidence_artifact import (
     EvidenceArtifactUnavailable,
     render_evidence_archive,
+    validate_retained_evidence_artifact,
 )
 from modules.opsboard.audit.application.evidence_export import decision_card_from_mapping
 from modules.opsboard.audit.application.evidence_pdf import render_evidence_pdf
 from modules.opsboard.audit.domain.evidence import EvidenceExportRequest
+from modules.opsboard.auth import AuthenticationBoundary
 from shared.audit import AuditEvent, EvidenceGovernanceError, InMemoryAuditLog
 from shared.audit.integrity import canonical_json
 from shared.audit.persistence import (
     EvidenceBundleStore,
+    EvidenceIntegrityError,
     GovernedEvidenceOperation,
     RetainedEvidence,
 )
@@ -26,7 +29,7 @@ from shared.auth import Principal, Role
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Request, status
-    from fastapi.responses import Response
+    from fastapi.responses import JSONResponse, Response
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
@@ -73,17 +76,41 @@ else:
         audit_log: InMemoryAuditLog | None = None,
         evidence_store: EvidenceBundleStore | None = None,
         service: AuditEvidenceExportService | None = None,
+        boundary: AuthenticationBoundary | None = None,
     ) -> APIRouter:
-        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from apps.api.oday_api.runtime_mode import live_data_required
+        from apps.api.oday_api.security.dependencies import (
+            build_engine,
+            default_boundary,
+            require_permission,
+        )
         from shared.auth import Action
 
         router = APIRouter(prefix="/audit", tags=["audit"])
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
-        export_guard = Depends(require_permission("audit", Action.EXPORT, engine=authz_engine))
-        view_guard = Depends(require_permission("audit", Action.VIEW, engine=authz_engine))
-        update_guard = Depends(require_permission("audit", Action.UPDATE, engine=authz_engine))
-        delete_guard = Depends(require_permission("audit", Action.DELETE, engine=authz_engine))
+        selected_boundary = boundary if boundary is not None else default_boundary()
+
+        def permission(action: Action):
+            guard = require_permission(
+                "audit", action, engine=authz_engine, boundary=selected_boundary
+            )
+
+            def dependency(request: Request) -> Principal:
+                # A router created without an auth owner must never adopt a
+                # later app's global owner via require_permission(None).
+                if selected_boundary is None and default_boundary() is not None:
+                    raise HTTPException(
+                        status_code=401, detail="AUDIT_AUTH_BOUNDARY_CHANGED"
+                    )
+                return guard(request)
+
+            return dependency
+
+        export_guard = Depends(permission(Action.EXPORT))
+        view_guard = Depends(permission(Action.VIEW))
+        update_guard = Depends(permission(Action.UPDATE))
+        delete_guard = Depends(permission(Action.DELETE))
         export_service = service or AuditEvidenceExportService(
             audit_log=active_audit_log, evidence_store=evidence_store
         )
@@ -98,7 +125,7 @@ else:
             request: Request,
             principal=export_guard,
         ) -> dict[str, Any]:
-            if os.environ.get("ODP_PRODUCT_MODE") == "production":
+            if live_data_required():
                 raise HTTPException(status_code=503, detail="CANONICAL_EVIDENCE_INPUT_REQUIRED")
             try:
                 identity_boundary = _identity_boundary(principal)
@@ -165,7 +192,14 @@ else:
             }
 
         def owned_record(export_id: str, principal: Principal) -> RetainedEvidence:
-            record = None if evidence_store is None else evidence_store.get(export_id)
+            try:
+                record = None if evidence_store is None else evidence_store.get(export_id)
+            except EvidenceIntegrityError as exc:
+                # Ownership cannot be trusted until the stored record verifies.
+                # Match unknown/foreign IDs instead of exposing a corrupt ID.
+                raise HTTPException(
+                    status_code=404, detail="retained evidence bundle not found"
+                ) from exc
             if record is None or not _belongs_to(record, principal):
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -173,9 +207,73 @@ else:
                 )
             return record
 
-        @router.get("/evidence/exports/{export_id}")
-        def get_retained_evidence(export_id: str, principal=view_guard) -> dict[str, Any]:
-            return owned_record(export_id, principal).to_dict()
+        def readable_content(export_id: str, principal: Principal) -> RetainedEvidence:
+            # JSON contains the full bundle too: it is not a metadata-history
+            # shortcut around the existing download admission/authority gates.
+            if live_data_required():
+                raise HTTPException(
+                    status_code=503, detail="CANONICAL_EVIDENCE_DOWNLOAD_ADMISSION_REQUIRED"
+                )
+            record = owned_record(export_id, principal)
+            if record.sensitive or record.data_classification.lower() in {
+                "restricted", "highly_restricted", "secret", "top_secret",
+            }:
+                raise HTTPException(
+                    status_code=403, detail="SENSITIVE_EVIDENCE_DOWNLOAD_AUTHORITY_REQUIRED"
+                )
+            try:
+                validate_retained_evidence_artifact(record)
+                expires_at = record.bundle["export_governance"].get("expires_at")
+                if expires_at is not None:
+                    if not isinstance(expires_at, str):
+                        raise EvidenceArtifactUnavailable("invalid evidence authorization expiry")
+                    if _parse_time(expires_at) <= datetime.now(UTC):
+                        raise EvidenceArtifactUnavailable("evidence download authorization expired")
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=410, detail="retained evidence content is unavailable"
+                ) from exc
+            # retain_until governs purge eligibility, not an invented access
+            # expiry. Existing legal holds and tombstone ownership stay intact.
+            return record
+
+        def record_content_served(
+            record: RetainedEvidence, request: Request, principal: Principal,
+            *, content: bytes, artifact_format: str,
+        ) -> None:
+            active_audit_log.record(
+                AuditEvent(
+                    event_type="audit.evidence_download.v1",
+                    actor=principal.subject_id,
+                    action="export",
+                    resource=f"audit-evidence/{record.program_id}/{record.export_id}",
+                    outcome="served",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "export_id": record.export_id,
+                        "bundle_checksum": record.bundle_checksum,
+                        "artifact_sha256": hashlib.sha256(content).hexdigest(),
+                        "artifact_bytes": len(content),
+                        "format": artifact_format,
+                        "identity_boundary": _identity_boundary(principal),
+                        "download_evidence_id": record.bundle["export_governance"].get("download_evidence_id"),
+                    },
+                )
+            )
+
+        @router.get("/evidence/exports/{export_id}", response_model=dict[str, Any])
+        def get_retained_evidence(
+            export_id: str, request: Request, principal=export_guard,
+        ) -> Response:
+            record = readable_content(export_id, principal)
+            response = JSONResponse(
+                content=record.to_dict(),
+                headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+            )
+            record_content_served(
+                record, request, principal, content=response.body, artifact_format="JSON",
+            )
+            return response
 
         @router.get(
             "/evidence/exports/{export_id}/download",
@@ -206,28 +304,7 @@ else:
             format: Literal["zip", "pdf"] = "zip",
             principal=export_guard,
         ) -> Response:
-            if os.environ.get("ODP_PRODUCT_MODE") == "production":
-                raise HTTPException(
-                    status_code=503, detail="CANONICAL_EVIDENCE_DOWNLOAD_ADMISSION_REQUIRED"
-                )
-            record = owned_record(export_id, principal)
-            # A string supplied as authorized_by/authorization_id is not an
-            # independently verified sensitive-data authorization receipt.
-            if record.sensitive or record.data_classification.lower() in {
-                "restricted",
-                "highly_restricted",
-                "secret",
-                "top_secret",
-            }:
-                raise HTTPException(
-                    status_code=403, detail="SENSITIVE_EVIDENCE_DOWNLOAD_AUTHORITY_REQUIRED"
-                )
-            governance = record.bundle.get("export_governance", {})
-            expires_at = governance.get("expires_at")
-            if expires_at and _parse_time(expires_at) <= datetime.now(UTC):
-                raise HTTPException(
-                    status_code=410, detail="evidence download authorization expired"
-                )
+            record = readable_content(export_id, principal)
             try:
                 artifact = (
                     render_evidence_pdf(record)
@@ -236,24 +313,9 @@ else:
                 )
             except EvidenceArtifactUnavailable as exc:
                 raise HTTPException(status_code=410, detail=str(exc)) from exc
-            active_audit_log.record(
-                AuditEvent(
-                    event_type="audit.evidence_download.v1",
-                    actor=principal.subject_id,
-                    action="export",
-                    resource=f"audit-evidence/{record.program_id}/{record.export_id}",
-                    outcome="served",
-                    correlation_id=request.state.correlation_id,
-                    metadata={
-                        "export_id": record.export_id,
-                        "bundle_checksum": record.bundle_checksum,
-                        "artifact_sha256": artifact.sha256,
-                        "artifact_bytes": len(artifact.content),
-                        "format": "PDF" if format == "pdf" else "JSON/CSV ZIP",
-                        "identity_boundary": _identity_boundary(principal),
-                        "download_evidence_id": governance.get("download_evidence_id"),
-                    },
-                )
+            record_content_served(
+                record, request, principal, content=artifact.content,
+                artifact_format="PDF" if format == "pdf" else "JSON/CSV ZIP",
             )
             # The filename contains no caller-controlled ID. This is an
             # authenticated response, not a public or signed URL.
