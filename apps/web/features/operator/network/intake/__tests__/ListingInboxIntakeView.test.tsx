@@ -446,4 +446,14 @@ describe("ListingInboxIntakeView", () => {
 
     expect(screen.getByTestId("intake-inbox-error")).toBeDefined();
   });
+
+  it("passes the current native HeatZone options through the normal add opener", () => {
+    render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
+      records={[]} selectedHeatZoneId="native-inbox-zone" onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail}
+      heatZoneOptions={{ state: "ready", options: [{ id: "native-inbox-zone", label: "原生收件區域" }] }} />);
+    fireEvent.click(screen.getByTestId("intake-add-button"));
+    expect(screen.getByTestId("intake-area-select")).toHaveValue("native-inbox-zone");
+    expect(screen.getByRole("option", { name: "原生收件區域" })).toHaveValue("native-inbox-zone");
+  });
+
 });

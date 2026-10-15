@@ -12,11 +12,14 @@ for (const width of [1440,1024,390]) {
       await page.addInitScript(() => sessionStorage.setItem("oday.operator.role","expansion-manager"));
       let writes=0;
       page.on("request",request => { if(request.method()==="POST" && /\/network-reviews\/[^/]+\/decide/.test(request.url()))writes+=1; });
-      await page.goto("/operator?ws=network&tab=review");
+      // The dialog belongs to this recorded candidate. Starting on its exact
+      // route avoids opening an intent that candidate navigation must revoke.
+      await page.goto("/operator?ws=network&tab=review&candidate=CS-1002");
       await expect(page.getByTestId("network-panel-review")).toBeVisible();
       // RV-701 exists in both the dedicated API queue and the archived fixture
       // queue. The supplemental CI server intentionally runs without an API.
       await page.getByTestId("review-card-RV-701").click();
+      await expect(page.getByTestId("review-card-RV-701")).toHaveAttribute("data-active", "true");
       const trigger=page.getByTestId(`review-btn-${action}-RV-701`);
       await trigger.focus(); await trigger.click();
       const dialog=page.getByRole("dialog");

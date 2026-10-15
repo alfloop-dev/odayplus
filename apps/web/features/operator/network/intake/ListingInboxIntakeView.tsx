@@ -5,7 +5,7 @@ import type { AssistedIntake, IntakeInboxPage, IntakeInboxQuery } from "@oday-pl
 import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
-import { AddListingFromUrlDialog } from "./AddListingFromUrlDialog";
+import { AddListingFromUrlDialog, type IntakeHeatZoneOptions } from "./AddListingFromUrlDialog";
 import { StateMatrix } from "./StateMatrix";
 import {
   matchLabel,
@@ -28,6 +28,7 @@ export function ListingInboxIntakeView({
   actionError,
   busy,
   selectedHeatZoneId,
+  heatZoneOptions,
   onAddSubmit,
   onOpenDetail,
   onRetryLoad,
@@ -46,6 +47,7 @@ export function ListingInboxIntakeView({
   actionError?: IntakeApiError | null;
   busy: boolean;
   selectedHeatZoneId?: string;
+  heatZoneOptions?: IntakeHeatZoneOptions;
   onAddSubmit: (input: { url: string; heatZoneId: string }) => Promise<void>;
   onOpenDetail: (intakeId: string) => void;
   onRetryLoad?: () => void;
@@ -580,6 +582,7 @@ export function ListingInboxIntakeView({
         <AddListingFromUrlDialog
           busy={busy}
           defaultHeatZoneId={selectedHeatZoneId}
+          heatZoneOptions={heatZoneOptions}
           error={actionError ?? null}
           onClose={closeAddDialog}
           onOpenExisting={(intakeId) => {

@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from modules.opsboard.application.store_ops_native_summary import native_store_summary
 
 from modules.opsboard.application.store_ops import StoreOpsLiveDataUnavailable
+from modules.opsboard.application.store_ops_native_summary import native_store_summary
 from shared.domain.models import Machine, Store
 
 NOW = datetime(2026, 10, 14, 12, tzinfo=UTC)

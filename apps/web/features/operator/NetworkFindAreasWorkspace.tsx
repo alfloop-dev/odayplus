@@ -1070,6 +1070,7 @@ export function NetworkFindAreasWorkspace({
       if (!cancelled && generation === navigationContext.current.generation && snapshot) {
         setNetworkNavigationGeneration(generation);
         const inspection = inspectNetworkListingsSnapshot(snapshot);
+        const authorizedEmpty = inspection === "empty" && snapshot.source === "api" && hasNetworkListingsRenderShape(snapshot);
         const serverSelectedId = snapshot.selectedHeatZoneId;
         if (
           inspection === "ready" &&
@@ -1080,7 +1081,9 @@ export function NetworkFindAreasWorkspace({
           setLocalSelectedId(serverSelectedId);
         }
         setNetworkSnapshot(
-          inspection === "ready" || fixturesAllowed && hasNetworkListingsRenderShape(snapshot)
+          inspection === "ready"
+            || authorizedEmpty
+            || fixturesAllowed && hasNetworkListingsRenderShape(snapshot)
             ? snapshot
             : null,
         );
@@ -1089,9 +1092,11 @@ export function NetworkFindAreasWorkspace({
         setNetworkLoadState(
           inspection === "ready"
             ? "ready"
-            : fixturesAllowed
-              ? "fixture"
-              : inspection,
+            : authorizedEmpty
+              ? "empty"
+              : fixturesAllowed
+                ? "fixture"
+                : inspection,
         );
       } else if (!cancelled && generation === navigationContext.current.generation && !read.ok) {
         setNetworkNavigationGeneration(generation);
@@ -1918,7 +1923,8 @@ export function NetworkFindAreasWorkspace({
     setNetworkNavigationGeneration(generation);
     if (read.ok) {
       const inspection = inspectNetworkListingsSnapshot(read.snapshot);
-      setNetworkSnapshot(inspection === "ready" || fixturesAllowed && hasNetworkListingsRenderShape(read.snapshot) ? read.snapshot : null);
+      const authorizedEmpty = inspection === "empty" && read.snapshot.source === "api" && hasNetworkListingsRenderShape(read.snapshot);
+      setNetworkSnapshot(inspection === "ready" || authorizedEmpty || fixturesAllowed && hasNetworkListingsRenderShape(read.snapshot) ? read.snapshot : null);
       setNetworkLoadState(inspection);
       setNetworkApiError(null);
       setNetworkLoadFailure(null);
@@ -2390,6 +2396,12 @@ export function NetworkFindAreasWorkspace({
       onMerge={mergeListing}
       rows={viewModel.listingRadar}
       selectedHeatZoneId={effectiveSelectedId}
+      heatZoneOptions={{
+        state: (networkLoadState === "ready" || networkLoadState === "empty") && networkSnapshot?.source === "api" ? "ready"
+          : networkLoadState === "loading" ? "loading" : "error",
+        options: (networkLoadState === "ready" || networkLoadState === "empty") && networkSnapshot?.source === "api"
+          ? (networkSnapshot.heatZones ?? []).map(({ id, label }) => ({ id, label })) : [],
+      }}
       selectedZoneLabel={selectedZoneLabel}
       sources={listingSourcesEffective}
       writeContext={listingWriteContext}

@@ -83,9 +83,8 @@ def test_store_native_facts_use_current_authorized_records_without_persisting_pr
 
 @pytest.mark.parametrize("change", ["region", "brand", "current", "effective_window"])
 def test_native_machine_query_rechecks_store_scope_changed_between_authorized_reads(case, change):
-    from tests.integration.test_intake_registry_calendar_postgresql import _bundle
-
     from shared.domain.models import Brand
+    from tests.integration.test_intake_registry_calendar_postgresql import _bundle
 
     bundle = case["bundle"]
     start = datetime(2020, 1, 1, tzinfo=UTC)

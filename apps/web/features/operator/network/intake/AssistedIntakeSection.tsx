@@ -18,6 +18,7 @@ import type {
 import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
+import type { IntakeHeatZoneOptions } from "./AddListingFromUrlDialog";
 import { ListingInboxIntakeView } from "./ListingInboxIntakeView";
 import { IntakeDecisionDialog } from "./IntakeDecisionDialog";
 import { IntakeProcessingDetail } from "./IntakeProcessingDetail";
@@ -64,6 +65,7 @@ export function AssistedIntakeSection({
   initialDialog,
   initialSelectedId,
   selectedHeatZoneId,
+  heatZoneOptions,
   targetListings = [],
 }: {
   activeRoleId: OperatorRoleId;
@@ -71,6 +73,7 @@ export function AssistedIntakeSection({
   initialDialog?: IntakeUrlState["dialog"];
   initialSelectedId?: string;
   selectedHeatZoneId?: string;
+  heatZoneOptions?: IntakeHeatZoneOptions;
   targetListings?: TargetListingData[];
 }) {
   const router = useRouter();
@@ -955,6 +958,7 @@ export function AssistedIntakeSection({
         pageData={pageData}
         records={records}
         selectedHeatZoneId={inboxQuery.selectedHeatZoneId}
+        heatZoneOptions={heatZoneOptions}
       /> : null}
 
       {/*

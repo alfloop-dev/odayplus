@@ -1,9 +1,76 @@
 import AxeBuilder from "@axe-core/playwright";
+import currentMemoryTriage from "../fixtures/operator-store-triage-visual-memory.json";
+import { createHash } from "node:crypto";
 import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ISSUE_FIXTURES, STORE_FIXTURES, EVIDENCE_FIXTURES, AUDIT_EVENT_FIXTURES } from "../../apps/web/features/operator/fixtures";
+
+type StoreOpsIssue = {
+  id: string;
+  title: string;
+  storeId: string;
+  storeName: string;
+  status: string;
+  severity: string;
+  source: string;
+  ownerRoleId: string;
+  ownerName: string;
+  slaDueAt: string;
+  createdAt: string;
+  updatedAt: string;
+  evidenceIds: string[];
+  summary: string;
+  workflowRecords?: Record<string, unknown>[];
+  outcomeReviews?: Record<string, unknown>[];
+};
+
+type MemoryWorkflowSample = {
+  requestPayload: Record<string, unknown>;
+  issueUpdatedAt: string;
+  record: Record<string, unknown>;
+  auditEvent: { id: string; occurredAt: string; metadata: Record<string, unknown> };
+  evidenceItem?: Record<string, unknown>;
+};
+
+function canonicalFixtureJSON(value: unknown): string {
+  if (Array.isArray(value)) return "[" + value.map(canonicalFixtureJSON).join(",") + "]";
+  if (value !== null && typeof value === "object") {
+    const row = value as Record<string, unknown>;
+    return "{" + Object.keys(row).sort().map((key) => JSON.stringify(key) + ":" + canonicalFixtureJSON(row[key])).join(",") + "}";
+  }
+  return JSON.stringify(value);
+}
+
+function bindMemoryWorkflowReceipt(
+  sample: MemoryWorkflowSample,
+  action: string,
+  issue: StoreOpsIssue,
+  sourceIssueUpdatedAt: string,
+  payload: Record<string, unknown>,
+  headers: Record<string, string>,
+) {
+  const expectedPayload = structuredClone(sample.requestPayload);
+  if (action === "field-report") expectedPayload.observedAt = sourceIssueUpdatedAt;
+  expect(payload).toMatchObject(expectedPayload);
+  const record = structuredClone(sample.record);
+  const auditEvent = structuredClone(sample.auditEvent);
+  record.correlationId = headers["x-correlation-id"];
+  record.sourceIssueUpdatedAt = sourceIssueUpdatedAt;
+  record.recordedAt = issue.updatedAt;
+  if (action === "field-report") (record.submission as Record<string, unknown>).observedAt = payload.observedAt;
+  auditEvent.occurredAt = action === "camera-purpose" ? sample.auditEvent.occurredAt : issue.updatedAt;
+  auditEvent.metadata.idempotencyKey = headers["idempotency-key"];
+  auditEvent.metadata.reviewRecordHash = createHash("sha256").update(canonicalFixtureJSON(record)).digest("hex");
+  const history = action === "outcome" ? "outcomeReviews" : "workflowRecords";
+  issue[history] = [...(issue[history] ?? []), record];
+  return { auditEvent };
+}
+
+// Actual local Memory producer capture; only CID/key/time transport fields are adapted below.
+// This mocked visual API does not prove native SQL, identity or delivered effects.
+const visualMemoryTriageSample = currentMemoryTriage.triage as unknown as MemoryWorkflowSample;
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -18,12 +85,20 @@ const dialogs = [
 ] as const;
 
 async function openStore(page: Page, withPaymentTrend = true) {
+  const state = {
+    stores: STORE_FIXTURES,
+    issues: structuredClone(ISSUE_FIXTURES) as StoreOpsIssue[],
+    evidence: withPaymentTrend ? EVIDENCE_FIXTURES : EVIDENCE_FIXTURES.map(({ paymentTrend: _trend, ...item }) => item),
+    auditEvents: [...AUDIT_EVENT_FIXTURES] as unknown[],
+    count: ISSUE_FIXTURES.length,
+  };
   await page.route("**/api/v1/operator/store-ops/**", (route) => route.fulfill({
     contentType: "application/json",
-    body: JSON.stringify({ stores: STORE_FIXTURES, issues: ISSUE_FIXTURES, evidence: withPaymentTrend ? EVIDENCE_FIXTURES : EVIDENCE_FIXTURES.map(({ paymentTrend: _trend, ...item }) => item), auditEvents: AUDIT_EVENT_FIXTURES, count: ISSUE_FIXTURES.length }),
+    body: JSON.stringify({ ...state, issue: state.issues.find(issue => route.request().url().includes("/issues/" + issue.id)) }),
   }));
   await page.goto("/operator?ws=store&entity=ISS-1024");
   await expect(page.locator('[aria-label="ISS-1024 detail"]')).toBeVisible();
+  return state;
 }
 
 async function save(page: Page, info: TestInfo, name: string, fullPage = false) {
@@ -68,7 +143,7 @@ test("Missing payment series stays unavailable; AI CTA opens action without a wr
 for (const width of [1440, 1024, 390]) {
   test(`Store workflow preserves pending and failed intent at ${width}`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 900 });
-    await openStore(page);
+    const state = await openStore(page);
     let finish!: () => void;
     const waitForRelease = new Promise<void>((resolve) => { finish = resolve; });
     const keys: string[] = [];
@@ -79,7 +154,13 @@ for (const width of [1440, 1024, 390]) {
         await waitForRelease;
         await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "synthetic response failure" }) });
       } else {
-        await route.fulfill({ contentType: "application/json", body: JSON.stringify({ issue: ISSUE_FIXTURES.find((issue) => issue.id === "ISS-1024") }) });
+        const issue = state.issues.find((issue) => issue.id === "ISS-1024")!;
+        const sourceIssueUpdatedAt = issue.updatedAt;
+        issue.status = currentMemoryTriage.triage.status;
+        issue.updatedAt = visualMemoryTriageSample.issueUpdatedAt;
+        const receipt = bindMemoryWorkflowReceipt(visualMemoryTriageSample, "triage", issue, sourceIssueUpdatedAt, route.request().postDataJSON(), route.request().headers());
+        state.auditEvents.push(receipt.auditEvent);
+        await route.fulfill({ contentType: "application/json", body: JSON.stringify({ ...state, issue, ...receipt, idempotentReplay: false }) });
       }
     });
     const trigger = page.getByLabel("Action rail").getByRole("button", { name: "完成 Triage", exact: true });
