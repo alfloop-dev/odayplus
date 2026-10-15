@@ -392,3 +392,288 @@ class TestT08MigrationIdempotency:
         )
         assert os.path.exists(version_path), \
             "Alembic version 0004_identity_schema.py must exist"
+
+
+class TestTimingDummyInitialization:
+    """Separate owning controls; original T01–T08 bodies above are unchanged.
+
+    All acceptance positives use real Argon2. Profiles count genuine calls;
+    failure doubles below are fault injection, never crypto acceptance evidence.
+    """
+
+    def setup_method(self) -> None:
+        from shared.identity import credential_service as credentials
+
+        credentials._reset_timing_dummy()
+
+    def teardown_method(self) -> None:
+        from shared.identity import credential_service as credentials
+
+        credentials._reset_timing_dummy()
+
+    def test_one_initialization_but_every_dummy_verification_is_real(self) -> None:
+        import sys
+
+        from argon2 import _password_hasher, extract_parameters, low_level
+
+        from shared.identity import credential_service as credentials
+
+        counts = {"hash": 0, "verify": 0}
+        hash_code = low_level.hash_secret.__code__
+        verify_code = low_level.verify_secret.__code__
+
+        def observe(frame, event, arg):
+            if event == "call":
+                if frame.f_code is hash_code:
+                    counts["hash"] += 1
+                elif frame.f_code is verify_code:
+                    counts["verify"] += 1
+
+        previous = sys.getprofile()
+        try:
+            sys.setprofile(observe)
+            services = [CredentialService() for _ in range(4)]
+            for service in services:
+                service.dummy_verify()
+                service.dummy_verify()
+            assert counts == {"hash": 1, "verify": 8}
+            assert len({id(service._hasher) for service in services}) == 4
+            assert len({service._dummy_hash for service in services}) == 1
+            assert credentials._dummy_artifact == (CURRENT_POLICY, services[0]._dummy_hash)
+            params = extract_parameters(services[0]._dummy_hash)
+            assert params.type is _password_hasher.Type.ID
+            assert (params.memory_cost, params.time_cost, params.parallelism) == (65536, 3, 1)
+            assert (params.hash_len, params.salt_len, params.version) == (32, 16, 19)
+            # User hashing never enters the artifact and retains fresh salts.
+            hashes = [service.hash_password("independent-user-password") for service in services]
+            assert len(set(hashes)) == 4
+            assert counts["hash"] == 5
+            assert all(service.verify_password(phc, "independent-user-password")
+                       for service, phc in zip(services, hashes, strict=True))
+            assert counts["verify"] == 12
+            assert all(phc != services[0]._dummy_hash for phc in hashes)
+        finally:
+            sys.setprofile(previous)
+
+    @pytest.mark.parametrize("change", [
+        {"version": 2}, {"memory_cost": 65537}, {"time_cost": 4},
+        {"parallelism": 2}, {"hash_len": 33}, {"salt_len": 17},
+    ])
+    def test_complete_policy_key_and_single_entry_bound(self, change) -> None:
+        import dataclasses
+
+        from argon2 import extract_parameters
+
+        from shared.identity import credential_service as credentials
+
+        first = CredentialService()
+        policy = dataclasses.replace(CURRENT_POLICY, **change)
+        other = CredentialService(policy)
+        again = CredentialService(policy)
+        assert other._dummy_hash == again._dummy_hash
+        assert other._dummy_hash != first._dummy_hash
+        params = extract_parameters(other._dummy_hash)
+        for field in ("memory_cost", "time_cost", "parallelism", "hash_len", "salt_len"):
+            assert getattr(params, field) == getattr(policy, field)
+        other.dummy_verify()
+        assert credentials._dummy_artifact == (policy, other._dummy_hash)
+        returned = CredentialService()
+        assert returned._dummy_hash != first._dummy_hash  # eviction, not unbounded per-policy state
+        assert credentials._dummy_artifact == (CURRENT_POLICY, returned._dummy_hash)
+
+    def test_concurrent_real_initialization_is_single_and_clients_are_isolated(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+
+        barrier = Barrier(4)
+
+        def construct(_):
+            barrier.wait(timeout=20)
+            return CredentialService()
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            services = list(pool.map(construct, range(4)))
+        assert len({service._dummy_hash for service in services}) == 1
+        assert len({id(service._hasher) for service in services}) == 4
+        for service in services:
+            service.dummy_verify()
+        # Instance mutations do not alter another service or retained PHC.
+        services[0]._hasher.encoding = "ascii"
+        assert services[1]._hasher.encoding == "utf-8"
+        assert CredentialService()._hasher.encoding == "utf-8"
+
+    def test_unavailable_backend_does_not_use_warm_artifact(self, monkeypatch) -> None:
+        from shared.identity import credential_service as credentials
+
+        CredentialService()
+        monkeypatch.setattr(credentials, "_ARGON2_AVAILABLE", False)
+        with pytest.raises(RuntimeError, match="argon2-cffi is required"):
+            CredentialService()
+
+    def test_builder_failure_does_not_use_warm_artifact(self, monkeypatch) -> None:
+        CredentialService()
+
+        def fail(policy):
+            raise RuntimeError("initialization refused")
+
+        monkeypatch.setattr(CredentialService, "_build_hasher", staticmethod(fail))
+        with pytest.raises(RuntimeError, match="initialization refused"):
+            CredentialService()
+
+    def test_changed_real_backend_is_not_reused_or_published(self, monkeypatch) -> None:
+        from argon2 import _password_hasher
+
+        from shared.identity import credential_service as credentials
+
+        first = CredentialService()
+        real_hash = _password_hasher.hash_secret
+        calls = []
+
+        def observing_hash(**kwargs):
+            calls.append(kwargs)
+            return real_hash(**kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(_password_hasher, "hash_secret", observing_hash)
+            second, third = CredentialService(), CredentialService()
+            second.dummy_verify()
+            assert len(calls) == 2
+            assert second._dummy_hash != third._dummy_hash
+            assert credentials._dummy_artifact is None
+            assert all((call["memory_cost"], call["time_cost"], call["parallelism"])
+                       == (65536, 3, 1) for call in calls)
+        assert CredentialService()._dummy_hash != first._dummy_hash
+
+    def test_hash_failure_invalidates_warm_artifact_and_retry_is_fresh(self, monkeypatch) -> None:
+        from argon2 import _password_hasher
+        from argon2.exceptions import HashingError
+
+        from shared.identity import credential_service as credentials
+
+        first = CredentialService()
+
+        def fail(**kwargs):
+            raise HashingError("backend refused")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(_password_hasher, "hash_secret", fail)
+            with pytest.raises(HashingError, match="backend refused"):
+                CredentialService()
+            assert credentials._dummy_artifact is None
+        recovered = CredentialService()
+        assert recovered._dummy_hash != first._dummy_hash
+        recovered.dummy_verify()
+
+    def test_every_dummy_call_propagates_backend_verification_failure(self, monkeypatch) -> None:
+        from argon2 import _password_hasher
+        from argon2.exceptions import VerificationError
+
+        service = CredentialService()
+        service.dummy_verify()
+        attempts = []
+
+        def fail(*args):
+            attempts.append(args)
+            raise VerificationError("verification backend unavailable")
+
+        monkeypatch.setattr(_password_hasher, "verify_secret", fail)
+        for _ in range(2):
+            with pytest.raises(VerificationError, match="verification backend unavailable"):
+                service.dummy_verify()
+        assert len(attempts) == 2
+
+    def test_real_hasher_subclass_is_not_shared(self, monkeypatch) -> None:
+        from argon2 import PasswordHasher
+
+        from shared.identity import credential_service as credentials
+
+        CredentialService()
+
+        class AlternateHasher(PasswordHasher):
+            pass
+
+        def build(policy):
+            return AlternateHasher(
+                memory_cost=policy.memory_cost, time_cost=policy.time_cost,
+                parallelism=policy.parallelism, hash_len=policy.hash_len,
+                salt_len=policy.salt_len,
+            )
+
+        monkeypatch.setattr(CredentialService, "_build_hasher", staticmethod(build))
+        first, second = CredentialService(), CredentialService()
+        assert first._dummy_hash != second._dummy_hash
+        assert credentials._dummy_artifact is None
+        first.dummy_verify()
+        second.dummy_verify()
+
+    def test_invalid_policy_cannot_use_warm_artifact(self) -> None:
+        import dataclasses
+
+        from argon2.exceptions import HashingError
+
+        CredentialService()
+        with pytest.raises(HashingError):
+            CredentialService(dataclasses.replace(CURRENT_POLICY, memory_cost=0))
+
+    @pytest.mark.parametrize("phc", ["not-a-phc", "$argon2id$v=19$m=32768,t=2,p=1$bad$bad"])
+    def test_incompatible_artifact_fails_closed_and_is_evicted(self, monkeypatch, phc) -> None:
+        from shared.identity import credential_service as credentials
+
+        CredentialService()
+        monkeypatch.setattr(credentials, "_dummy_artifact", (CURRENT_POLICY, phc))
+        with pytest.raises((ValueError, RuntimeError)):
+            CredentialService()
+        assert credentials._dummy_artifact is None
+        CredentialService().dummy_verify()
+
+    def test_custom_builder_retains_fresh_real_initialization(self, monkeypatch) -> None:
+        from shared.identity import credential_service as credentials
+
+        first = CredentialService()
+        stock = CredentialService._build_hasher
+
+        def build(policy):
+            return stock(policy)
+
+        monkeypatch.setattr(CredentialService, "_build_hasher", staticmethod(build))
+        second, third = CredentialService(), CredentialService()
+        assert len({first._dummy_hash, second._dummy_hash, third._dummy_hash}) == 3
+        assert credentials._dummy_artifact is None
+        second.dummy_verify()
+        third.dummy_verify()
+
+    def test_fork_child_resets_inherited_locked_state(self) -> None:
+        import os
+
+        from shared.identity import credential_service as credentials
+
+        parent = CredentialService()
+        read_fd, write_fd = os.pipe()
+        # Deliberately fork while locked: the child must not inherit deadlock.
+        with credentials._dummy_lock:
+            pid = os.fork()
+        if pid == 0:
+            try:
+                import signal
+
+                signal.alarm(20)
+                os.close(read_fd)
+                assert credentials._dummy_artifact is None
+                child = CredentialService()
+                child.dummy_verify()
+                assert child._dummy_hash != parent._dummy_hash
+                os.write(write_fd, b"real-child-ok")
+                os._exit(0)
+            except BaseException:
+                os._exit(1)
+        os.close(write_fd)
+        try:
+            import select
+
+            assert select.select([read_fd], [], [], 20)[0], "fork child did not complete"
+            assert os.read(read_fd, 100) == b"real-child-ok"
+        finally:
+            os.close(read_fd)
+            waited, status = os.waitpid(pid, 0)
+        assert waited == pid and os.waitstatus_to_exitcode(status) == 0
+        assert credentials._dummy_artifact == (CURRENT_POLICY, parent._dummy_hash)
